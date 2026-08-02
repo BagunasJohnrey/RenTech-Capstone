@@ -1,0 +1,9 @@
+{
+  "watch": ["backend/src", "frontend/src"],
+  "ext": "ts,tsx,js,jsx,json",
+  "ignore": [
+    "backend/dist",
+    "frontend/dist",
+    "node_modules"
+  ]
+}

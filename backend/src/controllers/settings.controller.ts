@@ -1,0 +1,78 @@
+import { Response, NextFunction } from 'express';
+import { z } from 'zod';
+import * as settingsService from '../services/settings.service.js';
+import { AuthenticatedRequest } from '../types/index.js';
+
+export const updateRulesSchema = z.object({
+  body: z.record(z.string(), z.string()),
+});
+
+export const createTemplateSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).max(100),
+    content: z.string().min(1).max(1600),
+    isDefault: z.boolean().optional(),
+  }),
+});
+
+export const updateTemplateSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).max(100).optional(),
+    content: z.string().min(1).max(1600).optional(),
+    isDefault: z.boolean().optional(),
+  }),
+});
+
+export async function getRules(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const rules = await settingsService.getBusinessRules();
+    res.json(rules);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateRules(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const result = await settingsService.updateBusinessRules(req.body);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listTemplates(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const templates = await settingsService.listSmsTemplates();
+    res.json(templates);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function createTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const template = await settingsService.createSmsTemplate(req.body);
+    res.status(201).json(template);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const template = await settingsService.updateSmsTemplate(String(req.params.id), req.body);
+    res.json(template);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const result = await settingsService.deleteSmsTemplate(String(req.params.id));
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}

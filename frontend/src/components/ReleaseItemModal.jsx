@@ -1,0 +1,145 @@
+import { useState } from 'react';
+import { X, Camera, Package, User, Calendar } from 'lucide-react';
+import { api } from '../utils/api';
+import { customerLabel, itemLabel } from '../utils/format';
+
+export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
+  const [photoUrl, setPhotoUrl] = useState(transaction.conditionPhoto || '');
+  const [notes, setNotes] = useState('');
+  const [releasing, setReleasing] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleRelease = async () => {
+    if (!photoUrl) { setError('Please capture the pre-rental condition photo'); return; }
+    setReleasing(true);
+    setError('');
+    try {
+      const updated = await api.put(`/transactions/${transaction.id}/release`, {
+        conditionPhoto: photoUrl,
+        notes,
+      });
+      onReleased(updated);
+      onClose();
+    } catch (err) {
+      setError(err?.message || 'Failed to release item');
+    }
+    setReleasing(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9999]">
+      <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none">
+        <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md max-h-[95vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-blue-50 rounded-xl">
+                <Package size={18} className="text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-gray-900">Release Item</h3>
+                <p className="text-xs text-gray-500">Customer pickup</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0">
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="p-5 sm:p-6 space-y-5">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3.5 bg-gray-50 rounded-2xl">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
+                <User size={11} /> Customer
+              </p>
+              <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(transaction.customer)}</p>
+            </div>
+            <div className="p-3.5 bg-gray-50 rounded-2xl">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
+                <Package size={11} /> Item
+              </p>
+              <p className="text-sm font-bold text-gray-900 truncate">{itemLabel(transaction.item)}</p>
+            </div>
+            <div className="p-3.5 bg-gray-50 rounded-2xl">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
+                <Calendar size={11} /> Rental Date
+              </p>
+              <p className="text-sm font-bold text-gray-900 truncate">
+                {new Date(transaction.rentalDate || transaction.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </p>
+            </div>
+            <div className="p-3.5 bg-gray-50 rounded-2xl">
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
+                <Calendar size={11} /> Due Date
+              </p>
+              <p className="text-sm font-bold text-gray-900 truncate">
+                {new Date(transaction.dueDate || transaction.returnDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-3 flex items-center gap-1.5">
+              <Camera size={14} className="text-blue-500" /> Pre-Rental Condition Photo
+            </label>
+            <p className="text-[10px] text-gray-400 mb-2">Capture the item's condition before releasing to the customer.</p>
+            <div className="relative h-44 sm:h-48 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden transition-colors hover:border-blue-300">
+              {photoUrl ? (
+                <>
+                  <img src={photoUrl} className="w-full h-full object-cover" alt="Pre-rental condition" />
+                  <button onClick={() => setPhotoUrl('')} className="absolute top-2 right-2 p-1.5 bg-gray-900/70 text-white rounded-full shadow hover:bg-gray-900 transition-colors">
+                    <X size={14} />
+                  </button>
+                </>
+              ) : (
+                <label className="cursor-pointer text-center p-4 w-full h-full flex flex-col items-center justify-center">
+                  <input type="file" accept="image/*" capture="environment" onChange={e => {
+                    const file = e.target.files[0];
+                    if (file) setPhotoUrl(URL.createObjectURL(file));
+                  }} className="hidden" />
+                  <div className="p-3.5 bg-white rounded-full shadow-sm mb-2.5">
+                    <Camera size={24} className="text-gray-400" />
+                  </div>
+                  <p className="text-sm font-bold text-gray-500">Tap to capture photo</p>
+                  <p className="text-[10px] text-gray-300 mt-1">Use camera to document item condition before release</p>
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1.5">
+              Notes (optional)
+            </label>
+            <textarea placeholder="Any notes about the item condition at pickup..."
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={2}
+              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-blue-400 resize-none"
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <button onClick={onClose}
+              className="py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
+              Cancel
+            </button>
+            <button onClick={handleRelease} disabled={releasing || !photoUrl}
+              className={`py-3.5 text-sm font-bold text-white rounded-2xl transition-all flex items-center justify-center gap-2 ${
+                photoUrl && !releasing
+                  ? 'bg-blue-600 hover:bg-blue-700 shadow-sm active:scale-[0.98]'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}>
+              {releasing ? 'Releasing...' : 'Confirm Release'}
+            </button>
+          </div>
+          </div>
+        </div>
+    </div>
+  </div>
+  );
+}

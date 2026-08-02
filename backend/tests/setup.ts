@@ -1,0 +1,259 @@
+import { beforeAll, afterAll, vi } from 'vitest';
+
+process.env.SUPABASE_URL = 'https://test.supabase.co';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
+process.env.SUPABASE_ANON_KEY = 'test-anon-key';
+process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
+process.env.FRONTEND_URL = 'http://localhost:5173';
+process.env.NODE_ENV = 'test';
+process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
+
+const { mockUsers, mockSessions } = vi.hoisted(() => {
+  const users: Record<string, { id: string; email: string }> = {
+    'customer-token': { id: 'auth-customer-id', email: 'customer@example.com' },
+    'admin-token': { id: 'auth-admin-id-789', email: 'admin@example.com' },
+    'staff-token': { id: 'auth-staff-id-456', email: 'staff@example.com' },
+    'valid-token': { id: 'auth-user-id-123', email: 'test@example.com' },
+  };
+
+  const sessions: Record<string, { access_token: string; refresh_token: string }> = {
+    'customer-token': { access_token: 'customer-token', refresh_token: 'rt-customer' },
+    'admin-token': { access_token: 'admin-token', refresh_token: 'rt-admin' },
+    'valid-token': { access_token: 'valid-token', refresh_token: 'rt-valid' },
+  };
+
+  return {
+    mockUsers: users,
+    mockSessions: sessions,
+  };
+});
+
+vi.mock('@supabase/supabase-js', () => {
+  const mockSupabaseClient = {
+    auth: {
+      admin: {
+        createUser: vi.fn().mockResolvedValue({
+          data: { user: { id: 'new-auth-id', email: 'new@test.com' }, session: { access_token: 'new-token', refresh_token: 'rt-new' } },
+          error: null,
+        }),
+        deleteUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
+      },
+      getUser: vi.fn().mockImplementation((token: string) => {
+        const user = mockUsers[token] || { id: 'auth-user-id-123', email: 'test@example.com' };
+        return Promise.resolve({ data: { user }, error: null });
+      }),
+      signInWithPassword: vi.fn().mockImplementation(({ email }: { email: string }) => {
+        const user = { id: 'auth-user-id-123', email };
+        return Promise.resolve({
+          data: { user, session: { access_token: 'mock-access-token-xyz', refresh_token: 'mock-refresh-token' } },
+          error: null,
+        });
+      }),
+      signOut: vi.fn().mockResolvedValue({ error: null }),
+    },
+  };
+
+  return {
+    createClient: vi.fn(() => mockSupabaseClient),
+  };
+});
+
+vi.mock('../src/config/database.js', () => {
+  const now = new Date();
+
+  const profiles: Record<string, any> = {
+    'auth-user-id-123': {
+      id: 'profile-id-123',
+      userId: 'auth-user-id-123',
+      email: 'test@example.com',
+      role: 'Customer',
+      name: 'Test User',
+      phone: '09171234567',
+      address: 'Test Address',
+      createdAt: now,
+      updatedAt: now,
+    },
+    'admin-id-789': {
+      id: 'admin-id-789',
+      userId: 'auth-admin-id-789',
+      email: 'admin@example.com',
+      role: 'Admin',
+      name: 'Admin User',
+      phone: null,
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    'auth-admin-id-789': {
+      id: 'admin-id-789',
+      userId: 'auth-admin-id-789',
+      email: 'admin@example.com',
+      role: 'Admin',
+      name: 'Admin User',
+      phone: null,
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    'profile-id-123': {
+      id: 'profile-id-123',
+      userId: 'auth-user-id-123',
+      email: 'test@example.com',
+      role: 'Customer',
+      name: 'Test User',
+      phone: '09171234567',
+      address: 'Test Address',
+      createdAt: now,
+      updatedAt: now,
+    },
+    'auth-customer-id': {
+      id: 'customer-id-111',
+      userId: 'auth-customer-id',
+      email: 'customer@example.com',
+      role: 'Customer',
+      name: 'Customer User',
+      phone: null,
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    'customer-id-111': {
+      id: 'customer-id-111',
+      userId: 'auth-customer-id',
+      email: 'customer@example.com',
+      role: 'Customer',
+      name: 'Customer User',
+      phone: '09171234567',
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    'no-phone-id': {
+      id: 'no-phone-id',
+      userId: 'no-phone-auth-id',
+      email: 'nophone@example.com',
+      role: 'Customer',
+      name: 'No Phone',
+      phone: null,
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    'staff-id-456': {
+      id: 'staff-id-456',
+      userId: 'auth-staff-id-456',
+      email: 'staff@example.com',
+      role: 'Staff',
+      name: 'Staff User',
+      phone: null,
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    'auth-staff-id-456': {
+      id: 'staff-id-456',
+      userId: 'auth-staff-id-456',
+      email: 'staff@example.com',
+      role: 'Staff',
+      name: 'Staff User',
+      phone: null,
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    'admin-id-789': {
+      id: 'admin-id-789',
+      userId: 'auth-admin-id-789',
+      email: 'admin@example.com',
+      role: 'Admin',
+      name: 'Admin User',
+      phone: null,
+      address: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+
+  const mockPrisma = {
+    profile: {
+      create: vi.fn().mockImplementation((args) => {
+        const key = args.data.userId;
+        const base = profiles[key] || profiles['auth-user-id-123'];
+        return Promise.resolve({ ...base, ...args.data, id: base?.id || 'profile-id-123' });
+      }),
+      findUnique: vi.fn().mockImplementation((args) => {
+        if (args.where.id) {
+          return Promise.resolve(profiles[args.where.id] || null);
+        }
+        if (args.where.userId) {
+          return Promise.resolve(profiles[args.where.userId] || null);
+        }
+        if (args.where.email) {
+          return Promise.resolve(Object.values(profiles).find(p => p.email === args.where.email) || null);
+        }
+        return Promise.resolve(null);
+      }),
+      findMany: vi.fn().mockResolvedValue([
+        profiles['staff-id-456'],
+      ]),
+      update: vi.fn().mockImplementation((args) => {
+        const profile = profiles['auth-user-id-123'];
+        return Promise.resolve({ ...profile, ...args.data });
+      }),
+      delete: vi.fn().mockResolvedValue({ id: 'staff-id-456' }),
+    },
+    inventoryItem: {
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 1, ...args.data })),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+      delete: vi.fn().mockResolvedValue({ id: 1 }),
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    transaction: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'tx-new', ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+    },
+    auditLog: {
+      create: vi.fn().mockResolvedValue({ id: 'log-1' }),
+    },
+    payment: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'pay-new', ...args.data })),
+    },
+    notification: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'notif-new', ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    sentSms: {
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'sms-new', ...args.data })),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    businessRule: {
+      findMany: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn().mockImplementation((args) => Promise.resolve({ key: args.where.key, value: args.create.value })),
+    },
+    smsTemplate: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'tmpl-new', ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      delete: vi.fn().mockResolvedValue({ id: 'tmpl-deleted' }),
+    },
+    $disconnect: vi.fn(),
+  };
+
+  return { prisma: mockPrisma };
+});

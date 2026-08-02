@@ -1,0 +1,132 @@
+import crypto from 'crypto';
+import { env } from '../config/env.js';
+import { AppError } from '../middleware/errorHandler.js';
+
+const PAYMONGO_API = 'https://api.paymongo.com/v1';
+
+function getAuthHeader(): string {
+  return `Basic ${Buffer.from(env.PAYMONGO_SECRET_KEY + ':').toString('base64')}`;
+}
+
+export async function createPaymentIntent(
+  amount: number,
+  description: string,
+  metadata?: Record<string, string>
+) {
+  if (!env.PAYMONGO_SECRET_KEY) {
+    // Simulation mode: no real gateway configured yet. Return a fake succeeded
+    // intent so the client can complete the booking flow end-to-end. Once
+    // PAYMONGO_SECRET_KEY is set, the real PayMongo call runs instead.
+    return {
+      id: `sim_${crypto.randomBytes(8).toString('hex')}`,
+      amount,
+      currency: 'PHP',
+      status: 'succeeded',
+      clientKey: `sim_${crypto.randomBytes(8).toString('hex')}`,
+      simulated: true,
+    };
+  }
+
+  const response = await fetch(`${PAYMONGO_API}/payment_intents`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+    body: JSON.stringify({
+      data: {
+        attributes: {
+          amount: Math.round(amount * 100),
+          currency: 'PHP',
+          description,
+          metadata: metadata ?? {},
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new AppError(502, `PayMongo API error: ${response.status}`, errorBody);
+  }
+
+  const data = await response.json() as {
+    data: {
+      id: string;
+      attributes: {
+        amount: number;
+        currency: string;
+        status: string;
+        client_key: string;
+        metadata: Record<string, string>;
+      };
+    };
+  };
+
+  return {
+    id: data.data.id,
+    amount: data.data.attributes.amount / 100,
+    currency: data.data.attributes.currency,
+    status: data.data.attributes.status,
+    clientKey: data.data.attributes.client_key,
+    metadata: data.data.attributes.metadata,
+    simulated: false,
+  };
+}
+
+export async function retrievePaymentIntent(paymentIntentId: string) {
+  if (!env.PAYMONGO_SECRET_KEY) {
+    throw new AppError(500, 'PayMongo is not configured');
+  }
+
+  const response = await fetch(`${PAYMONGO_API}/payment_intents/${paymentIntentId}`, {
+    headers: { Authorization: getAuthHeader() },
+  });
+
+  if (!response.ok) {
+    throw new AppError(404, 'Payment intent not found');
+  }
+
+  const data = await response.json() as {
+    data: {
+      id: string;
+      attributes: {
+        amount: number;
+        currency: string;
+        status: string;
+        payments: { id: string; attributes: { amount: number; status: string; source: string } }[];
+      };
+    };
+  };
+
+  const attrs = data.data.attributes;
+  return {
+    id: data.data.id,
+    amount: attrs.amount / 100,
+    currency: attrs.currency,
+    status: attrs.status,
+    payments: attrs.payments?.map((p: { id: string; attributes: { amount: number; status: string; source: string } }) => ({
+      id: p.id,
+      amount: p.attributes.amount / 100,
+      status: p.attributes.status,
+      source: p.attributes.source,
+    })) || [],
+  };
+}
+
+export function verifyWebhookSignature(payload: string, signature: string): boolean {
+  if (!env.PAYMONGO_WEBHOOK_SECRET) {
+    return false;
+  }
+
+  const expected = crypto
+    .createHmac('sha256', env.PAYMONGO_WEBHOOK_SECRET)
+    .update(payload)
+    .digest('hex');
+
+  if (expected.length !== signature.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+}

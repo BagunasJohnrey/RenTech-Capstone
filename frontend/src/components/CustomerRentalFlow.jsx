@@ -1,0 +1,765 @@
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, ScanLine, Calendar, ChevronRight } from 'lucide-react';
+import { usePromo } from '../hooks/usePromo';
+import { usePayments } from '../hooks/usePayments';
+import { usePaymongo } from '../hooks/usePaymongo';
+import ItemImage from './ItemImage';
+import { getSaleInfo } from './ItemCard';
+import { inventoryService } from '../services/inventory';
+import BookingCalendar from './BookingCalendar';
+import { useToast } from './Toast';
+
+const ITEMS_PER_LOAD = 6;
+
+const generateQRPattern = (data) => {
+  let hash = 0;
+  for (let i = 0; i < data.length; i++) {
+    hash = (hash << 5) - hash + data.charCodeAt(i);
+    hash |= 0;
+  }
+  let pattern = '';
+  for (let i = 0; i < 25; i++) {
+    pattern += ((hash >> (i % 32)) & 1) ? '1' : '0';
+  }
+  return pattern;
+};
+
+export default function CustomerRentalFlow({
+  item: preselectedItem,
+  selectedDate: preselectedDate,
+  inventory,
+  customerInfo,
+  onClose,
+  onSubmitBooking,
+  onCancelBooking,
+  inline,
+}) {
+  const [step, setStep] = useState(() => (preselectedItem ? 1 : 0));
+  const [selectedItem, setSelectedItem] = useState(preselectedItem || null);
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const [rentalDate, setRentalDate] = useState(preselectedDate || todayStr);
+  const measurementFields = useMemo(() => {
+    const isFemale = selectedItem?.category?.toLowerCase().includes('gown');
+    return isFemale
+      ? ['bust', 'waist', 'hips', 'shoulderToFloor', 'shoulderWidth']
+      : ['shoulder', 'chest', 'waist', 'sleeveLength', 'pantsLength', 'neck'];
+  }, [selectedItem]);
+
+  const [eventDate, setEventDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 2);
+    return d.toISOString().split('T')[0];
+  });
+  const dueDate = useMemo(() => {
+    if (!eventDate) return '';
+    const d = new Date(eventDate);
+    if (isNaN(d.getTime())) return '';
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  }, [eventDate]);
+  const [useAccountDetails, setUseAccountDetails] = useState(true);
+  const [customer, setCustomer] = useState({
+    name: customerInfo?.name || '',
+    contact: customerInfo?.contact || '',
+    address: customerInfo?.address || '',
+    notes: '',
+  });
+  const [paymentMethod, setPaymentMethod] = useState('gcash');
+  const [selectedSize, setSelectedSize] = useState('');
+  const [measurementsExpanded, setMeasurementsExpanded] = useState(false);
+  const [measurements, setMeasurements] = useState({});
+  const saleInfo = selectedItem ? getSaleInfo(selectedItem) : null;
+  const effectiveItemPrice = saleInfo?.active ? saleInfo.price : (selectedItem?.price || 0);
+  const minDownpayment = selectedItem ? Math.round(effectiveItemPrice * 0.5) : 0;
+  const [downpaymentAmount, setDownpaymentAmount] = useState(minDownpayment);
+  const [confirmedTx, setConfirmedTx] = useState(null);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoApplied, setPromoApplied] = useState(null);
+  const [promoError, setPromoError] = useState('');
+  const [promoApplying, setPromoApplying] = useState(false);
+  const [showQRDetails, setShowQRDetails] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState('all');
+  const [visibleCount, setVisibleCount] = useState(ITEMS_PER_LOAD);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [availability, setAvailability] = useState({ checking: false, available: null, reason: '' });
+  const [bookedRanges, setBookedRanges] = useState([]);
+  const [itemStatus, setItemStatus] = useState(null);
+  const isCleaning = itemStatus === 'Cleaning' || selectedItem?.status === 'Cleaning';
+  const catalogRef = useRef(null);
+
+  const { validate: validatePromo } = usePromo();
+  const { createIntent } = usePayments();
+  const { openDropIn } = usePaymongo();
+  const { info: toastInfo } = useToast();
+
+  const clearFieldError = (field) => {
+    setFieldErrors(prev => ({ ...prev, [field]: '' }));
+  };
+
+  const validateStep1 = () => {
+    const errs = {};
+    if (!selectedItem) errs.item = 'Please select an item.';
+    if (!customer.name || customer.name.trim().length < 2) errs.name = 'Full name is required (min 2 characters)';
+    if (!customer.contact || !/^\d{11}$/.test(customer.contact.trim())) errs.contact = 'Contact number must be exactly 11 digits';
+    if (!customer.address || customer.address.trim().length < 5) errs.address = 'Address is required (min 5 characters)';
+    if (new Date(rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
+    if (!eventDate) errs.eventDate = 'Please select an event date.';
+    else if (new Date(eventDate) < new Date(rentalDate)) errs.eventDate = 'Event date must be on or after the pickup date';
+    if (!selectedSize) errs.size = 'Please select a size';
+    if (selectedSize === 'Custom / Measurements' && measurementsExpanded) {
+      const filled = measurementFields.filter(f => measurements[f] && String(measurements[f]).trim());
+      if (filled.length < 3) errs.measurements = 'Please provide at least 3 measurements';
+    }
+    if (downpaymentAmount < minDownpayment) errs.downpayment = `Downpayment must be at least ₱${minDownpayment.toLocaleString()}`;
+    if (availability.available === false) errs.availability = availability.reason || 'Item is not available for the selected dates.';
+    setFieldErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const filteredCatalog = useMemo(() => {
+    const cats = {
+      all: () => true,
+      gown: (i) => i.category?.toLowerCase() === 'gown',
+      suit: (i) => i.category?.toLowerCase() === 'suit',
+      formal: (i) => i.category?.toLowerCase() === 'formal',
+    };
+    return inventory.filter((item) => {
+      // Hide items that can never be booked; show everything else (including
+      // currently Rented/Reserved) so customers can reserve future-free dates.
+      if (item.status === 'Damaged' || item.status === 'Maintenance') return false;
+      const matchesCat = cats[activeCategory] ? cats[activeCategory](item) : true;
+      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesCat && matchesSearch;
+    });
+  }, [inventory, activeCategory, searchQuery]);
+
+  useEffect(() => { setVisibleCount(ITEMS_PER_LOAD); setLoadingMore(false); }, [activeCategory, searchQuery]);
+
+  // Live availability check against the backend (same overlap logic as createRental).
+  // Lets customers reserve an item that is currently Rented but free for their dates.
+  useEffect(() => {
+    if (!selectedItem || !rentalDate || !dueDate) {
+      setAvailability({ checking: false, available: null, reason: '' });
+      return;
+    }
+    let active = true;
+    setAvailability({ checking: true, available: null, reason: '' });
+    inventoryService
+      .availability(selectedItem.id, rentalDate, dueDate)
+      .then((res) => { if (active) setAvailability({ checking: false, available: res.available, reason: res.reason || '' }); })
+      .catch(() => { if (active) setAvailability({ checking: false, available: null, reason: '' }); });
+    return () => { active = false; };
+  }, [selectedItem, rentalDate, dueDate]);
+
+  // Fetch the item's existing bookings so the calendar can mark blocked dates.
+  useEffect(() => {
+    if (!selectedItem) {
+      setBookedRanges([]);
+      return;
+    }
+    let active = true;
+    inventoryService
+      .blockedDates(selectedItem.id)
+      .then((res) => { if (active) { setBookedRanges(res.blockedRanges || []); setItemStatus(res.itemStatus || null); } })
+      .catch(() => { if (active) { setBookedRanges([]); setItemStatus(null); } });
+    return () => { active = false; };
+  }, [selectedItem]);
+
+  const displayedItems = filteredCatalog.slice(0, visibleCount);
+  const allLoaded = visibleCount >= filteredCatalog.length;
+
+  const handleCatalogScroll = useCallback(() => {
+    const el = catalogRef.current;
+    if (!el || loadingMore || allLoaded) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) {
+      setLoadingMore(true);
+      setTimeout(() => {
+        setVisibleCount((prev) => Math.min(prev + ITEMS_PER_LOAD, filteredCatalog.length));
+        setLoadingMore(false);
+      }, 400);
+    }
+  }, [loadingMore, allLoaded, filteredCatalog.length]);
+
+  const toggleAccountDetails = (useAccount) => {
+    setUseAccountDetails(useAccount);
+    if (useAccount) {
+      setCustomer({
+        name: customerInfo?.name || '',
+        contact: customerInfo?.contact || '',
+        address: customerInfo?.address || '',
+        notes: customer.notes,
+      });
+    } else {
+      setCustomer({ name: '', contact: '', address: '', notes: customer.notes });
+    }
+  };
+
+  const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
+    month: 'short', day: '2-digit', year: 'numeric',
+  });
+
+  // FIX B: the price actually charged is the promo-discounted fee.
+  const finalFee = promoApplied?.finalFee ?? effectiveItemPrice ?? 0;
+
+  // Build the booking payload sent to POST /bookings.
+  const buildBookingData = () => ({
+    itemId: selectedItem.id,
+    rentalDate,
+    dueDate,
+    rentalFee: finalFee,
+    downpayment: Number(downpaymentAmount),
+    notes: customer.notes,
+    promoCode: promoApplied?.code || undefined,
+    size: selectedSize || undefined,
+    measurements: Object.keys(measurements).length ? measurements : undefined,
+    paymentMethod,
+  });
+
+  const handleApplyPromo = async () => {
+    if (!promoCode.trim()) return;
+    setPromoApplying(true);
+    setPromoError('');
+    try {
+      const result = await validatePromo(promoCode.trim(), effectiveItemPrice || 0);
+      setPromoApplied(result);
+      setPromoError('');
+    } catch (err) {
+      setPromoApplied(null);
+      setPromoError(err.message || 'Invalid promo code');
+    }
+    setPromoApplying(false);
+  };
+
+  const handleBack = () => {
+    if (step > 1) setStep(s => s - 1);
+    else onClose();
+  };
+
+  const handleNext = async () => {
+    if (step === 0) {
+      if (!selectedItem) { setFieldErrors({ item: 'Please select an item.' }); return; }
+      setDownpaymentAmount(Math.round(selectedItem.price * 0.5));
+      setFieldErrors({});
+      setStep(1);
+      return;
+    }
+    if (step === 1) {
+      if (!validateStep1()) return;
+      setFieldErrors({});
+      setStep(2);
+      return;
+    }
+    if (step === 2) {
+      if (!validateStep1()) return;
+      setIsProcessingPayment(true);
+      setConfirmError('');
+      try {
+        // Create the booking first so we have a real transaction id.
+        const created = await onSubmitBooking(buildBookingData());
+        // FIX A: create a real PayMongo payment intent, then open the drop-in UI.
+        let intent;
+        try {
+          intent = await createIntent({ transactionId: created.id, amount: Number(downpaymentAmount) });
+        } catch (payErr) {
+          setConfirmError(payErr?.message || 'Payment failed. Please try again.');
+          // Roll back the committed booking so we don't leave an orphaned rental.
+          if (onCancelBooking) await onCancelBooking(created);
+          return;
+        }
+        // No real gateway configured yet: simulate a successful payment so the
+        // booking can complete end-to-end. When PAYMONGO_SECRET_KEY is set, the
+        // backend returns a real intent and we open the PayMongo drop-in instead.
+        if (intent.simulated) {
+          toastInfo('Payment gateway not configured — simulating successful payment.');
+          setPaymentSuccess(true);
+          setConfirmedTx(created);
+          setTimeout(() => {
+            setPaymentSuccess(false);
+            setStep(3);
+          }, 1500);
+          return;
+        }
+        try {
+          await openDropIn(intent.clientKey, {
+            amount: Number(downpaymentAmount) * 100,
+            currency: 'PHP',
+            description: `Rental downpayment for ${selectedItem?.name || 'item'}`,
+          });
+        } catch (payErr) {
+          setConfirmError(payErr?.message || 'Payment was cancelled or failed.');
+          if (onCancelBooking) await onCancelBooking(created);
+          return;
+        }
+        setPaymentSuccess(true);
+        setConfirmedTx(created);
+        setTimeout(() => {
+          setPaymentSuccess(false);
+          setStep(3);
+        }, 1500);
+      } catch (err) {
+        setConfirmError(err?.message || 'Booking failed. Please try again.');
+      } finally {
+        setIsProcessingPayment(false);
+      }
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (confirming) return;
+    setConfirming(true);
+    // Booking was already created during the payment step; just close.
+    onClose();
+    setConfirming(false);
+  };
+  const handleQRTap = () => { if (confirmedTx) setShowQRDetails(true); };
+  const qrData = confirmedTx ? JSON.stringify(confirmedTx) : 'booking_info';
+
+  // ---- Step 0: Catalog ----
+  if (step === 0) {
+    return (
+    <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-lg" onClick={onClose}>
+        <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
+            <h2 className="text-xl font-bold text-gray-900">Select Item</h2>
+            <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
+          </div>
+          <div className="p-4 flex flex-col flex-1 min-h-0">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-full text-xs font-medium focus:outline-none focus:border-[#bf4a53]" />
+              </div>
+            </div>
+            <div className="flex gap-2 overflow-x-auto mb-4">
+              {['all', 'gown', 'suit', 'formal'].map((cat) => (
+                <button key={cat} onClick={() => setActiveCategory(cat)}
+                  className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border ${
+                    activeCategory === cat ? 'bg-[#bf4a53] text-white border-[#bf4a53]' : 'bg-white border-gray-200 text-gray-600'}`}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+            {fieldErrors.item && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl px-4 py-2.5 text-center mb-3">
+                {fieldErrors.item}
+              </div>
+            )}
+            <div ref={catalogRef} onScroll={handleCatalogScroll} className="flex-1 overflow-y-auto pr-1 hide-scrollbar">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {displayedItems.map((item) => (
+                  <div key={item.id} onClick={() => setSelectedItem(item)}
+                    className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all ${
+                      selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'}`}>
+                    <ItemImage image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-gray-900 line-clamp-1">{item.name}</p>
+                      {getSaleInfo(item).active ? (
+                        <p className="text-[10px] text-gray-500">
+                          <span className="text-red-500 font-bold">₱{getSaleInfo(item).price.toLocaleString()}</span>
+                          <span className="line-through ml-1">₱{item.price.toLocaleString()}</span>
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-gray-500">₱{item.price.toLocaleString()}</p>
+                      )}
+                      <span className={`inline-block mt-1 text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                        item.status === 'Available'
+                          ? 'bg-emerald-50 text-emerald-600'
+                          : 'bg-amber-50 text-amber-600'
+                      }`}>
+                        {item.status === 'Available' ? 'Available now' : 'Limited — check dates'}
+                      </span>
+                    </div>
+                    {selectedItem?.id === item.id && (
+                      <svg className="w-5 h-5 text-[#bf4a53]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="py-3 flex justify-center">
+                {loadingMore && <Loader2 size={18} className="text-gray-400 animate-spin" />}
+                {!loadingMore && allLoaded && filteredCatalog.length > 0 && (
+                  <p className="text-xs text-gray-400">All items loaded</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="p-4 border-t bg-gray-50/50 flex gap-3">
+            <button onClick={onClose} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">Cancel</button>
+            <button onClick={handleNext} className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors flex items-center justify-center gap-1.5">
+              Continue <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    );
+  }
+
+  // ---- Steps 1–3 ----
+  const flowContent = (
+    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 relative" onClick={(e) => e.stopPropagation()}>
+        {isProcessingPayment && (
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center space-y-4">
+            <Loader2 size={48} className="text-[#bf4a53] animate-spin" />
+            <p className="font-bold text-gray-900">Processing Payment…</p>
+            <p className="text-sm text-gray-500">Please do not close this window</p>
+          </div>
+        )}
+        {paymentSuccess && (
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center space-y-4">
+            <CheckCircle2 size={56} className="text-emerald-500 animate-bounce" />
+            <p className="font-bold text-gray-900 text-xl">Payment Confirmed!</p>
+            <p className="text-sm text-gray-500">Redirecting to your receipt…</p>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
+          <h2 className="text-xl font-bold text-gray-900">Complete Booking</h2>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
+        </div>
+
+        <div className="flex items-center justify-center py-4 px-6 bg-gray-50/50">
+          {['Details', 'Payment', 'Receipt'].map((label, idx) => (
+            <div key={label} className="flex-1 flex flex-col items-center relative">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
+                step >= idx + 1 ? 'bg-[#bf4a53] border-[#bf4a53] text-white' : 'bg-white border-gray-200 text-gray-400'}`}>
+                {idx + 1}
+              </div>
+              <span className={`text-[10px] font-bold mt-1 ${step >= idx + 1 ? 'text-[#bf4a53]' : 'text-gray-400'}`}>{label}</span>
+              {idx < 2 && <div className={`absolute top-4 left-1/2 w-full h-0.5 ${step > idx + 1 ? 'bg-[#bf4a53]' : 'bg-gray-200'}`} />}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {step === 1 && (
+            <div className="space-y-5">
+              <div className="bg-gradient-to-r from-gray-50 to-white rounded-2xl p-4 flex items-center gap-4 border border-gray-100/60">
+                <ItemImage image={selectedItem.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-gray-200 shadow-sm" />
+                <div className="flex-1">
+                  <p className="font-bold text-gray-900">{selectedItem.name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Pickup: {formatDate(rentalDate)}</p>
+                  {saleInfo?.active ? (
+                    <p className="text-lg font-bold text-[#bf4a53] mt-1">
+                      ₱{saleInfo.price.toLocaleString()} <span className="text-xs text-gray-400 line-through font-medium">₱{selectedItem.price.toLocaleString()}</span>
+                    </p>
+                  ) : (
+                    <p className="text-lg font-bold text-[#bf4a53] mt-1">₱{selectedItem.price.toLocaleString()}</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wide">Who is this booking for?</label>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button onClick={() => toggleAccountDetails(true)}
+                    className={`py-3 px-4 rounded-xl text-sm font-bold border transition-all ${
+                      useAccountDetails ? 'bg-[#bf4a53] text-white border-[#bf4a53] shadow-sm' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'}`}>
+                    {customerInfo?.name ? `Me (${customerInfo.name.split(' ')[0]})` : 'Me'}
+                  </button>
+                  <button onClick={() => toggleAccountDetails(false)}
+                    className={`py-3 px-4 rounded-xl text-sm font-bold border transition-all ${
+                      !useAccountDetails ? 'bg-[#bf4a53] text-white border-[#bf4a53] shadow-sm' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'}`}>
+                    Someone else
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Contact Details</h4>
+                <div>
+                  <input type="text" placeholder="Full Name" value={customer.name}
+                    onChange={(e) => { setCustomer({ ...customer, name: e.target.value }); clearFieldError('name'); }}
+                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} />
+                  {fieldErrors.name && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.name}</p>}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <input type="tel" placeholder="Contact No." value={customer.contact}
+                      onChange={(e) => { setCustomer({ ...customer, contact: e.target.value.replace(/\D/g, '') }); clearFieldError('contact'); }}
+                      className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.contact ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} inputMode="numeric" />
+                    {fieldErrors.contact && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.contact}</p>}
+                  </div>
+                  <div>
+                    <input type="text" placeholder="Address" value={customer.address}
+                      onChange={(e) => { setCustomer({ ...customer, address: e.target.value }); clearFieldError('address'); }}
+                      className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} />
+                    {fieldErrors.address && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.address}</p>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                  <Calendar size={14} /> Rental Schedule
+                </h4>
+                {isCleaning ? (
+                  <div className="flex items-start gap-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                    <Calendar size={16} className="mt-0.5 text-amber-500" />
+                    <span>This item is currently being cleaned and can't be booked yet. Please check back once staff mark it available.</span>
+                  </div>
+                ) : (
+                <BookingCalendar
+                  pickup={rentalDate}
+                  event={eventDate}
+                  bookedRanges={bookedRanges}
+                  onChange={(p, e) => {
+                    setRentalDate(p);
+                    setEventDate(e);
+                    clearFieldError('rentalDate');
+                    clearFieldError('eventDate');
+                  }}
+                />
+                )}
+                <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
+                  <span className="text-amber-500 mt-0.5"><Calendar size={16} /></span>
+                  <div>
+                    <p className="text-xs font-bold text-amber-800">Pick up from the store before your event date</p>
+                    <p className="text-[11px] text-amber-600 mt-0.5">Return is due the day after your event ({formatDate(dueDate)}).</p>
+                  </div>
+                </div>
+
+                {availability.checking && (
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <Loader2 size={14} className="animate-spin" /> Checking availability…
+                  </div>
+                )}
+                {!availability.checking && availability.available === true && (
+                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                    <CheckCircle2 size={16} /> Available for your selected dates.
+                  </div>
+                )}
+                {!availability.checking && availability.available === false && (
+                  <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
+                    <Calendar size={16} /> {availability.reason || 'Not available for the selected dates.'}
+                  </div>
+                )}
+                {fieldErrors.availability && (
+                  <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.availability}</p>
+                )}
+              </div>
+
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Item Details</h4>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Size</label>
+                  <select value={selectedSize} onChange={(e) => { setSelectedSize(e.target.value); clearFieldError('size'); }}
+                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.size ? 'border-red-300 bg-red-50' : ''}`}>
+                    <option value="">-- Select Size --</option>
+                    {['XS','S','M','L','XL','XXL','Custom / Measurements'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  {fieldErrors.size && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.size}</p>}
+                </div>
+
+                {selectedSize === 'Custom / Measurements' && (
+                  <div className="pt-3 border-t border-gray-100">
+                    <button onClick={() => setMeasurementsExpanded(!measurementsExpanded)}
+                      className="flex items-center justify-between w-full text-xs font-bold text-gray-500 hover:text-[#bf4a53] transition-colors">
+                      <span>Custom Measurements</span>
+                      <svg className={`w-4 h-4 transition-transform ${measurementsExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </button>
+                    <div className={`grid grid-cols-2 gap-3 mt-3 overflow-hidden transition-all duration-300 ${measurementsExpanded ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                      {measurementFields.map(field => (
+                        <div key={field}>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">{field.replace(/([A-Z])/g, ' $1')}</label>
+                          <input type="number" placeholder="cm"
+                            value={measurements[field] || ''}
+                            onChange={e => { setMeasurements({...measurements, [field]: e.target.value}); clearFieldError('measurements'); }}
+                            className="w-full p-2.5 bg-gray-50 rounded-xl border text-xs focus:outline-none focus:border-[#bf4a53]" />
+                        </div>
+                      ))}
+                    </div>
+                    {fieldErrors.measurements && <p className="text-[11px] text-red-500 font-medium mt-2">{fieldErrors.measurements}</p>}
+                  </div>
+                )}
+
+                <textarea placeholder="Special notes (e.g. size preference, theme)" value={customer.notes}
+                  onChange={(e) => setCustomer({ ...customer, notes: e.target.value })}
+                  className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[80px] focus:outline-none focus:border-[#bf4a53]" />
+              </div>
+
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Required Downpayment</p>
+                <div>
+                  <div className="relative mt-2">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
+                    <input type="number" value={downpaymentAmount}
+                      onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
+                      className={`w-full pl-8 p-3 bg-white border rounded-xl text-sm font-bold focus:outline-none focus:border-[#bf4a53] ${fieldErrors.downpayment ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                      min={minDownpayment} />
+                  </div>
+                  {fieldErrors.downpayment && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.downpayment}</p>}
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1">Minimum 50% (₱{minDownpayment.toLocaleString()}) required to secure booking.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Promo Code */}
+          <div className="bg-gray-50 rounded-2xl p-4">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block">Have a promo code?</label>
+            <div className="flex gap-2">
+              <input type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
+                placeholder="Enter code" maxLength={20}
+                className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
+              <button onClick={handleApplyPromo} disabled={!promoCode.trim() || promoApplying}
+                className="px-4 py-2.5 bg-[#bf4a53] text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
+                {promoApplying ? <Loader2 size={14} className="animate-spin" /> : 'Apply'}
+              </button>
+            </div>
+            {promoApplied && (
+              <div className="mt-2 p-2.5 bg-emerald-50 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-emerald-700">{promoApplied.code}</span>
+                  <span className="text-xs text-emerald-600 ml-2">-{promoApplied.discountPct}% off</span>
+                </div>
+                <button onClick={() => { setPromoCode(''); setPromoApplied(null); }}
+                  className="text-xs text-red-500 font-semibold hover:underline">
+                  Remove
+                </button>
+              </div>
+            )}
+            {promoError && <p className="text-xs text-red-500 font-medium mt-1">{promoError}</p>}
+            {promoApplied && (
+              <div className="mt-2 flex justify-between text-sm">
+                <span className="text-gray-500">Discount</span>
+                <span className="font-bold text-emerald-600">-₱{promoApplied.discountAmount.toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+
+          {step === 2 && (
+            <div className="space-y-5">
+              <div className="text-center pb-2">
+                <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
+                <p className="text-sm text-gray-500">Select how you'd like to pay the downpayment.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => setPaymentMethod('gcash')}
+                  className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
+                    paymentMethod === 'gcash' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                  <Smartphone size={28} className={paymentMethod === 'gcash' ? 'text-[#bf4a53]' : 'text-gray-400'} />
+                  <span className="text-sm font-bold text-gray-900">GCash</span>
+                </button>
+                <button onClick={() => setPaymentMethod('card')}
+                  className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
+                    paymentMethod === 'card' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                  <CreditCard size={28} className={paymentMethod === 'card' ? 'text-[#bf4a53]' : 'text-gray-400'} />
+                  <span className="text-sm font-bold text-gray-900">Card</span>
+                </button>
+              </div>
+                <div className="bg-gray-50 p-5 rounded-2xl space-y-2 border border-gray-100/60">
+                  <div className="flex justify-between text-sm"><span className="text-gray-600">Downpayment</span><span className="font-bold">₱{downpaymentAmount.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-gray-600">Remaining Balance</span><span className="font-bold text-gray-900">₱{(finalFee - downpaymentAmount).toLocaleString()}</span></div>
+                  <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between text-base"><span className="font-bold text-gray-900">Total</span><span className="font-bold text-[#bf4a53]">₱{finalFee.toLocaleString()}</span></div>
+                  {promoApplied && (
+                    <div className="flex justify-between text-sm text-emerald-600"><span>Promo {promoApplied.code}</span><span>-₱{promoApplied.discountAmount.toLocaleString()}</span></div>
+                  )}
+                  <p className="text-[10px] text-gray-400 mt-1">Balance payable at pickup.</p>
+                </div>
+            </div>
+          )}
+
+          {step === 3 && confirmedTx && (
+            <div className="space-y-5">
+              <div className="text-center">
+                <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 size={32} className="text-emerald-500" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900">Booking Confirmed!</h3>
+                <p className="text-gray-500 text-sm mt-1">Your reservation has been secured.</p>
+              </div>
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
+                <p className="font-bold text-gray-900 text-base mb-2">{selectedItem.name}</p>
+                <div className="flex justify-between"><span className="text-gray-500">Pickup</span><span>{formatDate(rentalDate)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Event Date</span><span className="font-semibold">{formatDate(eventDate)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="text-amber-600 font-semibold">{formatDate(dueDate)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Customer</span><span>{confirmedTx.customer?.name || customer.name}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Size</span><span>{confirmedTx.size}</span></div>
+                <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex justify-between"><span className="text-gray-500">Downpayment</span><span className="text-[#bf4a53] font-bold">₱{confirmedTx.downpayment.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Balance</span><span className="font-bold">₱{(confirmedTx.amount - confirmedTx.downpayment).toLocaleString()}</span></div>
+              </div>
+              <div className="flex justify-center">
+                <button onClick={handleQRTap}
+                  className="relative bg-white p-4 rounded-2xl border border-gray-200 shadow-sm group cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
+                  title="Tap to view booking details">
+                  <QrCodeDisplay pattern={generateQRPattern(qrData)} />
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 rounded-2xl">
+                    <div className="flex items-center gap-2 text-[#bf4a53] font-bold">
+                      <ScanLine size={20} /> Tap to view
+                    </div>
+                  </div>
+                </button>
+              </div>
+              <p className="text-xs text-center text-gray-400">Transaction ID: {confirmedTx.id}</p>
+              {confirmError && (
+                <p className="text-xs text-center text-red-500 font-medium bg-red-50 py-2 rounded-lg">{confirmError}</p>
+              )}
+              <button onClick={handleConfirm} disabled={confirming}
+                className="w-full py-3.5 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                {confirming ? 'Processing...' : 'Done'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {step < 3 && (
+          <div className="p-4 border-t bg-gray-50/50 flex gap-3">
+            <button onClick={handleBack} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
+              {step > 1 ? 'Back' : 'Cancel'}
+            </button>
+            <button
+              onClick={handleNext}
+              disabled={step === 1 && (availability.checking || availability.available === false || isCleaning)}
+              className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : 'Confirm Payment'} <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+    </div>
+  );
+
+  return inline ? flowContent : (
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
+        {flowContent}
+      {showQRDetails && confirmedTx && (
+        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm z-[250] flex items-center justify-center p-4" onClick={() => setShowQRDetails(false)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in fade-in duration-200" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in fade-in duration-200 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-lg text-gray-900">Booking Info</h3>
+              <button onClick={() => setShowQRDetails(false)} className="text-gray-400 hover:bg-gray-100 rounded-full p-1"><X size={18} /></button>
+            </div>
+            <div className="space-y-2 text-sm">
+              {[['Booking ID', confirmedTx.id, 'font-mono font-bold'], ['Customer', confirmedTx.customer?.name || customer.name, 'font-bold'], ['Item', confirmedTx.item?.name || selectedItem?.name, ''], ['Size', confirmedTx.size, ''], ['Pickup', formatDate(rentalDate), ''], ['Event Date', formatDate(eventDate), 'font-semibold'], ['Return By', formatDate(dueDate), 'text-amber-600 font-semibold'], ['Status', confirmedTx.status, 'text-emerald-600 font-bold'], ['Downpayment', `₱${confirmedTx.downpayment.toLocaleString()}`, '']].map(([label, value, cls]) => (
+                <div key={label} className="flex justify-between"><span className="text-gray-500">{label}</span><span className={cls}>{value}</span></div>
+              ))}
+            </div>
+            <button onClick={() => setShowQRDetails(false)} className="w-full mt-6 py-3 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors">Close</button>
+          </div>
+        </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
+function QrCodeDisplay({ pattern }) {
+  return (
+    <div className="grid grid-cols-5 gap-1 w-32 h-32">
+      {Array.from({ length: 25 }, (_, i) => (
+        <div key={i} className={`w-full aspect-square rounded-sm ${pattern.charAt(i) === '1' ? 'bg-gray-900' : 'bg-white border border-gray-100'}`} />
+      ))}
+    </div>
+  );
+}

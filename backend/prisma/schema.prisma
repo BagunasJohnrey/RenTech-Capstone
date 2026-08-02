@@ -1,0 +1,211 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  Admin
+  Staff
+  Customer
+}
+
+enum ItemStatus {
+  Available
+  Rented
+  Reserved
+  Cleaning
+  Damaged
+  Maintenance
+  Deleted
+}
+
+enum TransactionStatus {
+  Active
+  Overdue
+  Reserved
+  Returned
+  Cancelled
+}
+
+model Profile {
+  id         String   @id @default(uuid())
+  userId     String   @unique @map("user_id")
+  email      String   @unique
+  role       Role     @default(Customer)
+  name       String
+  phone      String?
+  address    String?
+  preferences String? @map("preferences")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  customerTransactions Transaction[]    @relation("CustomerTransactions")
+  processedByTransactions Transaction[] @relation("ProcessedByTransactions")
+  notifications  Notification[]
+  sentMessages   SentSms[]              @relation("SentMessages")
+  sentByMessages SentSms[]              @relation("SentByMessages")
+
+  @@map("profiles")
+}
+
+model InventoryItem {
+  id          Int        @id @default(autoincrement())
+  name        String
+  category    String
+  price       Float
+  status      ItemStatus @default(Available)
+  image       String?
+  description String?
+  size        String?
+  onSale      Boolean    @default(false) @map("on_sale")
+  discountPct Float?     @map("discount_pct")
+  salePrice   Float?     @map("sale_price")
+  saleEndsAt  DateTime?  @map("sale_ends_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  transactions Transaction[]
+
+  @@map("inventory_items")
+}
+
+model Transaction {
+  id              String            @id @default(uuid())
+  txNumber        Int               @default(autoincrement()) @map("tx_number")
+  customerId      String            @map("customer_id")
+  processedById   String?           @map("processed_by_id")
+  itemId          Int               @map("item_id")
+  promoCodeId     String?           @map("promo_code_id")
+  rentalDate      DateTime          @map("rental_date")
+  dueDate         DateTime          @map("due_date")
+  returnDate      DateTime?         @map("return_date")
+  status          TransactionStatus @default(Active)
+  rentalFee       Float             @map("rental_fee")
+  downpayment     Float             @default(0)
+  latePenalty     Float             @default(0) @map("late_penalty")
+  damageFee       Float             @default(0) @map("damage_fee")
+  totalPaid       Float             @default(0) @map("total_paid")
+  balance         Float
+  conditionPhoto  String?           @map("condition_photo")
+  notes           String?
+  size            String?           @map("size")
+  measurements    Json?             @map("measurements")
+  paymentIntentId String?           @map("payment_intent_id")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  customer      Profile        @relation("CustomerTransactions", fields: [customerId], references: [id])
+  processedBy   Profile?       @relation("ProcessedByTransactions", fields: [processedById], references: [id])
+  item          InventoryItem  @relation(fields: [itemId], references: [id])
+  promoCode     PromoCode?     @relation(fields: [promoCodeId], references: [id])
+  notifications Notification[]
+  payments      Payment[]
+  sentSms       SentSms[]
+
+  @@map("transactions")
+}
+
+model PromoCode {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  discountPct Float    @map("discount_pct")
+  maxUses     Int?     @map("max_uses")
+  currentUses Int      @default(0) @map("current_uses")
+  expiresAt   DateTime? @map("expires_at")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  transactions Transaction[]
+
+  @@map("promo_codes")
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  transactionId String   @map("transaction_id")
+  amount        Float
+  method        String
+  type          String
+  paymongoPiId  String?  @map("paymongo_pi_id")
+  status        String   @default("pending")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@map("payments")
+}
+
+model Notification {
+  id            String   @id @default(uuid())
+  profileId     String   @map("profile_id")
+  transactionId String?  @map("transaction_id")
+  type          String
+  title         String
+  message       String
+  isRead        Boolean  @default(false) @map("is_read")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  profile     Profile?     @relation(fields: [profileId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  @@map("notifications")
+}
+
+model SentSms {
+  id            String   @id @default(uuid())
+  profileId     String   @map("profile_id")
+  sentById      String?  @map("sent_by_id")
+  transactionId String?  @map("transaction_id")
+  templateId    String?  @map("template_id")
+  message       String
+  status        String   @default("sent")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  profile     Profile      @relation("SentMessages", fields: [profileId], references: [id])
+  sentBy      Profile?     @relation("SentByMessages", fields: [sentById], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+  template    SmsTemplate? @relation(fields: [templateId], references: [id])
+
+  @@map("sent_sms")
+}
+
+model SmsTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  content   String
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  messages SentSms[]
+
+  @@map("sms_templates")
+}
+
+model BusinessRule {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("business_rules")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  action        String
+  entity        String
+  entityId      String   @map("entity_id")
+  performedById String?  @map("performed_by_id")
+  oldValue      Json?    @map("old_value")
+  newValue      Json?    @map("new_value")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+}

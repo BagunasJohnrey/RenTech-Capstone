@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { font-family: 'Plus Jakarta Sans', sans-serif; }
+html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
+
+*::-webkit-scrollbar { display: none; }
+* { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ---------------------------------------------------------------------------
+   AI Business Report document styling
+   --------------------------------------------------------------------------- */
+.report-document {
+  padding: 40px 48px;
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.report-header {
+  border-top: 4px solid #bf4a53;
+  padding-top: 14px;
+}
+.report-company {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.report-tagline {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.report-address {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+.report-doc-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+}
+.report-meta {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+.report-rule {
+  border: none;
+  border-top: 1px solid #bf4a53;
+  margin: 16px 0 22px;
+}
+
+.report-body { margin-top: 4px; }
+.report-section { margin-bottom: 22px; }
+.report-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.report-section-content { padding-left: 2px; }
+.report-line {
+  margin: 0 0 6px;
+  color: #374151;
+}
+.report-footer {
+  margin-top: 28px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 10px;
+  color: #9ca3af;
+  text-align: center;
+}
