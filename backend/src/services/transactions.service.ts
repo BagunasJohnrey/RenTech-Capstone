@@ -228,7 +228,7 @@ export async function listTransactions(params: {
           item: { select: { id: true, name: true, category: true } },
         },
       orderBy: { createdAt: 'desc' },
-      take: params.limit || 50,
+      take: params.limit ?? 500,
       skip: params.offset || 0,
     }),
     prisma.transaction.count({ where }),

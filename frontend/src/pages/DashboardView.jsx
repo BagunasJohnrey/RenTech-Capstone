@@ -2,6 +2,7 @@ import { Sparkles, ShoppingBag, Clock, BarChart3, Activity, Plus, Undo2, AlertTr
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import StatCard from '../components/StatCard';
 import { useTodayTasks } from '../hooks/useDashboard';
+import { txPill } from '../utils/statusColors';
 
 export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onCustomerBook }) {
   const todayStats = useTodayTasks(role);
@@ -66,7 +67,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                  <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-md text-xs">SALE</span>
+                  <span className="bg-[#bf4a53]/10 text-[#bf4a53] px-2 py-0.5 rounded-md text-xs">SALE</span>
                   On Sale
                 </h3>
                 <p className="text-xs text-gray-500">Limited-time discounts</p>
@@ -98,7 +99,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
                     <p className="text-sm font-bold text-gray-900 truncate">{itemName(tx)}</p>
                     <p className="text-xs text-gray-500 truncate">Due {tx.dueDate ? new Date(tx.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</p>
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tx.status === 'Overdue' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>{tx.status}</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
                 </div>
               ))}
             </div>
@@ -110,6 +111,8 @@ export default function DashboardView({ role, transactions, inventory, customerI
 
   // Computed data (FIX G: prefer server-authoritative /dashboard/today when loaded)
   const today = new Date();
+  const dayStart = new Date(today);
+  dayStart.setHours(0, 0, 0, 0);
   const activeRentalsCount = transactions.filter(tx => tx.status === 'Active').length;
   // Monthly revenue (current month)
   const monthlyRevenue = transactions
@@ -141,7 +144,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
   }
   // Staff dashboard
   if (role === 'Staff') {
-    const overdueCount = todayStats ? todayStats.overdue.length : transactions.filter(tx => tx.status === 'Overdue').length;
+    const overdueCount = todayStats ? todayStats.overdue.length : transactions.filter(tx =>
+      tx.status === 'Overdue' || (tx.status === 'Active' && new Date(tx.dueDate || tx.date) < dayStart)
+    ).length;
     const availableCount = inventory.filter(i => i.status === 'Available').length;
     const cleaningCount = todayStats ? todayStats.inCleaning : inventory.filter(i => i.status === 'Cleaning').length;
     const recentRentals = transactions.filter(tx => tx.status === 'Active' || tx.status === 'Overdue').slice(0, 3);
@@ -153,7 +158,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const revenueToday = transactions
       .filter(tx => tx.date && new Date(tx.date).toDateString() === today.toDateString())
       .reduce((sum, tx) => sum + (tx.amount || 0), 0);
-    const overdueTxs = transactions.filter(tx => tx.status === 'Overdue').slice(0, 3);
+    const overdueTxs = transactions.filter(tx =>
+      tx.status === 'Overdue' || (tx.status === 'Active' && new Date(tx.dueDate || tx.date) < dayStart)
+    ).slice(0, 3);
     const daysLate = (tx) => tx.dueDate ? Math.max(1, Math.ceil((today - new Date(tx.dueDate)) / 86400000)) : '?';
     return (
       <div className="max-w-lg mx-auto lg:max-w-[1200px]">

@@ -4,6 +4,7 @@ import { customerLabel, customerPhone, itemLabel } from '../utils/format';
 import { normalizeTx } from '../hooks/useTransactions';
 import ItemImage from './ItemImage';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { TX_STATUS_PILLS } from '../utils/statusColors';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -21,13 +22,9 @@ const fmtCurrency = (n) => {
   return `₱${num.toLocaleString()}`;
 };
 
-const statusColors = {
-  Reserved: 'bg-blue-50 text-blue-700 ring-blue-200',
-  Active: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  Overdue: 'bg-red-50 text-red-700 ring-red-200',
-  Returned: 'bg-gray-100 text-gray-700 ring-gray-200',
-  Cancelled: 'bg-gray-100 text-gray-500 ring-gray-200',
-};
+const statusColors = Object.fromEntries(
+  Object.entries(TX_STATUS_PILLS).map(([k, v]) => [k, `${v.bg} ${v.text} ${v.ring}`])
+);
 
 function DetailRow({ label, value, highlight }) {
   if (value == null || value === '' || value === '—') return null;

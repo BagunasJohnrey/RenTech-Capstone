@@ -2,10 +2,21 @@ import { useState, useMemo } from 'react';
 import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, RotateCcw } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import { SkeletonGrid } from '../components/Skeleton';
+import { itemPill } from '../utils/statusColors';
 
 const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
 const STAFF_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService'];
 const CUSTOMER_STATUSES = ['All', 'Available'];
+
+const META_MAP = {
+  All: 'bg-gray-900 text-white',
+  Available: `${itemPill('Available').dot} text-white`,
+  Rented: `${itemPill('Rented').dot} text-white`,
+  Reserved: `${itemPill('Reserved').dot} text-white`,
+  Cleaning: `${itemPill('Cleaning').dot} text-white`,
+  OutOfService: `${itemPill('OutOfService').dot} text-white`,
+  Deleted: `${itemPill('Deleted').dot} text-white`,
+};
 
 export default function CatalogView({ role, inventory, onCustomerBook, onEdit, onStatusChange, onMarkOutOfService, onStaffBookItem, onCheckAvailability, onRestore, onRequestDelete, loading, guest, onGuestBook, onExitGuest, onViewDetail }) {
   const isStaff = role !== 'Customer';
@@ -98,22 +109,23 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
           <h3 className="text-sm font-bold text-gray-900 mb-3">Inventory Health</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
             {[
-              { label: 'Available', status: 'Available', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
-              { label: 'Rented', status: 'Rented', color: 'bg-blue-50 text-blue-700 border-blue-200', dot: 'bg-blue-500' },
-              { label: 'Reserved', status: 'Reserved', color: 'bg-indigo-50 text-indigo-700 border-indigo-200', dot: 'bg-indigo-400' },
-              { label: 'In Cleaning', status: 'Cleaning', color: 'bg-orange-50 text-orange-700 border-orange-200', dot: 'bg-orange-400' },
-              { label: 'Out of Service', status: 'OutOfService', color: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500' },
-            ].map(({ label, status, color, dot }) => {
+              { label: 'Available', status: 'Available' },
+              { label: 'Rented', status: 'Rented' },
+              { label: 'Reserved', status: 'Reserved' },
+              { label: 'In Cleaning', status: 'Cleaning' },
+              { label: 'Out of Service', status: 'OutOfService' },
+            ].map(({ label, status }) => {
+              const pill = itemPill(status);
               const count = inventory.filter(i => i.status === status).length;
               const active = activeStatusFilter === status;
               return (
                 <button
                   key={status}
                   onClick={() => setActiveStatusFilter(active ? 'All' : status)}
-                  className={`rounded-xl border p-3 sm:p-3.5 text-left transition-all min-w-0 ${color} ${active ? 'ring-2 ring-gray-900/70' : 'hover:brightness-95'}`}
+                  className={`rounded-xl border p-3 sm:p-3.5 text-left transition-all min-w-0 ${pill.bg} ${pill.text} ${pill.border} ${active ? 'ring-2 ring-gray-900/70' : 'hover:brightness-95'}`}
                 >
                   <div className="flex items-center gap-2 mb-1 min-w-0">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${pill.dot}`} />
                     <span className="text-[11px] font-bold uppercase tracking-wider truncate">{label}</span>
                   </div>
                   <p className="text-xl sm:text-2xl font-bold tabular-nums">{count}</p>
@@ -178,15 +190,6 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
           {STATUSES.map(s => {
             const active = activeStatusFilter === s;
             const count = s === 'All' ? inventory.filter(i => i.status !== 'Deleted').length : inventory.filter(i => i.status === s).length;
-            const META_MAP = {
-              All: 'bg-gray-900 text-white',
-              Available: 'bg-emerald-500 text-white',
-              Rented: 'bg-blue-500 text-white',
-              Reserved: 'bg-indigo-500 text-white',
-              Cleaning: 'bg-orange-400 text-white',
-              OutOfService: 'bg-red-500 text-white',
-              Deleted: 'bg-gray-500 text-white',
-            };
             return (
               <button key={s} type="button" onClick={() => setActiveStatusFilter(s)} aria-pressed={active}
                 className={`shrink-0 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${

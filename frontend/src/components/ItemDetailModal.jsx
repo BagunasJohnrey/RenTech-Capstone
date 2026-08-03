@@ -5,6 +5,7 @@ import { useToast } from './Toast';
 import ItemImage from './ItemImage';
 import { getSaleInfo } from './ItemCard';
 import { Skeleton } from './Skeleton';
+import { itemPill } from '../utils/statusColors';
 
 // Item detail + availability view. Guests see it (and a "Sign In to Rent"
 // button that redirects to sign-up); logged-in customers get "Rent Now".
@@ -84,7 +85,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
                 ₱{item.price.toLocaleString()} <span className="text-gray-400 font-medium text-sm">/ day</span>
               </span>
             )}
-            <span className={`ml-auto text-[11px] font-bold px-2 py-1 rounded-full ${item.status === 'Available' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+            <span className={`ml-auto text-[11px] font-bold px-2 py-1 rounded-full ${itemPill(item.status).bg} ${itemPill(item.status).text}`}>
               {item.status}
             </span>
           </div>

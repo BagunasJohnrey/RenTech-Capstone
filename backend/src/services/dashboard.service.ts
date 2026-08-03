@@ -131,7 +131,9 @@ export async function getTodayTasks() {
   });
 
   const overdue = await prisma.transaction.findMany({
-    where: { status: 'Overdue' },
+    where: {
+      OR: [{ status: 'Overdue' }, { status: 'Active', dueDate: { lt: today } }],
+    },
     include: {
       customer: { select: { id: true, name: true, phone: true } },
       item: { select: { id: true, name: true } },

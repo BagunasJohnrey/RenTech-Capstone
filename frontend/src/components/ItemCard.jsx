@@ -1,5 +1,6 @@
-import { Edit3, Trash2, RotateCcw, Calendar, CalendarCheck, CheckCircle2, AlertTriangle, Droplets, Eye } from 'lucide-react';
+import { Edit3, Trash2, RotateCcw, Calendar, Eye } from 'lucide-react';
 import ItemImage from './ItemImage';
+import { itemPill } from '../utils/statusColors';
 
 // Determine whether a sale is currently active and the resulting price.
 export function getSaleInfo(item) {
@@ -17,15 +18,6 @@ export function getSaleInfo(item) {
   return { active: true, price, pct };
 }
 
-const STATUS_META = {
-  Available: { icon: CheckCircle2, label: 'Available', bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', border: 'border-emerald-200' },
-  Rented: { icon: CalendarCheck, label: 'Rented', bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500', border: 'border-blue-200' },
-  Reserved: { icon: Calendar, label: 'Reserved', bg: 'bg-indigo-50', text: 'text-indigo-700', dot: 'bg-indigo-400', border: 'border-indigo-200' },
-  Cleaning: { icon: Droplets, label: 'Cleaning', bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-400', border: 'border-orange-200' },
-  OutOfService: { icon: AlertTriangle, label: 'Out of Service', bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500', border: 'border-red-200' },
-  Deleted: { icon: Trash2, label: 'Archived', bg: 'bg-gray-100', text: 'text-gray-500', dot: 'bg-gray-400', border: 'border-gray-200' },
-};
-
 function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, showBook }) {
   const sale = getSaleInfo(item);
   return (
@@ -34,7 +26,7 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
         <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
-          <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-red-200 bg-red-50 text-[9px] sm:text-[10px] font-bold shadow-sm text-red-700">
+          <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] sm:text-[10px] font-bold shadow-sm text-[#bf4a53]">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
           </div>
         )}
@@ -76,7 +68,7 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
           <p className="font-bold text-[13px]">
             {sale.active ? (
               <>
-                <span className="text-red-600">₱{sale.price.toLocaleString()}</span>
+                <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
                 <span className="text-gray-400 font-medium text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
                 <span className="text-gray-400 font-medium text-xs"> / day</span>
               </>
@@ -134,7 +126,7 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
 export default function ItemCard({ item, role, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, guest, onViewDetail }) {
   const isAdmin = role === 'Admin';
   const isStaff = role !== 'Customer';
-  const meta = STATUS_META[item.status] || STATUS_META.Available;
+  const meta = itemPill(item.status);
   const StatusIcon = meta.icon;
 
   if (isStaff) {
@@ -160,7 +152,7 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
         className="relative aspect-[4/5] bg-gray-50 overflow-hidden w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60">
         <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
-          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-red-200 bg-red-50 text-[9px] font-bold shadow-sm text-red-700">
+          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] font-bold shadow-sm text-[#bf4a53]">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
           </span>
         )}
@@ -171,7 +163,7 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
         <p className="font-bold text-sm">
           {sale.active ? (
             <>
-              <span className="text-red-600">₱{sale.price.toLocaleString()}</span>
+              <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
               <span className="text-gray-400 font-medium text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
             </>
           ) : (

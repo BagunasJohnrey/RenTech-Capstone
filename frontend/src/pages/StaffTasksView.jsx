@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { customerLabel, itemLabel } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import { isReleased } from '../hooks/useTransactions';
+import { txPill } from '../utils/statusColors';
 
 export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease }) {
   const today = new Date();
@@ -346,7 +347,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                     activityFilter === 'Reserved' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  <span className="w-2 h-2 rounded-full bg-indigo-400" />
                   Reserved
                 </button>
                 <button
@@ -355,7 +356,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                     activityFilter === 'Active' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
                   Active
                 </button>
                 <button
@@ -364,7 +365,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                     activityFilter === 'Returned' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-gray-400" />
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
                   Returned
                 </button>
                 <button
@@ -373,7 +374,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                     activityFilter === 'For Release' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-blue-400" />
+                  <span className="w-2 h-2 rounded-full bg-teal-500" />
                   For Release
                 </button>
               </div>
@@ -401,7 +402,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                           <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
                           <p className="text-xs text-gray-500 truncate">{itemLabel(tx.item)}</p>
                           {showActions && (
-                            <p className="text-[11px] text-red-500 font-medium mt-0.5">
+                            <p className={`text-[11px] font-medium mt-0.5 ${tx.status === 'Overdue' ? 'text-red-500' : 'text-blue-600'}`}>
                               {tx.status === 'Overdue' ? `${daysOverdue}d overdue` : `Due ${dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                             </p>
                           )}
@@ -427,13 +428,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                               )}
                             </>
                           )}
-                          <span className={`shrink-0 px-3 py-1 rounded-full text-[11px] font-bold ${
-                            tx.status === 'Reserved' ? 'bg-blue-50 text-blue-600'
-                            : tx.status === 'Active' ? 'bg-emerald-50 text-emerald-600'
-                            : tx.status === 'Overdue' ? 'bg-red-50 text-red-600'
-                            : tx.status === 'Returned' ? 'bg-gray-100 text-gray-600'
-                            : 'bg-gray-100 text-gray-600'
-                          }`}>
+                          <span className={`shrink-0 px-3 py-1 rounded-full text-[11px] font-bold ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>
                             {tx.status || '—'}
                           </span>
                         </div>
@@ -493,9 +488,9 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                           isSelected
                             ? 'bg-gray-900 text-white'
                             : status === 'active'
-                            ? 'bg-green-500 text-white'
+                            ? 'bg-blue-500 text-white'
                             : status === 'returned'
-                            ? 'bg-gray-400 text-white'
+                            ? 'bg-emerald-500 text-white'
                             : status === 'mixed'
                             ? 'bg-orange-400 text-white'
                             : 'text-gray-700 hover:bg-gray-100'
@@ -512,10 +507,10 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
             {/* Legend */}
             <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100">
               <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-green-500" /> Active
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Active
               </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-gray-400" /> Returned
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Returned
               </span>
               <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
                 <span className="w-2.5 h-2.5 rounded-full bg-orange-400" /> Mixed

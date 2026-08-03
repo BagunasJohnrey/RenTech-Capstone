@@ -8,6 +8,7 @@ import { api } from '../utils/api';
 import { customerLabel, customerTelLink, itemLabel } from '../utils/format';
 import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
 import ItemImage from '../components/ItemImage';
+import { TX_STATUS_PILLS } from '../utils/statusColors';
 
 const formatDate = (d) => {
   if (!d) return '—';
@@ -21,13 +22,9 @@ const formatCurrency = (n) => {
   catch { return `₱${n}`; }
 };
 
-const statusColors = {
-  Reserved: 'bg-blue-50 text-blue-600',
-  Active: 'bg-emerald-50 text-emerald-600',
-  Overdue: 'bg-red-50 text-red-600',
-  Returned: 'bg-gray-100 text-gray-600',
-  Cancelled: 'bg-gray-100 text-gray-500',
-};
+const statusColors = Object.fromEntries(
+  Object.entries(TX_STATUS_PILLS).map(([k, v]) => [k, `${v.bg} ${v.text}`])
+);
 
 const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved', 'Released'];  // Released = Active/Overdue with conditionPhoto
 

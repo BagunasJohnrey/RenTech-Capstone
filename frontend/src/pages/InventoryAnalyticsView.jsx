@@ -3,6 +3,7 @@ import { TrendingUp, RotateCcw, DollarSign } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
 import { Skeleton } from '../components/Skeleton';
+import { itemPill } from '../utils/statusColors';
 
 const PAGE_SIZE = 10;
 
@@ -161,12 +162,7 @@ export default function InventoryAnalyticsView({ noHeader, period }) {
                   </td>
                   <td className="px-4 py-3 text-gray-600">{item.daysIdle !== null ? `${item.daysIdle}d` : '—'}</td>
                   <td className="px-4 py-3">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      item.status === 'Available' ? 'bg-emerald-50 text-emerald-600' :
-                      item.status === 'Rented' ? 'bg-blue-50 text-blue-600' :
-                      item.status === 'Cleaning' ? 'bg-orange-50 text-orange-600' :
-                      item.status === 'OutOfService' ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'
-                    }`}>{item.status}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${itemPill(item.status).bg} ${itemPill(item.status).text}`}>{item.status}</span>
                   </td>
                 </tr>
               ))}

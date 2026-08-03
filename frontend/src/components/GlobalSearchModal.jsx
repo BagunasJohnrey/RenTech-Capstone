@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, X, ShoppingBag, Clock, User, ArrowRight } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { customerLabel, itemLabel } from '../utils/format';
+import { itemPill, txPill } from '../utils/statusColors';
 
 export default function GlobalSearchModal({ transactions, inventory, onClose, onNavigate }) {
   const [query, setQuery] = useState('');
@@ -104,11 +105,9 @@ export default function GlobalSearchModal({ transactions, inventory, onClose, on
                     <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
                     <p className="text-xs text-gray-500">₱{item.price?.toLocaleString()} · {item.status}</p>
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    item.status === 'Available' ? 'bg-emerald-100 text-emerald-600' :
-                    item.status === 'Rented' ? 'bg-orange-100 text-orange-600' :
-                    'bg-gray-100 text-gray-500'
-                  }`}>{item.status}</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${itemPill(item.status).bg} ${itemPill(item.status).text}`}>
+                    {item.status}
+                  </span>
                 </button>
               ))}
             </div>
@@ -129,13 +128,9 @@ export default function GlobalSearchModal({ transactions, inventory, onClose, on
                     <p className="text-sm font-bold text-gray-900 truncate">{itemLabel(tx.item)}</p>
                     <p className="text-xs text-gray-500">{customerLabel(tx.customer)} · {tx.date}</p>
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    tx.status === 'Active' ? 'bg-emerald-100 text-emerald-600' :
-                    tx.status === 'Reserved' ? 'bg-blue-100 text-blue-600' :
-                    tx.status === 'Returned' ? 'bg-gray-100 text-gray-600' :
-                    tx.status === 'Overdue' ? 'bg-red-100 text-red-600' :
-                    'bg-gray-100 text-gray-500'
-                  }`}>{tx.status}</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>
+                    {tx.status}
+                  </span>
                 </button>
               ))}
             </div>
