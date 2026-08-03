@@ -26,8 +26,8 @@ export default function Sidebar({ role, activeTab, setActiveTab, navItems, onReq
               className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13px] font-semibold transition-all duration-300 ${
                 isActive ? 'bg-red-50/80 text-[#bf4a53]' : 'text-gray-500 hover:bg-gray-50/80 hover:text-gray-900'
               }`}>
-              <Icon size={18} className={isActive ? 'text-[#bf4a53]' : 'text-gray-400'} strokeWidth={isActive ? 2.5 : 2} />
-              {item.label}
+              <Icon size={18} className={`${isActive ? 'text-[#bf4a53]' : 'text-gray-400'} shrink-0`} strokeWidth={isActive ? 2.5 : 2} />
+              <span className="truncate flex-1 text-left">{item.label}</span>
               {item.id === 'Tasks' && taskBadge > 0 && (
                 <span className="ml-auto bg-red-500 text-white text-[10px] font-bold min-w-[20px] h-5 flex items-center justify-center rounded-full px-1.5 shadow-sm shadow-red-500/30">
                   {taskBadge}
@@ -46,13 +46,13 @@ export default function Sidebar({ role, activeTab, setActiveTab, navItems, onReq
           className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13px] font-semibold transition-all duration-300 ${
             activeTab === 'Help' ? 'bg-red-50/80 text-[#bf4a53]' : 'text-gray-500 hover:bg-gray-50/80 hover:text-gray-900'
           }`}>
-          <HelpCircle size={18} className={activeTab === 'Help' ? 'text-[#bf4a53]' : 'text-gray-400'} strokeWidth={activeTab === 'Help' ? 2.5 : 2} />
-          Help Guide
+          <HelpCircle size={18} className={`${activeTab === 'Help' ? 'text-[#bf4a53]' : 'text-gray-400'} shrink-0`} strokeWidth={activeTab === 'Help' ? 2.5 : 2} />
+          <span className="truncate flex-1 text-left">Help Guide</span>
         </button>
         <button onClick={onRequestLogout}
           className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13px] font-semibold text-gray-500 hover:bg-red-50/50 hover:text-[#bf4a53] transition-colors">
-          <LogOut size={18} />
-          Sign Out
+          <LogOut size={18} className="shrink-0" />
+          <span className="truncate flex-1 text-left">Sign Out</span>
         </button>
       </div>
     </aside>

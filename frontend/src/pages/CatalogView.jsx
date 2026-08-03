@@ -149,7 +149,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input
             type="text"
-            placeholder={isStaff ? 'Search items...' : 'Search (e.g. Gatsby, Suit)...'}
+            placeholder={isStaff ? 'Search items by name or category...' : 'Search (e.g. Gatsby, Suit)...'}
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3.5 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors"
@@ -172,6 +172,37 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
           <span className="font-semibold text-gray-900">{filteredInventory.length}</span><span className="text-gray-400">/{inventory.length}</span>
         </div>
       </div>
+
+      {/* Status rail — staff/admin only (persistent, live counts, one-tap filter) */}
+      {isStaff && (
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
+          {STATUSES.map(s => {
+            const active = activeStatusFilter === s;
+            const count = s === 'All' ? inventory.filter(i => i.status !== 'Deleted').length : inventory.filter(i => i.status === s).length;
+            const META_MAP = {
+              All: 'bg-gray-900 text-white',
+              Available: 'bg-emerald-500 text-white',
+              Rented: 'bg-blue-500 text-white',
+              Reserved: 'bg-indigo-500 text-white',
+              Cleaning: 'bg-orange-400 text-white',
+              Maintenance: 'bg-yellow-500 text-white',
+              Damaged: 'bg-red-500 text-white',
+              Deleted: 'bg-gray-500 text-white',
+            };
+            return (
+              <button key={s} type="button" onClick={() => setActiveStatusFilter(s)} aria-pressed={active}
+                className={`shrink-0 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                  active ? `${META_MAP[s] || 'bg-gray-900'} text-white shadow-sm` : 'bg-white text-gray-600 border border-gray-200 hover:border-gray-300 hover:text-gray-800'
+                }`}>
+                {s}
+                <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center tabular-nums ${active ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Category rail — shown for guests/customers under the search bar */}
       {(!isStaff || guest) && allCategories.length > 0 && (
@@ -197,7 +228,8 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
       {/* Modern filter toolbar */}
       {showFilters && (
         <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
-          {/* Status pills */}
+          {/* Status pills — hidden for staff (dedicated rail above) */}
+          {!isStaff && (
           <div className="px-4 py-3 border-b border-gray-50">
             <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
               {STATUSES.map(s => {
@@ -214,7 +246,9 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
                   </button>
                 );
               })}
+            </div>
           </div>
+          )}
 
           {/* On Sale toggle */}
           <div className="px-4 py-2 border-b border-gray-50">
@@ -228,7 +262,6 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
               On Sale
             </button>
           </div>
-        </div>
 
         {/* Category + Size + Price row */}
           <div className="px-4 py-3 space-y-3">
@@ -347,8 +380,8 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
       {/* Availability check modal - overlay */}
       {/* Items */}
       <div>
-        {loading && inventory.length === 0 ? (
-          <SkeletonGrid count={isStaff ? 6 : 8} columns={isStaff ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'} />
+      {loading && inventory.length === 0 ? (
+          <SkeletonGrid count={isStaff ? 8 : 8} columns={isStaff ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'} />
         ) : filteredInventory.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
             <Search size={32} className="text-gray-300" />
@@ -356,7 +389,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
             <button onClick={clearFilters} className="text-xs font-bold text-[#bf4a53] hover:underline">Clear filters</button>
           </div>
         ) : isStaff ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
             {filteredInventory.map(item => (
               <ItemCard key={item.id} item={item} role={role} guest={guest}
                 onBook={() => handleItemAction(item)}

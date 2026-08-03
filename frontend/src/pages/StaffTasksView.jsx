@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle } from 'lucide-react';
 import { api } from '../utils/api';
 import { customerLabel, itemLabel } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
@@ -161,46 +161,90 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
           <p className="text-gray-500 font-medium mt-1">Overdue reminders & upcoming schedule.</p>
         </div>
 
-        {/* Stats/KPI row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-500 font-medium">Overdue</p>
-              <span className="inline-flex items-center justify-center bg-red-100 text-red-600 text-[10px] font-bold min-w-[24px] h-6 rounded-full px-1.5">
-                {overdueItems.length}
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{overdueItems.length}</p>
-            {overdueItems.length > 0 && (
-              <button onClick={() => setShowOverdueModal(true)}
-                className="text-xs font-semibold text-[#bf4a53] hover:underline mt-2 inline-block">
-                View details →
-              </button>
-            )}
+        {/* Today's Focus — actionable daily queue (replaces KPI count row) */}
+        <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 lg:p-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Today's Priority</p>
+            {(() => {
+              // urgency: overdues first, then pickups due today (Active/Reserved due today), then upcoming tomorrow
+              const now = new Date(); now.setHours(0,0,0,0);
+              const pickupToday = pendingPickup.filter(tx => {
+                const d = new Date(tx.rentalDate || tx.date);
+                d.setHours(0,0,0,0);
+                return d.getTime() === now.getTime();
+              });
+              const focusItems = [
+                ...overdueItems.slice(0, 3).map(tx => ({
+                  key: `od-${tx.id}`,
+                  icon: AlertTriangle,
+                  tone: 'text-red-500',
+                  label: `${customerLabel(tx.customer)} — ${itemLabel(tx.item)}`,
+                  sub: `${Math.floor((now - new Date(tx.dueDate || tx.date)) / 86400000)}d overdue`,
+                })),
+                ...pickupToday.slice(0, 2).map(tx => ({
+                  key: `pk-${tx.id}`,
+                  icon: Undo2,
+                  tone: 'text-emerald-600',
+                  label: `Prepare pickup for ${customerLabel(tx.customer)}`,
+                  sub: `${itemLabel(tx.item)} due today`,
+                })),
+              ].slice(0, 4);
+
+              if (focusItems.length === 0) {
+                return <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>;
+              }
+              return <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>;
+            })()}
           </div>
-          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-500 font-medium">Upcoming</p>
-              <span className="inline-flex items-center justify-center bg-blue-100 text-blue-600 text-[10px] font-bold min-w-[24px] h-6 rounded-full px-1.5">
-                {upcoming.length}
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{upcoming.length}</p>
-            {upcoming.length > 0 && (
-              <button onClick={() => onNavigate && onNavigate('History')}
-                className="text-xs font-semibold text-[#bf4a53] hover:underline mt-2 inline-block">
-                View details →
-              </button>
-            )}
-          </div>
-          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-500 font-medium">Pickup Ready</p>
-              <span className="inline-flex items-center justify-center bg-blue-100 text-blue-600 text-[10px] font-bold min-w-[24px] h-6 rounded-full px-1.5">
-                {pendingPickup.length}
-              </span>
-            </div>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{pendingPickup.length}</p>
+
+          <div className="space-y-2">
+            {(() => {
+              const now = new Date(); now.setHours(0,0,0,0);
+              const pickupToday = pendingPickup.filter(tx => {
+                const d = new Date(tx.rentalDate || tx.date); d.setHours(0,0,0,0);
+                return d.getTime() === now.getTime();
+              });
+              const focusItems = [
+                ...overdueItems.slice(0, 3).map(tx => ({
+                  key: `od-${tx.id}`,
+                  icon: AlertTriangle,
+                  tone: 'text-red-500',
+                  bg: 'bg-red-50 border-red-200/70',
+                  label: `${customerLabel(tx.customer)} — ${itemLabel(tx.item)}`,
+                  sub: `${Math.floor((now - new Date(tx.dueDate || tx.date)) / 86400000)}d overdue`,
+                  action: () => setShowOverdueModal(true),
+                })),
+                ...pickupToday.slice(0, 2).map(tx => ({
+                  key: `pk-${tx.id}`,
+                  icon: Undo2,
+                  tone: 'text-emerald-600',
+                  bg: 'bg-emerald-50 border-emerald-200/70',
+                  label: `Prepare pickup for ${customerLabel(tx.customer)}`,
+                  sub: `${itemLabel(tx.item)} due today`,
+                  action: () => onNavigate && onNavigate('History'),
+                })),
+              ].slice(0, 4);
+
+              if (focusItems.length === 0) {
+                return (
+                  <div className="text-center py-6 text-gray-400 text-sm font-medium">
+                    Nothing urgent today.
+                  </div>
+                );
+              }
+
+              return focusItems.map((f) => (
+                <button key={f.key} onClick={f.action}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all hover:shadow-sm hover:scale-[1.01] ${f.bg}`}>
+                  <f.icon size={16} className={`${f.tone} shrink-0`} />
+                  <div className="flex-1 min-w-0 text-left">
+                    <p className="text-sm font-bold text-gray-900 truncate">{f.label}</p>
+                    <p className="text-[11px] text-gray-500 truncate">{f.sub}</p>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300 shrink-0" />
+                </button>
+              ));
+            })()}
           </div>
         </div>
 

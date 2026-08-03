@@ -1,5 +1,4 @@
-import { useMemo, useRef } from 'react';
-import { Sparkles, ShoppingBag, Clock, BarChart3, Activity, Plus, Undo2, AlertTriangle, Package, TrendingUp, ChevronRight, User } from 'lucide-react';
+import { Sparkles, ShoppingBag, Clock, BarChart3, Activity, Plus, Undo2, AlertTriangle, Package, TrendingUp, User } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import StatCard from '../components/StatCard';
 import CleaningQueue from '../components/CleaningQueue';
@@ -147,8 +146,17 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const overdueCount = todayStats ? todayStats.overdue.length : transactions.filter(tx => tx.status === 'Overdue').length;
     const availableCount = inventory.filter(i => i.status === 'Available').length;
     const cleaningCount = todayStats ? todayStats.inCleaning : inventory.filter(i => i.status === 'Cleaning').length;
-    const maintenanceCount = inventory.filter(i => i.status === 'Maintenance').length;
     const recentRentals = transactions.filter(tx => tx.status === 'Active' || tx.status === 'Overdue').slice(0, 3);
+    // Desktop-only extras (staff benefit data)
+    const pickupsToday = transactions.filter(tx => {
+      if (!tx.rentalDate || (tx.status !== 'Reserved' && tx.status !== 'Active')) return false;
+      return new Date(tx.rentalDate).toDateString() === today.toDateString();
+    });
+    const revenueToday = transactions
+      .filter(tx => tx.date && new Date(tx.date).toDateString() === today.toDateString())
+      .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    const overdueTxs = transactions.filter(tx => tx.status === 'Overdue').slice(0, 3);
+    const daysLate = (tx) => tx.dueDate ? Math.max(1, Math.ceil((today - new Date(tx.dueDate)) / 86400000)) : '?';
     return (
       <div className="max-w-lg mx-auto lg:max-w-[1200px]">
         {/* Header (mobile/tablet) — unchanged */}
@@ -174,11 +182,11 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </div>
         </header>
 
-        {/* Desktop bento grid — mobile/tablet/iPad keep the single-column `space-y-6` layout above lg breakpoint */}
-        <div className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6">
+        {/* Desktop bento grid — mobile/tablet/iPad get more vertical breathing room */}
+        <div className="space-y-7 pt-2 lg:pt-0 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
 
-        {/* KPI row */}
-        <div className="lg:col-span-9 grid grid-cols-3 gap-3 lg:gap-4 lg:self-start">
+        {/* KPI row — desktop: 4 cards full width; mobile: 3 cards (Pickups hidden) */}
+        <div className="lg:col-span-12 grid grid-cols-3 lg:grid-cols-4 gap-3 lg:gap-5">
           <button onClick={() => onNavigate('History')}
             className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Active</p>
@@ -191,6 +199,11 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </p>
             <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueCount > 0 ? 'text-red-500' : 'text-gray-900'}`}>{overdueCount}</p>
           </button>
+          <button onClick={() => onNavigate('History')}
+            className="hidden lg:block bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pickups Today</p>
+            <p className="text-3xl font-extrabold text-gray-900 mt-1">{pickupsToday.length}</p>
+          </button>
           <button onClick={() => onNavigate('Catalog')}
             className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Available</p>
@@ -198,30 +211,66 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </button>
         </div>
 
-        {/* Action rail: stacked CTAs on mobile/tablet — desktop right sidebar panel (spans 2 rows) */}
-        <aside className="lg:col-span-3 lg:row-span-2 flex flex-col gap-3 lg:gap-4 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-5 lg:self-start lg:min-h-full">
+        {/* Right rail: Quick Actions + (desktop) Today at a Glance + Overdue Follow-ups */}
+        <aside className="lg:col-span-3 lg:col-start-10 lg:row-start-2 lg:row-span-3 lg:self-start space-y-7 lg:space-y-6">
 
-        {/* Desktop panel label */}
-        <p className="hidden lg:block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Quick Actions</p>
+          {/* Quick Actions panel */}
+          <div className="lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-5 flex flex-col gap-3 lg:gap-4">
+            <p className="hidden lg:block text-[11px] font-bold text-gray-400 uppercase tracking-widest -mb-1">Quick Actions</p>
+            {/* Primary CTA */}
+            <button data-tour="new-rental" onClick={onOpenNewRental}
+              className="w-full flex items-center justify-center gap-3 bg-[#bf4a53] text-white font-bold text-base lg:text-[15px] py-5 lg:py-3.5 rounded-2xl lg:rounded-xl shadow-lg shadow-red-500/20 hover:bg-red-700 btn-press transition-all min-h-[56px] lg:min-h-0">
+              <Plus size={22} strokeWidth={3} />
+              New Rental
+            </button>
+            {/* Secondary CTA */}
+            <button data-tour="returns" onClick={() => onNavigate('History')}
+              className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-200 lg:border-gray-200 text-gray-900 font-bold text-base lg:text-[15px] py-4 lg:py-3.5 rounded-2xl lg:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] lg:min-h-0 shadow-sm lg:shadow-none">
+              <Undo2 size={20} />
+              Process Return
+            </button>
+          </div>
 
-        {/* Primary CTA */}
-        <button data-tour="new-rental" onClick={onOpenNewRental}
-          className="w-full lg:flex-1 flex items-center justify-center gap-3 bg-[#bf4a53] text-white font-bold text-base lg:text-[15px] py-5 lg:py-3.5 rounded-2xl lg:rounded-xl shadow-lg shadow-red-500/20 hover:bg-red-700 btn-press transition-all min-h-[56px] lg:min-h-0">
-          <Plus size={22} strokeWidth={3} />
-          New Rental
-        </button>
+          {/* Today at a Glance (desktop only) */}
+          <div className="hidden lg:block bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
+            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">Today at a Glance</p>
+            <div className="flex items-center gap-2 text-gray-900">
+              <TrendingUp size={18} className="text-emerald-500 shrink-0" />
+              <p className="text-sm font-bold">₱{revenueToday.toLocaleString()}</p>
+              <p className="text-xs text-gray-400 font-medium">collected today</p>
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-xs text-gray-500 font-medium">
+              <p><span className="font-bold text-gray-800">{upcomingToday.length}</span> return{upcomingToday.length === 1 ? '' : 's'} due today</p>
+              <p><span className="font-bold text-gray-800">{pickupsToday.length}</span> pickup{pickupsToday.length === 1 ? '' : 's'} scheduled</p>
+              <p><span className="font-bold text-gray-800">{cleaningCount}</span> item{cleaningCount === 1 ? '' : 's'} in cleaning</p>
+            </div>
+          </div>
 
-        {/* Secondary CTA */}
-        <button data-tour="returns" onClick={() => onNavigate('History')}
-          className="w-full lg:flex-1 flex items-center justify-center gap-3 bg-white border-2 border-gray-200 text-gray-900 font-bold text-base lg:text-[15px] py-4 lg:py-3.5 rounded-2xl lg:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] lg:min-h-0 shadow-sm">
-          <Undo2 size={20} />
-          Process Return
-        </button>
+          {/* Overdue Follow-ups (desktop only) */}
+          {overdueCount > 0 && (
+            <div className="hidden lg:block bg-white rounded-2xl border border-red-100 shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[11px] font-bold text-red-400 uppercase tracking-widest">Follow Up</p>
+                <button onClick={() => onNavigate('Tasks')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
+              </div>
+              <div className="space-y-2.5">
+                {overdueTxs.map(tx => (
+                  <div key={tx.id} className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
+                      <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
+                    </div>
+                    <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">{daysLate(tx)}d late</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
         </aside>
 
         {/* Upcoming Today — main column */}
-        <div className="lg:col-span-9 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
+        <div className="lg:col-span-9 lg:col-start-1 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Upcoming Today</h3>
             {upcomingToday.length > 0 && (
@@ -255,19 +304,11 @@ export default function DashboardView({ role, transactions, inventory, customerI
           )}
         </div>
 
-        {/* Overdue alert */}
-        {overdueCount > 0 && (
-          <div className="lg:col-span-9 bg-red-50 border border-red-200/70 rounded-2xl p-4 flex items-start gap-3">
-            <AlertTriangle size={18} className="text-red-500 shrink-0 mt-0.5" />
-            <p className="text-sm font-semibold text-red-700">
-              {overdueCount} rental{overdueCount > 1 ? 's' : ''} past due. <button onClick={() => onNavigate('Tasks')} className="underline">View</button>
-            </p>
-          </div>
-        )}
+
 
         {/* Active Rentals — main column */}
         {recentRentals.length > 0 && (
-          <div className="lg:col-span-9 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
+          <div className="lg:col-span-9 lg:col-start-1 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
               <button onClick={() => onNavigate('History')}
@@ -303,11 +344,11 @@ export default function DashboardView({ role, transactions, inventory, customerI
             .slice(0, 3);
           if (attentionItems.length === 0) return null;
           return (
-            <div className="lg:col-span-3 lg:row-span-2 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-6 lg:self-start">
+            <div className="lg:col-span-9 lg:col-start-1 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Needs Attention</h3>
                 <button onClick={() => onNavigate('Catalog')} className="text-xs font-semibold text-[#bf4a53] hover:underline">
-                  Manage
+                  Manage Inventory
                 </button>
               </div>
               <div className="space-y-3">
@@ -489,8 +530,8 @@ export default function DashboardView({ role, transactions, inventory, customerI
               </div>
               <p className="text-[13px] text-gray-700 leading-relaxed">
                 {overdueCount > 0
-                  ? `${overdueCount} rental(s) past due — review Tasks for details.`
-                  : 'No overdue rentals. All returns on track.'}
+                  ? 'Action needed — review Tasks for details.'
+                  : 'All returns are on track.'}
               </p>
             </div>
             <div className="p-3.5 bg-gray-50/80 rounded-2xl border border-gray-100/50">
