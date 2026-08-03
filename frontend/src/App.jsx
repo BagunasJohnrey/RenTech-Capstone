@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { tabPath, tabFromPath, homeTab, HOME_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
   ClipboardList, AlertTriangle
@@ -23,9 +25,12 @@ import ConfirmModal from './components/ConfirmModal';
 import ItemForm from './components/ItemForm';
 import AppLayout from './layout/AppLayout';
 import CustomerRentalFlow from './components/CustomerRentalFlow';
+import NotFoundPage from './pages/NotFoundPage';
+import UnauthorizedPage from './pages/UnauthorizedPage';
 import { SkeletonScreen } from './components/Skeleton';
 import { PageSkeleton } from './components/PageSkeletons';
 import ProcessReturnModal from './components/ProcessReturnModal';
+import TransactionDetailModal from './components/TransactionDetailModal';
 import OutOfServiceModal from './components/OutOfServiceModal';
 import ChatbotModal from './components/ChatbotModal';
 import AvailabilityCalendar from './components/AvailabilityCalendar';
@@ -68,6 +73,24 @@ const navItems = {
 export default function RentechApp() {
   const { isLoggedIn, role, profile, loading, logout, updateProfile, completeOAuth } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // viewRole mirrors role (was state, but it's always synced to it).
+  const viewRole = role;
+  // The active tab is derived from the URL; navigating = changing the URL.
+  // Detail URLs (/collection/5, /admin/transactions/12, …) resolve to their
+  // parent tab for the page underneath, plus a routed modal.
+  const itemDetailMatch = location.pathname.match(ITEM_DETAIL_RE);
+  const txDetailMatch = location.pathname.match(TX_DETAIL_RE);
+  const basePath = location.pathname.replace(/\/\d+$/, '');
+  const goTab = (tabId) => navigate(tabPath(viewRole, tabId));
+  // '/' is the app entry: customers get their Home, staff/admin get their
+  // dashboard (otherwise they'd hit the Unauthorized page right after login).
+  const activeTab = (location.pathname === '/' && viewRole)
+    ? homeTab(viewRole)
+    : tabFromPath(viewRole, basePath);
+  // Paths that belong to another role (for the Unauthorized page).
+  const roleOwnsPath = pathRequiresRole(location.pathname);
   const [oauthProcessing, setOauthProcessing] = useState(
     () => new URLSearchParams(window.location.search).has('code') || window.location.hash.includes('access_token')
   );
@@ -114,7 +137,6 @@ export default function RentechApp() {
       });
   }, [completeOAuth]);
 
-  const [activeTab, setActiveTab] = useState('Dashboard');
   const {
     inventory,
     setInventory,
@@ -188,8 +210,7 @@ export default function RentechApp() {
   // Global search
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
-
-  const [viewRole, setViewRole] = useState(role);
+  const [routedTx, setRoutedTx] = useState(null);
 
   // Ctrl+K keyboard shortcut for global search
   useEffect(() => {
@@ -205,16 +226,36 @@ export default function RentechApp() {
     return () => window.removeEventListener('keydown', handler);
   }, [viewRole]);
 
+  // Current path, read via ref so the profile effect below doesn't re-fire on
+  // every route change (it used to subscribe to location.pathname, which made
+  // it re-run and fight the logout navigate by bouncing staff/admin back to
+  // their portal).
+  const pathRef = useRef(location.pathname);
+  useEffect(() => { pathRef.current = location.pathname; }, [location.pathname]);
+
+  // Set while signing out: the portal bounce below must be suppressed, or the
+  // logout navigate to '/' re-fires this effect (useNavigate is recreated on
+  // every location change in react-router v7) and bounces staff/admin back to
+  // their portal URL right before the profile clears — landing them on 404.
+  const loggingOutRef = useRef(false);
+
   useEffect(() => {
     if (profile) {
       syncFromProfile(profile);
-      setActiveTab(profile.role === 'Customer' ? 'Home' : 'Dashboard');
+      // After auth restore, staff/admin who landed on the app root (the
+      // landing/login URL) get sent to their portal so the URL matches the
+      // view. Customers keep '/' as their Home. Other paths are left alone —
+      // deep links must not be clobbered and cross-role URLs must reach the
+      // Unauthorized page instead of silently bouncing.
+      if (pathRef.current === '/' && role && role !== 'Customer' && !loggingOutRef.current) {
+        navigate(HOME_PATH[role], { replace: true });
+      }
       const onboardingKey = profile.role === 'Customer' ? 'onboardingDone_Customer' : 'onboardingDone';
       if (!localStorage.getItem(onboardingKey)) {
         setShowOnboarding(true);
       }
     }
-  }, [profile]);
+  }, [profile, syncFromProfile, role, navigate]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -225,10 +266,35 @@ export default function RentechApp() {
     }
   }, [isLoggedIn, role, loadInventory, loadTransactions, loadStaff]);
 
+  // Routed detail modals: resolve the URL id into a full record. Rendering is
+  // gated on the route match, so stale state when the URL changes is harmless.
+  // Item — from the inventory list when loaded, else fetch the single record.
+  useEffect(() => {
+    if (!isLoggedIn || !itemDetailMatch) return;
+    const id = Number(itemDetailMatch[1]);
+    const found = inventory.find((i) => i.id === id);
+    if (found) { setDetailItem(found); return; }
+    api.get(`/inventory/${id}`).then(setDetailItem).catch(() => {});
+  }, [isLoggedIn, itemDetailMatch, inventory]);
+
+  // Transaction — from the list when loaded, else fetch the full record.
+  useEffect(() => {
+    if (!isLoggedIn || !txDetailMatch) return;
+    const id = Number(txDetailMatch[1]);
+    const found = transactions.find((t) => t.id === id);
+    if (found) { setRoutedTx(normalizeTx(found)); return; }
+    getById(id).then((full) => setRoutedTx(normalizeTx(full))).catch(() => {});
+  }, [isLoggedIn, txDetailMatch, transactions, getById]);
+
   const handleLogout = async () => {
-    await logout();
+    // Leave the portal URL first — otherwise the signed-out render (which
+    // 404s any path other than '/') would show "Page not found" after logout.
+    loggingOutRef.current = true;
+    navigate('/', { replace: true });
     setShowLoginPage(false);
     setShowLogoutModal(false);
+    await logout();
+    loggingOutRef.current = false;
   };
 
   // ---- Transaction mutations delegate to useTransactions (SoC) ----
@@ -353,7 +419,7 @@ export default function RentechApp() {
     }
     toastSuccess('Booking confirmed');
     setCustomerRental(null);
-    setActiveTab('History');
+    goTab('History');
   };
 
   // Booking submission from the rental flow — returns the created tx
@@ -375,10 +441,6 @@ export default function RentechApp() {
     if (created.itemId) markItemStatus(created.itemId, 'Active'); // FIX C
     return created;
   };
-
-  useEffect(() => {
-    if (role) setViewRole(role);
-  }, [role]);
 
   const handleAddStaff = (newStaff) => {
     addStaff(newStaff);
@@ -489,6 +551,22 @@ export default function RentechApp() {
     );
   }
 
+  // Fallback + role guard: unknown URL -> 404 page; URL owned by another role
+  // -> Unauthorized page (no silent redirect). Runs after the auth gates so
+  // role is resolved.
+  if (isLoggedIn && activeTab == null) {
+    if (roleOwnsPath && roleOwnsPath !== viewRole) {
+      return (
+        <UnauthorizedPage
+          signedInRole={viewRole}
+          requiredRole={roleOwnsPath}
+          onHome={() => navigate(HOME_PATH[viewRole], { replace: true })}
+        />
+      );
+    }
+    return <NotFoundPage signedIn onGoHome={() => navigate(HOME_PATH[viewRole], { replace: true })} />;
+  }
+
   // From the landing Featured Pieces: jump into the guest collection and open
   // that exact item's detail modal (fetching it if inventory isn't loaded yet).
   const handleViewFeatured = async (entry) => {
@@ -507,6 +585,10 @@ export default function RentechApp() {
   if (!isLoggedIn) {
     if (showLoginPage) {
        return <LoginPage />;
+    }
+    // Unknown URL while signed out -> 404 with a way back to the landing page.
+    if (!guestView && location.pathname !== '/') {
+      return <NotFoundPage onGoHome={() => navigate('/', { replace: true })} />;
     }
     // Guest (public) catalog browsing — no account required to look.
     if (guestView) {
@@ -590,7 +672,7 @@ export default function RentechApp() {
                 inventory={inventory}
                 customerInfo={customerInfo}
                 onOpenNewRental={() => setShowStaffRental(true)}
-                onNavigate={setActiveTab}
+                onNavigate={goTab}
                 onOpenChatbot={() => setShowChatbot(true)}
                 onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
               />
@@ -600,7 +682,7 @@ export default function RentechApp() {
                 transactions={transactions}
                 inventory={inventory}
                 onReturn={handleReturnClick}
-                onNavigate={setActiveTab}
+                onNavigate={goTab}
                 onRelease={handleReleaseRental}
                 onMarkClean={markItemClean}
                 onBulkClean={handleBulkClean}
@@ -614,7 +696,7 @@ export default function RentechApp() {
                 loading={inventoryLoading}
                 onBook={(item, date) => setCustomerRental({ item, date })}
                 onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
-                onViewDetail={(item) => setDetailItem(item)}
+                onViewDetail={(item) => navigate(itemDetailPath(viewRole, item.id))}
                 onEdit={setEditingItem}
                 onDelete={handleDeleteInventoryItem}
                 onRestore={handleRestoreInventoryItem}
@@ -627,7 +709,7 @@ export default function RentechApp() {
               />
             )}
             {activeTab === 'History' && (
-              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} />
+              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} />
             )}
             {activeTab === 'AI Insights' && (
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} />
@@ -762,17 +844,28 @@ export default function RentechApp() {
 
         {showOnboarding && <OnboardingTutorial role={viewRole} onComplete={() => setShowOnboarding(false)} />}
 
-        {/* Item detail / availability view (logged-in customers) */}
-        {detailItem && (
+        {/* Routed item detail (logged-in) — URL like /collection/5 or
+            /admin/inventory/5; closing navigates back to the parent tab. */}
+        {isLoggedIn && itemDetailMatch && detailItem && (
           <ItemDetailModal
             item={detailItem}
             guest={false}
-            onClose={() => setDetailItem(null)}
+            onClose={() => navigate(basePath, { replace: true })}
             onBook={() => {
               const it = detailItem;
-              setDetailItem(null);
+              navigate(basePath, { replace: true });
               setCustomerRental({ item: it, date: new Date().toISOString().split('T')[0] });
             }}
+          />
+        )}
+
+        {/* Routed transaction detail — URL like /transactions/12,
+            /admin/transactions/12 or /staff/logs/12. */}
+        {isLoggedIn && txDetailMatch && routedTx && (
+          <TransactionDetailModal
+            transaction={routedTx}
+            fetchFull={getById}
+            onClose={() => navigate(basePath, { replace: true })}
           />
         )}
 
@@ -782,7 +875,7 @@ export default function RentechApp() {
             transactions={transactions}
             inventory={inventory}
             onClose={() => setShowGlobalSearch(false)}
-        onNavigate={(tab) => { setActiveTab(tab); setShowGlobalSearch(false); }}
+        onNavigate={(tab) => { goTab(tab); setShowGlobalSearch(false); }}
       />
         )}
 
@@ -805,20 +898,20 @@ export default function RentechApp() {
     <AppLayout
       viewRole={viewRole}
       activeTab={activeTab}
-      setActiveTab={setActiveTab}
+      setActiveTab={goTab}
       navItems={currentNav}
       onRequestLogout={() => setShowLogoutModal(true)}
       customerInfo={customerInfo}
       role={role}
       onOpenGlobalSearch={() => setShowGlobalSearch(true)}
       onAddItem={() => setShowAddItemModal(true)}
-      onOpenSettings={() => setActiveTab('Settings')}
-      onOpenHelp={() => setActiveTab('Help')}
+      onOpenSettings={() => goTab('Settings')}
+      onOpenHelp={() => goTab('Help')}
       showNotifications={showNotifications}
       onToggleNotifications={() => setShowNotifications((s) => !s)}
       taskBadge={taskBadge}
       onFabClick={() => {
-        if (viewRole === 'Admin') setActiveTab('AI Insights');
+        if (viewRole === 'Admin') goTab('AI Insights');
         else if (viewRole === 'Staff') setShowStaffRental(true);
         else setCustomerRental({ item: null, date: new Date().toISOString().split('T')[0] });
       }}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import ReleaseItemModal from '../components/ReleaseItemModal';
@@ -28,7 +28,7 @@ const statusColors = Object.fromEntries(
 
 const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved', 'Released'];  // Released = Active/Overdue with conditionPhoto
 
-export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, loading }) {
+export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, loading, onNavigateDetail }) {
   const isStaff = role !== 'Customer';
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -43,6 +43,13 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [sendingSms, setSendingSms] = useState(false);
   const itemsPerPage = 10;
+
+  // Rows navigate to a real URL when the app provides a router callback;
+  // otherwise fall back to the local modal (e.g. standalone usage).
+  const openDetail = (tx) => {
+    if (onNavigateDetail) onNavigateDetail(tx);
+    else openDetail(tx);
+  };
 
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
     + (dateFrom !== '' ? 1 : 0)
@@ -328,7 +335,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     <tr
                       key={tx.id}
                       className="hover:bg-gray-50/50 transition-colors group cursor-pointer"
-                      onClick={() => setDetailTx(tx)}
+                      onClick={() => openDetail(tx)}
                     >
                       <td className="px-6 py-4 font-bold text-gray-900 font-mono text-xs">
 {String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}
@@ -356,7 +363,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       <td className="px-6 py-4 text-center" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1.5">
                           <button
-                            onClick={() => setDetailTx(tx)}
+                            onClick={() => openDetail(tx)}
                             className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
                             title="View Details"
                           >
@@ -504,7 +511,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               <div
                 key={tx.id}
                 className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-4 space-y-2.5 cursor-pointer active:scale-[0.99] transition-transform"
-                onClick={() => setDetailTx(tx)}
+                onClick={() => openDetail(tx)}
               >
                 <div className="flex justify-between items-start gap-3">
                   <div className="min-w-0">
@@ -536,7 +543,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                   </p>
                   <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
                     <button
-                      onClick={() => setDetailTx(tx)}
+                      onClick={() => openDetail(tx)}
                       className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
                       title="View Details"
                     >
