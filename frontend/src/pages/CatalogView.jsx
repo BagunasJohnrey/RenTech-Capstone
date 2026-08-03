@@ -389,7 +389,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
             <button onClick={clearFilters} className="text-xs font-bold text-[#bf4a53] hover:underline">Clear filters</button>
           </div>
         ) : isStaff ? (
-          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-5 gap-3">
             {filteredInventory.map(item => (
               <ItemCard key={item.id} item={item} role={role} guest={guest}
                 onBook={() => handleItemAction(item)}
