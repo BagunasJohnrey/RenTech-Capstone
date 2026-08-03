@@ -412,6 +412,21 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                               <Pencil size={14} />
                             </button>
                           )}
+                          {(role === 'Admin' || role === 'Staff') && ['Active', 'Reserved', 'Overdue'].includes(tx.status) && (
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`Cancel this booking (${tx.txNumber ?? tx.id})? The item will be freed and marked Available.`)) {
+                                  onCancel(tx.id);
+                                }
+                              }}
+                              className="p-1.5 text-red-500 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
+                              title="Cancel Booking"
+                              aria-label={`Cancel booking ${tx.txNumber ?? tx.id}`}
+                            >
+                              <XCircle size={15} />
+                              <span className="sr-only">Cancel Booking</span>
+                            </button>
+                          )}
                           {(tx.status === 'Active') && role === 'Customer' && (
                             <button
                               onClick={() => {
@@ -561,6 +576,19 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                         title="Process Return"
                       >
                         <Undo2 size={16} />
+                      </button>
+                    )}
+                    {(role === 'Admin' || role === 'Staff') && ['Active', 'Reserved', 'Overdue'].includes(tx.status) && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Cancel this booking (${tx.txNumber ?? tx.id})? The item will be freed and marked Available.`)) {
+                            onCancel(tx.id);
+                          }
+                        }}
+                        className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
+                        title="Cancel Booking"
+                      >
+                        <XCircle size={16} />
                       </button>
                     )}
                     {(tx.status === 'Active') && role === 'Customer' && (

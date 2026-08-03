@@ -316,10 +316,14 @@ export default function RentechApp() {
     }
   };
 
-  // Cancel transaction (FIX D: surface errors)
+  // Cancel transaction (FIX D: surface errors) — syncs local state so the
+  // list + item card update immediately (frees the item to Available).
   const handleCancelTransaction = async (txId) => {
     try {
       await cancelTransaction(txId);
+      const tx = transactions.find((t) => t.id === txId);
+      setTransactions((prev) => prev.map((t) => (t.id === txId ? { ...t, status: 'Cancelled' } : t)));
+      if (tx?.itemId) markItemStatus(tx.itemId, 'Available');
       toastSuccess('Transaction cancelled');
     } catch (err) {
       toastError(err?.message || 'Failed to cancel transaction');
@@ -626,7 +630,7 @@ export default function RentechApp() {
               <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} />
             )}
             {activeTab === 'AI Insights' && (
-              <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} />
+              <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} />
             )}
             {(activeTab === 'Profile' || activeTab === 'Settings') && (
               <ProfileSettingsView
