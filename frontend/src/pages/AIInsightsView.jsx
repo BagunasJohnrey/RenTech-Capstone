@@ -1,7 +1,7 @@
 import { useState, useEffect, cloneElement } from 'react';
 import {
   BarChart3, TrendingUp, DollarSign,
-  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download
+  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles
 } from 'lucide-react';
 import {
   ComposedChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid,
@@ -12,6 +12,7 @@ import AIReportModal from '../components/AIReportModal';
 import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
 import { AIInsightsSkeleton } from '../components/PageSkeletons';
+import { Skeleton } from '../components/Skeleton';
 import { TX_STATUS_HEX } from '../utils/statusColors';
 
 const fmt = (n) => `₱${Number(n).toLocaleString()}`;
@@ -36,40 +37,111 @@ const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCc
 
 const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];
 
-export default function AIInsightsView({ analyticsData }) {
+// 60s TTL cache per time range — same pattern as useKpis/useTodayTasks so
+// tab switches and range toggles render instantly instead of re-querying.
+const AI_CACHE_TTL_MS = 60_000;
+const aiCache = new Map(); // timeRange -> { data, at }
+
+function readAiCache(range) {
+  const hit = aiCache.get(range);
+  if (!hit) return null;
+  if (Date.now() - hit.at > AI_CACHE_TTL_MS) return null;
+  return hit.data;
+}
+
+// AI-generated promo/restock suggestions — cached in localStorage for 1 day
+// (survives reloads; refresh button forces a fresh call). Deliberately not
+// auto-called on every page load: Gemini is slow + costs money.
+const AI_SUGGEST_TTL_MS = 24 * 60 * 60 * 1000;
+const AI_SUGGEST_KEY = 'rentech_ai_suggestions';
+const aiSuggestCache = new Map();
+
+function readAiSuggestCache() {
+  const mem = aiSuggestCache.get('all');
+  if (mem && Date.now() - mem.at <= AI_SUGGEST_TTL_MS) return mem.data;
+  try {
+    const raw = localStorage.getItem(AI_SUGGEST_KEY);
+    if (!raw) return null;
+    const { data, at } = JSON.parse(raw);
+    if (Date.now() - at <= AI_SUGGEST_TTL_MS) {
+      aiSuggestCache.set('all', { data, at });
+      return data;
+    }
+    localStorage.removeItem(AI_SUGGEST_KEY);
+  } catch {
+    // corrupted/blocked storage — treat as no cache
+  }
+  return null;
+}
+
+function writeAiSuggestCache(data) {
+  const at = Date.now();
+  aiSuggestCache.set('all', { data, at });
+  try {
+    localStorage.setItem(AI_SUGGEST_KEY, JSON.stringify({ data, at }));
+  } catch {
+    // storage unavailable — in-memory cache still works for this session
+  }
+}
+
+function extractRecommendations(report) {
+  if (!report) return [];
+  const lines = String(report).split('\n').map(l => l.trim());
+  const idx = lines.findIndex(l => /^recommendations\s*:?$/i.test(l));
+  if (idx === -1) return [];
+  return lines.slice(idx + 1).filter(l => l.length > 0);
+}
+
+export default function AIInsightsView({ analyticsData, role }) {
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [activePie, setActivePie] = useState(null);
   const [timeRange, setTimeRange] = useState('Overall');
 
-  const [kpis, setKpis] = useState(null);
-  const [forecast, setForecast] = useState(null);
-  const [insightsData, setInsightsData] = useState(null);
-  const [revenueChartData, setRevenueChartData] = useState(null);
-  const [analyticsSummary, setAnalyticsSummary] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const cached = readAiCache(timeRange);
+  const [kpis, setKpis] = useState(cached?.kpis ?? null);
+  const [forecast, setForecast] = useState(cached?.forecast ?? null);
+  const [insightsData, setInsightsData] = useState(cached?.insights ?? null);
+  const [revenueChartData, setRevenueChartData] = useState(cached?.insights?.revenueByMonth ?? null);
+  const [inventoryAnalytics, setInventoryAnalytics] = useState(cached?.analytics ?? null);
+  const [analyticsSummary, setAnalyticsSummary] = useState(cached?.analytics?.summary ?? null);
+  const [loading, setLoading] = useState(!cached);
+  const [aiSuggestions, setAiSuggestions] = useState(() => readAiSuggestCache());
+  const [suggestLoading, setSuggestLoading] = useState(false);
   const { error: toastError } = useToast();
 
   useEffect(() => {
-    setLoading(true);
-    const periodParam = timeRange === 'Overall' ? '' : `period=${timeRange.toLowerCase()}`;
+    const range = timeRange;
+    let active = true;
+    const periodParam = range === 'Overall' ? '' : `period=${range.toLowerCase()}`;
+    if (!readAiCache(range)) setLoading(true);
     Promise.all([
       api.get(`/dashboard/kpis?${periodParam}`),
       api.get('/dashboard/forecast?period=3'),
       api.get(`/dashboard/insights?${periodParam}`),
-      api.get(`/inventory/analytics?${periodParam}`).then(r => r.summary),
-    ]).then(([kpiResult, forecastResult, insightsResult, analyticsSum]) => {
-      setKpis(kpiResult);
-      setForecast(forecastResult);
-      setInsightsData(insightsResult);
-      setRevenueChartData(insightsResult?.revenueByMonth || []);
-      setAnalyticsSummary(analyticsSum);
+      api.get(`/inventory/analytics?${periodParam}`),
+    ]).then(([kpiResult, forecastResult, insightsResult, analyticsFull]) => {
+      if (!active) return;
+      const payload = {
+        kpis: kpiResult,
+        forecast: forecastResult,
+        insights: insightsResult,
+        analytics: analyticsFull,
+      };
+      aiCache.set(range, { data: payload, at: Date.now() });
+      setKpis(payload.kpis);
+      setForecast(payload.forecast);
+      setInsightsData(payload.insights);
+      setRevenueChartData(payload.insights?.revenueByMonth || []);
+      setInventoryAnalytics(payload.analytics);
+      setAnalyticsSummary(payload.analytics?.summary);
     }).catch((err) => {
       // FIX D: surface the dashboard/KPI load failure instead of silently
       // rendering zeroed charts.
       toastError(err?.message || 'Failed to load dashboard data');
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [timeRange]);
 
   // FIX D: surface export failures instead of throwing unhandled.
@@ -78,6 +150,37 @@ export default function AIInsightsView({ analyticsData }) {
       await api.download(url, filename);
     } catch (err) {
       alert(err?.message || 'Export failed. Please try again.');
+    }
+  };
+
+  // On-demand AI suggestions (promo/restock recommendations) — reuses the
+  // admin-only /ai/generate-report endpoint. Cached 1 day (localStorage);
+  // passing force=true (Refresh AI button) always regenerates.
+  const handleAiSuggest = async (force = false) => {
+    if (suggestLoading) return;
+    if (!force) {
+      const hit = readAiSuggestCache();
+      if (hit) {
+        setAiSuggestions(hit);
+        return;
+      }
+    }
+    setSuggestLoading(true);
+    try {
+      const r = await api.post('/ai/generate-report');
+      const suggestions = extractRecommendations(r.report || r);
+      if (suggestions.length === 0) {
+        toastError('AI report came back in an unexpected format — showing static insights.');
+        setAiSuggestions(null);
+        return;
+      }
+      writeAiSuggestCache(suggestions);
+      setAiSuggestions(suggestions);
+    } catch (err) {
+      toastError(err?.message || 'Failed to generate AI suggestions');
+      setAiSuggestions(null);
+    } finally {
+      setSuggestLoading(false);
     }
   };
 
@@ -288,7 +391,7 @@ export default function AIInsightsView({ analyticsData }) {
 
         {analyticsData && (
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
-            {cloneElement(analyticsData, { period: timeRange })}
+            {cloneElement(analyticsData, { period: timeRange, initialData: inventoryAnalytics })}
           </div>
         )}
 
@@ -509,9 +612,39 @@ export default function AIInsightsView({ analyticsData }) {
           <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
             <div className="flex items-center gap-2 mb-2">
               <Lightbulb size={18} className="text-[#bf4a53]" />
-              <h3 className="font-bold text-gray-900 text-lg">Insights</h3>
+              <h3 className="font-bold text-gray-900 text-lg flex-1">Insights</h3>
+              {role === 'Admin' && (
+                <button onClick={() => handleAiSuggest(Boolean(aiSuggestions))} disabled={suggestLoading}
+                  className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full transition-colors disabled:opacity-50 ${
+                    aiSuggestions
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                      : 'bg-[#bf4a53] text-white shadow-sm hover:bg-red-700'
+                  }`}>
+                  {suggestLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  {suggestLoading ? 'Generating...' : aiSuggestions ? 'Refresh AI' : 'AI Suggestions'}
+                </button>
+              )}
             </div>
-            {insights.length === 0 ? (
+            {suggestLoading ? (
+              <div className="space-y-3 py-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-11/12" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-4/5" />
+              </div>
+            ) : aiSuggestions?.length ? (
+              <>
+                <p className="text-[11px] text-gray-400 font-medium">AI-generated promo &amp; restock suggestions</p>
+                <ul className="space-y-2">
+                  {aiSuggestions.map((text, i) => (
+                    <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
+                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                      {text}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : insights.length === 0 ? (
               <p className="text-sm text-gray-400">Not enough data for insights yet.</p>
             ) : (
               <ul className="space-y-2">

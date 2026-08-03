@@ -29,6 +29,7 @@
 - **Customer Home personalized** (`DashboardView.jsx`): hero uses `customerInfo.name`; "Recommended for You" from preferences; "Your Rentals" summary; `App.jsx` passes `customerInfo`. Booking form (`CustomerRentalFlow.jsx`) prefills saved contact/address.
 - **App-wide signed-URL image resolution**: created `components/ItemImage.jsx`; applied to `ItemCard.jsx`, `CleaningQueue.jsx`, `AvailabilityCalendar.jsx`, `GlobalSearchModal.jsx`, `CustomerRentalFlow.jsx`, `StaffNewRental.jsx`. Removed now-unused `ImageIcon`/`Package` imports and `ITEM_TYPES` const/`User` import in `DashboardView.jsx`.
 - **Customer Home cleanup**: removed "Your Saved Details" card and "Browse by Category" section (per request). Frontend `vite build` passes.
+- **Admin dashboard + caching**: admin gets a standalone role-branched dashboard (staff visual language) fed by `/dashboard/kpis` via `useKpis` (60s TTL cache keyed by role, client fallbacks). `AIInsightsView` has its own 60s TTL cache keyed by time range (Overall/Yearly/Monthly) covering kpis+forecast+insights+inventory-analytics; cached views skip the skeleton and refresh in the background. The embedded `InventoryAnalyticsView` accepts `initialData` so it no longer re-fetches `/inventory/analytics` (parent fetches once and passes it via `cloneElement`).
 
 ### Active
 - **Per-item sales feature (mostly done)**: schema pushed + Prisma client regenerated; backend controller enforces admin-only sale fields + forwards them in service; `useInventory` forwards sale fields conditionally; `ItemForm` shows sale UI for Admin only (`showSale={role==='Admin'}`); `ItemCard` shows sale badge + strikethrough via `getSaleInfo`; `CatalogView` has "On Sale" filter; `DashboardView` customer Home has "On Sale" collection; `CustomerRentalFlow` charges/display the sale price. Remaining: visual run-through to confirm.
@@ -55,7 +56,8 @@
 - `frontend/src/components/ItemImage.jsx`: **new** reusable signed-URL image component.
 - `frontend/src/components/ItemCard.jsx`, `CleaningQueue.jsx`, `AvailabilityCalendar.jsx`, `GlobalSearchModal.jsx`, `CustomerRentalFlow.jsx`: now use `ItemImage`.
 - `frontend/src/pages/StaffNewRental.jsx`: image thumbnail uses `ItemImage`.
-- `frontend/src/pages/DashboardView.jsx`: customer Home (Recommendations + Your Rentals; Saved Details & Browse-by-Category removed).
+- `frontend/src/pages/DashboardView.jsx`: customer Home (Recommendations + Your Rentals; Saved Details & Browse-by-Category removed); staff + admin dashboards (role-branched; admin standalone with useKpis).
+- `frontend/src/hooks/useDashboard.js`: `useTodayTasks` + `useKpis` (both 60s TTL caches); `AIInsightsView.jsx` + `InventoryAnalyticsView.jsx`: 60s TTL AI cache + `initialData` dedupe (no double analytics fetch).
 - `backend/src/services/gemini.service.ts`, `middleware/aiRateLimit.ts`, `services/notifications.service.ts`, `transactions.service.ts`, `sms.service.ts`, `index.ts`: AI + notifications.
 - `backend/src/services/paymongo.service.ts`, `controllers/payments.controller.ts`: simulated payment.
 - `backend/src/services/auth.service.ts`, `controllers/auth.controller.ts`, `prisma/schema.prisma`: preferences persistence.

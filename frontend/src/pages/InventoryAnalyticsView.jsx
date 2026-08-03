@@ -7,19 +7,25 @@ import { itemPill } from '../utils/statusColors';
 
 const PAGE_SIZE = 10;
 
-export default function InventoryAnalyticsView({ noHeader, period }) {
-  const [data, setData] = useState(null);
+export default function InventoryAnalyticsView({ noHeader, period, initialData }) {
+  const [data, setData] = useState(initialData ?? null);
   const [sortKey, setSortKey] = useState('revenueGenerated');
   const [sortDesc, setSortDesc] = useState(true);
   const [page, setPage] = useState(0);
   const { error: toastError } = useToast();
 
   useEffect(() => {
+    // When embedded in AI Insights, the parent already fetched (and cached)
+    // /inventory/analytics for this period — skip the duplicate request.
+    if (initialData) {
+      setData(initialData);
+      return;
+    }
     const params = period && period !== 'Overall' ? `?period=${period.toLowerCase()}` : '';
     api.get(`/inventory/analytics${params}`).then(setData).catch((err) => {
       toastError(err?.message || 'Failed to load inventory analytics');
     });
-  }, [period]);
+  }, [period, initialData]);
 
   if (!data) {
     return (
