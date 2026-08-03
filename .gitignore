@@ -34,3 +34,5 @@ test-results
 # OS / temp
 Thumbs.db
 *.swp
+
+images/*

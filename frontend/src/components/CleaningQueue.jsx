@@ -24,7 +24,7 @@ export default function CleaningQueue({ items, onMarkClean, onViewAll }) {
         )}
       </div>
       <div className="space-y-3">
-        {items.slice(0, 5).map((item) => (
+        {items.slice(0, 3).map((item) => (
           <div key={item.id} className="bg-white rounded-2xl p-3 border border-gray-100/80 shadow-sm flex items-center gap-3">
             <ItemImage image={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={20} />
             <div className="flex-1 min-w-0">

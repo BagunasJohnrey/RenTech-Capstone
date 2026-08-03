@@ -124,10 +124,10 @@ export default function DashboardView({ role, transactions, inventory, customerI
   // Today's due returns (FIX G: from server when available)
   const todayStr = today.toISOString().split('T')[0];
   const upcomingToday = todayStats
-    ? todayStats.dueToday.slice(0, 5)
+    ? todayStats.dueToday.slice(0, 3)
     : transactions.filter(tx =>
         tx.status === 'Active' && tx.dueDate && tx.dueDate.split('T')[0] <= todayStr
-      ).slice(0, 5);
+      ).slice(0, 3);
 
   // Demand Forecast
   const getMonthData = (month, year) => {
@@ -148,64 +148,80 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const availableCount = inventory.filter(i => i.status === 'Available').length;
     const cleaningCount = todayStats ? todayStats.inCleaning : inventory.filter(i => i.status === 'Cleaning').length;
     const maintenanceCount = inventory.filter(i => i.status === 'Maintenance').length;
-    const recentRentals = transactions.filter(tx => tx.status === 'Active' || tx.status === 'Overdue').slice(0, 5);
+    const recentRentals = transactions.filter(tx => tx.status === 'Active' || tx.status === 'Overdue').slice(0, 3);
     return (
-      <div className="space-y-6 max-w-lg mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+      <div className="max-w-lg mx-auto lg:max-w-[1200px]">
+        {/* Header (mobile/tablet) — unchanged */}
+        <div className="flex items-center justify-between mb-6 lg:hidden">
           <div>
             <h2 className="text-xl font-bold text-gray-900 tracking-tight">Staff Dashboard</h2>
             <p className="text-sm text-gray-500 mt-0.5">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
           </div>
         </div>
 
+        {/* Desktop header band */}
+        <header className="hidden lg:flex items-center justify-between mb-7 pb-5 border-b border-gray-200/80">
+          <div>
+            <h2 className="text-[28px] leading-tight font-bold text-gray-900 tracking-tight">Staff Dashboard</h2>
+            <p className="text-sm text-gray-500 mt-1">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
+          </div>
+          <div className="flex items-center gap-2.5 bg-white border border-gray-200/80 rounded-full pl-3 pr-4 py-1.5 shadow-sm">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            </span>
+            <span className="text-xs font-semibold text-gray-600 tracking-wide">All systems normal</span>
+          </div>
+        </header>
+
+        {/* Desktop bento grid — mobile/tablet/iPad keep the single-column `space-y-6` layout above lg breakpoint */}
+        <div className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6">
+
         {/* KPI row */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="lg:col-span-9 grid grid-cols-3 gap-3 lg:gap-4 lg:self-start">
           <button onClick={() => onNavigate('History')}
-            className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm text-center hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500">Active</p>
-            <p className="text-2xl font-extrabold text-gray-900 mt-1">{activeRentalsCount}</p>
+            className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Active</p>
+            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{activeRentalsCount}</p>
           </button>
           <button onClick={() => onNavigate('Tasks')}
-            className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm text-center hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500">
+            className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
               {overdueCount > 0 ? <span className="text-red-500">Overdue</span> : 'Overdue'}
             </p>
-            <p className={`text-2xl font-extrabold mt-1 ${overdueCount > 0 ? 'text-red-500' : 'text-gray-900'}`}>{overdueCount}</p>
+            <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueCount > 0 ? 'text-red-500' : 'text-gray-900'}`}>{overdueCount}</p>
           </button>
           <button onClick={() => onNavigate('Catalog')}
-            className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm text-center hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500">Available</p>
-            <p className="text-2xl font-extrabold text-gray-900 mt-1">{availableCount}</p>
+            className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Available</p>
+            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{availableCount}</p>
           </button>
         </div>
 
-        {/* Overdue alert */}
-        {overdueCount > 0 && (
-          <div className="bg-red-50 border border-red-200/70 rounded-2xl p-4 flex items-start gap-3">
-            <AlertTriangle size={18} className="text-red-500 shrink-0 mt-0.5" />
-            <p className="text-sm font-semibold text-red-700">
-              {overdueCount} rental{overdueCount > 1 ? 's' : ''} past due. <button onClick={() => onNavigate('Tasks')} className="underline">View</button>
-            </p>
-          </div>
-        )}
+        {/* Action rail: stacked CTAs on mobile/tablet — desktop right sidebar panel (spans 2 rows) */}
+        <aside className="lg:col-span-3 lg:row-span-2 flex flex-col gap-3 lg:gap-4 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-5 lg:self-start lg:min-h-full">
+
+        {/* Desktop panel label */}
+        <p className="hidden lg:block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-1">Quick Actions</p>
 
         {/* Primary CTA */}
         <button data-tour="new-rental" onClick={onOpenNewRental}
-          className="w-full flex items-center justify-center gap-3 bg-[#bf4a53] text-white font-bold text-base py-5 rounded-2xl shadow-lg shadow-red-500/20 hover:bg-red-700 btn-press transition-all min-h-[56px]">
+          className="w-full lg:flex-1 flex items-center justify-center gap-3 bg-[#bf4a53] text-white font-bold text-base lg:text-[15px] py-5 lg:py-3.5 rounded-2xl lg:rounded-xl shadow-lg shadow-red-500/20 hover:bg-red-700 btn-press transition-all min-h-[56px] lg:min-h-0">
           <Plus size={22} strokeWidth={3} />
           New Rental
         </button>
 
         {/* Secondary CTA */}
         <button data-tour="returns" onClick={() => onNavigate('History')}
-          className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-200 text-gray-900 font-bold text-base py-4 rounded-2xl hover:bg-gray-50 btn-press transition-all min-h-[56px] shadow-sm">
+          className="w-full lg:flex-1 flex items-center justify-center gap-3 bg-white border-2 border-gray-200 text-gray-900 font-bold text-base lg:text-[15px] py-4 lg:py-3.5 rounded-2xl lg:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] lg:min-h-0 shadow-sm">
           <Undo2 size={20} />
           Process Return
         </button>
 
-        {/* Upcoming Today */}
-        <div>
+        </aside>
+
+        {/* Upcoming Today — main column */}
+        <div className="lg:col-span-9 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Upcoming Today</h3>
             {upcomingToday.length > 0 && (
@@ -216,13 +232,13 @@ export default function DashboardView({ role, transactions, inventory, customerI
             )}
           </div>
           {upcomingToday.length === 0 ? (
-            <div className="bg-white rounded-2xl p-6 border border-gray-100/80 shadow-sm text-center">
+            <div className="py-8 text-center">
               <p className="text-sm text-gray-400 font-medium">No returns due today.</p>
             </div>
           ) : (
             <div className="space-y-3 stagger">
               {upcomingToday.map(tx => (
-                <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
+                <div key={tx.id} className="flex items-center gap-3 py-3 border-b border-gray-100 last:border-0">
                   <div className="w-10 h-10 rounded-full bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-400 shrink-0">
                     <User size={16} />
                   </div>
@@ -239,9 +255,19 @@ export default function DashboardView({ role, transactions, inventory, customerI
           )}
         </div>
 
-        {/* Recent Rentals */}
+        {/* Overdue alert */}
+        {overdueCount > 0 && (
+          <div className="lg:col-span-9 bg-red-50 border border-red-200/70 rounded-2xl p-4 flex items-start gap-3">
+            <AlertTriangle size={18} className="text-red-500 shrink-0 mt-0.5" />
+            <p className="text-sm font-semibold text-red-700">
+              {overdueCount} rental{overdueCount > 1 ? 's' : ''} past due. <button onClick={() => onNavigate('Tasks')} className="underline">View</button>
+            </p>
+          </div>
+        )}
+
+        {/* Active Rentals — main column */}
         {recentRentals.length > 0 && (
-          <div>
+          <div className="lg:col-span-9 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
               <button onClick={() => onNavigate('History')}
@@ -251,7 +277,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </div>
             <div className="space-y-3">
               {recentRentals.map(tx => (
-                <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
+                <div key={tx.id} className="flex items-center gap-3 py-3 border-b border-gray-100 last:border-0">
                   <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
                     <ShoppingBag size={16} className="text-[#bf4a53]" />
                   </div>
@@ -270,31 +296,49 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </div>
         )}
 
-        {/* Inventory Health */}
-        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
-          <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Inventory Health</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-gray-50 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-gray-900">{availableCount}</p>
-              <p className="text-[11px] font-semibold text-gray-500">Available</p>
+        {/* Needs Attention — sidebar column, row 3 (desktop) / inline (mobile) */}
+        {(() => {
+          const attentionItems = inventory
+            .filter(i => i.status === 'Damaged' || i.status === 'Maintenance')
+            .slice(0, 3);
+          if (attentionItems.length === 0) return null;
+          return (
+            <div className="lg:col-span-3 lg:row-span-2 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-6 lg:self-start">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Needs Attention</h3>
+                <button onClick={() => onNavigate('Catalog')} className="text-xs font-semibold text-[#bf4a53] hover:underline">
+                  Manage
+                </button>
+              </div>
+              <div className="space-y-3">
+                {attentionItems.map(item => (
+                  <div key={item.id} className="bg-gray-50/50 rounded-xl p-3 border border-gray-100 flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${item.status === 'Damaged' ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-600'}`}>
+                      <AlertTriangle size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        <span className={`font-semibold ${item.status === 'Damaged' ? 'text-red-600' : 'text-amber-600'}`}>{item.status}</span>
+                      </p>
+                    </div>
+                    <button onClick={() => onNavigate('Catalog')} className="shrink-0 text-xs font-bold bg-white border border-gray-200 text-gray-900 px-3 py-1.5 rounded-full hover:bg-gray-100 transition-colors shadow-sm">
+                      Fix
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="bg-gray-50 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-gray-900">{cleaningCount}</p>
-              <p className="text-[11px] font-semibold text-gray-500">In Cleaning</p>
-            </div>
-            <div className="bg-gray-50 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-amber-600">{maintenanceCount}</p>
-              <p className="text-[11px] font-semibold text-gray-500">Maintenance</p>
-            </div>
-            <div className="bg-gray-50 rounded-xl p-3 text-center">
-              <p className="text-lg font-extrabold text-red-500">{damagedCount}</p>
-              <p className="text-[11px] font-semibold text-gray-500">Damaged</p>
-            </div>
+          );
+        })()}
+
+        {/* In Cleaning */}
+        {cleaningItems.length > 0 && (
+          <div className="lg:col-span-9 lg:col-start-1 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
+            <CleaningQueue items={cleaningItems} onMarkClean={onMarkClean} onViewAll={() => onNavigate('Catalog')} />
           </div>
+        )}
         </div>
-      {cleaningItems.length > 0 && (
-        <CleaningQueue items={cleaningItems} onMarkClean={onMarkClean} onViewAll={() => onNavigate('Catalog')} />
-      )}
       </div>
     );
   }
