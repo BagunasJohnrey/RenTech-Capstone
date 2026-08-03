@@ -24,6 +24,7 @@ export const createItemSchema = z.object({
     description: z.string().nullable().optional(),
     size: z.string().nullable().optional(),
     status: z.nativeEnum(ItemStatus).optional(),
+    outOfServiceReason: z.string().nullable().optional(),
     onSale: z.boolean().optional(),
     discountPct: numOrNull(z.number().min(0).max(100)),
     salePrice: numOrNull(z.number().positive()),
@@ -37,6 +38,7 @@ export const updateItemSchema = z.object({
     category: z.string().min(1).optional(),
     price: z.coerce.number().positive().optional(),
     status: z.nativeEnum(ItemStatus).optional(),
+    outOfServiceReason: z.string().nullable().optional(),
     image: z.string().nullable().optional(),
     description: z.string().nullable().optional(),
     size: z.string().nullable().optional(),
@@ -44,6 +46,14 @@ export const updateItemSchema = z.object({
     discountPct: numOrNull(z.number().min(0).max(100)),
     salePrice: numOrNull(z.number().positive()),
     saleEndsAt: isoDateOrNull,
+  }),
+});
+
+export const bulkStatusSchema = z.object({
+  body: z.object({
+    ids: z.array(z.number().int().positive()).min(1),
+    status: z.nativeEnum(ItemStatus),
+    outOfServiceReason: z.string().nullable().optional(),
   }),
 });
 
@@ -84,7 +94,7 @@ export async function listItems(req: Request, res: Response, next: NextFunction)
         // Staff see everything except archived (Deleted) items — those are
         // Admin-only so only an Admin can review/restore them.
         exclude: !isAuthenticated
-          ? ['Damaged', 'Maintenance', 'Deleted']
+          ? ['OutOfService', 'Deleted']
           : isAdmin
             ? undefined
             : ['Deleted'],
@@ -124,7 +134,7 @@ export async function updateItem(req: AuthenticatedRequest, res: Response, next:
     assertSaleAdminOnly(req.body, req.user?.role);
 
     if (req.user?.role === Role.Staff) {
-      const allowedFields = ['name', 'category', 'price', 'description', 'size', 'image', 'status'];
+      const allowedFields = ['name', 'category', 'price', 'description', 'size', 'image', 'status', 'outOfServiceReason'];
       const attemptedFields = Object.keys(req.body);
       const disallowed = attemptedFields.filter(f => !allowedFields.includes(f));
       if (disallowed.length > 0) {
@@ -144,6 +154,21 @@ export async function deleteItem(req: AuthenticatedRequest, res: Response, next:
     const id = Number(req.params.id);
     await inventoryService.deleteItem(id);
     res.json({ message: 'Item deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkSetStatus(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const result = await inventoryService.bulkSetStatus(
+      req.body.ids,
+      req.body.status as 'Available' | 'Cleaning' | 'OutOfService',
+      req.body.outOfServiceReason ?? null,
+      req.user.id
+    );
+    res.json(result);
   } catch (err) {
     next(err);
   }

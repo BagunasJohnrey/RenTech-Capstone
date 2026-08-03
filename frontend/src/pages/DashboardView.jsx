@@ -1,17 +1,15 @@
-import { Sparkles, ShoppingBag, Clock, BarChart3, Activity, Plus, Undo2, AlertTriangle, Package, TrendingUp, User } from 'lucide-react';
+import { Sparkles, ShoppingBag, Clock, BarChart3, Activity, Plus, Undo2, AlertTriangle, Package, TrendingUp, User, Droplets } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import StatCard from '../components/StatCard';
-import CleaningQueue from '../components/CleaningQueue';
 import { useTodayTasks } from '../hooks/useDashboard';
 
-export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onCustomerBook, onMarkClean }) {
+export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onCustomerBook }) {
   const todayStats = useTodayTasks(role);
 
   // Normalize customer/item to a display name — client transactions carry a
   // string, while server /dashboard/today returns { id, name, phone } objects.
   const custName = (tx) => (typeof tx.customer === 'string' ? tx.customer : tx.customer?.name) || 'Customer';
   const itemName = (tx) => (typeof tx.item === 'string' ? tx.item : tx.item?.name) || 'Item';
-  const cleaningItems = inventory.filter((i) => i.status === 'Cleaning');
   // Customer view
   if (role === 'Customer') {
     const available = inventory.filter((i) => i.status === 'Available');
@@ -118,7 +116,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
     .filter(tx => { const d = new Date(tx.date); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })
     .reduce((sum, tx) => sum + tx.amount, 0);
 
-  const damagedCount = inventory.filter(i => i.status === 'Damaged').length;
+  const outOfServiceCount = inventory.filter(i => i.status === 'OutOfService').length;
 
   // Today's due returns (FIX G: from server when available)
   const todayStr = today.toISOString().split('T')[0];
@@ -185,12 +183,12 @@ export default function DashboardView({ role, transactions, inventory, customerI
         {/* Desktop bento grid — mobile/tablet/iPad get more vertical breathing room */}
         <div className="space-y-7 pt-2 lg:pt-0 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
 
-        {/* KPI row — desktop: 4 cards full width; mobile: 3 cards (Pickups hidden) */}
-        <div className="lg:col-span-12 grid grid-cols-3 lg:grid-cols-4 gap-3 lg:gap-5">
+        {/* KPI row — 2x2 on mobile/tablet, 4 across on desktop */}
+        <div className="lg:col-span-12 grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-5">
           <button onClick={() => onNavigate('History')}
             className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Active</p>
-            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{activeRentalsCount}</p>
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pickups Today</p>
+            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{pickupsToday.length}</p>
           </button>
           <button onClick={() => onNavigate('Tasks')}
             className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
@@ -199,15 +197,17 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </p>
             <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueCount > 0 ? 'text-red-500' : 'text-gray-900'}`}>{overdueCount}</p>
           </button>
-          <button onClick={() => onNavigate('History')}
-            className="hidden lg:block bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pickups Today</p>
-            <p className="text-3xl font-extrabold text-gray-900 mt-1">{pickupsToday.length}</p>
-          </button>
           <button onClick={() => onNavigate('Catalog')}
             className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Available</p>
             <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{availableCount}</p>
+          </button>
+          <button onClick={() => onNavigate('Tasks')}
+            className="bg-white rounded-2xl p-4 lg:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+              {cleaningCount > 0 ? <span className="text-orange-500">In Cleaning</span> : 'In Cleaning'}
+            </p>
+            <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${cleaningCount > 0 ? 'text-orange-500' : 'text-gray-900'}`}>{cleaningCount}</p>
           </button>
         </div>
 
@@ -340,7 +340,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
         {/* Needs Attention — sidebar column, row 3 (desktop) / inline (mobile) */}
         {(() => {
           const attentionItems = inventory
-            .filter(i => i.status === 'Damaged' || i.status === 'Maintenance')
+            .filter(i => i.status === 'OutOfService')
             .slice(0, 3);
           if (attentionItems.length === 0) return null;
           return (
@@ -354,13 +354,14 @@ export default function DashboardView({ role, transactions, inventory, customerI
               <div className="space-y-3">
                 {attentionItems.map(item => (
                   <div key={item.id} className="bg-gray-50/50 rounded-xl p-3 border border-gray-100 flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${item.status === 'Damaged' ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-600'}`}>
+                    <div className="w-10 h-10 rounded-full bg-red-50 text-red-500 flex items-center justify-center shrink-0">
                       <AlertTriangle size={18} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
                       <p className="text-xs text-gray-500 truncate">
-                        <span className={`font-semibold ${item.status === 'Damaged' ? 'text-red-600' : 'text-amber-600'}`}>{item.status}</span>
+                        <span className="font-semibold text-red-600">Out of Service</span>
+                        {item.outOfServiceReason ? ` · ${item.outOfServiceReason}` : ''}
                       </p>
                     </div>
                     <button onClick={() => onNavigate('Catalog')} className="shrink-0 text-xs font-bold bg-white border border-gray-200 text-gray-900 px-3 py-1.5 rounded-full hover:bg-gray-100 transition-colors shadow-sm">
@@ -373,10 +374,19 @@ export default function DashboardView({ role, transactions, inventory, customerI
           );
         })()}
 
-        {/* In Cleaning */}
-        {cleaningItems.length > 0 && (
-          <div className="lg:col-span-9 lg:col-start-1 lg:bg-white lg:rounded-2xl lg:border lg:border-gray-100/80 lg:shadow-sm lg:p-6">
-            <CleaningQueue items={cleaningItems} onMarkClean={onMarkClean} onViewAll={() => onNavigate('Catalog')} />
+        {/* Cleaning reminder — full queue lives in Tasks */}
+        {cleaningCount > 0 && (
+          <div className="lg:col-span-9 lg:col-start-1 bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Droplets size={16} className="text-orange-500 shrink-0" />
+              <p className="text-sm font-semibold text-gray-800 truncate">
+                {cleaningCount} item{cleaningCount === 1 ? '' : 's'} awaiting cleaning
+              </p>
+            </div>
+            <button onClick={() => onNavigate('Tasks')}
+              className="shrink-0 text-xs font-bold text-orange-700 bg-white border border-orange-200 px-3 py-1.5 rounded-full hover:bg-orange-100 transition-colors">
+              Cleaning Queue
+            </button>
           </div>
         )}
         </div>
@@ -540,7 +550,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
                 <span className="font-bold text-gray-900 text-[13px]">Inventory</span>
               </div>
               <p className="text-[13px] text-gray-700 leading-relaxed">
-                {`${availableItems} of ${totalItems} items available (${cleaningCount} in cleaning, ${damagedCount} damaged).`}
+                {`${availableItems} of ${totalItems} items available (${cleaningCount} in cleaning, ${outOfServiceCount} out of service).`}
               </p>
             </div>
             <div className="p-3.5 bg-gray-50/80 rounded-2xl border border-gray-100/50">

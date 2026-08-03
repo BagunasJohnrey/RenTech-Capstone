@@ -26,6 +26,7 @@ import CustomerRentalFlow from './components/CustomerRentalFlow';
 import { SkeletonScreen } from './components/Skeleton';
 import { PageSkeleton } from './components/PageSkeletons';
 import ProcessReturnModal from './components/ProcessReturnModal';
+import OutOfServiceModal from './components/OutOfServiceModal';
 import ChatbotModal from './components/ChatbotModal';
 import AvailabilityCalendar from './components/AvailabilityCalendar';
 import OnboardingTutorial from './components/OnboardingTutorial';
@@ -121,6 +122,7 @@ export default function RentechApp() {
     addItem,
     updateItem,
     setStatus: setItemStatus,
+    setBulkStatus,
     loading: inventoryLoading,
   } = useInventory();
   const {
@@ -161,6 +163,7 @@ export default function RentechApp() {
   const [showChatbot, setShowChatbot] = useState(false);
   const [showLoginPage, setShowLoginPage] = useState(false);
   const [guestView, setGuestView] = useState(false);
+  const [outOfServiceItem, setOutOfServiceItem] = useState(null);
 
   // Load inventory for guest (public) catalog browsing.
   useEffect(() => {
@@ -283,16 +286,20 @@ export default function RentechApp() {
     if (created.itemId) markItemStatus(created.itemId, 'Available');
   };
 
-  // Process return (FIX D: surface errors)
-  const handleProcessReturn = async (txId, isDamaged, isLate, returnPhoto) => {
+  // Process return (FIX D: surface errors). A damaged return takes the item
+  // OUT of rotation (skips cleaning); an intact return goes to Cleaning.
+  const handleProcessReturn = async (txId, isDamaged, isLate, returnPhoto, damageReason) => {
     try {
       const updated = await processReturnTx(txId, {
         returnDate: new Date().toISOString().split('T')[0],
         isDamaged: !!isDamaged,
         returnPhoto: returnPhoto || undefined,
+        damageReason: damageReason || undefined,
       });
-      if (updated.itemId) markItemStatus(updated.itemId, 'Cleaning');
-      toastSuccess('Return processed — item moved to cleaning');
+      if (updated.itemId) {
+        markItemStatus(updated.itemId, isDamaged ? 'OutOfService' : 'Cleaning');
+      }
+      toastSuccess(isDamaged ? 'Return processed — item taken out of rotation' : 'Return processed — item moved to cleaning');
     } catch (err) {
       toastError(err?.message || 'Failed to process return');
     }
@@ -379,10 +386,10 @@ export default function RentechApp() {
 
   // Inventory mutations are delegated to useInventory and surface failures
   // to the user (FIX: previously swallowed via console.error).
-  const handleQuickStatusChange = async (itemId, status) => {
+  const handleQuickStatusChange = async (itemId, status, outOfServiceReason) => {
     try {
-      await setItemStatus(itemId, status);
-      toastSuccess(`Item marked as ${status}`);
+      await setItemStatus(itemId, status, outOfServiceReason);
+      toastSuccess(status === 'OutOfService' ? 'Item marked as out of service' : `Item marked as ${status}`);
     } catch (err) {
       toastError(err?.message || 'Failed to update item status');
     }
@@ -391,6 +398,24 @@ export default function RentechApp() {
   // Mark a returned item (currently 'Cleaning') as clean/available again.
   const markItemClean = async (itemId) => {
     await setItemStatus(itemId, 'Available');
+  };
+
+  // Batch "mark cleaned": every selected item in the Cleaning queue becomes
+  // Available at once (the boutique cleans in batches).
+  const handleBulkClean = async (ids) => {
+    await setBulkStatus(ids, 'Available');
+  };
+
+  // "Mark Out of Service" opens a reason modal; the chosen reason is stored
+  // on the item (and shown in the catalog/dashboard).
+  const handleOutOfServiceConfirm = async (item, reason) => {
+    try {
+      await setItemStatus(item.id, 'OutOfService', reason);
+      toastSuccess('Item taken out of service');
+      setOutOfServiceItem(null);
+    } catch (err) {
+      toastError(err?.message || 'Failed to update item status');
+    }
   };
 
   const handleAddItem = async (values) => {
@@ -564,7 +589,6 @@ export default function RentechApp() {
                 onNavigate={setActiveTab}
                 onOpenChatbot={() => setShowChatbot(true)}
                 onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
-                onMarkClean={markItemClean}
               />
             )}
             {activeTab === 'Tasks' && (
@@ -575,6 +599,7 @@ export default function RentechApp() {
                 onNavigate={setActiveTab}
                 onRelease={handleReleaseRental}
                 onMarkClean={markItemClean}
+                onBulkClean={handleBulkClean}
               />
             )}
             {activeTab === 'Catalog' && (
@@ -590,6 +615,7 @@ export default function RentechApp() {
                 onDelete={handleDeleteInventoryItem}
                 onRestore={handleRestoreInventoryItem}
                 onStatusChange={handleQuickStatusChange}
+                onMarkOutOfService={(item) => setOutOfServiceItem(item)}
                 onConfirmBooking={handleCustomerBooking}
                 onStaffBookItem={(item) => setStaffBookingItem(item)}
                 onCheckAvailability={(item) => setCalendarItem(item)}
@@ -630,7 +656,10 @@ export default function RentechApp() {
             title="Edit Inventory Item"
             subtitle={`ID: ${editingItem.id}`}
             initial={editingItem}
-            statusOptions={['Available', 'Rented', 'Reserved', 'Cleaning', 'Maintenance', 'Damaged']}
+            statusOptions={(() => {
+              const manual = ['Available', 'Cleaning', 'OutOfService'];
+              return manual.includes(editingItem.status) ? manual : [...manual, editingItem.status];
+            })()}
             submitLabel="Save Changes"
             showSale={role === 'Admin'}
             onSubmit={(values) => handleUpdateItem(values)}
@@ -640,7 +669,7 @@ export default function RentechApp() {
         {showAddItemModal && (
           <ItemForm
             title="Add New Item"
-            statusOptions={['Available', 'Cleaning', 'Maintenance', 'Damaged']}
+            statusOptions={['Available', 'Cleaning', 'OutOfService']}
             submitLabel="Add Item"
             showCategory
             showPhoto
@@ -649,6 +678,10 @@ export default function RentechApp() {
             onSubmit={handleAddItem}
             onClose={() => setShowAddItemModal(false)}
           />
+        )}
+
+        {outOfServiceItem && (
+          <OutOfServiceModal item={outOfServiceItem} onClose={() => setOutOfServiceItem(null)} onConfirm={handleOutOfServiceConfirm} />
         )}
 
         {(showStaffRental || staffBookingItem) && (

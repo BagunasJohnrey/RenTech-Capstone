@@ -165,9 +165,9 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               Sign In to Rent
             </button>
           ) : (
-            <button onClick={onBook} disabled={item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted'}
+            <button onClick={onBook} disabled={item.status === 'OutOfService' || item.status === 'Deleted'}
               className={`w-full py-3 rounded-full font-bold transition-colors ${
-                (item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted')
+                (item.status === 'OutOfService' || item.status === 'Deleted')
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : 'bg-[#bf4a53] text-white hover:bg-[#a63f47]'
               }`}>

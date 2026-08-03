@@ -18,7 +18,7 @@ export default function ItemForm({
   title,
   subtitle,
   initial = {},
-  statusOptions = ['Available', 'Rented', 'Reserved', 'Cleaning', 'Maintenance', 'Damaged'],
+  statusOptions = ['Available', 'Cleaning', 'OutOfService'],
   submitLabel = 'Save',
   showCategory = false,
   showPhoto = false,

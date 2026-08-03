@@ -67,9 +67,20 @@ export function useInventory() {
     return result;
   }, []);
 
-  const setStatus = useCallback(async (itemId, status) => {
-    const result = await inventoryService.quickStatus(itemId, status);
+  const setStatus = useCallback(async (itemId, status, outOfServiceReason) => {
+    const payload = { status };
+    if (outOfServiceReason) payload.outOfServiceReason = outOfServiceReason;
+    const result = await inventoryService.update(itemId, payload);
     setInventory((prev) => prev.map((i) => (i.id === result.id ? normalize(result) : i)));
+    return result;
+  }, []);
+
+  // Batch status change (e.g. "mark selected items as cleaned"). Updates the
+  // local list for every returned id.
+  const setBulkStatus = useCallback(async (ids, status, outOfServiceReason) => {
+    const result = await inventoryService.bulkStatus(ids, status, outOfServiceReason);
+    const byId = new Set(ids);
+    setInventory((prev) => prev.map((i) => (byId.has(i.id) ? { ...i, status, outOfServiceReason: status === 'OutOfService' ? (outOfServiceReason ?? null) : null } : i)));
     return result;
   }, []);
 
@@ -88,6 +99,7 @@ export function useInventory() {
     addItem,
     updateItem,
     setStatus,
+    setBulkStatus,
     deleteItem,
     restoreItem,
   };

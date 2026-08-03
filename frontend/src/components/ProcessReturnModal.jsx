@@ -10,6 +10,8 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
   useEscapeClose(onClose);
   const [isLate, setIsLate] = useState(null);
   const [isDamaged, setIsDamaged] = useState(null);
+  const [damageReason, setDamageReason] = useState('');
+  const [otherDamageReason, setOtherDamageReason] = useState('');
   const [returnPhotoFile, setReturnPhotoFile] = useState(null);
   const [returnPhotoUrl, setReturnPhotoUrl] = useState('');
   const [returnNotes, setReturnNotes] = useState('');
@@ -20,7 +22,10 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
   const damageFee = isDamaged ? 1000 : 0;
   const totalFees = basePenalty + damageFee;
 
-  const canConfirm = isLate !== null && isDamaged !== null;
+  const DAMAGE_REASONS = ['Torn', 'Stained', 'Missing parts', 'Other'];
+
+  const reasonText = damageReason === 'Other' ? otherDamageReason.trim() : damageReason;
+  const canConfirm = isLate !== null && isDamaged !== null && (!isDamaged || reasonText);
 
   useEffect(() => () => { if (returnPhotoUrl) URL.revokeObjectURL(returnPhotoUrl); }, [returnPhotoUrl]);
 
@@ -59,7 +64,7 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
       }
       setSubmitting(false);
     }
-    onComplete(transaction.id, isDamaged, isLate, photoPath);
+    onComplete(transaction.id, isDamaged, isLate, photoPath, isDamaged ? reasonText : undefined);
   };
 
   return (
@@ -155,7 +160,7 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
                   </span>
                 )}
                 <AlertTriangle size={18} />
-                Damaged
+                Item damaged — take out of rotation
               </button>
               <button onClick={() => setIsDamaged(false)}
                 className={`relative flex items-center justify-center gap-2.5 py-4 rounded-2xl font-bold text-sm transition-all min-h-[52px] border-2 ${
@@ -173,6 +178,34 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
               </button>
             </div>
           </div>
+
+          {/* Damage reason — required to take the item out of rotation */}
+          {isDamaged === true && (
+            <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                <AlertTriangle size={14} /> Damage reason
+              </label>
+              <select
+                value={damageReason}
+                onChange={(e) => setDamageReason(e.target.value)}
+                className="w-full bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:bg-white focus:border-red-300 transition-all cursor-pointer"
+              >
+                <option value="">Select a reason…</option>
+                {DAMAGE_REASONS.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+              {damageReason === 'Other' && (
+                <input
+                  type="text"
+                  value={otherDamageReason}
+                  onChange={(e) => setOtherDamageReason(e.target.value)}
+                  placeholder="Describe the damage (e.g. torn hem, missing button)"
+                  className="w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:border-red-300 transition-all"
+                />
+              )}
+            </div>
+          )}
 
           <div>
             <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5 mb-1.5">

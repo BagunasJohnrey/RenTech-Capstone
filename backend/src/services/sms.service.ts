@@ -217,8 +217,52 @@ export async function notifyDueToday() {
   return results;
 }
 
-export async function getSmsHistory(params: { limit?: number; offset?: number }) {
-  return prisma.sentSms.findMany({
+// No-show detection: a Reserved transaction whose pickup (rentalDate) passed
+// more than NO_SHOW_WINDOW_DAYS ago with no release/condition photo means the
+// customer never picked the item up. Staff get ONE alert per transaction
+// (noShowNotified once-guard) so they can cancel and free the item.
+const NO_SHOW_WINDOW_DAYS = 1;
+
+export async function checkNoShowAndNotify() {
+  const cutoff = new Date(Date.now() - NO_SHOW_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  const noShowTxs = await prisma.transaction.findMany({
+    where: {
+      status: 'Reserved',
+      rentalDate: { lt: cutoff },
+      noShowNotified: false,
+      releasePhoto: null,
+      conditionPhoto: null,
+    },
+    include: {
+      customer: { select: { id: true, name: true } },
+      item: { select: { id: true, name: true } },
+    },
+  });
+
+  if (noShowTxs.length === 0) return [];
+
+  const results: { transactionId: string; customerName: string; itemName: string }[] = [];
+
+  for (const tx of noShowTxs) {
+    try {
+      await notifyStaffMembers({
+        transactionId: tx.id,
+        type: 'no_show',
+        title: 'No-Show Pickup',
+        message: `${tx.customer.name} didn't pick up "${tx.item.name}" (reserved for ${tx.rentalDate.toLocaleDateString('en-PH')}). Cancel the booking?`,
+      });
+      await prisma.transaction.update({ where: { id: tx.id }, data: { noShowNotified: true } });
+      results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name });
+    } catch {
+      // leave noShowNotified false so the next tick retries the notification
+    }
+  }
+
+  return results;
+}
+
+export async function getSmsHistory(params: { limit?: number; offset?: number }) {  return prisma.sentSms.findMany({
     include: {
       profile: { select: { id: true, name: true, phone: true } },
       sentBy: { select: { id: true, name: true } },

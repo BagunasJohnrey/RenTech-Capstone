@@ -18,8 +18,7 @@ enum ItemStatus {
   Rented
   Reserved
   Cleaning
-  Damaged
-  Maintenance
+  OutOfService
   Deleted
 }
 
@@ -65,6 +64,7 @@ model InventoryItem {
   discountPct Float?     @map("discount_pct")
   salePrice   Float?     @map("sale_price")
   saleEndsAt  DateTime?  @map("sale_ends_at")
+  outOfServiceReason String? @map("out_of_service_reason")
   createdAt   DateTime   @default(now()) @map("created_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
 
@@ -95,6 +95,8 @@ model Transaction {
   releasePhoto    String?           @map("release_photo")
   returnPhoto     String?           @map("return_photo")
   dueReminderSent Boolean           @default(false) @map("due_reminder_sent")
+  noShowNotified  Boolean           @default(false) @map("no_show_notified")
+  damageReason    String?           @map("damage_reason")
   notes           String?
   size            String?           @map("size")
   measurements    Json?             @map("measurements")

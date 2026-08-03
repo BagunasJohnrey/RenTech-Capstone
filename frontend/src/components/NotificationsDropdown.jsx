@@ -13,6 +13,7 @@ const TYPE_CONFIG = {
   due_today: { icon: CalendarClock, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Due Today' },
   overdue: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Overdue' },
   late_return: { icon: Clock, iconBg: 'bg-orange-50', iconColor: 'text-orange-500', chip: 'Late Return' },
+  no_show: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-600', chip: 'No-Show' },
   reminder: { icon: Smartphone, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Reminder' },
   default: { icon: Bell, iconBg: 'bg-gray-100', iconColor: 'text-gray-500', chip: 'Notification' },
 };

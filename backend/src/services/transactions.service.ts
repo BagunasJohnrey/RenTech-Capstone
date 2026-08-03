@@ -31,15 +31,14 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   if (!item) throw new AppError(404, 'Item not found');
 
   // Compute effective availability
-  if (item.status === ItemStatus.Damaged) {
-    throw new AppError(400, 'Item is damaged and cannot be rented');
+  if (item.status === ItemStatus.OutOfService) {
+    throw new AppError(400, 'Item is out of service and cannot be rented');
   }
 
-  // An item being cleaned after a return, or in maintenance, cannot be booked
-  // until staff manually flips its status back. This enforces the 1-day
-  // cleaning window without surfacing returned rentals to customers.
-  if (item.status === ItemStatus.Cleaning || item.status === ItemStatus.Maintenance) {
-    throw new AppError(409, 'Item is unavailable for the selected dates (being cleaned or maintained)');
+  // An item being cleaned after a return cannot be booked until staff
+  // manually flips its status back (batch cleaning workflow).
+  if (item.status === ItemStatus.Cleaning) {
+    throw new AppError(409, 'Item is unavailable for the selected dates (being cleaned)');
   }
 
   const start = new Date(data.rentalDate);
@@ -244,7 +243,8 @@ export async function processReturn(
   returnDate: string,
   isDamaged: boolean,
   returnPhoto?: string,
-  notes?: string
+  notes?: string,
+  damageReason?: string
 ) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -273,14 +273,20 @@ export async function processReturn(
       damageFee: fees.damageFee,
       balance: Math.max(0, newBalance),
       returnPhoto: returnPhoto ?? null,
+      damageReason: isDamaged ? (damageReason ?? null) : null,
       notes: notes ?? undefined,
       processedById,
     },
   });
 
+  // A damaged return takes the item OUT of rotation entirely (skips cleaning
+  // — it can't be rented again until staff repair it). An intact return goes
+  // to Cleaning for the staff to process in batches.
   await prisma.inventoryItem.update({
     where: { id: tx.itemId },
-    data: { status: ItemStatus.Cleaning },
+    data: isDamaged
+      ? { status: ItemStatus.OutOfService, outOfServiceReason: damageReason ?? 'damaged' }
+      : { status: ItemStatus.Cleaning },
   });
 
   await createAuditLog({
@@ -288,7 +294,7 @@ export async function processReturn(
     entity: 'transaction',
     entityId: transactionId,
     performedById: processedById,
-    newValue: { status: 'Returned', latePenalty: fees.latePenalty, damageFee: fees.damageFee },
+    newValue: { status: 'Returned', latePenalty: fees.latePenalty, damageFee: fees.damageFee, damageReason: isDamaged ? (damageReason ?? null) : null },
     oldValue: { status: tx.status },
   });
 
@@ -399,7 +405,7 @@ export async function cancelTransaction(transactionId: string, performedById: st
 
   await prisma.inventoryItem.update({
     where: { id: tx.itemId },
-    data: { status: ItemStatus.Available },
+    data: { status: ItemStatus.Available, outOfServiceReason: null },
   });
 
   await createAuditLog({
@@ -430,10 +436,10 @@ export async function deleteTransaction(transactionId: string) {
   ]);
 
   const nonReturnedStatuses = ['Active', 'Overdue'];
-  if (nonReturnedStatuses.includes(tx.status) && tx.item.status !== 'Damaged') {
+  if (nonReturnedStatuses.includes(tx.status) && tx.item.status !== ItemStatus.OutOfService) {
     await prisma.inventoryItem.update({
       where: { id: tx.itemId },
-      data: { status: ItemStatus.Available },
+      data: { status: ItemStatus.Available, outOfServiceReason: null },
     });
   }
 

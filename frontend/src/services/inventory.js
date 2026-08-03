@@ -20,6 +20,10 @@ export const inventoryService = {
 
   quickStatus: (id, status) => api.put(`/inventory/${id}`, { status }),
 
+  // Bulk lifecycle status change (batch "mark cleaned" / "out of service").
+  bulkStatus: (ids, status, outOfServiceReason) =>
+    api.patch(`/inventory/bulk-status`, { ids, status, outOfServiceReason }),
+
   availability: (itemId, rentalDate, dueDate) =>
     api.get(
       `/inventory/availability?itemId=${encodeURIComponent(itemId)}&rentalDate=${encodeURIComponent(rentalDate)}&dueDate=${encodeURIComponent(dueDate)}`

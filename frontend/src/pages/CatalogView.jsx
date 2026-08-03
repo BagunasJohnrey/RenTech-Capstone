@@ -3,11 +3,11 @@ import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, RotateC
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import { SkeletonGrid } from '../components/Skeleton';
 
-const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'Maintenance', 'Damaged', 'Deleted'];
-const STAFF_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'Maintenance', 'Damaged'];
+const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
+const STAFF_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService'];
 const CUSTOMER_STATUSES = ['All', 'Available'];
 
-export default function CatalogView({ role, inventory, onCustomerBook, onEdit, onStatusChange, onStaffBookItem, onCheckAvailability, onRestore, onRequestDelete, loading, guest, onGuestBook, onExitGuest, onViewDetail }) {
+export default function CatalogView({ role, inventory, onCustomerBook, onEdit, onStatusChange, onMarkOutOfService, onStaffBookItem, onCheckAvailability, onRestore, onRequestDelete, loading, guest, onGuestBook, onExitGuest, onViewDetail }) {
   const isStaff = role !== 'Customer';
   const STATUSES = role === 'Admin' ? ADMIN_STATUSES : isStaff ? STAFF_STATUSES : CUSTOMER_STATUSES;
   const [searchQuery, setSearchQuery] = useState('');
@@ -102,8 +102,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
               { label: 'Rented', status: 'Rented', color: 'bg-blue-50 text-blue-700 border-blue-200', dot: 'bg-blue-500' },
               { label: 'Reserved', status: 'Reserved', color: 'bg-indigo-50 text-indigo-700 border-indigo-200', dot: 'bg-indigo-400' },
               { label: 'In Cleaning', status: 'Cleaning', color: 'bg-orange-50 text-orange-700 border-orange-200', dot: 'bg-orange-400' },
-              { label: 'Maintenance', status: 'Maintenance', color: 'bg-yellow-50 text-yellow-700 border-yellow-200', dot: 'bg-yellow-500' },
-              { label: 'Damaged', status: 'Damaged', color: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500' },
+              { label: 'Out of Service', status: 'OutOfService', color: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500' },
             ].map(({ label, status, color, dot }) => {
               const count = inventory.filter(i => i.status === status).length;
               const active = activeStatusFilter === status;
@@ -185,8 +184,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
               Rented: 'bg-blue-500 text-white',
               Reserved: 'bg-indigo-500 text-white',
               Cleaning: 'bg-orange-400 text-white',
-              Maintenance: 'bg-yellow-500 text-white',
-              Damaged: 'bg-red-500 text-white',
+              OutOfService: 'bg-red-500 text-white',
               Deleted: 'bg-gray-500 text-white',
             };
             return (
@@ -399,6 +397,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
                 onRestore={role === 'Admin' && onRestore ? () => onRestore(item.id) : undefined}
                 onCheckAvailability={() => onCheckAvailability(item)}
                 onStatusChange={onStatusChange}
+                onMarkOutOfService={onMarkOutOfService}
               />
             ))}
           </div>
@@ -413,6 +412,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
                 onRestore={role === 'Admin' && onRestore ? () => onRestore(item.id) : undefined}
                 onCheckAvailability={() => onCheckAvailability(item)}
                 onStatusChange={onStatusChange}
+                onMarkOutOfService={onMarkOutOfService}
               />
             ))}
           </div>

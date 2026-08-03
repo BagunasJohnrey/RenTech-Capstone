@@ -29,6 +29,7 @@ export const returnSchema = z.object({
     returnPhoto: z.string().optional(),
     conditionPhoto: z.string().optional(), // legacy alias
     notes: z.string().optional(),
+    damageReason: z.string().optional(),
   }),
 });
 
@@ -135,7 +136,8 @@ export async function processReturn(req: AuthenticatedRequest, res: Response, ne
       req.body.returnDate || new Date().toISOString(), // honor client's date; else now
       req.body.isDamaged ?? false,
       req.body.returnPhoto ?? req.body.conditionPhoto,
-      req.body.notes
+      req.body.notes,
+      req.body.damageReason
     );
 
     res.json(result);

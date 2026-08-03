@@ -1,7 +1,5 @@
-import { Edit3, Trash2, RotateCcw, Calendar, CalendarCheck, CheckCircle2, AlertTriangle, Droplets, Wrench, Eye } from 'lucide-react';
+import { Edit3, Trash2, RotateCcw, Calendar, CalendarCheck, CheckCircle2, AlertTriangle, Droplets, Eye } from 'lucide-react';
 import ItemImage from './ItemImage';
-
-const STATUSES = ['Available', 'Cleaning', 'Damaged'];
 
 // Determine whether a sale is currently active and the resulting price.
 export function getSaleInfo(item) {
@@ -24,12 +22,11 @@ const STATUS_META = {
   Rented: { icon: CalendarCheck, label: 'Rented', bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500', border: 'border-blue-200' },
   Reserved: { icon: Calendar, label: 'Reserved', bg: 'bg-indigo-50', text: 'text-indigo-700', dot: 'bg-indigo-400', border: 'border-indigo-200' },
   Cleaning: { icon: Droplets, label: 'Cleaning', bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-400', border: 'border-orange-200' },
-  Maintenance: { icon: Wrench, label: 'Maintenance', bg: 'bg-yellow-50', text: 'text-yellow-700', dot: 'bg-yellow-500', border: 'border-yellow-200' },
-  Damaged: { icon: AlertTriangle, label: 'Damaged', bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500', border: 'border-red-200' },
+  OutOfService: { icon: AlertTriangle, label: 'Out of Service', bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500', border: 'border-red-200' },
   Deleted: { icon: Trash2, label: 'Archived', bg: 'bg-gray-100', text: 'text-gray-500', dot: 'bg-gray-400', border: 'border-gray-200' },
 };
 
-function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, showBook }) {
+function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, showBook }) {
   const sale = getSaleInfo(item);
   return (
     <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group">
@@ -97,25 +94,35 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
           </button>
         )}
 
+        {/* Manual lifecycle actions only. Rented/Reserved are derived from
+            transactions (read-only) — staff can't flip them by hand. */}
         {onStatusChange && item.status !== 'Deleted' && (
           <div>
-            <span className="text-[8px] font-bold text-gray-400 uppercase tracking-wider">Status</span>
-            <div className="flex items-center gap-1 mt-1">
-              {STATUSES.map(s => {
-                const m = STATUS_META[s];
-                const active = item.status === s;
-                return (
-                  <button key={s} onClick={() => onStatusChange(item.id, s)}
-                    className={`flex-1 text-[9px] font-bold py-1 rounded-md border transition-all ${
-                      active
-                        ? `${m.bg} ${m.text} ${m.border} shadow-sm`
-                        : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50 hover:text-gray-600'
-                    }`}
-                  >
-                    {s === 'Cleaning' ? 'Clean' : s === 'Damaged' ? 'Damage' : s.substring(0, 4)}
-                  </button>
-                );
-              })}
+            <span className="text-[8px] font-bold text-gray-400 uppercase tracking-wider">Actions</span>
+            <div className="flex flex-wrap items-center gap-1 mt-1">
+              {item.status === 'Cleaning' && (
+                <button onClick={() => onStatusChange(item.id, 'Available')}
+                  className="flex-1 text-[9px] font-bold py-1 rounded-md border transition-all bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm hover:bg-emerald-100">
+                  Mark Cleaned
+                </button>
+              )}
+              {item.status === 'OutOfService' && (
+                <button onClick={() => onStatusChange(item.id, 'Available')}
+                  className="flex-1 text-[9px] font-bold py-1 rounded-md border transition-all bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm hover:bg-emerald-100">
+                  Restore
+                </button>
+              )}
+              {(item.status === 'Available' || item.status === 'Cleaning') && onMarkOutOfService && (
+                <button onClick={() => onMarkOutOfService(item)}
+                  className="flex-1 text-[9px] font-bold py-1 rounded-md border transition-all bg-white text-red-500 border-red-200 hover:bg-red-50">
+                  Out of Service
+                </button>
+              )}
+              {item.status !== 'Cleaning' && item.status !== 'OutOfService' && (
+                <span className="text-[9px] font-medium text-gray-400 py-1">
+                  Status auto-syncs with bookings
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -124,7 +131,7 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
   );
 }
 
-export default function ItemCard({ item, role, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, guest, onViewDetail }) {
+export default function ItemCard({ item, role, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, guest, onViewDetail }) {
   const isAdmin = role === 'Admin';
   const isStaff = role !== 'Customer';
   const meta = STATUS_META[item.status] || STATUS_META.Available;
@@ -135,13 +142,13 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
       return (
         <StaffCard item={item} meta={meta} StatusIcon={StatusIcon}
           onBook={() => {}} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore}
-          onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} showBook={false} />
+          onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} onMarkOutOfService={onMarkOutOfService} showBook={false} />
       );
     }
     return (
       <StaffCard item={item} meta={meta} StatusIcon={StatusIcon}
         onBook={onBook} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore}
-        onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} showBook={true} />
+        onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} onMarkOutOfService={onMarkOutOfService} showBook={true} />
     );
   }
 
@@ -172,7 +179,7 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
           )}
         </p>
         {(() => {
-          const disabled = !guest && (item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted');
+          const disabled = !guest && (item.status === 'OutOfService' || item.status === 'Deleted');
           const sizingCls = 'w-full mt-3 font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-2';
           if (guest) {
             return (

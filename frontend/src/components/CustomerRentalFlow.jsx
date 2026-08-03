@@ -135,7 +135,7 @@ export default function CustomerRentalFlow({
     return inventory.filter((item) => {
       // Hide items that can never be booked; show everything else (including
       // currently Rented/Reserved) so customers can reserve future-free dates.
-      if (item.status === 'Damaged' || item.status === 'Maintenance') return false;
+      if (item.status === 'OutOfService') return false;
       const matchesCat = cats[activeCategory] ? cats[activeCategory](item) : true;
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesCat && matchesSearch;

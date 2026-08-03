@@ -1,5 +1,6 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { createAuditLog } from '../utils/audit.js';
 import { ItemStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -50,9 +51,9 @@ export async function listItems(
     let effectiveStatus: string = item.status;
 
     // Terminal statuses are never overridden by rental-derived logic, so a
-    // soft-deleted (or damaged/maintenance) item always stays that way after
+    // soft-deleted (or out-of-service) item always stays that way after
     // a refresh even if it still has an Active/Overdue transaction row.
-    const terminal = item.status === 'Deleted' || item.status === 'Damaged' || item.status === 'Maintenance';
+    const terminal = item.status === 'Deleted' || item.status === 'OutOfService';
     if (!terminal) {
       if (activeTx) {
         effectiveStatus = activeTx.status === 'Overdue' ? 'Overdue' : activeTx.status === 'Reserved' ? 'Reserved' : 'Rented';
@@ -94,7 +95,7 @@ export async function getItem(id: number) {
 
   let effectiveStatus: string = item.status;
 
-  const terminal = item.status === 'Deleted' || item.status === 'Damaged' || item.status === 'Maintenance';
+  const terminal = item.status === 'Deleted' || item.status === 'OutOfService';
   if (!terminal) {
     if (activeTx) {
       effectiveStatus = activeTx.status === 'Overdue' ? 'Overdue' : 'Rented';
@@ -120,6 +121,7 @@ export async function createItem(data: {
   description?: string;
   size?: string;
   status?: ItemStatus;
+  outOfServiceReason?: string | null;
   onSale?: boolean;
   discountPct?: number;
   salePrice?: number;
@@ -134,6 +136,7 @@ export async function updateItem(id: number, data: {
   category?: string;
   price?: number;
   status?: ItemStatus;
+  outOfServiceReason?: string | null;
   image?: string;
   description?: string;
   size?: string;
@@ -147,8 +150,56 @@ export async function updateItem(id: number, data: {
     throw new AppError(404, 'Item not found');
   }
 
-  const updated = await prisma.inventoryItem.update({ where: { id }, data });
+  // Leaving OutOfService (or any status change off it) clears the recorded
+  // reason so a later re-entry starts fresh.
+  const patch: Prisma.InventoryItemUpdateInput = { ...data };
+  if (data.status && data.status !== ItemStatus.OutOfService && item.outOfServiceReason) {
+    patch.outOfServiceReason = null;
+  }
+
+  const updated = await prisma.inventoryItem.update({ where: { id }, data: patch });
   return { ...updated, effectiveStatus: updated.status };
+}
+
+// Bulk status update for batch workflows (e.g. marking a batch of cleaned
+// items Available). Only manual lifecycle states are allowed — derived states
+// (Rented/Reserved/Deleted) can never be set in bulk.
+const BULK_STATUSES = [ItemStatus.Available, ItemStatus.Cleaning, ItemStatus.OutOfService] as const;
+
+export async function bulkSetStatus(
+  ids: number[],
+  status: 'Available' | 'Cleaning' | 'OutOfService',
+  outOfServiceReason?: string | null,
+  performedById?: string
+) {
+  if (!BULK_STATUSES.includes(status)) {
+    throw new AppError(400, `Bulk status change to "${status}" is not allowed`);
+  }
+  if (ids.length === 0) return { updated: 0 };
+
+  const items = await prisma.inventoryItem.findMany({ where: { id: { in: ids } } });
+  if (items.length !== ids.length) {
+    throw new AppError(404, 'One or more items were not found');
+  }
+
+  const result = await prisma.inventoryItem.updateMany({
+    where: { id: { in: ids } },
+    data: {
+      status,
+      outOfServiceReason: status === ItemStatus.OutOfService ? (outOfServiceReason ?? null) : null,
+    },
+  });
+
+  await createAuditLog({
+    action: 'update',
+    entity: 'inventory',
+    entityId: `bulk:${ids.join(',')}`,
+    performedById,
+    oldValue: { ids, statuses: items.map(i => ({ id: i.id, status: i.status })) },
+    newValue: { ids, status, outOfServiceReason: status === ItemStatus.OutOfService ? (outOfServiceReason ?? null) : null },
+  });
+
+  return { updated: result.count };
 }
 
 export async function deleteItem(id: number) {
@@ -157,8 +208,8 @@ export async function deleteItem(id: number) {
     throw new AppError(404, 'Item not found');
   }
 
-  if (item.status !== ItemStatus.Available && item.status !== ItemStatus.Maintenance) {
-    throw new AppError(400, 'Only Available or Maintenance items can be deleted');
+  if (item.status !== ItemStatus.Available && item.status !== ItemStatus.OutOfService) {
+    throw new AppError(400, 'Only Available or Out of Service items can be deleted');
   }
 
   await prisma.inventoryItem.delete({ where: { id } });
@@ -170,8 +221,8 @@ export async function checkAvailability(itemId: number, rentalDate: string, dueD
     throw new AppError(404, 'Item not found');
   }
 
-  if (item.status === ItemStatus.Damaged || item.status === ItemStatus.Maintenance) {
-    return { available: false, reason: `Item is currently ${item.status.toLowerCase()}` };
+  if (item.status === ItemStatus.OutOfService) {
+    return { available: false, reason: 'Item is currently out of service' };
   }
 
   // An item that is being cleaned after a return is not bookable until staff

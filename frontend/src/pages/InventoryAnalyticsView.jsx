@@ -165,7 +165,7 @@ export default function InventoryAnalyticsView({ noHeader, period }) {
                       item.status === 'Available' ? 'bg-emerald-50 text-emerald-600' :
                       item.status === 'Rented' ? 'bg-blue-50 text-blue-600' :
                       item.status === 'Cleaning' ? 'bg-orange-50 text-orange-600' :
-                      item.status === 'Damaged' ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'
+                      item.status === 'OutOfService' ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'
                     }`}>{item.status}</span>
                   </td>
                 </tr>

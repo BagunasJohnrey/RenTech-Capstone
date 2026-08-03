@@ -7,7 +7,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
-import { autoNotifyOverdue, notifyDueToday } from './services/sms.service.js';
+import { autoNotifyOverdue, notifyDueToday, checkNoShowAndNotify } from './services/sms.service.js';
 import { ensureBucket } from './services/storage.service.js';
 
 const app = express();
@@ -78,6 +78,13 @@ app.listen(env.PORT, () => {
         }
       })
       .catch(err => console.error('[Due Today] scheduler error:', err));
+    checkNoShowAndNotify()
+      .then(results => {
+        if (results.length > 0) {
+          console.log(`[No-Show] Flagged ${results.length} no-show pickup(s)`);
+        }
+      })
+      .catch(err => console.error('[No-Show] scheduler error:', err));
   };
   runScheduledChecks();
   const scheduler = setInterval(runScheduledChecks, 60 * 1000);

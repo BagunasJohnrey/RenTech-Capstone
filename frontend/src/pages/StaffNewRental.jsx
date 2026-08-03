@@ -459,7 +459,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       <span className={`inline-block mt-1 text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
                         item.status === 'Available'
                           ? 'bg-emerald-50 text-emerald-600'
-                          : item.status === 'Damaged' || item.status === 'Maintenance'
+                          : item.status === 'OutOfService'
                           ? 'bg-red-50 text-red-600'
                           : 'bg-amber-50 text-amber-600'
                       }`}>

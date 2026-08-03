@@ -22,7 +22,7 @@ export async function getKpis(filter?: { start?: Date; end?: Date }) {
     prisma.transaction.count({ where: { status: 'Overdue' } }),
     prisma.transaction.count({ where: { status: 'Returned' } }),
     prisma.transaction.count({ where: { status: 'Cancelled' } }),
-    prisma.inventoryItem.count({ where: { status: 'Damaged' } }),
+    prisma.inventoryItem.count({ where: { status: 'OutOfService' } }),
     filter?.start ? aggregateRevenueFrom(filter.start) : aggregateMonthlyRevenue(),
     prisma.inventoryItem.count(),
     prisma.inventoryItem.count({ where: { status: 'Available' } }),

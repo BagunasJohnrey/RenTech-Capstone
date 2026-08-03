@@ -11,8 +11,7 @@ export enum ItemStatus {
   Rented = 'Rented',
   Reserved = 'Reserved',
   Cleaning = 'Cleaning',
-  Damaged = 'Damaged',
-  Maintenance = 'Maintenance',
+  OutOfService = 'OutOfService',
   Deleted = 'Deleted',
 }
 
