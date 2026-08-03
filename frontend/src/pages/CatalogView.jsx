@@ -92,30 +92,11 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
   return (
     <div className="space-y-4">
-      {/* Guest banner — visible only when browsing the public catalog without an account */}
-      {guest && (
-        <div className="bg-[#FAF0F1] border border-[#f1dde0] rounded-2xl p-4 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-bold text-gray-950">Browsing as a guest</p>
-            <p className="text-xs text-gray-600">Sign in or create an account to rent this item.</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button onClick={onExitGuest} className="text-xs font-bold text-gray-500 hover:text-gray-900 px-3 py-2">Back</button>
-            <button
-              onClick={() => onGuestBook?.()}
-              className="bg-[#bf4a53] text-white text-xs font-bold px-4 py-2 rounded-full hover:bg-[#a63f47] transition-colors"
-            >
-              Sign In to Rent
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Inventory Health KPIs — Admin only */}
       {role === 'Admin' && (
-        <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
+        <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5">
           <h3 className="text-sm font-bold text-gray-900 mb-3">Inventory Health</h3>
-          <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
             {[
               { label: 'Available', status: 'Available', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
               { label: 'Rented', status: 'Rented', color: 'bg-blue-50 text-blue-700 border-blue-200', dot: 'bg-blue-500' },
@@ -130,13 +111,13 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
                 <button
                   key={status}
                   onClick={() => setActiveStatusFilter(active ? 'All' : status)}
-                  className={`rounded-xl border p-3.5 text-left transition-all ${color} ${active ? 'ring-2 ring-gray-900/70' : 'hover:brightness-95'}`}
+                  className={`rounded-xl border p-3 sm:p-3.5 text-left transition-all min-w-0 ${color} ${active ? 'ring-2 ring-gray-900/70' : 'hover:brightness-95'}`}
                 >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`w-2 h-2 rounded-full ${dot}`} />
-                    <span className="text-[11px] font-bold uppercase tracking-wider">{label}</span>
+                  <div className="flex items-center gap-2 mb-1 min-w-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+                    <span className="text-[11px] font-bold uppercase tracking-wider truncate">{label}</span>
                   </div>
-                  <p className="text-2xl font-bold tabular-nums">{count}</p>
+                  <p className="text-xl sm:text-2xl font-bold tabular-nums">{count}</p>
                 </button>
               );
             })}
@@ -191,6 +172,27 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
           <span className="font-semibold text-gray-900">{filteredInventory.length}</span><span className="text-gray-400">/{inventory.length}</span>
         </div>
       </div>
+
+      {/* Category rail — shown for guests/customers under the search bar */}
+      {(!isStaff || guest) && allCategories.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
+          {['All', ...allCategories].map(cat => {
+            const active = cat === 'All' ? selectedCategories.length === 0 : selectedCategories.includes(cat);
+            return (
+              <button key={cat} type="button"
+                onClick={() => setSelectedCategories(cat === 'All' ? [] : [cat])}
+                aria-pressed={active}
+                className={`shrink-0 px-4 py-2 rounded-full text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
+                  active
+                    ? 'bg-gray-950 text-white shadow-sm'
+                    : 'bg-white text-gray-500 hover:text-gray-800 border border-gray-200 hover:border-gray-400'
+                }`}>
+                {cat}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Modern filter toolbar */}
       {showFilters && (

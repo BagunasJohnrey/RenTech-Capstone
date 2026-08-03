@@ -11,17 +11,20 @@ export const normalizeTx = (tx) => ({
   amount: tx.rentalFee ?? tx.amount ?? 0,
 });
 
+// An item is physically "with the customer" (picked up) once a release/condition
+// photo exists. Until then it is still pending release (on hold / reserved).
+export const isReleased = (tx) => !!(tx.releasePhoto || tx.conditionPhoto);
+export const getReleasePhoto = (tx) => tx.releasePhoto || tx.conditionPhoto || null;
+
+// A transaction can be returned once the item is out the door: either it was
+// released (photo proof) or inventory still shows the item as Rented. This keeps
+// the Return action available for legacy rentals created before the release flow.
+export const canReturn = (tx, inventory = []) =>
+  isReleased(tx) || inventory.some((i) => i.id === tx.itemId && i.status === 'Rented');
+
 // Merge a server `updated` transaction back into the list while preserving
 // client-side display fields when the server response omits them.
-const mergeUpdated = (t, updated) => ({
-  ...t,
-  ...updated,
-  customer: updated.customer?.name ?? updated.customer ?? t.customer,
-  item: updated.item?.name ?? updated.item ?? t.item,
-  date: updated.rentalDate ?? updated.date ?? t.date,
-  amount: updated.rentalFee ?? updated.amount ?? t.amount,
-  status: updated.status ?? t.status,
-});
+const mergeUpdated = (t, updated) => normalizeTx({ ...t, ...updated });
 
 export function useTransactions() {
   const [transactions, setTransactions] = useState([]);
@@ -68,9 +71,7 @@ export function useTransactions() {
 
   // Local merge only — the actual release API call lives in ReleaseItemModal.
   const release = useCallback((updated) => {
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === updated.id ? { ...t, conditionPhoto: updated.conditionPhoto } : t))
-    );
+    setTransactions((prev) => prev.map((t) => (t.id === updated.id ? mergeUpdated(t, updated) : t)));
   }, []);
 
   // FIX G: orphaned endpoints, now available for components to consume.

@@ -1,3 +1,4 @@
+import { useMemo, useRef } from 'react';
 import { Sparkles, ShoppingBag, Clock, BarChart3, Activity, Plus, Undo2, AlertTriangle, Package, TrendingUp, ChevronRight, User } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import StatCard from '../components/StatCard';
@@ -149,7 +150,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const maintenanceCount = inventory.filter(i => i.status === 'Maintenance').length;
     const recentRentals = transactions.filter(tx => tx.status === 'Active' || tx.status === 'Overdue').slice(0, 5);
     return (
-      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-lg mx-auto">
+      <div className="space-y-6 max-w-lg mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>

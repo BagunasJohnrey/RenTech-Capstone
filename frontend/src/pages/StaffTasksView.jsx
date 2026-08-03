@@ -3,6 +3,7 @@ import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package }
 import { api } from '../utils/api';
 import { customerLabel, itemLabel } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
+import { isReleased } from '../hooks/useTransactions';
 
 export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease }) {
   const today = new Date();
@@ -26,7 +27,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
 
   // Ready for Pickup
   const pendingPickup = transactions.filter(tx =>
-    (tx.status === 'Active' || tx.status === 'Reserved') && !tx.conditionPhoto
+    (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx)
   );
 
   // Overdue data
@@ -47,7 +48,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
     return [...transactions]
       .filter(tx => {
         if (activityFilter === 'All') return true;
-        if (activityFilter === 'For Release') return (tx.status === 'Active' || tx.status === 'Reserved') && !tx.conditionPhoto;
+        if (activityFilter === 'For Release') return (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx);
         return tx.status === activityFilter;
       })
       .sort((a, b) => new Date(b.date || b.rentalDate || 0) - new Date(a.date || a.rentalDate || 0));
@@ -56,7 +57,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
   // --- Calendar ---
   const calendarTransactions = useMemo(() => {
     if (activityFilter === 'All') return transactions;
-    if (activityFilter === 'For Release') return transactions.filter(tx => (tx.status === 'Active' || tx.status === 'Reserved') && !tx.conditionPhoto);
+    if (activityFilter === 'For Release') return transactions.filter(tx => (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx));
     return transactions.filter(tx => tx.status === activityFilter);
   }, [transactions, activityFilter]);
 
@@ -368,7 +369,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                                 className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="Send SMS">
                                 <MessageCircle size={14} />
                               </button>
-                              {!tx.conditionPhoto && (tx.status === 'Active' || tx.status === 'Reserved') && (
+                              {!isReleased(tx) && (tx.status === 'Active' || tx.status === 'Reserved') && (
                                 <button onClick={(e) => { e.stopPropagation(); setReleaseTx(tx); }}
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors" title="Release Item">
                                   <Package size={14} />

@@ -1,4 +1,4 @@
-import { Edit3, Trash2, RotateCcw, Calendar, CheckCircle2, AlertTriangle, Sparkles } from 'lucide-react';
+import { Edit3, Trash2, RotateCcw, Calendar, CheckCircle2, AlertTriangle, Sparkles, Eye } from 'lucide-react';
 import ItemImage from './ItemImage';
 
 const STATUSES = ['Available', 'Cleaning', 'Damaged'];
@@ -170,17 +170,38 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
             <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
           )}
         </p>
-        <button data-tour="book" type="button"
-          onClick={(e) => { e.stopPropagation(); if (guest) onViewDetail?.(item); else onBook?.(); }}
-          disabled={!guest && (item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted')}
-          className={`w-full mt-3 font-semibold py-2.5 rounded-full text-[13px] shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
-            (!guest && (item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted'))
-              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              : 'bg-white border border-gray-200 text-gray-900 hover:border-gray-400'
-          }`}
-        >
-          {guest ? 'View Details' : (item.status === 'Available' ? 'Rent Now' : 'Check Availability')}
-        </button>
+        {(() => {
+          const disabled = !guest && (item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted');
+          const sizingCls = 'w-full mt-3 font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-2';
+          if (guest) {
+            return (
+              <button data-tour="book" type="button"
+                onClick={(e) => { e.stopPropagation(); onViewDetail?.(item); }}
+                className={`${sizingCls} bg-white border border-[#bf4a53]/60 text-[#bf4a53] hover:bg-[#bf4a53] hover:text-white hover:shadow-lg hover:shadow-[#bf4a53]/25 active:scale-[0.98]`}
+              >
+                <Eye size={15} />
+                View Details
+              </button>
+            );
+          }
+          if (disabled) {
+            return (
+              <button data-tour="book" type="button" disabled
+                className={`${sizingCls} bg-gray-100 text-gray-400 cursor-not-allowed shadow-none`}>
+                Unavailable
+              </button>
+            );
+          }
+          return (
+            <button data-tour="book" type="button"
+              onClick={(e) => { e.stopPropagation(); onBook?.(); }}
+              className={`${sizingCls} bg-gradient-to-r from-[#b33842] via-[#bf4a53] to-[#d97079] text-white shadow-md shadow-[#bf4a53]/30 hover:shadow-lg hover:shadow-[#bf4a53]/40 hover:brightness-110 active:scale-[0.98]`}
+            >
+              <Calendar size={14} />
+              <span>Rent Now</span>
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

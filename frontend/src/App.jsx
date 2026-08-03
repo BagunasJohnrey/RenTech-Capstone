@@ -460,6 +460,20 @@ export default function RentechApp() {
     );
   }
 
+  // From the landing Featured Pieces: jump into the guest collection and open
+  // that exact item's detail modal (fetching it if inventory isn't loaded yet).
+  const handleViewFeatured = async (entry) => {
+    const raw = entry?._item;
+    const id = raw?.id ?? entry?.id;
+    setGuestView(true);
+
+    let item = raw || inventory.find((i) => i.id === id);
+    if (!item && id != null) {
+      try { item = await api.get(`/inventory/${id}`); } catch { item = null; }
+    }
+    if (item) setDetailItem(item);
+  };
+
   // Render: Landing -> Login -> Main App
   if (!isLoggedIn) {
     if (showLoginPage) {
@@ -468,20 +482,44 @@ export default function RentechApp() {
     // Guest (public) catalog browsing — no account required to look.
     if (guestView) {
       return (
-        <div className="min-h-screen bg-[#fcfcfd]">
-          <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-gray-100 flex items-center justify-between px-4 py-3">
-            <button onClick={() => setGuestView(false)} className="flex items-center gap-2 font-extrabold tracking-tighter text-gray-950">
-              <img src="/RenTech.png" alt="RENTECH" className="w-7 h-7 rounded-lg object-contain" />
-              RENTECH<span className="text-[#bf4a53]">.</span>
-            </button>
-            <button
-              onClick={() => { setGuestView(false); setShowLoginPage(true); }}
-              className="bg-gray-950 text-white px-4 py-2 rounded-full text-xs font-bold hover:bg-gray-800 transition-colors"
-            >
-              Sign In
-            </button>
+        <div className="min-h-screen bg-[#FAFAFB] selection:bg-[#bf4a53]/10 selection:text-[#bf4a53] overflow-x-hidden">
+          {/* Glass nav — matches landing page */}
+          <header className="fixed top-0 inset-x-0 z-40 bg-[#FAFAFB]/80 backdrop-blur-lg border-b border-gray-100">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
+              <button onClick={() => setGuestView(false)} className="flex items-center gap-2 font-extrabold tracking-tighter text-gray-950 shrink-0">
+                <img src="/RenTech.png" alt="RENTECH" className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-xl" />
+                <span className="hidden sm:block">RENTECH<span className="text-[#bf4a53]">.</span></span>
+              </button>
+
+              <div className="flex items-center gap-2 md:gap-3 shrink-0">
+                <button
+                  onClick={() => setGuestView(false)}
+                  className="text-xs md:text-sm font-semibold text-gray-600 px-3 py-2 hover:text-gray-950 transition-colors"
+                >
+                  ← Home
+                </button>
+                <button
+                  onClick={() => { setGuestView(false); setShowLoginPage(true); }}
+                  className="bg-[#bf4a53] text-white px-5 py-2.5 md:px-7 md:py-3 rounded-full font-bold text-xs md:text-sm shadow-lg shadow-[#bf4a53]/20 hover:bg-[#a63f47] transition-colors whitespace-nowrap"
+                >
+                  Sign In to Rent
+                </button>
+              </div>
+            </div>
           </header>
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+
+          {/* Hero label */}
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-28 md:pt-32 pb-2 md:pb-4 text-center relative">
+            <div className="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:32px_32px] opacity-40 -z-10" />
+            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tighter text-gray-950">
+              The Collection
+            </h1>
+            <p className="mt-3 text-sm md:text-base text-gray-500 font-medium max-w-xl mx-auto">
+              Browse as a guest. Sign in to book instantly, or tap any piece to see details and availability.
+            </p>
+          </div>
+
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 md:py-8">
             <InventoryPage
               role="Customer"
               inventory={inventory}
@@ -504,7 +542,11 @@ export default function RentechApp() {
       );
     }
     return (
-      <LandingPage onLogin={() => setShowLoginPage(true)} onBrowse={() => setGuestView(true)} />
+      <LandingPage
+        onLogin={() => setShowLoginPage(true)}
+        onBrowse={() => setGuestView(true)}
+        onViewFeatured={handleViewFeatured}
+      />
     );
   }
 

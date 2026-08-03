@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence, useScroll, useMotionValueEvent } from 'framer-motion';
-import { 
-  Sparkles, ShoppingBag, ShieldCheck, ArrowRight, 
-  CalendarDays, MapPin, ChevronDown 
+import {
+  ShoppingBag, ShieldCheck, ArrowRight,
+  CalendarDays, MapPin, ChevronDown, Phone, Clock
 } from 'lucide-react';
+import ItemImage from '../components/ItemImage';
+import { getSaleInfo } from '../components/ItemCard';
 
 // --- Custom Styles (unchanged) ---
 const customStyles = `
@@ -57,24 +59,28 @@ const galleryItems = [
     id: 1,
     title: 'Emerald Silk Mermaid Evening Gown',
     category: 'Gowns',
+    price: 'From ₱1,500 / day',
     img: 'https://www.misshow.com/cdn/shop/files/Elegant-Stunning-Off-the-Shoulder-Mermaid-Prom-Evening-Dresses-Ruffles-With-Split.jpg?v=1763109918'
   },
   {
     id: 2,
     title: 'Hand-Painted Maria Clara Ensembles',
     category: 'Filipiniana',
+    price: 'From ₱1,500 / day',
     img: 'https://cmcbaronglv.com/cdn/shop/files/1_d5ba90b4-d664-40db-8bed-ef53a23792e5.png?v=1748915935&width=713'
   },
   {
     id: 3,
     title: 'Organza Barong with Geometric Patterns',
     category: 'Barong',
+    price: 'From ₱1,500 / day',
     img: 'https://barongsrus.com/wp-content/uploads/2023/08/1070A_SMM.jpg'
   },
   {
     id: 4,
     title: 'Forest Green 3-Piece Wool Suit',
     category: 'Suits',
+    price: 'From ₱1,500 / day',
     img: 'https://i.pinimg.com/1200x/77/49/8b/77498bef8f7d20fed02a499253c3beef.jpg'
   }
 ];
@@ -86,9 +92,45 @@ const faqs = [
   { q: "What happens if I return the item late or damaged?", a: "Our automated system calculates late penalties and damage fees based on predefined business rules. You will be notified via SMS regarding your return deadlines to help you avoid these fees." }
 ];
 
+// Fetch up to 4 available pieces from the public catalog for the gallery.
+// Falls back to the static `galleryItems` if the request fails or returns empty.
+function useFeaturedItems(fallback) {
+  const [items, setItems] = useState(null); // null = still loading
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const API_BASE = import.meta.env.VITE_API_URL || '/api';
+    fetch(`${API_BASE}/inventory`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!active) return;
+        const list = Array.isArray(data) ? data : [];
+        const available = list
+          .filter((i) => i.status === 'Available')
+          .slice(0, 4)
+          .map((i) => ({ id: i.id, title: i.name, category: i.category || 'Piece', _item: i }));
+        setItems(available.length > 0 ? available : null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setFailed(true);
+      });
+    return () => { active = false; };
+  }, []);
+
+  // While loading, show nothing (prevents flash). On error, use fallback.
+  if (items && items.length) return { items };
+  if (failed) return { items: fallback };
+  return { items: [] };
+}
+
 // --- Sub-Components (unchanged) ---
 const FeatureCard = ({ icon: Icon, title, description }) => (
-  <motion.div 
+  <motion.div
     variants={fadeInUp}
     whileHover={hoverScale}
     className="bg-white rounded-[24px] p-6 md:p-8 border border-gray-100 shadow-sm shadow-gray-950/5 group transition-all duration-300 hover:border-gray-200 hover:shadow-lg hover:shadow-gray-950/5"
@@ -100,6 +142,64 @@ const FeatureCard = ({ icon: Icon, title, description }) => (
     <p className="text-gray-600 leading-relaxed text-sm md:text-base font-medium">{description}</p>
   </motion.div>
 );
+
+// Gallery card: renders a real inventory item when `_item` is present, else the
+// original static markup (title/img/price fields).
+const GalleryCard = ({ item, onBrowse }) => {
+  const isReal = !!item._item;
+  const sale = isReal ? getSaleInfo(item._item) : null;
+  const price = isReal ? sale.price : null;
+  const hasSale = isReal && sale.active;
+
+  return (
+    <motion.button
+      type="button"
+      onClick={onBrowse}
+      variants={fadeInUp}
+      whileHover={{ y: -6 }}
+      whileTap={buttonPress}
+      className="group relative rounded-2xl md:rounded-[28px] overflow-hidden bg-gray-100 aspect-[3/4] cursor-pointer shadow-sm hover:shadow-xl hover:shadow-gray-950/10 transition-shadow duration-300 text-left"
+    >
+      {isReal ? (
+        <ItemImage image={item._item.image} alt={item.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+      ) : (
+        <img src={item.img} alt={item.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+      )}
+      <div className="absolute inset-0 bg-gradient-to-t from-gray-950/85 via-gray-950/20 to-transparent" />
+      {/* Category chip */}
+      <span className="absolute top-3 left-3 md:top-4 md:left-4 inline-flex items-center px-3 py-1 rounded-full bg-white/85 backdrop-blur-md text-gray-900 text-[10px] md:text-xs font-bold tracking-widest uppercase shadow-sm">
+        {item.category}
+      </span>
+      {/* Sale badge */}
+      {hasSale && (
+        <span className="absolute top-3 right-3 md:top-4 md:right-4 inline-flex items-center px-3 py-1 rounded-full bg-[#bf4a53] text-white text-[10px] md:text-xs font-bold tracking-widest uppercase shadow-sm">
+          On Sale
+        </span>
+      )}
+      {/* Bottom copy */}
+      <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col gap-1">
+        <h3 className={`text-white text-sm md:text-lg font-bold leading-snug ${isReal ? 'line-clamp-2' : ''}`}>{item.title}</h3>
+        <p className="text-white/70 text-[11px] md:text-sm font-medium">
+          {isReal ? (
+            hasSale ? (
+              <>
+                <span className="line-through opacity-70 mr-1.5">From ₱{Number(item._item.price).toLocaleString()} / day</span>
+                <span className="text-white font-semibold">₱{Number(price).toLocaleString()} / day</span>
+              </>
+            ) : (
+              <>From ₱{Number(item._item.price).toLocaleString()} / day</>
+            )
+          ) : (
+            item.price
+          )}
+        </p>
+        <span className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-full bg-[#bf4a53] text-white text-[10px] md:text-xs font-bold px-3 py-1.5 md:opacity-0 md:translate-y-1 md:group-hover:opacity-100 md:group-hover:translate-y-0 transition-all duration-300">
+          {isReal ? 'Rent this piece' : 'Browse this piece'} <ArrowRight size={12} strokeWidth={2.5} />
+        </span>
+      </div>
+    </motion.button>
+  );
+};
 
 const FaqItem = ({ question, answer }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -131,9 +231,10 @@ const FaqItem = ({ question, answer }) => {
 };
 
 // --- Main Component ---
-export default function LandingPage({ onLogin, onBrowse }) {
+export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
   const [navHidden, setNavHidden] = useState(false);
   const { scrollY } = useScroll();
+  const { items: featuredItems } = useFeaturedItems(galleryItems);
 
   useMotionValueEvent(scrollY, "change", (latest) => {
     const previous = scrollY.getPrevious();
@@ -194,14 +295,6 @@ export default function LandingPage({ onLogin, onBrowse }) {
               >
                 Sign In
               </motion.button>
-              <motion.button 
-                whileHover={hoverScale}
-                whileTap={buttonPress}
-                onClick={onBrowse}
-                className="bg-gray-950 text-white px-4 py-2 md:px-5 md:py-2.5 rounded-full font-bold text-xs md:text-sm shadow-sm hover:bg-gray-800 transition-colors whitespace-nowrap"
-              >
-                Browse Now
-              </motion.button>
             </div>
           </nav>
         </motion.header>
@@ -217,11 +310,6 @@ export default function LandingPage({ onLogin, onBrowse }) {
           </div>
 
           <motion.div initial="hidden" animate="visible" variants={staggerContainer} className="max-w-6xl mx-auto relative z-10 text-center flex flex-col items-center w-full">
-            <motion.div variants={fadeInUp} className="inline-flex items-center gap-2 bg-white/60 backdrop-blur-md border border-gray-200 rounded-full px-4 py-2 text-xs md:text-sm font-semibold text-gray-700 mb-6 md:mb-8 shadow-sm">
-              <Sparkles size={14} className="text-[#bf4a53]" />
-              Powered by RenTech for Mylene's Boutique
-            </motion.div>
-
             <motion.h1 variants={blurFadeInUp} className="text-5xl sm:text-6xl md:text-8xl font-extrabold tracking-tighter leading-[1.05] md:leading-[0.95] text-gray-950 mb-6 md:mb-8">
               Rent the outfit, <br />
               <span className="text-[#bf4a53]">own the moment.</span>
@@ -232,9 +320,9 @@ export default function LandingPage({ onLogin, onBrowse }) {
             </motion.p>
 
             <motion.div variants={fadeInUp} className="flex flex-col sm:flex-row items-center justify-center gap-4 w-full sm:w-auto">
-              <motion.button 
-                whileHover={{ scale: 1.03, y: -2 }} 
-                whileTap={buttonPress} 
+              <motion.button
+                whileHover={{ scale: 1.03, y: -2 }}
+                whileTap={buttonPress}
                 onClick={onBrowse}
                 className="w-full sm:w-auto bg-[#bf4a53] text-white px-8 py-4 md:px-10 md:py-5 rounded-full font-bold text-base md:text-lg shadow-lg shadow-[#bf4a53]/20 hover:bg-[#a63f47] transition-all flex items-center justify-center gap-2"
               >
@@ -247,30 +335,32 @@ export default function LandingPage({ onLogin, onBrowse }) {
 
         {/* ---------- Collection (Gallery) Section ---------- */}
         <motion.section id="collection" initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.1 }} variants={staggerContainer} className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 md:px-12 py-16 md:py-24 scroll-mt-20">
-          <motion.div variants={fadeInUp} className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-8 md:mb-12 gap-4">
-            <div>
-              <h2 className="text-sm md:text-base font-bold text-[#bf4a53] uppercase tracking-[0.2em] mb-2 md:mb-4">Mylene's Catalog</h2>
-              <p className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-950 tracking-tighter">Featured Pieces</p>
-            </div>
-            <button onClick={onBrowse} className="hidden sm:flex items-center gap-2 text-gray-600 font-bold hover:text-[#bf4a53] transition-colors">
-              View Full Collection <ArrowRight size={18} />
-            </button>
+          <div className="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:32px_32px] opacity-30 -z-10 rounded-[40px]" />
+
+          <motion.div variants={fadeInUp} className="text-center max-w-2xl mx-auto mb-10 md:mb-16">
+            <h2 className="text-sm md:text-base font-bold text-[#bf4a53] uppercase tracking-[0.2em] mb-2 md:mb-4">Mylene's Catalog</h2>
+            <p className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-gray-950 tracking-tighter leading-tight">Featured Pieces</p>
+            <p className="text-gray-500 mt-4 md:mt-5 text-sm md:text-lg leading-relaxed font-medium">
+              A curated edit of gowns, suits, Filipiniana and costumes — ready for proms, debuts, and every social event in between.
+            </p>
           </motion.div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-            {galleryItems.map((item) => (
-              <motion.div key={item.id} variants={fadeInUp} whileHover={{ y: -5 }} className="group relative rounded-2xl md:rounded-3xl overflow-hidden bg-gray-200 aspect-[3/4] cursor-pointer shadow-sm">
-                <img src={item.img} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-                <div className="absolute inset-0 bg-gradient-to-t from-gray-950/80 via-transparent to-transparent opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-5 md:p-6">
-                  <span className="text-white/80 text-xs md:text-sm font-bold tracking-widest uppercase mb-1">{item.category}</span>
-                  <h3 className="text-white text-lg md:text-xl font-bold">{item.title}</h3>
-                </div>
-              </motion.div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+            {featuredItems.map((item) => (
+              <GalleryCard key={item.id} item={item} onBrowse={() => onViewFeatured?.(item)} />
             ))}
           </div>
-          <button onClick={onBrowse} className="sm:hidden w-full mt-6 flex items-center justify-center gap-2 bg-gray-100 text-gray-950 py-4 rounded-full font-bold">
-            View Full Collection <ArrowRight size={18} />
-          </button>
+
+          <motion.div variants={fadeInUp} className="mt-10 md:mt-14 flex justify-center">
+            <motion.button
+              whileHover={{ scale: 1.03, y: -2 }}
+              whileTap={buttonPress}
+              onClick={onBrowse}
+              className="bg-gray-950 text-white px-8 py-3.5 md:px-10 md:py-4 rounded-full font-bold text-sm md:text-base shadow-lg shadow-gray-950/10 hover:bg-gray-800 transition-colors inline-flex items-center gap-2"
+            >
+              View Full Collection <ArrowRight size={18} />
+            </motion.button>
+          </motion.div>
         </motion.section>
 
         {/* ---------- How it Works Section (unchanged) ---------- */}
@@ -340,29 +430,84 @@ export default function LandingPage({ onLogin, onBrowse }) {
           </motion.div>
         </motion.section>
 
-        {/* ---------- Footer (unchanged except logo) ---------- */}
-        <footer className="border-t border-gray-200 bg-white py-10 md:py-12 px-4 sm:px-6">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 text-gray-600 font-medium">
-            <div className="text-center md:text-left">
-               <div className="text-xl md:text-2xl font-extrabold tracking-tighter flex items-center justify-center md:justify-start gap-2 text-gray-950 mb-2">
-                  <img 
-                    src="/RenTech.png" 
-                    alt="RENTECH Logo" 
-                    className="w-7 h-7 md:w-8 md:h-8 object-contain rounded-lg"
+        {/* ---------- Footer ---------- */}
+        <footer className="border-t border-gray-200 bg-white pt-14 md:pt-20 pb-8 px-4 sm:px-6">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10 md:gap-12 text-gray-600 font-medium">
+            {/* Brand */}
+            <div>
+               <div className="text-xl md:text-2xl font-extrabold tracking-tighter flex items-center gap-2 text-gray-950 mb-4">
+                  <img
+                    src="/RenTech.png"
+                    alt="Mylene's Boutique Logo"
+                    className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-lg"
                   />
-                  RENTECH
+                  Mylene's Boutique
                </div>
-               <p className="text-xs md:text-sm leading-relaxed">Powered by AI Analytics for Mylene's Boutique.</p>
+               <p className="text-sm leading-relaxed text-gray-500">
+                  23 years of legacy in Balayan, Batangas. Effortless rentals of gowns, suits, Filipiniana and costumes for proms, debuts, and every social event.
+               </p>
             </div>
-            
-            <div className="flex flex-wrap justify-center gap-4 md:gap-6 text-xs md:text-sm">
-               <a href="#collection" className="hover:text-[#bf4a53] transition-colors">Collection</a>
-               <a href="#how-it-works" className="hover:text-[#bf4a53] transition-colors">How it Works</a>
-               <a href="#location" className="hover:text-[#bf4a53] transition-colors">Location</a>
+
+            {/* Explore */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Explore</h4>
+              <ul className="space-y-3 text-sm">
+                <li><a href="#collection" className="hover:text-[#bf4a53] transition-colors">Collection</a></li>
+                <li><a href="#how-it-works" className="hover:text-[#bf4a53] transition-colors">How it Works</a></li>
+                <li><a href="#location" className="hover:text-[#bf4a53] transition-colors">Location</a></li>
+                <li><a href="#faq" className="hover:text-[#bf4a53] transition-colors">FAQ</a></li>
+              </ul>
+            </div>
+
+            {/* Visit Us */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Visit Us</h4>
+              <ul className="space-y-3 text-sm">
+                <li className="flex items-start gap-2">
+                  <MapPin size={16} className="text-[#bf4a53] mt-0.5 shrink-0" />
+                  <span>Balayan, Batangas, Philippines</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Clock size={16} className="text-[#bf4a53] mt-0.5 shrink-0" />
+                  <span>Mon – Sat, 9:00 AM – 6:00 PM</span>
+                </li>
+                <li>
+                  <a
+                    href="https://www.google.com/maps/place/Balayan,+Batangas"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-[#bf4a53] font-semibold hover:underline"
+                  >
+                    Get Directions <ArrowRight size={14} strokeWidth={2.5} />
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            {/* Contact */}
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Contact</h4>
+              <ul className="space-y-3 text-sm">
+                <li className="flex items-start gap-2">
+                  <Phone size={16} className="text-[#bf4a53] mt-0.5 shrink-0" />
+                  <span>In-store inquiries &amp; fittings</span>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={onLogin}
+                    className="inline-flex items-center gap-1.5 text-[#bf4a53] font-semibold hover:underline"
+                  >
+                    Book an appointment <ArrowRight size={14} strokeWidth={2.5} />
+                  </button>
+                </li>
+              </ul>
             </div>
           </div>
-          <div className="max-w-7xl mx-auto text-center mt-8 pt-6 md:pt-8 border-t border-gray-100 text-xs md:text-sm text-gray-500 font-medium">
-            © {new Date().getFullYear()} Mylene's Boutique. All rights reserved. (Prototype Build)
+
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 mt-12 pt-6 md:pt-8 border-t border-gray-100 text-xs md:text-sm text-gray-500 font-medium">
+            <p>© {new Date().getFullYear()} Mylene's Boutique. All rights reserved.</p>
+            <p>Online reservation &amp; rental portal — Balayan, Batangas</p>
           </div>
         </footer>
       </div>
