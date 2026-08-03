@@ -21,9 +21,11 @@ export const createRentalSchema = z.object({
 
 export const returnSchema = z.object({
   body: z.object({
-    isDamaged: z.boolean(),
-    isLate: z.boolean(),
+    returnDate: z.string().optional(),     // server falls back to "now" if omitted
+    isDamaged: z.boolean().optional().default(false),
+    isLate: z.boolean().optional(),        // informational; late fee computed by date anyway
     returnPhoto: z.string().optional(),
+    conditionPhoto: z.string().optional(), // legacy alias
     notes: z.string().optional(),
   }),
 });
@@ -100,8 +102,8 @@ export async function processReturn(req: AuthenticatedRequest, res: Response, ne
     const result = await transactionService.processReturn(
       String(req.params.id),
       req.user.id,
-      new Date().toISOString(), // auto-assign when client doesn't provide dates
-      req.body.isDamaged,
+      req.body.returnDate || new Date().toISOString(), // honor client's date; else now
+      req.body.isDamaged ?? false,
       req.body.returnPhoto ?? req.body.conditionPhoto,
       req.body.notes
     );

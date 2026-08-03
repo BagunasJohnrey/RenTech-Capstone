@@ -3,7 +3,7 @@ import { X, Camera, Clock, AlertTriangle, CheckCircle, DollarSign, Undo2, FileTe
 
 import { customerLabel, itemLabel } from '../utils/format';
 import { storageService } from '../services';
-import { fileToBase64 } from '../utils/file';
+import { fileToBase64, downscaleToJpeg } from '../utils/file';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export default function ProcessReturnModal({ transaction, onClose, onComplete }) {
@@ -45,11 +45,10 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
     if (returnPhotoFile) {
       setSubmitting(true);
       try {
-        const base64 = await fileToBase64(returnPhotoFile);
-        const contentType = returnPhotoFile.type?.startsWith('image/') ? returnPhotoFile.type : 'image/jpeg';
+        const base64 = (await downscaleToJpeg(returnPhotoFile)) || (await fileToBase64(returnPhotoFile));
         const { path } = await storageService.upload(
           `rental/${transaction.id}/return-${Date.now()}.jpg`,
-          contentType,
+          'image/jpeg',
           base64
         );
         photoPath = path;

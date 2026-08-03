@@ -3,7 +3,7 @@ import { X, Camera, Package, User, Calendar } from 'lucide-react';
 import { api } from '../utils/api';
 import { storageService } from '../services';
 import { customerLabel, itemLabel } from '../utils/format';
-import { fileToBase64 } from '../utils/file';
+import { fileToBase64, downscaleToJpeg } from '../utils/file';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
@@ -35,11 +35,10 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
     setReleasing(true);
     setError('');
     try {
-      const base64 = await fileToBase64(photoFile);
-      const contentType = photoFile.type?.startsWith('image/') ? photoFile.type : 'image/jpeg';
+      const base64 = (await downscaleToJpeg(photoFile)) || (await fileToBase64(photoFile));
       const { path } = await storageService.upload(
         `rental/${transaction.id}/release-${Date.now()}.jpg`,
-        contentType,
+        'image/jpeg',
         base64
       );
       const updated = await api.put(`/transactions/${transaction.id}/release`, {
