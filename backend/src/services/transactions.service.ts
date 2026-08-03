@@ -193,7 +193,7 @@ export async function getTransaction(id: string) {
   const tx = await prisma.transaction.findUnique({
     where: { id },
     include: {
-      customer: { select: { id: true, name: true, email: true, phone: true } },
+      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
       processedBy: { select: { id: true, name: true } },
       item: true,
       payments: { orderBy: { createdAt: 'desc' } },
@@ -224,10 +224,10 @@ export async function listTransactions(params: {
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
       where,
-      include: {
-        customer: { select: { id: true, name: true, email: true } },
-        item: { select: { id: true, name: true, category: true } },
-      },
+        include: {
+          customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
+          item: { select: { id: true, name: true, category: true } },
+        },
       orderBy: { createdAt: 'desc' },
       take: params.limit || 50,
       skip: params.offset || 0,

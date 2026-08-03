@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera } from 'lucide-react';
 import { customerLabel, customerPhone, itemLabel } from '../utils/format';
+import { normalizeTx } from '../hooks/useTransactions';
 import ItemImage from './ItemImage';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
@@ -47,7 +48,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   useEffect(() => {
     setTx(transaction);
     if (transaction?.id && fetchFull) {
-      fetchFull(transaction.id).then(setTx).catch(() => {});
+      // normalize the full record so customerProfile is always present —
+      // otherwise the address flickers in from the list item then vanishes.
+      fetchFull(transaction.id).then((full) => setTx(normalizeTx(full))).catch(() => {});
     }
   }, [transaction, fetchFull]);
 
@@ -99,8 +102,11 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 <span className="text-[10px] font-bold uppercase tracking-wide">Customer</span>
               </div>
               <p className="font-bold text-gray-900">{customerLabel(tx.customer) || '—'}</p>
-              {customerPhone(tx.customer, tx.contact || tx.customerPhone) && (
-                <p className="text-xs text-gray-500">{customerPhone(tx.customer, tx.contact || tx.customerPhone)}</p>
+              {customerPhone(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone) && (
+                <p className="text-xs text-gray-500">{customerPhone(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone)}</p>
+              )}
+              {tx.customerProfile?.address && (
+                <p className="text-xs text-gray-500">{tx.customerProfile.address}</p>
               )}
             </div>
             <div className="bg-gray-50 rounded-2xl p-4 space-y-1">
@@ -178,9 +184,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               ) : (
                 <p className="text-gray-400 italic">No notes</p>
               )}
-              {tx.address && (
+              {(tx.address || tx.customerProfile?.address) && (
                 <p className="text-gray-500 mt-2 pt-2 border-t border-gray-100">
-                  <span className="font-medium text-gray-400">Address:</span> {tx.address}
+                  <span className="font-medium text-gray-400">Address:</span> {tx.address || tx.customerProfile?.address}
                 </p>
               )}
             </div>

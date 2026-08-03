@@ -120,9 +120,8 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
   const { success: toastSuccess, error: toastError } = useToast();
   const [form, setForm] = useState({
     name: customerLabel(transaction.customer) || transaction.customer || '',
-    phone: transaction.contact || transaction.customer?.phone || '',
-    address: transaction.address || transaction.customer?.address || '',
-    preferences: transaction.customer?.preferences || '',
+    phone: transaction.contact || transaction.customerProfile?.phone || '',
+    address: transaction.address || transaction.customerProfile?.address || '',
   });
   const [saving, setSaving] = useState(false);
 
@@ -138,14 +137,10 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
     }
     setSaving(true);
     try {
-      const prefs = typeof form.preferences === 'string'
-        ? form.preferences.split(',').map(s => s.trim()).filter(Boolean)
-        : form.preferences;
       const updated = await customerService.update(customerId, {
         name: form.name.trim(),
         phone: form.phone || null,
         address: form.address || null,
-        preferences: prefs,
       });
       toastSuccess('Customer updated');
       onSaved?.({ type: 'customer', updated });
@@ -161,9 +156,8 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
       <Field label="Full Name" required value={form.name} onChange={(e) => update('name', e.target.value)} className={inputClass} autoComplete="name" />
       <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value.replace(/\D/g, ''))} className={inputClass} inputMode="tel" autoComplete="tel" placeholder="0917…" />
       <Field label="Address" value={form.address} onChange={(e) => update('address', e.target.value)} className={inputClass} autoComplete="street-address" placeholder="Street, Balayan, Batangas" />
-      <Field label="Interests (comma separated item types)" value={form.preferences}
-        onChange={(e) => update('preferences', e.target.value)} className={inputClass}
-        placeholder="Gown, Suit, Barong" />
+
+      <p className="text-[10px] text-gray-400">Item / payment / fee details still require cancel + re-book.</p>
 
       <div className="grid grid-cols-2 gap-3 pt-1">
         <button onClick={onClose} className="py-3 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl border border-gray-200 transition-colors">Cancel</button>
@@ -172,7 +166,6 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
           {saving ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : <><Save size={16} /> Save Changes</>}
         </button>
       </div>
-      <p className="text-[10px] text-gray-400 text-center">Item / payment / fee details still require cancel + re-book.</p>
     </div>
   );
 }

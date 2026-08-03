@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil } from 'lucide-react';
+import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
-import { customerLabel, itemLabel } from '../utils/format';
-import { isReleased, canReturn, getReleasePhoto } from '../hooks/useTransactions';
+import { customerLabel, customerTelLink, itemLabel } from '../utils/format';
+import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
 import ItemImage from '../components/ItemImage';
 
 const formatDate = (d) => {
@@ -43,6 +43,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [detailTx, setDetailTx] = useState(null);
   const [releaseTx, setReleaseTx] = useState(null);
   const [editRental, setEditRental] = useState(null);       // tx staff is editing (booking dates/notes + customer)
+  const [smsModalTx, setSmsModalTx] = useState(null);
+  const [sendingSms, setSendingSms] = useState(false);
   const itemsPerPage = 10;
 
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
@@ -55,6 +57,23 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     setDateFrom('');
     setDateTo('');
     setCurrentPage(1);
+  };
+
+  const handleSendSMS = async (tx) => {
+    setSendingSms(true);
+    try {
+      await api.post('/sms/send', {
+        profileId: tx.customerId,
+        transactionId: tx.id,
+        message: `Hi ${customerLabel(tx.customer)}, your rental of ${itemLabel(tx.item)} is now overdue. Please return immediately to minimize penalties. Thank you!`,
+      });
+      setSendingSms(false);
+      setSmsModalTx(null);
+      alert('SMS sent successfully.');
+    } catch (err) {
+      setSendingSms(false);
+      alert(err?.message || 'Failed to send SMS.');
+    }
   };
 
   const statusPriority = { Active: 0, Overdue: 1, Reserved: 2, Returned: 3, Cancelled: 4 };
@@ -356,7 +375,27 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                               <span className="sr-only">Release Item</span>
                             </button>
                           )}
-                          {(tx.status === 'Active' || tx.status === 'Overdue') && canReturn(tx, inventory) && role !== 'Customer' && (
+                          {tx.status === 'Overdue' && role !== 'Customer' && customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone) && (
+                            <a
+                              href={customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone)}
+                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
+                              title="Call Customer"
+                            >
+                              <Phone size={15} />
+                              <span className="sr-only">Call Customer</span>
+                            </a>
+                          )}
+                          {tx.status === 'Overdue' && role !== 'Customer' && (
+                            <button
+                              onClick={() => setSmsModalTx(tx)}
+                              className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+                              title="Send SMS"
+                            >
+                              <MessageCircle size={15} />
+                              <span className="sr-only">Send SMS</span>
+                            </button>
+                          )}
+                          {role !== 'Customer' && (tx.status === 'Overdue' || (tx.status === 'Active' && isReleased(tx))) && (
                             <button
                               onClick={() => onReturn(tx)}
                               className="p-1.5 text-[#bf4a53] bg-red-50 hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors"
@@ -500,7 +539,25 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                         <Package size={16} />
                       </button>
                     )}
-                    {(tx.status === 'Active' || tx.status === 'Overdue') && canReturn(tx, inventory) && role !== 'Customer' && (
+                    {tx.status === 'Overdue' && role !== 'Customer' && customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone) && (
+                      <a
+                        href={customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone)}
+                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
+                        title="Call Customer"
+                      >
+                        <Phone size={16} />
+                      </a>
+                    )}
+                    {tx.status === 'Overdue' && role !== 'Customer' && (
+                      <button
+                        onClick={() => setSmsModalTx(tx)}
+                        className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+                        title="Send SMS"
+                      >
+                        <MessageCircle size={16} />
+                      </button>
+                    )}
+                    {role !== 'Customer' && (tx.status === 'Overdue' || (tx.status === 'Active' && isReleased(tx))) && (
                       <button
                         onClick={() => onReturn(tx)}
                         className="p-2 text-[#bf4a53] bg-red-50 hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors"
@@ -575,6 +632,42 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           onClose={() => setDetailTx(null)}
           fetchFull={fetchFull}
         />
+      )}
+
+      {/* SMS Confirmation Modal */}
+      {smsModalTx && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+          onClick={() => setSmsModalTx(null)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-6 border-b border-gray-100/80">
+              <div>
+                <h3 className="font-bold text-lg text-gray-900">Confirm SMS</h3>
+                <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
+              </div>
+              <button onClick={() => setSmsModalTx(null)}
+                className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-gray-50 rounded-2xl p-4 text-sm">
+                <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
+                <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
+                <p className="mt-1"><span className="text-gray-500">Due Date:</span> <strong className="text-red-500">{smsModalTx.dueDate || smsModalTx.date}</strong></p>
+              </div>
+              <p className="text-xs text-gray-500 text-center">The SMS will say: "Please return your rented item immediately."</p>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setSmsModalTx(null)}
+                  className="flex-1 py-2.5 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-full transition-colors">Cancel</button>
+                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms}
+                  className="flex-1 py-2.5 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-full transition-colors shadow-sm shadow-red-500/20">
+                  {sendingSms ? 'Sending...' : 'Send SMS'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {releaseTx && (

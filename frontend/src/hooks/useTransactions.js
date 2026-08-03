@@ -2,9 +2,12 @@ import { useState, useCallback } from 'react';
 import { transactionsService } from '../services';
 
 // Shared normalizer (also imported by App for optimistic updates).
+// `customer` stays a display string for compatibility; `customerProfile`
+// carries the full profile object (phone/address) for edit/detail views.
 export const normalizeTx = (tx) => ({
   ...tx,
   customer: tx.customer?.name ?? tx.customer ?? '',
+  customerProfile: tx.customer ?? null,
   customerId: tx.customer?.id ?? tx.customerId ?? '',
   item: tx.item?.name ?? tx.item ?? '',
   date: tx.rentalDate ?? tx.date ?? '',

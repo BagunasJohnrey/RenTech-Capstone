@@ -14,6 +14,8 @@ export const createRentalSchema = z.object({
     downpayment: z.number().min(0).optional(),
     customerId: z.string().optional(),
     customerName: z.string().optional(),
+    contact: z.string().optional(),
+    address: z.string().optional(),
     notes: z.string().optional(),
     conditionPhoto: z.string().optional(),
   }),
@@ -42,14 +44,42 @@ export async function createRental(req: AuthenticatedRequest, res: Response, nex
       const profile = await prisma.profile.findFirst({
         where: { name: { contains: req.body.customerName, mode: 'insensitive' } },
       });
-      if (!profile) {
-        throw new AppError(404, `Customer "${req.body.customerName}" not found`);
+      if (profile) {
+        customerId = profile.id;
+      } else {
+        // Walk-in with no existing profile: auto-create a customer record so
+        // the rental can be linked. The profile has no auth account (synthetic
+        // userId/email), so the walk-in can't log in — it just carries their
+        // name/phone/address for history, SMS, and the call button.
+        const walkInId = crypto.randomUUID();
+        const created = await prisma.profile.create({
+          data: {
+            userId: `walkin_${walkInId}`,
+            email: `walkin_${walkInId}@rentech.invalid`,
+            name: req.body.customerName.trim(),
+            phone: req.body.contact ?? null,
+            address: req.body.address ?? null,
+            role: 'Customer',
+          },
+        });
+        customerId = created.id;
       }
-      customerId = profile.id;
     }
 
     if (!customerId) {
       throw new AppError(400, 'customerId or customerName is required for staff-created rentals');
+    }
+
+    // Persist the contact number/address staff typed at booking time onto the
+    // customer's profile (only when provided) so SMS + the call button work.
+    if (req.body.contact || req.body.address) {
+      await prisma.profile.update({
+        where: { id: customerId },
+        data: {
+          phone: req.body.contact ?? undefined,
+          address: req.body.address ?? undefined,
+        },
+      });
     }
 
     const tx = await transactionService.createRental(

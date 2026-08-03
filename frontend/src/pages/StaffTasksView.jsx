@@ -284,7 +284,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                         className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] font-bold text-white bg-[#bf4a53] hover:bg-red-700 rounded-full transition-colors shadow-sm">
                         <MessageCircle size={12} /> Send SMS
                       </button>
-                      {onReturn && isOverduePickedUp && (
+                      {onReturn && isOverduePickedUp && isReleased(tx) && (
                         <button onClick={() => { setShowOverdueModal(false); onReturn(tx); }}
                           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-full transition-colors">
                           <Undo2 size={12} /> Return
@@ -419,7 +419,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                                   <Package size={14} />
                                 </button>
                               )}
-                              {onReturn && isPickedUp && (
+                              {onReturn && isPickedUp && isReleased(tx) && (
                                 <button onClick={(e) => { e.stopPropagation(); onReturn(tx); }}
                                   className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors" title="Process Return">
                                   <Undo2 size={14} />
