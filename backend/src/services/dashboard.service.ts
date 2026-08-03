@@ -57,7 +57,7 @@ export async function getKpis(filter?: { start?: Date; end?: Date }) {
     availableItems,
     inUseItems,
     utilizationRate: pct(inUseItems, totalItems),
-    overdueRate: pct(overdueReturns, activeRentals),
+    overdueRate: pct(overdueReturns, overdueReturns + returnedCount),
     returnedRate: pct(returnedCount, allTransactions),
     cancellationRate: pct(cancelledCount, allTransactions),
   };

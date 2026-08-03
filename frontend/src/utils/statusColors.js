@@ -26,5 +26,14 @@ export const TX_STATUS_PILLS = {
   Cancelled: { bg: 'bg-gray-100', text: 'text-gray-500', dot: 'bg-gray-400', border: 'border-gray-200', ring: 'ring-gray-200' },
 };
 
+// Hex equivalents for charts/legends — mirrors the pill semantics above.
+export const TX_STATUS_HEX = {
+  Reserved: '#6366f1',
+  Active: '#3b82f6',
+  Overdue: '#ef4444',
+  Returned: '#10b981',
+  Cancelled: '#6b7280',
+};
+
 export const itemPill = (status) => ITEM_STATUS_PILLS[status] || ITEM_STATUS_PILLS.Deleted;
 export const txPill = (status) => TX_STATUS_PILLS[status] || TX_STATUS_PILLS.Cancelled;

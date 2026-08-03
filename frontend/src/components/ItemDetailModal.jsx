@@ -5,7 +5,7 @@ import { useToast } from './Toast';
 import ItemImage from './ItemImage';
 import { getSaleInfo } from './ItemCard';
 import { Skeleton } from './Skeleton';
-import { itemPill } from '../utils/statusColors';
+import { itemPill, txPill } from '../utils/statusColors';
 
 // Item detail + availability view. Guests see it (and a "Sign In to Rent"
 // button that redirects to sign-up); logged-in customers get "Rent Now".
@@ -116,7 +116,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
                 {blockedRanges.map((range, i) => (
                   <div key={range.transactionId || i} className="flex items-center justify-between px-3 py-2 bg-red-50/70 rounded-lg">
                     <span className="text-xs font-medium text-red-700 whitespace-nowrap">{range.start} — {range.end}</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2 ${range.status === 'Active' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-2 ${txPill(range.status).bg} ${txPill(range.status).text}`}>
                       {range.status}
                     </span>
                   </div>

@@ -12,6 +12,7 @@ import AIReportModal from '../components/AIReportModal';
 import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
 import { AIInsightsSkeleton } from '../components/PageSkeletons';
+import { TX_STATUS_HEX } from '../utils/statusColors';
 
 const fmt = (n) => `₱${Number(n).toLocaleString()}`;
 const shortMonth = (l) => l?.split(' ')[0] || '';
@@ -30,7 +31,7 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
-const STATUS_COLORS = { Active: '#bf4a53', Overdue: '#f59e0b', Returned: '#10b981', Cancelled: '#6b7280' };
+const STATUS_COLORS = { Active: TX_STATUS_HEX.Active, Overdue: TX_STATUS_HEX.Overdue, Returned: TX_STATUS_HEX.Returned, Cancelled: TX_STATUS_HEX.Cancelled };
 const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCcw, Cancelled: XCircle };
 
 const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];

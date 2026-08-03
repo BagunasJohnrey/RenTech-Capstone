@@ -37,3 +37,32 @@ export function useTodayTasks(role) {
 
   return data;
 }
+
+// Server-authoritative business KPIs (monthly revenue, utilization, rates…)
+// from GET /dashboard/kpis — cached the same way as the today-digest.
+const kpisCache = new Map(); // role -> { data, at }
+
+function readKpisCache(role) {
+  const hit = kpisCache.get(role);
+  if (!hit) return null;
+  if (Date.now() - hit.at > TTL_MS) return null;
+  return hit.data;
+}
+
+export function useKpis(role) {
+  const [data, setData] = useState(() => (role === 'Admin' ? readKpisCache(role) : null));
+
+  useEffect(() => {
+    if (role !== 'Admin') return;
+    let active = true;
+    api.get('/dashboard/kpis')
+      .then((d) => {
+        kpisCache.set(role, { data: d, at: Date.now() });
+        if (active) setData(d);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [role]);
+
+  return data;
+}

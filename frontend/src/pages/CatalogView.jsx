@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, RotateCcw } from 'lucide-react';
+import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, Trash2 } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import { SkeletonGrid } from '../components/Skeleton';
 import { itemPill } from '../utils/statusColors';
@@ -44,6 +44,11 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
   const deletedCount = useMemo(
     () => inventory.filter(item => item.status === 'Deleted').length,
+    [inventory]
+  );
+
+  const onSaleCount = useMemo(
+    () => inventory.filter(item => getSaleInfo(item).active).length,
     [inventory]
   );
 
@@ -106,8 +111,11 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
       {/* Inventory Health KPIs — Admin only */}
       {role === 'Admin' && (
         <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5">
-          <h3 className="text-sm font-bold text-gray-900 mb-3">Inventory Health</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-bold text-gray-900">Inventory Health</h3>
+            <span className="text-[11px] font-semibold text-gray-500 tabular-nums">{inventory.length} items total</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3">
             {[
               { label: 'Available', status: 'Available' },
               { label: 'Rented', status: 'Rented' },
@@ -116,41 +124,68 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
               { label: 'Out of Service', status: 'OutOfService' },
             ].map(({ label, status }) => {
               const pill = itemPill(status);
+              const Icon = pill.icon;
               const count = inventory.filter(i => i.status === status).length;
+              const pct = inventory.length > 0 ? Math.round((count / inventory.length) * 100) : 0;
               const active = activeStatusFilter === status;
               return (
                 <button
                   key={status}
                   onClick={() => setActiveStatusFilter(active ? 'All' : status)}
-                  className={`rounded-xl border p-3 sm:p-3.5 text-left transition-all min-w-0 ${pill.bg} ${pill.text} ${pill.border} ${active ? 'ring-2 ring-gray-900/70' : 'hover:brightness-95'}`}
+                  title={`Filter by ${label}`}
+                  className={`group rounded-xl border p-3 text-left transition-all min-w-0 bg-white ${pill.border} ${
+                    active ? 'ring-2 ring-gray-900/70 shadow-sm' : 'hover:shadow-sm hover:-translate-y-0.5'
+                  }`}
                 >
-                  <div className="flex items-center gap-2 mb-1 min-w-0">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${pill.dot}`} />
-                    <span className="text-[11px] font-bold uppercase tracking-wider truncate">{label}</span>
+                  <div className="flex items-center gap-1.5 mb-1.5 min-w-0">
+                    <span className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${pill.bg} ${pill.text}`}>
+                      <Icon size={12} strokeWidth={2.5} />
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 truncate">{label}</span>
                   </div>
-                  <p className="text-xl sm:text-2xl font-bold tabular-nums">{count}</p>
+                  <p className={`text-xl sm:text-2xl font-bold tabular-nums ${pill.text}`}>{count}</p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${pill.dot}`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="text-[9px] font-semibold text-gray-400 tabular-nums shrink-0">{pct}%</span>
+                  </div>
                 </button>
               );
             })}
           </div>
-        </div>
-      )}
-
-      {/* Archived / Deleted items — Admin-only discoverable restore entry point */}
-      {role === 'Admin' && deletedCount > 0 && activeStatusFilter !== 'Deleted' && (
-        <div className="bg-[#FFF7F2] border border-[#f3dccb] rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <RotateCcw size={16} className="text-[#bf4a53] shrink-0" />
-            <p className="text-sm font-semibold text-gray-800 truncate">
-              {deletedCount} archived {deletedCount === 1 ? 'item' : 'items'} can be restored
-            </p>
+          <div className="mt-2.5 pt-2.5 border-t border-gray-100 grid grid-cols-2 gap-2.5 sm:gap-3">
+            <button
+              onClick={() => setOnSaleOnly(!onSaleOnly)}
+              title="Filter: On Sale"
+              className={`flex items-center justify-between rounded-xl border px-3 py-2 transition-all ${
+                onSaleOnly
+                  ? 'ring-2 ring-[#bf4a53]/60 bg-[#bf4a53]/5 border-[#bf4a53]/40'
+                  : 'bg-white border-gray-200 hover:border-[#bf4a53]/40 hover:bg-[#bf4a53]/5'
+              }`}
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <BadgePercent size={14} className="text-[#bf4a53] shrink-0" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 truncate">On Sale</span>
+              </span>
+              <span className="text-sm font-bold text-[#bf4a53] tabular-nums">{onSaleCount}</span>
+            </button>
+            <button
+              onClick={() => setActiveStatusFilter(activeStatusFilter === 'Deleted' ? 'All' : 'Deleted')}
+              title="Filter: Archived"
+              className={`flex items-center justify-between rounded-xl border px-3 py-2 transition-all ${
+                activeStatusFilter === 'Deleted'
+                  ? 'ring-2 ring-gray-900/70 bg-gray-100 border-gray-300'
+                  : 'bg-white border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <Trash2 size={14} className="text-gray-400 shrink-0" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 truncate">Archived</span>
+              </span>
+              <span className="text-sm font-bold text-gray-500 tabular-nums">{deletedCount}</span>
+            </button>
           </div>
-          <button
-            onClick={() => setActiveStatusFilter('Deleted')}
-            className="shrink-0 text-xs font-bold text-[#bf4a53] bg-white border border-[#f3dccb] px-3 py-1.5 rounded-full hover:bg-[#fdeee6] transition-colors"
-          >
-            View &amp; restore
-          </button>
         </div>
       )}
 
