@@ -24,6 +24,7 @@ export const returnSchema = z.object({
     returnDate: z.string(),
     isDamaged: z.boolean(),
     conditionPhoto: z.string().optional(),
+    returnPhoto: z.string().optional(),
     notes: z.string().optional(),
   }),
 });
@@ -102,7 +103,7 @@ export async function processReturn(req: AuthenticatedRequest, res: Response, ne
       req.user.id,
       req.body.returnDate,
       req.body.isDamaged,
-      req.body.conditionPhoto,
+      req.body.returnPhoto ?? req.body.conditionPhoto,
       req.body.notes
     );
 
@@ -115,9 +116,34 @@ export async function processReturn(req: AuthenticatedRequest, res: Response, ne
 export const releaseSchema = z.object({
   body: z.object({
     conditionPhoto: z.string().optional(),
+    releasePhoto: z.string().optional(),
     notes: z.string().optional(),
   }),
 });
+
+export const updateTransactionSchema = z.object({
+  body: z.object({
+    rentalDate: z.string().optional(),
+    dueDate: z.string().optional(),
+    notes: z.string().optional(),
+  }).refine((d) => d.rentalDate || d.dueDate || d.notes !== undefined, {
+    message: 'At least one of rentalDate, dueDate, or notes must be provided',
+  }),
+});
+
+export async function updateTransaction(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const updated = await transactionService.updateTransaction(
+      String(req.params.id),
+      req.user.id,
+      { rentalDate: req.body.rentalDate, dueDate: req.body.dueDate, notes: req.body.notes }
+    );
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
 
 export async function releaseRental(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
@@ -125,7 +151,7 @@ export async function releaseRental(req: AuthenticatedRequest, res: Response, ne
     const result = await transactionService.releaseRental(
       String(req.params.id),
       req.user.id,
-      req.body.conditionPhoto,
+      req.body.releasePhoto ?? req.body.conditionPhoto,
       req.body.notes
     );
     res.json(result);

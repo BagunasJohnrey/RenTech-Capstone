@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package } from 'lucide-react';
+import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, FileEdit, UserCog } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import ReleaseItemModal from '../components/ReleaseItemModal';
+import CustomerEditModal from '../components/CustomerEditModal';
+import EditBookingModal from '../components/EditBookingModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
 import { customerLabel, itemLabel } from '../utils/format';
@@ -39,6 +41,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [currentPage, setCurrentPage] = useState(1);
   const [detailTx, setDetailTx] = useState(null);
   const [releaseTx, setReleaseTx] = useState(null);
+  const [editCustomer, setEditCustomer] = useState(null);   // tx whose customer staff is editing
+  const [editBooking, setEditBooking] = useState(null);     // tx staff is editing dates/notes on
   const itemsPerPage = 10;
 
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
@@ -362,6 +366,26 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                               <span className="sr-only">Process Return</span>
                             </button>
                           )}
+                          {(role === 'Admin' || role === 'Staff') && (
+                            <>
+                              <button
+                                onClick={() => setEditBooking(tx)}
+                                className="p-1.5 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
+                                title="Edit booking dates/notes"
+                                aria-label={`Edit booking ${tx.txNumber ?? tx.id}`}
+                              >
+                                <FileEdit size={14} />
+                              </button>
+                              <button
+                                onClick={() => setEditCustomer(tx)}
+                                className="p-1.5 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50"
+                                title="Edit customer"
+                                aria-label={`Edit customer ${customerLabel(tx.customer) || tx.customerId}`}
+                              >
+                                <UserCog size={14} />
+                              </button>
+                            </>
+                          )}
                           {(tx.status === 'Active') && role === 'Customer' && (
                             <button
                               onClick={() => {
@@ -568,6 +592,28 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
 
       {releaseTx && (
         <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} />
+      )}
+
+      {editCustomer && (
+        <CustomerEditModal
+          customer={{
+            id: editCustomer.customerId,
+            name: customerLabel(editCustomer.customer) || editCustomer.customer || '',
+            phone: editCustomer.contact || editCustomer.customer?.phone || '',
+            address: editCustomer.address || editCustomer.customer?.address || '',
+            preferences: editCustomer.customer?.preferences || '',
+          }}
+          onClose={() => setEditCustomer(null)}
+          onSaved={() => setEditCustomer(null)}
+        />
+      )}
+
+      {editBooking && (
+        <EditBookingModal
+          transaction={editBooking}
+          onClose={() => setEditBooking(null)}
+          onSaved={() => setEditBooking(null)}
+        />
       )}
     </>
   );

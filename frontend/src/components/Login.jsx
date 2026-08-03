@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { supabaseClient } from '../utils/supabaseClient';
+import Field from './ui/Field';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
@@ -24,12 +25,6 @@ function GoogleGlyph() {
       <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
     </svg>
   );
-}
-
-function FieldError({ show, message }) {
-  return show ? (
-    <p className="text-red-500 text-[11px] font-semibold mt-1">{message}</p>
-  ) : null;
 }
 
 function GoogleButton({ label, onClick, loading }) {
@@ -229,21 +224,18 @@ export default function Login({ onLogin }) {
               <Divider />
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Email</label>
-                  <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="you@example.com" />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Password</label>
-                  <div className="relative">
-                    <input type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)}
-                      className={inputClass + ' pr-10'} placeholder="••••••••" />
+                <Field label="Email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="you@example.com" autoComplete="email" />
+                <Field label="Password" required className={inputClass + ' pr-10'} placeholder="••••••••"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+                  endAccessory={
                     <button type="button" onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                       {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
-                  </div>
-                </div>
+                  }
+                />
                 {error && (
                   <div className="text-red-500 text-xs font-semibold text-center space-y-1">
                     <p>{error}</p>
@@ -297,34 +289,22 @@ export default function Login({ onLogin }) {
                   <Divider />
 
                   <div className="space-y-4">
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Full Name</label>
-                      <input type="text" required value={signupData.name}
-                        onChange={(e) => updateSignup('name', e.target.value)} onBlur={() => markTouched('name')}
-                        className={inputClass + ' ' + glowClass('name')} placeholder="Juan Dela Cruz" />
-                      <FieldError show={touched.name && !fieldState('name').valid} message={fieldState('name').error} />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Email</label>
-                      <input type="email" required value={signupData.email}
-                        onChange={(e) => updateSignup('email', e.target.value)} onBlur={() => markTouched('email')}
-                        className={inputClass + ' ' + glowClass('email')} placeholder="you@example.com" />
-                      <FieldError show={touched.email && !fieldState('email').valid} message={fieldState('email').error} />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Phone</label>
-                      <input type="tel" required value={signupData.phone}
-                        onChange={(e) => updateSignup('phone', e.target.value)} onBlur={() => markTouched('phone')}
-                        className={inputClass + ' ' + glowClass('phone')} placeholder="0917 123 4567" />
-                      <FieldError show={touched.phone && !fieldState('phone').valid} message={fieldState('phone').error} />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Address</label>
-                      <input type="text" required value={signupData.address}
-                        onChange={(e) => updateSignup('address', e.target.value)} onBlur={() => markTouched('address')}
-                        className={inputClass + ' ' + glowClass('address')} placeholder="123 Rizal St, Balayan, Batangas" />
-                      <FieldError show={touched.address && !fieldState('address').valid} message={fieldState('address').error} />
-                    </div>
+                    <Field label="Full Name" type="text" required value={signupData.name}
+                      onChange={(e) => updateSignup('name', e.target.value)} onBlur={() => markTouched('name')}
+                      className={inputClass + ' ' + glowClass('name')} placeholder="Juan Dela Cruz" autoComplete="name"
+                      error={touched.name && !fieldState('name').valid ? fieldState('name').error : undefined} />
+                    <Field label="Email" type="email" required value={signupData.email}
+                      onChange={(e) => updateSignup('email', e.target.value)} onBlur={() => markTouched('email')}
+                      className={inputClass + ' ' + glowClass('email')} placeholder="you@example.com" autoComplete="email"
+                      error={touched.email && !fieldState('email').valid ? fieldState('email').error : undefined} />
+                    <Field label="Phone" type="tel" required value={signupData.phone}
+                      onChange={(e) => updateSignup('phone', e.target.value)} onBlur={() => markTouched('phone')}
+                      className={inputClass + ' ' + glowClass('phone')} placeholder="0917 123 4567" autoComplete="tel" inputMode="tel"
+                      error={touched.phone && !fieldState('phone').valid ? fieldState('phone').error : undefined} />
+                    <Field label="Address" type="text" required value={signupData.address}
+                      onChange={(e) => updateSignup('address', e.target.value)} onBlur={() => markTouched('address')}
+                      className={inputClass + ' ' + glowClass('address')} placeholder="123 Rizal St, Balayan, Batangas" autoComplete="street-address"
+                      error={touched.address && !fieldState('address').valid ? fieldState('address').error : undefined} />
                   </div>
 
                   <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
@@ -354,26 +334,23 @@ export default function Login({ onLogin }) {
 
               {signupStep === 2 && (
                 <div className="space-y-5">
-                  <div>
-                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Password</label>
-                    <div className="relative">
-                      <input type={showSignupPassword ? 'text' : 'password'} required value={signupData.password}
-                        onChange={(e) => updateSignup('password', e.target.value)} onBlur={() => markTouched('password')}
-                        className={inputClass + ' pr-10 ' + glowClass('password')} placeholder="••••••••" />
+                  <Field label="Password" required placeholder="••••••••" autoComplete="new-password"
+                    type={showSignupPassword ? 'text' : 'password'} value={signupData.password}
+                    onChange={(e) => updateSignup('password', e.target.value)} onBlur={() => markTouched('password')}
+                    className={inputClass + ' pr-10 ' + glowClass('password')}
+                    error={touched.password && !fieldState('password').valid ? fieldState('password').error : undefined}
+                    endAccessory={
                       <button type="button" onClick={() => setShowSignupPassword(!showSignupPassword)}
+                        aria-label={showSignupPassword ? 'Hide password' : 'Show password'} aria-pressed={showSignupPassword}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                         {showSignupPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
-                    </div>
-                    <FieldError show={touched.password && !fieldState('password').valid} message={fieldState('password').error} />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Confirm Password</label>
-                    <input type={showSignupPassword ? 'text' : 'password'} required value={signupData.confirm}
-                      onChange={(e) => updateSignup('confirm', e.target.value)} onBlur={() => markTouched('confirm')}
-                      className={inputClass + ' ' + glowClass('confirm')} placeholder="••••••••" />
-                    <FieldError show={touched.confirm && !fieldState('confirm').valid} message={fieldState('confirm').error} />
-                  </div>
+                    } />
+                  <Field label="Confirm Password" required placeholder="••••••••" autoComplete="new-password"
+                    type={showSignupPassword ? 'text' : 'password'} value={signupData.confirm}
+                    onChange={(e) => updateSignup('confirm', e.target.value)} onBlur={() => markTouched('confirm')}
+                    className={inputClass + ' ' + glowClass('confirm')}
+                    error={touched.confirm && !fieldState('confirm').valid ? fieldState('confirm').error : undefined} />
                   <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1.5">
                     <CheckCircle size={12} className={signupData.password.length >= 8 ? 'text-emerald-500' : 'text-gray-300'} />
                     Must be 8+ characters

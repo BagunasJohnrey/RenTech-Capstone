@@ -284,12 +284,12 @@ export default function RentechApp() {
   };
 
   // Process return (FIX D: surface errors)
-  const handleProcessReturn = async (txId, isDamaged, isLate, conditionPhoto) => {
+  const handleProcessReturn = async (txId, isDamaged, isLate, returnPhoto) => {
     try {
       const updated = await processReturnTx(txId, {
         returnDate: new Date().toISOString().split('T')[0],
         isDamaged: !!isDamaged,
-        conditionPhoto: conditionPhoto || undefined,
+        returnPhoto: returnPhoto || undefined,
       });
       if (updated.itemId) markItemStatus(updated.itemId, 'Cleaning');
       toastSuccess('Return processed — item moved to cleaning');

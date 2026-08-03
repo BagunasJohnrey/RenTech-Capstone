@@ -21,4 +21,7 @@ export const customerService = {
   createBooking: (payload) => api.post('/bookings', payload),
 
   getBooking: (id) => api.get(`/bookings/${id}`),
+
+  // Admin/Staff edit a customer's contact details.
+  update: (id, patch) => api.put(`/customers/${id}`, patch),
 };

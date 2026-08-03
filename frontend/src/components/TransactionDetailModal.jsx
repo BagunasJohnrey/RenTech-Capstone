@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard } from 'lucide-react';
+import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera } from 'lucide-react';
 import { customerLabel, customerPhone, itemLabel } from '../utils/format';
+import ItemImage from './ItemImage';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -37,6 +39,7 @@ function DetailRow({ label, value, highlight }) {
 }
 
 export default function TransactionDetailModal({ transaction, onClose, fetchFull }) {
+  useEscapeClose(onClose);
   // FIX G: enrich the in-memory list object with the full server record
   // (payments[], processedBy, full customer/item) when available.
   const [tx, setTx] = useState(transaction);
@@ -56,7 +59,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         <div className="sticky top-0 bg-white/90 backdrop-blur-md border-b border-gray-100/80 rounded-t-3xl z-10">
@@ -66,7 +69,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 <Receipt size={18} className="text-gray-600" />
               </div>
               <div>
-                <h3 className="font-bold text-lg text-gray-900">Transaction {txRef}</h3>
+                <h3 id="dialog-title-transaction-detail" className="font-bold text-lg text-gray-900">Transaction {txRef}</h3>
                 <p className="text-xs text-gray-500 mt-0.5">
                   {status === 'Active' ? 'Currently rented' :
                    status === 'Overdue' ? 'Past due date' :
@@ -75,7 +78,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 </p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full transition-colors shrink-0">
+            <button onClick={onClose} aria-label="Close transaction details" className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
               <X size={18} />
             </button>
           </div>
@@ -183,24 +186,24 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             </div>
           </div>
 
-          {/* Photos */}
-          {(tx.conditionPhoto || tx.photoUrl) && (
+          {/* Condition Photos (before / after) */}
+          {(tx.releasePhoto || tx.returnPhoto || tx.conditionPhoto) && (
             <div>
               <div className="flex items-center gap-1.5 text-gray-400 mb-3">
-                <FileText size={13} />
-                <span className="text-[10px] font-bold uppercase tracking-wide">Photos</span>
+                <Camera size={13} />
+                <span className="text-[10px] font-bold uppercase tracking-wide">Condition Photos</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                {tx.conditionPhoto && (
+                {(tx.releasePhoto || tx.conditionPhoto) && (
                   <div className="bg-white border border-gray-100/80 rounded-2xl overflow-hidden">
-                    <img src={tx.conditionPhoto} alt="Condition photo" className="w-full h-40 object-cover" />
-                    <p className="text-[10px] text-gray-500 font-medium text-center py-2">Pre-Rental Photo</p>
+                    <ItemImage image={tx.releasePhoto || tx.conditionPhoto} alt="Item condition at release" className="w-full h-40 object-cover" placeholderSize={20} />
+                    <p className="text-[10px] text-gray-500 font-medium text-center py-2">Release (Before)</p>
                   </div>
                 )}
-                {tx.photoUrl && (
+                {tx.returnPhoto && (
                   <div className="bg-white border border-gray-100/80 rounded-2xl overflow-hidden">
-                    <img src={tx.photoUrl} alt="Pre-rental photo" className="w-full h-40 object-cover" />
-                    <p className="text-[10px] text-gray-500 font-medium text-center py-2">Pre-Rental Photo</p>
+                    <ItemImage image={tx.returnPhoto} alt="Item condition on return" className="w-full h-40 object-cover" placeholderSize={20} />
+                    <p className="text-[10px] text-gray-500 font-medium text-center py-2">Return (After)</p>
                   </div>
                 )}
               </div>

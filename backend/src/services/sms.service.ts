@@ -2,6 +2,7 @@ import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
+import { getBusinessRules } from './settings.service.js';
 
 export async function sendManualSms(params: {
   profileId: string;
@@ -146,17 +147,62 @@ export async function notifyDueToday() {
     where: {
       status: { in: ['Active', 'Overdue'] },
       dueDate: { gte: startOfToday, lt: endOfToday },
+      dueReminderSent: false,
     },
     include: {
-      customer: { select: { id: true, name: true } },
+      customer: { select: { id: true, name: true, phone: true } },
       item: { select: { id: true, name: true } },
     },
   });
 
   if (dueToday.length === 0) return [];
 
-  const results: { transactionId: string; customerName: string; itemName: string }[] = [];
+  // Reuse existing due_reminder template + the configurable late fee so the
+  // customer sees the penalty for returning late.
+  const template = await prisma.smsTemplate.findFirst({ where: { name: 'due_reminder' } });
+  let latePerDay = 500;
+  try {
+    const rules = await getBusinessRules();
+    const raw = rules['late_fee_per_day'] ?? rules['late_penalty_per_day'];
+    const parsed = raw != null ? parseFloat(raw) : NaN;
+    if (Number.isFinite(parsed) && parsed >= 0) latePerDay = parsed;
+  } catch { /* keep default */ }
+
+  const results: { transactionId: string; customerName: string; itemName: string; sent: boolean }[] = [];
   for (const tx of dueToday) {
+    // Text the customer their due-today reminder (if they have a phone).
+    let sent = false;
+    if (tx.customer.phone) {
+      const message = template?.content
+        ? applyTemplate(template.content, {
+            customer: tx.customer.name,
+            item: tx.item.name,
+            date: tx.dueDate.toLocaleDateString('en-PH'),
+          }) + ` Late fee: ₱${latePerDay}/day.`
+        : `Hi ${tx.customer.name}, your rental of ${tx.item.name} is due today (${tx.dueDate.toLocaleDateString('en-PH')}). Please return on time to avoid a ₱${latePerDay}/day late fee.`;
+
+      try {
+        const smsResult = await sendSms(tx.customer.phone, message);
+        await prisma.sentSms.create({
+          data: {
+            profileId: tx.customer.id,
+            transactionId: tx.id,
+            templateId: template?.id ?? null,
+            message,
+            status: smsResult.messageId ? 'sent' : 'queued',
+          },
+        });
+        await prisma.transaction.update({ where: { id: tx.id }, data: { dueReminderSent: true } });
+        sent = true;
+      } catch {
+        // leave dueReminderSent false so the next tick retries the SMS
+      }
+    } else {
+      // No phone on file: nothing to send, so don't keep retrying every minute.
+      await prisma.transaction.update({ where: { id: tx.id }, data: { dueReminderSent: true } });
+    }
+
+    // Staff in-app alert (existing behavior).
     try {
       await notifyStaffMembers({
         transactionId: tx.id,
@@ -164,8 +210,9 @@ export async function notifyDueToday() {
         title: 'Due Today',
         message: `"${tx.item.name}" rented by ${tx.customer.name} is due today.`,
       });
-      results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name });
     } catch { /* notification is non-critical */ }
+
+    results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name, sent });
   }
   return results;
 }

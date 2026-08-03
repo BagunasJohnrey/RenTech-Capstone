@@ -20,6 +20,8 @@ export const transactionsService = {
   processReturn: (id, patch) =>
     api.put(`/transactions/${id}/return`, patch),
 
+  update: (id, patch) => api.patch(`/transactions/${id}`, patch),
+
   cancel: (id) => api.put(`/transactions/${id}/cancel`),
 
   remove: (id) => api.delete(`/transactions/${id}`),

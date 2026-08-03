@@ -3,6 +3,8 @@ import { X, Send, Sparkles, Loader2, ShoppingBag } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../utils/api';
 import { storageService } from '../services';
+import { imageCache } from '../utils/imageCache';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 const SUGGESTIONS = [
   'Suggest a gown for a wedding',
@@ -23,8 +25,11 @@ const isAbsoluteUrl = (v) =>
 async function resolveImage(item) {
   if (!item?.image || isAbsoluteUrl(item.image)) return item;
   try {
-    const { url } = await storageService.getDownloadUrl(item.image);
-    return { ...item, image: url };
+    const url = await imageCache.resolve(item.image, async () => {
+      const res = await storageService.getDownloadUrl(item.image);
+      return res?.url || null;
+    });
+    return url ? { ...item, image: url } : item;
   } catch {
     return item;
   }
@@ -98,6 +103,7 @@ function isOutfitQuery(text) {
 }
 
 export default function ChatbotModal({ onClose, inventory = [], onBook }) {
+  useEscapeClose(onClose);
   const [messages, setMessages] = useState([
     {
       sender: 'bot',
@@ -181,6 +187,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
       onClick={onClose}
     >
       <div
+        role="dialog" aria-modal="true" aria-labelledby="dialog-title-ai-stylist"
         className="bg-white rounded-3xl shadow-2xl w-full max-w-md h-[90vh] max-h-[600px] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300"
         onClick={(e) => e.stopPropagation()}
       >
@@ -191,13 +198,13 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
               <Sparkles size={18} />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900">AI Stylist</h3>
+              <h3 id="dialog-title-ai-stylist" className="font-bold text-gray-900">AI Stylist</h3>
               <p className="text-xs text-gray-500">
                 AI Stylist
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full">
+          <button onClick={onClose} aria-label="Close AI stylist" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
             <X size={20} />
           </button>
         </div>
@@ -304,7 +311,8 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
           <button
             onClick={() => sendMessage(input)}
             disabled={!input.trim() || isLoading}
-            className="p-2.5 bg-[#bf4a53] text-white rounded-full hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="Send message"
+            className="p-2.5 bg-[#bf4a53] text-white rounded-full hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60"
           >
             {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
           </button>

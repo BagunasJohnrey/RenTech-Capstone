@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 const TYPE_CONFIG = {
   new_booking: { icon: ShoppingBag, iconBg: 'bg-[#bf4a53]/10', iconColor: 'text-[#bf4a53]', chip: 'New Booking' },
@@ -32,6 +33,7 @@ const timeAgo = (iso) => {
 };
 
 export default function NotificationsDropdown({ role, showNotifications, toggle }) {
+  useEscapeClose(toggle, showNotifications);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -155,8 +157,8 @@ export default function NotificationsDropdown({ role, showNotifications, toggle 
               )}
               <button
                 onClick={toggle}
-                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-                title="Close"
+                aria-label="Close notifications"
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60"
               >
                 <X size={14} />
               </button>

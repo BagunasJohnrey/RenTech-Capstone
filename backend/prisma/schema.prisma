@@ -70,6 +70,7 @@ model InventoryItem {
 
   transactions Transaction[]
 
+  @@index([name, category, status])
   @@map("inventory_items")
 }
 
@@ -91,6 +92,9 @@ model Transaction {
   totalPaid       Float             @default(0) @map("total_paid")
   balance         Float
   conditionPhoto  String?           @map("condition_photo")
+  releasePhoto    String?           @map("release_photo")
+  returnPhoto     String?           @map("return_photo")
+  dueReminderSent Boolean           @default(false) @map("due_reminder_sent")
   notes           String?
   size            String?           @map("size")
   measurements    Json?             @map("measurements")
@@ -106,6 +110,7 @@ model Transaction {
   payments      Payment[]
   sentSms       SentSms[]
 
+  @@index([itemId, status])
   @@map("transactions")
 }
 

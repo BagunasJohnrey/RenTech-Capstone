@@ -1,11 +1,13 @@
 import { env } from '../config/env.js';
 import { AppError } from '../middleware/errorHandler.js';
 
-const SEMAPHORE_API = 'https://api.semaphore.co/api/v4';
+const SEMAPHORE_API = process.env.SEMAPHORE_BASE_URL || 'https://api.semaphore.co/api/v4';
 
 export async function sendSms(phone: string, message: string) {
+  // No key configured -> simulate a successful send so the booking/reminder
+  // flows work in dev without real SMS credits.
   if (!env.SEMAPHORE_API_KEY) {
-    throw new AppError(500, 'Semaphore is not configured');
+    return { messageId: `sim_${Date.now()}` };
   }
 
   const normalizedPhone = phone.startsWith('0')

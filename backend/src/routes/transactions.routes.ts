@@ -18,6 +18,7 @@ router.post('/', requireRole(Role.Admin, Role.Staff, Role.Customer), validate(tr
 router.put('/:id/release', requireRole(Role.Admin, Role.Staff), validate(transactionController.releaseSchema), transactionController.releaseRental);
 router.put('/:id/return', requireRole(Role.Admin, Role.Staff), validate(transactionController.returnSchema), transactionController.processReturn);
 router.put('/:id/cancel', requireRole(Role.Admin, Role.Customer), transactionController.cancelTransaction);
+router.patch('/:id', requireRole(Role.Admin, Role.Staff), validate(transactionController.updateTransactionSchema), transactionController.updateTransaction);
 router.delete('/:id', requireRole(Role.Admin), transactionController.deleteTransaction);
 
 export default router;

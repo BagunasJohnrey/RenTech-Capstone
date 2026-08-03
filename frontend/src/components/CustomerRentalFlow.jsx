@@ -7,6 +7,8 @@ import ItemImage from './ItemImage';
 import { getSaleInfo } from './ItemCard';
 import { inventoryService } from '../services/inventory';
 import BookingCalendar from './BookingCalendar';
+import Field from './ui/Field';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useToast } from './Toast';
 
 const ITEMS_PER_LOAD = 6;
@@ -34,6 +36,7 @@ export default function CustomerRentalFlow({
   onCancelBooking,
   inline,
 }) {
+  useEscapeClose(onClose);
   const [step, setStep] = useState(() => (preselectedItem ? 1 : 0));
   const [selectedItem, setSelectedItem] = useState(preselectedItem || null);
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -325,10 +328,10 @@ export default function CustomerRentalFlow({
     return (
     <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-lg" onClick={onClose}>
         <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-select-item" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
-            <h2 className="text-xl font-bold text-gray-900">Select Item</h2>
-            <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
+            <h2 id="dialog-title-select-item" className="text-xl font-bold text-gray-900">Select Item</h2>
+            <button onClick={onClose} aria-label="Close item selection" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"><X size={20} /></button>
           </div>
           <div className="p-4 flex flex-col flex-1 min-h-0">
             <div className="flex items-center gap-3 mb-4">
@@ -355,8 +358,9 @@ export default function CustomerRentalFlow({
             <div ref={catalogRef} onScroll={handleCatalogScroll} className="flex-1 overflow-y-auto pr-1 hide-scrollbar">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {displayedItems.map((item) => (
-                  <div key={item.id} onClick={() => setSelectedItem(item)}
-                    className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all ${
+                  <button type="button" key={item.id} onClick={() => setSelectedItem(item)}
+                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per day`}
+                    className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'}`}>
                     <ItemImage image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
                     <div className="flex-1 min-w-0">
@@ -378,11 +382,11 @@ export default function CustomerRentalFlow({
                       </span>
                     </div>
                     {selectedItem?.id === item.id && (
-                      <svg className="w-5 h-5 text-[#bf4a53]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <svg className="w-5 h-5 text-[#bf4a53]" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                       </svg>
                     )}
-                  </div>
+                  </button>
                 ))}
               </div>
               <div className="py-3 flex justify-center">
@@ -407,7 +411,7 @@ export default function CustomerRentalFlow({
 
   // ---- Steps 1–3 ----
   const flowContent = (
-    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 relative" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-complete-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 relative" onClick={(e) => e.stopPropagation()}>
         {isProcessingPayment && (
           <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center space-y-4">
             <Loader2 size={48} className="text-[#bf4a53] animate-spin" />
@@ -424,8 +428,8 @@ export default function CustomerRentalFlow({
         )}
 
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
-          <h2 className="text-xl font-bold text-gray-900">Complete Booking</h2>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
+          <h2 id="dialog-title-complete-booking" className="text-xl font-bold text-gray-900">Complete Booking</h2>
+          <button onClick={onClose} aria-label="Close booking" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"><X size={20} /></button>
         </div>
 
         <div className="flex items-center justify-center py-4 px-6 bg-gray-50/50">
@@ -477,25 +481,19 @@ export default function CustomerRentalFlow({
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Contact Details</h4>
-                <div>
-                  <input type="text" placeholder="Full Name" value={customer.name}
-                    onChange={(e) => { setCustomer({ ...customer, name: e.target.value }); clearFieldError('name'); }}
-                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} />
-                  {fieldErrors.name && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.name}</p>}
-                </div>
+                <Field type="text" label="Full Name" placeholder="Full Name" value={customer.name}
+                  onChange={(e) => { setCustomer({ ...customer, name: e.target.value }); clearFieldError('name'); }}
+                  className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails}
+                  error={fieldErrors.name || undefined} />
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <input type="tel" placeholder="Contact No." value={customer.contact}
-                      onChange={(e) => { setCustomer({ ...customer, contact: e.target.value.replace(/\D/g, '') }); clearFieldError('contact'); }}
-                      className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.contact ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} inputMode="numeric" />
-                    {fieldErrors.contact && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.contact}</p>}
-                  </div>
-                  <div>
-                    <input type="text" placeholder="Address" value={customer.address}
-                      onChange={(e) => { setCustomer({ ...customer, address: e.target.value }); clearFieldError('address'); }}
-                      className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} />
-                    {fieldErrors.address && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.address}</p>}
-                  </div>
+                  <Field type="tel" label="Contact No." placeholder="Contact No." value={customer.contact}
+                    onChange={(e) => { setCustomer({ ...customer, contact: e.target.value.replace(/\D/g, '') }); clearFieldError('contact'); }}
+                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.contact ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} inputMode="numeric"
+                    error={fieldErrors.contact || undefined} />
+                  <Field type="text" label="Address" placeholder="Address" value={customer.address}
+                    onChange={(e) => { setCustomer({ ...customer, address: e.target.value }); clearFieldError('address'); }}
+                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails}
+                    error={fieldErrors.address || undefined} />
                 </div>
               </div>
 
@@ -593,12 +591,12 @@ export default function CustomerRentalFlow({
                 <div>
                   <div className="relative mt-2">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
-                    <input type="number" value={downpaymentAmount}
+                    <Field showLabel={false} type="number" value={downpaymentAmount}
                       onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
-                      className={`w-full pl-8 p-3 bg-white border rounded-xl text-sm font-bold focus:outline-none focus:border-[#bf4a53] ${fieldErrors.downpayment ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
-                      min={minDownpayment} />
+                      className={`w-full pl-8 p-3 bg-white border rounded-xl text-sm font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.downpayment ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                      min={minDownpayment} aria-label="Required downpayment amount"
+                      error={fieldErrors.downpayment || undefined} />
                   </div>
-                  {fieldErrors.downpayment && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.downpayment}</p>}
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1">Minimum 50% (₱{minDownpayment.toLocaleString()}) required to secure booking.</p>
               </div>
@@ -609,9 +607,9 @@ export default function CustomerRentalFlow({
           <div className="bg-gray-50 rounded-2xl p-4">
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block">Have a promo code?</label>
             <div className="flex gap-2">
-              <input type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                placeholder="Enter code" maxLength={20}
-                className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
+              <Field showLabel={false} type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
+                placeholder="Enter code" maxLength={20} aria-label="Promo code"
+                className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]" />
               <button onClick={handleApplyPromo} disabled={!promoCode.trim() || promoApplying}
                 className="px-4 py-2.5 bg-[#bf4a53] text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
                 {promoApplying ? <Loader2 size={14} className="animate-spin" /> : 'Apply'}
@@ -735,10 +733,10 @@ export default function CustomerRentalFlow({
       {showQRDetails && confirmedTx && (
         <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm z-[250] flex items-center justify-center p-4" onClick={() => setShowQRDetails(false)}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in fade-in duration-200" onClick={(e) => e.stopPropagation()}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in fade-in duration-200 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-booking-info" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in fade-in duration-200 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-lg text-gray-900">Booking Info</h3>
-              <button onClick={() => setShowQRDetails(false)} className="text-gray-400 hover:bg-gray-100 rounded-full p-1"><X size={18} /></button>
+              <h3 id="dialog-title-booking-info" className="font-bold text-lg text-gray-900">Booking Info</h3>
+              <button onClick={() => setShowQRDetails(false)} aria-label="Close booking info" className="text-gray-400 hover:bg-gray-100 rounded-full p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"><X size={18} /></button>
             </div>
             <div className="space-y-2 text-sm">
               {[['Booking ID', confirmedTx.id, 'font-mono font-bold'], ['Customer', confirmedTx.customer?.name || customer.name, 'font-bold'], ['Item', confirmedTx.item?.name || selectedItem?.name, ''], ['Size', confirmedTx.size, ''], ['Pickup', formatDate(rentalDate), ''], ['Event Date', formatDate(eventDate), 'font-semibold'], ['Return By', formatDate(dueDate), 'text-amber-600 font-semibold'], ['Status', confirmedTx.status, 'text-emerald-600 font-bold'], ['Downpayment', `₱${confirmedTx.downpayment.toLocaleString()}`, '']].map(([label, value, cls]) => (

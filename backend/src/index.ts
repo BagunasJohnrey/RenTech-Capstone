@@ -12,7 +12,27 @@ import { ensureBucket } from './services/storage.service.js';
 
 const app = express();
 
-app.use(helmet());
+// Trust the first proxy hop (host/load-balancer) so req.protocol reflects the
+// public scheme, which the HTTPS redirect + HSTS rely on.
+app.set('trust proxy', 1);
+
+// Production: force HTTPS (skip the health-check so load-balancers can probe
+// over HTTP). Placed BEFORE helmet so helmet's HSTS only ever sees a secure
+// request. Dev stays plain HTTP.
+app.use((req, res, next) => {
+  if (env.NODE_ENV !== 'production') return next();
+  // Health probe exempt (load balancers probe over HTTP). Trust the proxy's
+  // forwarded scheme when present; when there's no proxy, the socket itself
+  // tells us whether TLS terminated here.
+  const forwardedProto = String(req.headers['x-forwarded-proto'] ?? (req.secure ? 'https' : 'http')).split(',')[0].trim().toLowerCase();
+  if (req.path === '/api/health' || forwardedProto === 'https') return next();
+  const host = req.headers.host;
+  res.redirect(301, `https://${host}${req.originalUrl}`);
+});
+
+app.use(helmet({
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+}));
 app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
@@ -41,21 +61,27 @@ app.listen(env.PORT, () => {
   // signed URLs (otherwise generateUploadUrl throws "Failed to generate upload URL").
   ensureBucket().catch((err) => console.error('Storage bucket init failed:', err));
 
-  // Check for overdue / due-today transactions every 5 minutes
+  // Check for overdue / due-today transactions every 1 minute so SMS
+  // reminders go out within ~60s of the relevant date boundary.
   const runScheduledChecks = () => {
-    autoNotifyOverdue().then(results => {
-      if (results.length > 0) {
-        console.log(`[Overdue] Processed ${results.length} overdue transaction(s)`);
-      }
-    });
-    notifyDueToday().then(results => {
-      if (results.length > 0) {
-        console.log(`[Due Today] Flagged ${results.length} transaction(s) due today`);
-      }
-    });
+    autoNotifyOverdue()
+      .then(results => {
+        if (results.length > 0) {
+          console.log(`[Overdue] Processed ${results.length} overdue transaction(s)`);
+        }
+      })
+      .catch(err => console.error('[Overdue] scheduler error:', err));
+    notifyDueToday()
+      .then(results => {
+        if (results.length > 0) {
+          console.log(`[Due Today] Flagged ${results.length} transaction(s) due today`);
+        }
+      })
+      .catch(err => console.error('[Due Today] scheduler error:', err));
   };
   runScheduledChecks();
-  setInterval(runScheduledChecks, 5 * 60 * 1000);
+  const scheduler = setInterval(runScheduledChecks, 60 * 1000);
+  scheduler.unref?.();
 });
 
 export default app;

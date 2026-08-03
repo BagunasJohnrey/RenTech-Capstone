@@ -1,6 +1,7 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { calculateFees } from '../utils/fees.js';
+import { assertItemAvailable } from '../utils/availability.js';
 import { createAuditLog } from '../utils/audit.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
@@ -41,19 +42,6 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     throw new AppError(409, 'Item is unavailable for the selected dates (being cleaned or maintained)');
   }
 
-  const activeTx = await prisma.transaction.findFirst({
-    where: { itemId: item.id, status: { in: ['Active', 'Overdue', 'Reserved'] } },
-    select: { id: true },
-  });
-
-  // Stale Rented/Reserved without an active transaction → treat as available
-  if ((item.status === ItemStatus.Rented || item.status === ItemStatus.Reserved) && !activeTx) {
-    await prisma.inventoryItem.update({
-      where: { id: item.id },
-      data: { status: ItemStatus.Available },
-    });
-  }
-
   const start = new Date(data.rentalDate);
   const end = new Date(data.dueDate);
 
@@ -71,48 +59,76 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   const startMinusDelay = new Date(start);
   startMinusDelay.setDate(startMinusDelay.getDate() - CLEANING_DELAY_DAYS);
 
-  const overlapping = await prisma.transaction.findFirst({
-    where: {
-      itemId: data.itemId,
-      status: { in: ['Active', 'Overdue', 'Reserved'] },
-      rentalDate: { lte: end },
-      dueDate: { gte: startMinusDelay },
-    },
-  });
+  const overlapWhere: Prisma.TransactionWhereInput = {
+    itemId: data.itemId,
+    status: { in: ['Active', 'Overdue', 'Reserved'] as TransactionStatus[] },
+    rentalDate: { lte: end },
+    dueDate: { gte: startMinusDelay },
+  };
+  const activeWhere: Prisma.TransactionWhereInput = {
+    itemId: item.id,
+    status: { in: ['Active', 'Overdue', 'Reserved'] as TransactionStatus[] },
+  };
 
-  if (overlapping) {
-    throw new AppError(409, 'Item is unavailable for the selected dates (rented or being cleaned)');
+  // ATOMIC: run the availability re-check + insert + status flip in ONE
+  // Serializable transaction. A second concurrent booking for the same
+  // item/date now either sees the first's rows (overlap -> 409) or fails with
+  // a serialization/unique conflict (caught below -> 409), so two customers
+  // can never both pass the check before either commits.
+  let transaction;
+  try {
+    transaction = await prisma.$transaction(async (tx) => {
+      const activeTx = await tx.transaction.findFirst({ where: activeWhere, select: { id: true } });
+
+      // Stale Rented/Reserved without an active transaction → treat as available
+      if ((item.status === ItemStatus.Rented || item.status === ItemStatus.Reserved) && !activeTx) {
+        await tx.inventoryItem.update({ where: { id: item.id }, data: { status: ItemStatus.Available } });
+      }
+
+      const overlapping = await tx.transaction.findFirst({ where: overlapWhere });
+      if (overlapping) {
+        throw new AppError(409, 'Item is unavailable for the selected dates (rented or being cleaned)');
+      }
+
+      const balance = data.rentalFee - (data.downpayment || 0);
+
+      const created = await tx.transaction.create({
+        data: {
+          customerId: data.customerId,
+          processedById: processedById ?? null,
+          itemId: data.itemId,
+          rentalDate: start,
+          dueDate: end,
+          status: isFuture ? TransactionStatus.Reserved : TransactionStatus.Active,
+          rentalFee: data.rentalFee,
+          downpayment: data.downpayment || 0,
+          balance,
+          promoCodeId: data.promoCodeId ?? null,
+          size: data.size ?? null,
+          measurements: data.measurements as Prisma.InputJsonValue | undefined,
+          notes: data.notes ?? null,
+          conditionPhoto: data.conditionPhoto ?? null,
+        },
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          item: { select: { id: true, name: true, category: true } },
+        },
+      });
+
+      await tx.inventoryItem.update({
+        where: { id: data.itemId },
+        data: { status: isFuture ? ItemStatus.Reserved : ItemStatus.Rented },
+      });
+
+      return created;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      throw new AppError(409, 'Item is unavailable for the selected dates');
+    }
+    throw err;
   }
-
-  const balance = data.rentalFee - (data.downpayment || 0);
-
-  const transaction = await prisma.transaction.create({
-    data: {
-      customerId: data.customerId,
-      processedById: processedById ?? null,
-      itemId: data.itemId,
-      rentalDate: start,
-      dueDate: end,
-      status: isFuture ? TransactionStatus.Reserved : TransactionStatus.Active,
-      rentalFee: data.rentalFee,
-      downpayment: data.downpayment || 0,
-      balance,
-      promoCodeId: data.promoCodeId ?? null,
-      size: data.size ?? null,
-      measurements: data.measurements as Prisma.InputJsonValue | undefined,
-      notes: data.notes ?? null,
-      conditionPhoto: data.conditionPhoto ?? null,
-    },
-    include: {
-      customer: { select: { id: true, name: true, email: true } },
-      item: { select: { id: true, name: true, category: true } },
-    },
-  });
-
-  await prisma.inventoryItem.update({
-    where: { id: data.itemId },
-    data: { status: isFuture ? ItemStatus.Reserved : ItemStatus.Rented },
-  });
 
   await createAuditLog({
     action: 'create',
@@ -227,7 +243,7 @@ export async function processReturn(
   processedById: string,
   returnDate: string,
   isDamaged: boolean,
-  conditionPhoto?: string,
+  returnPhoto?: string,
   notes?: string
 ) {
   const tx = await prisma.transaction.findUnique({
@@ -243,7 +259,7 @@ export async function processReturn(
   if (tx.status === 'Cancelled') throw new AppError(400, 'Transaction was cancelled');
 
   const retDate = new Date(returnDate);
-  const fees = calculateFees(tx.rentalDate, tx.dueDate, retDate, isDamaged);
+  const fees = await calculateFees(tx.rentalDate, tx.dueDate, retDate, isDamaged);
 
   const additionalCharges = fees.latePenalty + fees.damageFee;
   const newBalance = tx.balance + additionalCharges;
@@ -256,7 +272,7 @@ export async function processReturn(
       latePenalty: fees.latePenalty,
       damageFee: fees.damageFee,
       balance: Math.max(0, newBalance),
-      conditionPhoto: conditionPhoto ?? null,
+      returnPhoto: returnPhoto ?? null,
       notes: notes ?? undefined,
       processedById,
     },
@@ -289,6 +305,81 @@ export async function processReturn(
   }
 
   return { ...updated, fees };
+}
+
+// EDIT booking details (dates + notes only) without cancel+re-book. Reuses the
+// same overlap check as createRental so an edit can't collide with another
+// booking, and runs read+check+update in one Serializable transaction.
+export async function updateTransaction(
+  transactionId: string,
+  performedById: string,
+  patch: { rentalDate?: string; dueDate?: string; notes?: string }
+) {
+  const existing = await prisma.transaction.findUnique({
+    where: { id: transactionId },
+    select: {
+      id: true, itemId: true, status: true, rentalDate: true, dueDate: true, notes: true,
+      customerId: true, item: { select: { id: true, name: true } },
+    },
+  });
+  if (!existing) throw new AppError(404, 'Transaction not found');
+  if (existing.status === 'Returned') throw new AppError(400, 'Cannot edit a returned transaction');
+  if (existing.status === 'Cancelled') throw new AppError(400, 'Cannot edit a cancelled transaction');
+
+  const nextRental = patch.rentalDate ? new Date(patch.rentalDate) : existing.rentalDate;
+  const nextDue = patch.dueDate ? new Date(patch.dueDate) : existing.dueDate;
+  if (isNaN(nextRental.getTime()) || isNaN(nextDue.getTime())) {
+    throw new AppError(400, 'Invalid rentalDate/dueDate');
+  }
+  if (nextRental.getTime() > nextDue.getTime()) {
+    throw new AppError(400, 'Pickup date must be on or before the due date');
+  }
+
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      await assertItemAvailable(
+        {
+          itemId: existing.itemId,
+          rentalDate: nextRental,
+          dueDate: nextDue,
+          excludeTxId: transactionId,
+          cleaningDelayDays: CLEANING_DELAY_DAYS,
+        },
+        tx
+      );
+
+      return tx.transaction.update({
+        where: { id: transactionId },
+        data: {
+          rentalDate: nextRental,
+          dueDate: nextDue,
+          notes: patch.notes !== undefined ? patch.notes : existing.notes,
+        },
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          item: { select: { id: true, name: true, category: true } },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      throw new AppError(409, 'Item is unavailable for the selected dates');
+    }
+    throw err;
+  }
+
+  await createAuditLog({
+    action: 'update',
+    entity: 'transaction',
+    entityId: transactionId,
+    performedById,
+    oldValue: { rentalDate: existing.rentalDate, dueDate: existing.dueDate, notes: existing.notes },
+    newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes },
+  });
+
+  return updated;
 }
 
 export async function cancelTransaction(transactionId: string, performedById: string) {
@@ -352,7 +443,7 @@ export async function deleteTransaction(transactionId: string) {
 export async function releaseRental(
   transactionId: string,
   processedById: string,
-  conditionPhoto?: string,
+  releasePhoto?: string,
   notes?: string
 ) {
   const tx = await prisma.transaction.findUnique({
@@ -370,7 +461,7 @@ export async function releaseRental(
       // Releasing/picking up an item moves an upcoming hold (Reserved) into an
       // active rental (Active) and marks the item as Rented.
       status: TransactionStatus.Active,
-      conditionPhoto: conditionPhoto ?? null,
+      releasePhoto: releasePhoto ?? null,
       notes: notes ?? undefined,
       processedById,
     },

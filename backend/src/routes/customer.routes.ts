@@ -7,6 +7,7 @@ import * as customerController from '../controllers/customer.controller.js';
 
 const catalogRouter = Router();
 const bookingRouter = Router();
+const customerRouter = Router();
 
 catalogRouter.get('/', customerController.getCatalog);
 catalogRouter.get('/:id', customerController.getCatalogItem);
@@ -16,4 +17,7 @@ bookingRouter.post('/', validate(customerController.createBookingSchema), custom
 bookingRouter.get('/', customerController.getBookings);
 bookingRouter.get('/:id', customerController.getBookingDetail);
 
-export { catalogRouter, bookingRouter };
+// Admin/Staff edit a customer's contact details (name/phone/address/prefs).
+customerRouter.put('/:id', authMiddleware, requireRole(Role.Admin, Role.Staff), validate(customerController.updateCustomerSchema), customerController.updateCustomer);
+
+export { catalogRouter, bookingRouter, customerRouter };

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import * as inventoryService from '../services/inventory.service.js';
 import * as transactionService from '../services/transactions.service.js';
 import * as promoService from '../services/promoCodes.service.js';
+import * as customerService from '../services/customer.service.js';
+import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 
@@ -102,6 +104,37 @@ export async function getBookingDetail(req: AuthenticatedRequest, res: Response,
     }
 
     res.json(tx);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin/Staff: update a customer's contact details (name/phone/address/prefs).
+// Scoped to non-fee contact fields only — item/fee changes stay cancel+rebook.
+export const updateCustomerSchema = z.object({
+  body: z.object({
+    name: z.string().min(2).optional(),
+    phone: z.string().optional().nullable(),
+    address: z.string().optional().nullable(),
+    preferences: z.array(z.string()).optional().nullable(),
+  }),
+});
+
+export async function updateCustomer(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const customer = await customerService.updateCustomer(String(req.params.id), req.body);
+    // Audit: who/what changed (performedById = the staff/admin making the edit)
+    try {
+      await createAuditLog({
+        action: 'update',
+        entity: 'customer',
+        entityId: customer.id,
+        performedById: req.user.id,
+        newValue: req.body,
+      });
+    } catch { /* audit is non-critical */ }
+    res.json(customer);
   } catch (err) {
     next(err);
   }

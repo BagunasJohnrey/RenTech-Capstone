@@ -3,7 +3,9 @@ import { X, Loader2, Search, Calendar, User, Check, Percent, ShieldCheck } from 
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
+import Field from '../components/ui/Field';
 import { inventoryService } from '../services/inventory';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useToast } from '../components/Toast';
 
 const ITEMS_PER_LOAD = 6;
@@ -14,6 +16,7 @@ const toLocalYmd = (d) => {
 };
 
 export default function StaffNewRental({ inventory, transactions = [], onAddTransaction, onClose, initialItem }) {
+  useEscapeClose(onClose);
   const { success: toastSuccess } = useToast();
 
   // Steps & toast
@@ -370,11 +373,11 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   return (
     <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-sm" onClick={onClose}>
       <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-new-rental" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
-          <h2 className="text-xl font-bold text-gray-900">New Rental</h2>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors">
+          <h2 id="dialog-title-new-rental" className="text-xl font-bold text-gray-900">New Rental</h2>
+          <button onClick={onClose} aria-label="Close new rental" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50">
             <X size={20} />
           </button>
         </div>
@@ -443,10 +446,12 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {displayedItems.map(item => (
-                  <div
+                  <button
+                    type="button"
                     key={item.id}
                     onClick={() => { setSelectedItem(prev => prev?.id === item.id ? null : item); setSize(''); }}
-                    className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all ${
+                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ${item.status}, ₱${item.price.toLocaleString()} per day`}
+                    className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'
                     }`}
                   >
@@ -465,9 +470,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       </span>
                     </div>
                     {selectedItem?.id === item.id && (
-                      <svg className="w-5 h-5 text-[#bf4a53]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                      <svg className="w-5 h-5 text-[#bf4a53]" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
                     )}
-                  </div>
+                  </button>
                   ))}
                 </div>
 
@@ -521,26 +526,26 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   )}
                 </div>
                 <div>
-                  <input type="text" placeholder="Full Name" value={customer.name}
+                  <Field showLabel={false} type="text" placeholder="Full Name" value={customer.name}
                     onChange={e => { setCustomer({...customer, name: e.target.value}); clearFieldError('name'); touchField('name'); }}
                     onBlur={() => touchField('name')}
-                    className={inputClass('name')} />
-                  {fieldErrors.name && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.name}</p>}
+                    className={inputClass('name')} aria-label="Customer full name"
+                    error={fieldErrors.name || undefined} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <input type="tel" placeholder="Contact No." value={customer.contact}
+                    <Field showLabel={false} type="tel" placeholder="Contact No." value={customer.contact}
                       onChange={e => { setCustomer({...customer, contact: e.target.value.replace(/\D/g, '')}); clearFieldError('contact'); touchField('contact'); }}
                       onBlur={() => touchField('contact')}
-                      className={inputClass('contact')} inputMode="numeric" />
-                    {fieldErrors.contact && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.contact}</p>}
+                      className={inputClass('contact')} inputMode="numeric" aria-label="Customer contact number"
+                      error={fieldErrors.contact || undefined} />
                   </div>
                   <div>
-                    <input type="text" placeholder="Address" value={customer.address}
+                    <Field showLabel={false} type="text" placeholder="Address" value={customer.address}
                       onChange={e => { setCustomer({...customer, address: e.target.value}); clearFieldError('address'); touchField('address'); }}
                       onBlur={() => touchField('address')}
-                      className={inputClass('address')} />
-                    {fieldErrors.address && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.address}</p>}
+                      className={inputClass('address')} aria-label="Customer address"
+                      error={fieldErrors.address || undefined} />
                   </div>
                 </div>
                 <div>
@@ -750,8 +755,8 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       {showAdminAuth && (
         <div className="fixed inset-0 z-[250] bg-gray-900/40 backdrop-blur-sm" onClick={() => setShowAdminAuth(false)}>
           <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
-            <h4 className="font-bold text-gray-900">Admin Authorization</h4>
+          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-admin-auth" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
+            <h4 id="dialog-title-admin-auth" className="font-bold text-gray-900">Admin Authorization</h4>
             <p className="text-xs text-gray-500">Enter admin credentials to apply a discount.</p>
             {authError && <p className="text-xs text-red-500 font-medium bg-red-50 p-3 rounded-xl">{authError}</p>}
             <input type="email" placeholder="Admin Email" value={adminEmail}

@@ -117,7 +117,11 @@ export async function chatWithAi(message: string, history?: { role: string; text
 
 export async function generateReport(data: {
   kpis: Record<string, number>;
-  insights?: Record<string, unknown>;
+  insights?: Record<string, unknown> & {
+    underperforming?: { id: number; name: string; category: string; rentals: number }[];
+    topRented?: { id: number; name: string; category: string; rentals: number }[];
+    revenueByCategory?: Record<string, number>;
+  };
   forecast?: Record<string, unknown>;
 }) {
   if (!env.GEMINI_API_KEY) {
@@ -126,6 +130,16 @@ export async function generateReport(data: {
       source: 'fallback',
     };
   }
+
+  const underperforming = Array.isArray(data.insights?.underperforming) ? data.insights.underperforming : [];
+  const topRented = Array.isArray(data.insights?.topRented) ? data.insights.topRented : [];
+  const revenueByCategory = data.insights?.revenueByCategory || {};
+  const underperformingList = underperforming
+    .map(i => `${i.name} (${i.category})`)
+    .join(', ');
+  const topList = topRented.map(i => `${i.name} (${i.category})`).join(', ');
+  const strongestCategory = Object.entries(revenueByCategory)
+    .sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0];
 
   const prompt = `You are a business analyst for Mylene's Boutique, a Philippine clothing rental shop (gowns, suits, barongs, Filipiniana, costumes). Write a clear, professional business performance report using ONLY the data provided below.
 
@@ -151,7 +165,7 @@ CONTENT RULES:
 - Do NOT contradict yourself. If a category appears in revenue leaders or most-rented items, do not call it "underperforming".
 - "Underperforming" items are ONLY those listed in the underperforming array.
 - Lead each section with the key takeaway, then support it with the relevant numbers.
-- Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete action on its own line.
+- Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete, actionable action on its own line. These recommendations must be data-driven and directly reference the specific items and categories named below — NOT generic filler. For every name in the "Underperforming items" list, suggest a concrete promo (e.g. "run a [category]-themed promo week for [item]") or clearance/retire action. If a strongest revenue category is given, recommend prioritizing restock/featured placement for the "Top rented items" in that category. Each recommendation must mention an actual item name or category from the data.
 
 SECTION GUIDANCE (use the supplied data):
 - Executive Summary: overall health (revenue direction, utilization, urgent risks) in a short paragraph.
@@ -165,7 +179,10 @@ SECTION GUIDANCE (use the supplied data):
 Data:
 KPIs: ${JSON.stringify(data.kpis)}
 ${data.insights ? `Insights: ${JSON.stringify(data.insights)}` : ''}
-${data.forecast ? `Forecast: ${JSON.stringify(data.forecast)}` : ''}`;
+${data.forecast ? `Forecast: ${JSON.stringify(data.forecast)}` : ''}
+${underperforming.length ? `Underperforming items (never rented, promote or clear): ${underperformingList}` : 'Underperforming items: none'}
+${topRented.length ? `Top rented items (demand leaders — prioritize restock): ${topList}` : ''}
+${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''}`;
 
   try {
     const response = await fetch(

@@ -5,7 +5,7 @@ import inventoryRoutes from './inventory.routes.js';
 import storageRoutes from './storage.routes.js';
 import transactionRoutes from './transactions.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
-import { catalogRouter, bookingRouter } from './customer.routes.js';
+import { catalogRouter, bookingRouter, customerRouter } from './customer.routes.js';
 import aiRoutes from './ai.routes.js';
 import paymentRoutes from './payments.routes.js';
 import smsRoutes from './sms.routes.js';
@@ -24,6 +24,7 @@ router.use('/auth', authRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/catalog', catalogRouter);
 router.use('/bookings', bookingRouter);
+router.use('/customers', customerRouter);
 // Storage download is intentionally public (signed URL is the access control)
 // so guest catalog browsers can resolve item photos. Upload stays protected
 // by its own authMiddleware + requireRole inside storage.routes.ts.

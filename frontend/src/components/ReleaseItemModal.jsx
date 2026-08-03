@@ -1,21 +1,49 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Camera, Package, User, Calendar } from 'lucide-react';
 import { api } from '../utils/api';
+import { storageService } from '../services';
 import { customerLabel, itemLabel } from '../utils/format';
+import { fileToBase64 } from '../utils/file';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
-  const [photoUrl, setPhotoUrl] = useState(transaction.conditionPhoto || '');
+  useEscapeClose(onClose);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoUrl, setPhotoUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+    setPhotoFile(file);
+    setPhotoUrl(URL.createObjectURL(file));
+  };
+
+  const clearPhoto = () => {
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+    setPhotoFile(null);
+    setPhotoUrl('');
+  };
+
   const handleRelease = async () => {
-    if (!photoUrl) { setError('Please capture the pre-rental condition photo'); return; }
+    if (!photoFile) { setError('Please capture the pre-rental condition photo'); return; }
     setReleasing(true);
     setError('');
     try {
+      const base64 = await fileToBase64(photoFile);
+      const contentType = photoFile.type?.startsWith('image/') ? photoFile.type : 'image/jpeg';
+      const { path } = await storageService.upload(
+        `rental/${transaction.id}/release-${Date.now()}.jpg`,
+        contentType,
+        base64
+      );
       const updated = await api.put(`/transactions/${transaction.id}/release`, {
-        conditionPhoto: photoUrl,
+        releasePhoto: path,
         notes,
       });
       onReleased(updated);
@@ -30,18 +58,18 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
     <div className="fixed inset-0 z-[9999]">
       <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
       <div className="fixed inset-0 flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none">
-        <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md max-h-[95vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-release-item" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md max-h-[95vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
           <div className="bg-white flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl">
             <div className="flex items-center gap-3">
               <div className="p-2.5 bg-blue-50 rounded-xl">
                 <Package size={18} className="text-blue-600" />
               </div>
               <div>
-                <h3 className="font-bold text-lg text-gray-900">Release Item</h3>
+                <h3 id="dialog-title-release-item" className="font-bold text-lg text-gray-900">Release Item</h3>
                 <p className="text-xs text-gray-500">Customer pickup</p>
               </div>
             </div>
-            <button onClick={onClose} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0">
+            <button onClick={onClose} aria-label="Close release dialog" className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
               <X size={20} />
             </button>
           </div>
@@ -87,16 +115,13 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
               {photoUrl ? (
                 <>
                   <img src={photoUrl} className="w-full h-full object-cover" alt="Pre-rental condition" />
-                  <button onClick={() => setPhotoUrl('')} className="absolute top-2 right-2 p-1.5 bg-gray-900/70 text-white rounded-full shadow hover:bg-gray-900 transition-colors">
+                  <button onClick={clearPhoto} aria-label="Remove photo" className="absolute top-2 right-2 p-1.5 bg-gray-900/70 text-white rounded-full shadow hover:bg-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
                     <X size={14} />
                   </button>
                 </>
               ) : (
                 <label className="cursor-pointer text-center p-4 w-full h-full flex flex-col items-center justify-center">
-                  <input type="file" accept="image/*" capture="environment" onChange={e => {
-                    const file = e.target.files[0];
-                    if (file) setPhotoUrl(URL.createObjectURL(file));
-                  }} className="hidden" />
+                  <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" />
                   <div className="p-3.5 bg-white rounded-full shadow-sm mb-2.5">
                     <Camera size={24} className="text-gray-400" />
                   </div>
@@ -128,9 +153,9 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
               className="py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
               Cancel
             </button>
-            <button onClick={handleRelease} disabled={releasing || !photoUrl}
+            <button onClick={handleRelease} disabled={releasing || !photoFile}
               className={`py-3.5 text-sm font-bold text-white rounded-2xl transition-all flex items-center justify-center gap-2 ${
-                photoUrl && !releasing
+                photoFile && !releasing
                   ? 'bg-blue-600 hover:bg-blue-700 shadow-sm active:scale-[0.98]'
                   : 'bg-gray-200 text-gray-400 cursor-not-allowed'
               }`}>

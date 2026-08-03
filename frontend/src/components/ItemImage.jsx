@@ -1,11 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { ImageIcon } from 'lucide-react';
 import { storageService } from '../services/storage';
+import { imageCache } from '../utils/imageCache';
 
 const isAbsoluteUrl = (p) =>
   typeof p === 'string' && (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:'));
 
-export default function ItemImage({ image, alt = '', className = '', placeholderSize = 28 }) {
+// Resolve an absolute URL immediately; a private-bucket path goes through the
+// shared signed-URL cache so grids of items don't re-hit the backend (and
+// images don't flicker) on every render/navigation.
+const resolveUrl = (image) =>
+  imageCache.resolve(image, async () => {
+    const res = await storageService.getDownloadUrl(image);
+    return res?.url || null;
+  });
+
+function ItemImage({ image, alt = '', className = '', placeholderSize = 28 }) {
   const [src, setSrc] = useState(() => (image && isAbsoluteUrl(image) ? image : null));
 
   useEffect(() => {
@@ -14,10 +24,7 @@ export default function ItemImage({ image, alt = '', className = '', placeholder
       setSrc(image || null);
       return;
     }
-    storageService
-      .getDownloadUrl(image)
-      .then((res) => { if (active) setSrc(res?.url || null); })
-      .catch(() => { if (active) setSrc(null); });
+    resolveUrl(image).then((url) => { if (active) setSrc(url || null); });
     return () => { active = false; };
   }, [image]);
 
@@ -31,3 +38,5 @@ export default function ItemImage({ image, alt = '', className = '', placeholder
 
   return <img src={src} alt={alt} className={className} />;
 }
+
+export default memo(ItemImage);

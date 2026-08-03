@@ -1,13 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Camera, Clock, AlertTriangle, CheckCircle, DollarSign, Undo2, FileText } from 'lucide-react';
 
 import { customerLabel, itemLabel } from '../utils/format';
+import { storageService } from '../services';
+import { fileToBase64 } from '../utils/file';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export default function ProcessReturnModal({ transaction, onClose, onComplete }) {
+  useEscapeClose(onClose);
   const [isLate, setIsLate] = useState(null);
   const [isDamaged, setIsDamaged] = useState(null);
+  const [returnPhotoFile, setReturnPhotoFile] = useState(null);
   const [returnPhotoUrl, setReturnPhotoUrl] = useState('');
   const [returnNotes, setReturnNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
   const basePenalty = isLate ? 500 : 0;
   const damageFee = isDamaged ? 1000 : 0;
@@ -15,25 +22,61 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
 
   const canConfirm = isLate !== null && isDamaged !== null;
 
-  const handleComplete = () => {
-    if (!canConfirm) return;
-    onComplete(transaction.id, isDamaged, isLate, returnPhotoUrl);
+  useEffect(() => () => { if (returnPhotoUrl) URL.revokeObjectURL(returnPhotoUrl); }, [returnPhotoUrl]);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (returnPhotoUrl) URL.revokeObjectURL(returnPhotoUrl);
+    setReturnPhotoFile(file);
+    setReturnPhotoUrl(URL.createObjectURL(file));
+  };
+
+  const clearPhoto = () => {
+    if (returnPhotoUrl) URL.revokeObjectURL(returnPhotoUrl);
+    setReturnPhotoFile(null);
+    setReturnPhotoUrl('');
+  };
+
+  const handleComplete = async () => {
+    if (!canConfirm || submitting) return;
+    setError('');
+    let photoPath;
+    if (returnPhotoFile) {
+      setSubmitting(true);
+      try {
+        const base64 = await fileToBase64(returnPhotoFile);
+        const contentType = returnPhotoFile.type?.startsWith('image/') ? returnPhotoFile.type : 'image/jpeg';
+        const { path } = await storageService.upload(
+          `rental/${transaction.id}/return-${Date.now()}.jpg`,
+          contentType,
+          base64
+        );
+        photoPath = path;
+      } catch (err) {
+        setError(err?.message || 'Photo upload failed');
+        setSubmitting(false);
+        return;
+      }
+      setSubmitting(false);
+    }
+    onComplete(transaction.id, isDamaged, isLate, photoPath);
   };
 
   return (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-process-return" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-50 rounded-xl">
               <Undo2 size={18} className="text-emerald-600" />
             </div>
             <div>
-              <h3 className="font-bold text-lg text-gray-900">Process Return</h3>
+              <h3 id="dialog-title-process-return" className="font-bold text-lg text-gray-900">Process Return</h3>
               <p className="text-xs text-gray-500">Transaction #{transaction.id}</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0">
+          <button onClick={onClose} aria-label="Close return dialog" className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
             <X size={20} />
           </button>
         </div>
@@ -141,20 +184,17 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
               {returnPhotoUrl ? (
                 <>
                   <img src={returnPhotoUrl} className="w-full h-full object-cover" alt="Return condition" />
-                  <button onClick={() => setReturnPhotoUrl('')} className="absolute top-2 right-2 p-1.5 bg-gray-900/70 text-white rounded-full shadow hover:bg-gray-900 transition-colors">
+                  <button onClick={clearPhoto} aria-label="Remove photo" className="absolute top-2 right-2 p-1.5 bg-gray-900/70 text-white rounded-full shadow hover:bg-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
                     <X size={14} />
                   </button>
-                  <button onClick={() => { setReturnPhotoUrl(''); setTimeout(() => document.getElementById('return-photo-input')?.click(), 50); }}
+                  <button onClick={() => { clearPhoto(); setTimeout(() => document.getElementById('return-photo-input')?.click(), 50); }}
                     className="absolute bottom-2 right-2 px-3 py-1.5 bg-white/90 backdrop-blur-sm rounded-full text-[11px] font-bold text-gray-700 shadow-sm hover:bg-white transition-colors border border-gray-200">
                     Retake
                   </button>
                 </>
               ) : (
                 <label className="cursor-pointer text-center p-4 w-full h-full flex flex-col items-center justify-center">
-                  <input id="return-photo-input" type="file" accept="image/*" capture="environment" onChange={e => {
-                    const file = e.target.files[0];
-                    if (file) setReturnPhotoUrl(URL.createObjectURL(file));
-                  }} className="hidden" />
+                  <input id="return-photo-input" type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" />
                   <div className="p-3.5 bg-white rounded-full shadow-sm mb-2.5">
                     <Camera size={24} className="text-gray-400" />
                   </div>
@@ -207,19 +247,23 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
             </div>
           </div>
 
+          {error && (
+            <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
+          )}
+
           <div className="grid grid-cols-2 gap-3 pt-1">
             <button onClick={onClose}
               className="py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
               Cancel
             </button>
-            <button onClick={handleComplete} disabled={!canConfirm}
+            <button onClick={handleComplete} disabled={!canConfirm || submitting}
               className={`py-3.5 text-sm font-bold text-white rounded-2xl transition-all flex items-center justify-center gap-2 ${
-                canConfirm
+                canConfirm && !submitting
                   ? 'bg-emerald-600 hover:bg-emerald-700 shadow-sm shadow-emerald-500/20 active:scale-[0.98]'
                   : 'bg-gray-200 text-gray-400 cursor-not-allowed'
               }`}>
               <Undo2 size={16} />
-              Confirm Return
+              {submitting ? 'Uploading...' : 'Confirm Return'}
             </button>
           </div>
         </div>

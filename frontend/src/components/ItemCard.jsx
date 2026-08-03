@@ -44,23 +44,23 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
           {item.status}
         </div>
         <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 flex items-center gap-1">
-          <button onClick={onEdit}
-            className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-gray-800 hover:bg-white transition-colors" title="Edit item">
+          <button onClick={onEdit} aria-label={`Edit ${item.name}`}
+            className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-gray-800 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50" title="Edit item">
             <Edit3 size={13} />
           </button>
-          <button onClick={onCheckAvailability}
-            className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-gray-800 hover:bg-white transition-colors" title="View availability">
+          <button onClick={onCheckAvailability} aria-label={`View availability for ${item.name}`}
+            className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-gray-800 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50" title="View availability">
             <Calendar size={13} />
           </button>
           {onRestore && item.status === 'Deleted' && (
-            <button onClick={onRestore}
-              className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-emerald-600 hover:text-emerald-700 hover:bg-white transition-colors" title="Restore item">
+            <button onClick={onRestore} aria-label={`Restore ${item.name}`}
+              className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-emerald-600 hover:text-emerald-700 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50" title="Restore item">
               <RotateCcw size={13} />
             </button>
           )}
           {onDelete && item.status !== 'Deleted' && (
-            <button onClick={onDelete}
-              className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-red-600 hover:bg-white transition-colors" title="Delete item">
+            <button onClick={onDelete} aria-label={`Delete ${item.name}`}
+              className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-red-600 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50" title="Delete item">
               <Trash2 size={13} />
             </button>
           )}
@@ -147,16 +147,16 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
   const sale = getSaleInfo(item);
   return (
     <div
-      onClick={() => onViewDetail?.(item)}
-      className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col cursor-pointer">
-      <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
+      className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
+      <button type="button" onClick={() => onViewDetail?.(item)} aria-label={`View ${item.name}`}
+        className="relative aspect-[4/5] bg-gray-50 overflow-hidden w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60">
         <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
-          <div className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-red-200 bg-red-50 text-[9px] font-bold shadow-sm text-red-700">
+          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-red-200 bg-red-50 text-[9px] font-bold shadow-sm text-red-700">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
-          </div>
+          </span>
         )}
-      </div>
+      </button>
       <div className="p-4 flex flex-col flex-1 gap-1">
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</div>
         <h3 className="font-bold text-gray-900 text-sm leading-tight line-clamp-2">{item.name}</h3>
@@ -170,10 +170,10 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
             <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
           )}
         </p>
-        <button data-tour="book"
+        <button data-tour="book" type="button"
           onClick={(e) => { e.stopPropagation(); if (guest) onViewDetail?.(item); else onBook?.(); }}
           disabled={!guest && (item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted')}
-          className={`w-full mt-3 font-semibold py-2.5 rounded-full text-[13px] shadow-sm transition-colors ${
+          className={`w-full mt-3 font-semibold py-2.5 rounded-full text-[13px] shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
             (!guest && (item.status === 'Damaged' || item.status === 'Maintenance' || item.status === 'Deleted'))
               ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
               : 'bg-white border border-gray-200 text-gray-900 hover:border-gray-400'
