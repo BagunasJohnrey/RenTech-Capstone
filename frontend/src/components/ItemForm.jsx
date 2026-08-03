@@ -86,7 +86,7 @@ export default function ItemForm({
   // Upload the file to Supabase Storage via a server-side signed upload.
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
-    if (!file) return;
+    if (!file || file.type.startsWith('blob:')) return;
     setUploading(true);
     try {
       const base64 = (await downscaleImage(file)) || (await fileToBase64(file));
@@ -111,7 +111,10 @@ export default function ItemForm({
     if (!name || !price) return;
     const values = { name, price: parseFloat(price), status };
     if (showCategory) values.category = category;
-    if (showPhoto) values.image = imagePath || FALLBACK_IMAGE;
+    if (showPhoto) {
+      const img = imagePath && imagePath.startsWith('blob:') ? null : imagePath;
+      values.image = img || FALLBACK_IMAGE;
+    }
     if (showSale) {
       values.onSale = onSale;
       values.discountPct = discountPct === '' ? null : parseFloat(discountPct);

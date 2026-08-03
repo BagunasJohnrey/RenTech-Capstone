@@ -21,9 +21,8 @@ export const createRentalSchema = z.object({
 
 export const returnSchema = z.object({
   body: z.object({
-    returnDate: z.string(),
     isDamaged: z.boolean(),
-    conditionPhoto: z.string().optional(),
+    isLate: z.boolean(),
     returnPhoto: z.string().optional(),
     notes: z.string().optional(),
   }),
@@ -101,7 +100,7 @@ export async function processReturn(req: AuthenticatedRequest, res: Response, ne
     const result = await transactionService.processReturn(
       String(req.params.id),
       req.user.id,
-      req.body.returnDate,
+      new Date().toISOString(), // auto-assign when client doesn't provide dates
       req.body.isDamaged,
       req.body.returnPhoto ?? req.body.conditionPhoto,
       req.body.notes

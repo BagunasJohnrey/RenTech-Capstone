@@ -6,7 +6,6 @@ import BookingCalendar from '../components/BookingCalendar';
 import Field from '../components/ui/Field';
 import { inventoryService } from '../services/inventory';
 import { useEscapeClose } from '../hooks/useEscapeClose';
-import { useToast } from '../components/Toast';
 
 const ITEMS_PER_LOAD = 6;
 
@@ -17,9 +16,8 @@ const toLocalYmd = (d) => {
 
 export default function StaffNewRental({ inventory, transactions = [], onAddTransaction, onClose, initialItem }) {
   useEscapeClose(onClose);
-  const { success: toastSuccess } = useToast();
 
-  // Steps & toast
+  // Steps
   const [step, setStep] = useState(initialItem ? 2 : 1);
 
   // Catalog search & filter
@@ -355,7 +353,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       };
       try {
         await onAddTransaction(transactionData);
-        toastSuccess('Booking created successfully');
         setTimeout(() => onClose(), 1200);
       } catch (err) {
         setError(err?.message || 'Failed to create rental. Please try again.');
