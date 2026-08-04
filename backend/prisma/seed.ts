@@ -9,6 +9,8 @@ async function main() {
     { key: 'damage_fee', value: '1000', description: 'Damage fee in PHP' },
     { key: 'rental_period_days', value: '3', description: 'Default rental period in days' },
     { key: 'min_downpayment', value: '200', description: 'Minimum downpayment in PHP' },
+    { key: 'overdue_escalation_days', value: '3', description: 'Days a rental must stay overdue before the escalation SMS fires' },
+    { key: 'data_retention_months', value: '12', description: 'Months of notifications/SMS/audit history to keep before the scheduled purge deletes it' },
   ];
 
   for (const rule of rules) {

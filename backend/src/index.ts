@@ -9,6 +9,7 @@ import { rateLimiter } from './middleware/rateLimiter.js';
 import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNotify } from './services/sms.service.js';
+import { purgeOldData } from './services/retention.service.js';
 import { ensureBucket } from './services/storage.service.js';
 import { getKpis, getForecast, getInsights, getTodayTasks } from './services/dashboard.service.js';
 import { getInventoryAnalytics } from './services/inventoryAnalytics.service.js';
@@ -137,6 +138,38 @@ app.listen(env.PORT, () => {
   runScheduledChecks();
   const scheduler = setInterval(runScheduledChecks, 60 * 1000);
   scheduler.unref?.();
+
+  // Phase 4.3 retention purge: sweep long-tail Notification/SentSms/AuditLog
+  // rows older than `data_retention_months` once a day. Purging is idempotent
+  // and low-cost, but still kept out of the 60s SMS cron so an accidental
+  // misconfiguration can't widen its blast radius; the coarse daily cadence is
+  // plenty given chains of months-long data. Guarded against overlap the same
+  // way as the SMS scheduler so two ticks can't race the same deleteMany.
+  let retentionRunning = false;
+  const runRetention = async () => {
+    if (retentionRunning) return;
+    retentionRunning = true;
+    try {
+      const result = await purgeOldData();
+      console.log(
+        `[Retention] purged ${result.notifications} notification(s), ` +
+        `${result.sentSms} sms record(s), ${result.auditLogs} audit log(s) older than ` +
+        `${result.retentionMonths} month(s)`
+      );
+    } catch (err) {
+      console.error('[Retention] purge failed:', err);
+    } finally {
+      retentionRunning = false;
+    }
+  };
+  // Run once shortly after startup (staggered so it doesn't compete with the
+  // dashboard pre-warm + the first SMS tick), then every 24 hours.
+  const retentionStart = setTimeout(() => {
+    runRetention();
+    const daily = setInterval(runRetention, 24 * 60 * 60 * 1000);
+    daily.unref?.();
+  }, 5 * 60 * 1000);
+  retentionStart.unref?.();
 });
 
 export default app;

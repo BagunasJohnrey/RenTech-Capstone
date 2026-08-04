@@ -257,5 +257,14 @@ export async function removeStaffAccount(adminId: string, staffId: string) {
 
   await supabaseAdmin.auth.admin.deleteUser(staff.userId);
   await prisma.notification.deleteMany({ where: { profileId: staffId } });
+  // Clear sentSms rows that reference this profile (both as recipient and as
+  // the staff sender) so the profile delete doesn't hit FK constraints and
+  // doesn't leave orphan history keyed to a removed account. The `profileId`
+  // where already covers every sentSms row whose recipient OR sender is this
+  // staff member, so two deletes are needed: one for rows they received, one
+  // for rows they sent on behalf of other customers (which have a different
+  // profileId and so are not caught by the first).
+  await prisma.sentSms.deleteMany({ where: { profileId: staffId } });
+  await prisma.sentSms.deleteMany({ where: { sentById: staffId } });
   await prisma.profile.delete({ where: { id: staffId } });
 }

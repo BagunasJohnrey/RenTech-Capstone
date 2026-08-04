@@ -187,6 +187,17 @@ describe('Admin: Staff Management', () => {
       expect(res.status).toBe(200);
     });
 
+    it('should remove staff who was an SMS recipient (cleans sentSms)', async () => {
+      const res = await request(app)
+        .delete('/api/auth/staff/staff-id-456')
+        .set(adminAuth);
+
+      expect(res.status).toBe(200);
+      const { prisma } = await import('../src/config/database.js');
+      // sentSms.deleteMany should have been called for both recipient and sender cleanup
+      expect(prisma.sentSms.deleteMany).toHaveBeenCalled();
+    });
+
     it('should reject non-admin', async () => {
       const res = await request(app)
         .delete('/api/auth/staff/staff-id-456')

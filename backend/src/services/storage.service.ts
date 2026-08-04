@@ -99,3 +99,15 @@ export async function getDownloadUrl(path: string) {
 
   return { url: data.signedUrl };
 }
+
+// Remove a stored object. Best-effort — a missing/bogus path must not fail the
+// caller's delete flow, so errors are logged and swallowed.
+export async function removeObject(path: string) {
+  try {
+    if (!path || /^https?:\/\//.test(path)) return; // absolute URLs aren't bucket objects
+    const { error } = await supabaseAdmin.storage.from(BUCKET_NAME).remove([path]);
+    if (error) console.warn('[storage] removeObject failed:', error.message);
+  } catch (err) {
+    console.warn('[storage] removeObject error:', err);
+  }
+}

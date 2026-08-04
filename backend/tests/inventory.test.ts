@@ -187,6 +187,40 @@ describe('DELETE /api/inventory/:id', () => {
     expect(res.status).toBe(200);
   });
 
+  it('should reject delete when item has transaction history (archive instead)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'Available',
+      image: 'path/to/image.jpg',
+    });
+    prisma.transaction.findFirst.mockResolvedValueOnce({ id: 10 });
+
+    const res = await request(app)
+      .delete('/api/inventory/1')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/rental history/i);
+    expect(prisma.inventoryItem.delete).not.toHaveBeenCalled();
+  });
+
+  it('should delete item without history and clean up image', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'Available',
+      image: 'path/to/image.jpg',
+    });
+    prisma.transaction.findFirst.mockResolvedValueOnce(null);
+    prisma.inventoryItem.delete.mockResolvedValueOnce({ id: 1 });
+
+    const res = await request(app)
+      .delete('/api/inventory/1')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(prisma.inventoryItem.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+  });
+
   it('should reject when staff (not admin)', async () => {
     const res = await request(app)
       .delete('/api/inventory/1')

@@ -217,7 +217,21 @@ export async function deleteItem(id: number) {
     throw new AppError(400, 'Only Available or Out of Service items can be deleted');
   }
 
+  // A hard delete must not orphan history. If the item has any transaction it
+  // should be archived (status=Deleted) instead of physically removed.
+  const hasHistory = await prisma.transaction.findFirst({ where: { itemId: id }, select: { id: true } });
+  if (hasHistory) {
+    throw new AppError(400, 'Item has rental history — archive it (set status to Deleted) instead of deleting');
+  }
+
   await prisma.inventoryItem.delete({ where: { id } });
+
+  // Clean up the stored image so the bucket doesn't accumulate orphan files.
+  if (item.image) {
+    const { removeObject } = await import('./storage.service.js');
+    await removeObject(item.image);
+  }
+
   clearDataCache();
 }
 

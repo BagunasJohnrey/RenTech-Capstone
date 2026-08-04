@@ -1,4 +1,12 @@
-import { beforeAll, afterAll, vi } from 'vitest';
+import { beforeAll, afterAll, beforeEach, vi } from 'vitest';
+
+// Reset mock call history (and any mockImplementation/mockResolvedValueOnce
+// leftovers) between every test so once-guard / "not called" assertions never
+// see stale calls from a previous test. Without this, any test asserting
+// `.not.toHaveBeenCalled()` is order-dependent.
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 process.env.SUPABASE_URL = 'https://test.supabase.co';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
@@ -225,6 +233,7 @@ vi.mock('../src/config/database.js', () => {
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: 'log-1' }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     payment: {
       aggregate: vi.fn().mockResolvedValue({ _sum: { amount: 0 } }),
@@ -244,6 +253,8 @@ vi.mock('../src/config/database.js', () => {
     sentSms: {
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'sms-new', ...args.data })),
       findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      delete: vi.fn().mockResolvedValue({ id: 'sms-deleted' }),
     },
     businessRule: {
       findMany: vi.fn().mockResolvedValue([]),
