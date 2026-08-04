@@ -59,7 +59,10 @@ export function homeTab(role) {
 // ---- Detail routes (modal-on-URL) ----
 
 export const ITEM_DETAIL_RE = /^\/(?:collection|admin\/inventory|staff\/catalog)\/(\d+)$/;
-export const TX_DETAIL_RE = /^\/(?:transactions|admin\/transactions|staff\/logs)\/(\d+)$/;
+// Transactions use UUID primary keys (unlike inventory items, which are ints),
+// so accept both digits and UUIDs here — previously the (\d+)-only matcher let
+// staff/admin/customer deep-links to a transaction fall through to the 404 page.
+export const TX_DETAIL_RE = /^\/(?:transactions|admin\/transactions|staff\/logs)\/([0-9a-fA-F-]{8,}|\d+)$/;
 
 export function itemDetailPath(role, itemId) {
   if (role === 'Admin') return `/admin/inventory/${itemId}`;

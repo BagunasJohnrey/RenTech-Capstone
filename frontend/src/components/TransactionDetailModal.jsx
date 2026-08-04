@@ -42,14 +42,26 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // (payments[], processedBy, full customer/item) when available.
   const [tx, setTx] = useState(transaction);
 
+  // Fetch enrichment only when the transaction id changes — `transaction` is a
+  // new object identity on every parent render, and `normalizeTx()` also
+  // returns a fresh object, so depending on them (or calling setTx every
+  // render + every fetch resolve) creates an infinite update loop, which is
+  // what used to block the close button from ever un-mounting the modal.
   useEffect(() => {
     setTx(transaction);
+  }, [transaction?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (transaction?.id && fetchFull) {
+      let cancelled = false;
       // normalize the full record so customerProfile is always present —
       // otherwise the address flickers in from the list item then vanishes.
-      fetchFull(transaction.id).then((full) => setTx(normalizeTx(full))).catch(() => {});
+      fetchFull(transaction.id)
+        .then((full) => { if (!cancelled) setTx(normalizeTx(full)); })
+        .catch(() => {});
+      return () => { cancelled = true; };
     }
-  }, [transaction, fetchFull]);
+  }, [transaction?.id, fetchFull]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!tx) return null;
 

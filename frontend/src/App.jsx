@@ -82,7 +82,9 @@ export default function RentechApp() {
   // parent tab for the page underneath, plus a routed modal.
   const itemDetailMatch = location.pathname.match(ITEM_DETAIL_RE);
   const txDetailMatch = location.pathname.match(TX_DETAIL_RE);
-  const basePath = location.pathname.replace(/\/\d+$/, '');
+  // Strip a trailing detail id (numeric item id OR a transaction UUID) so the
+  // underlying tab resolves for detail URLs like /staff/logs/<uuid>.
+  const basePath = location.pathname.replace(/\/(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\d+)$/, '');
   const goTab = (tabId) => navigate(tabPath(viewRole, tabId));
   // '/' is the app entry: customers get their Home, staff/admin get their
   // dashboard (otherwise they'd hit the Unauthorized page right after login).
@@ -278,13 +280,18 @@ export default function RentechApp() {
   }, [isLoggedIn, itemDetailMatch, inventory]);
 
   // Transaction — from the list when loaded, else fetch the full record.
+  // Transaction ids are UUID strings (NOT numbers) — keep them as strings.
+  // NOTE: depend on the extracted id string only — `txDetailMatch` is a new
+  // RegExp match object on every render, which would retrigger this effect in
+  // an infinite loop (React "Maximum update depth exceeded").
+  const txDetailId = txDetailMatch ? String(txDetailMatch[1]) : null;
   useEffect(() => {
-    if (!isLoggedIn || !txDetailMatch) return;
-    const id = Number(txDetailMatch[1]);
-    const found = transactions.find((t) => t.id === id);
+    if (!isLoggedIn || !txDetailId) return;
+    const id = txDetailId;
+    const found = transactions.find((t) => String(t.id) === id);
     if (found) { setRoutedTx(normalizeTx(found)); return; }
     getById(id).then((full) => setRoutedTx(normalizeTx(full))).catch(() => {});
-  }, [isLoggedIn, txDetailMatch, transactions, getById]);
+  }, [isLoggedIn, txDetailId, transactions, getById]);
 
   const handleLogout = async () => {
     // Leave the portal URL first — otherwise the signed-out render (which
