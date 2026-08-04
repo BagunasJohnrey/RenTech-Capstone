@@ -9,6 +9,8 @@ import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import { autoNotifyOverdue, notifyDueToday, checkNoShowAndNotify } from './services/sms.service.js';
 import { ensureBucket } from './services/storage.service.js';
+import { getKpis, getForecast, getInsights } from './services/dashboard.service.js';
+import { getInventoryAnalytics } from './services/inventoryAnalytics.service.js';
 
 const app = express();
 
@@ -73,6 +75,17 @@ app.listen(env.PORT, () => {
   // Ensure the private image bucket exists so item-photo uploads can mint
   // signed URLs (otherwise generateUploadUrl throws "Failed to generate upload URL").
   ensureBucket().catch((err) => console.error('Storage bucket init failed:', err));
+
+  // Pre-warm the dashboard cache so the first page load (AI Insights, KPIs,
+  // revenue charts) is a cache hit instead of paying the cold-connection +
+  // multi-query cost in front of the user. Errors are non-fatal — the page
+  // just computes on first request as usual.
+  Promise.allSettled([
+    getKpis(),
+    getForecast(3),
+    getInsights(),
+    getInventoryAnalytics(),
+  ]).then(() => console.log('[Cache] dashboard data pre-warmed'));
 
   // Check for overdue / due-today transactions every 1 minute so SMS
   // reminders go out within ~60s of the relevant date boundary.

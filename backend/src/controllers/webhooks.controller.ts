@@ -3,6 +3,7 @@ import * as paymongoService from '../services/paymongo.service.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
+import { clearDataCache } from '../utils/ttlCache.js';
 
 export async function handlePayMongoWebhook(req: Request, res: Response, next: NextFunction) {
   try {
@@ -94,6 +95,10 @@ export async function handlePayMongoWebhook(req: Request, res: Response, next: N
         entityId: transactionId,
         newValue: { paymentReceived: amount, totalPaid: newTotalPaid, balance: newBalance },
       });
+
+      // A succeeded payment changes revenue figures — drop the cached dashboard
+      // data so the next load shows the new totals.
+      clearDataCache();
     }
 
     res.json({ received: true });

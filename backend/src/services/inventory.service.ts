@@ -1,6 +1,7 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
+import { clearDataCache } from '../utils/ttlCache.js';
 import { ItemStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -128,6 +129,7 @@ export async function createItem(data: {
   saleEndsAt?: string;
 }) {
   const item = await prisma.inventoryItem.create({ data });
+  clearDataCache();
   return { ...item, effectiveStatus: item.status };
 }
 
@@ -158,6 +160,7 @@ export async function updateItem(id: number, data: {
   }
 
   const updated = await prisma.inventoryItem.update({ where: { id }, data: patch });
+  clearDataCache();
   return { ...updated, effectiveStatus: updated.status };
 }
 
@@ -199,6 +202,8 @@ export async function bulkSetStatus(
     newValue: { ids, status, outOfServiceReason: status === ItemStatus.OutOfService ? (outOfServiceReason ?? null) : null },
   });
 
+  clearDataCache();
+
   return { updated: result.count };
 }
 
@@ -213,6 +218,7 @@ export async function deleteItem(id: number) {
   }
 
   await prisma.inventoryItem.delete({ where: { id } });
+  clearDataCache();
 }
 
 export async function checkAvailability(itemId: number, rentalDate: string, dueDate: string) {

@@ -1,5 +1,6 @@
 import { prisma } from '../config/database.js';
 import { sma } from '../utils/sma.js';
+import { cacheOrCompute } from '../utils/ttlCache.js';
 
 function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
   if (filter?.start) where.createdAt = { gte: filter.start };
@@ -8,6 +9,14 @@ function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
 }
 
 export async function getKpis(filter?: { start?: Date; end?: Date }) {
+  // Cached server-side so every consumer (customer Home, staff today-view,
+  // admin dashboard, AI Insights) shares one computation instead of repeating
+  // the same 8+ queries per request.
+  const key = filter?.start ? `kpis:${filter.start.toISOString()}` : 'kpis:all';
+  return cacheOrCompute(key, () => getKpisUncached(filter));
+}
+
+async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
   const [
     activeRentals,
     overdueReturns,
@@ -175,40 +184,61 @@ async function getDataMonths() {
 }
 
 export async function getForecast(period: number = 3) {
-  const { months } = await getDataMonths();
-  const now = new Date();
+  const key = `forecast:${period}`;
+  return cacheOrCompute(key, async () => {
+    const { months, firstMonth } = await getDataMonths();
 
-  const monthlyCounts = await Promise.all(
-    months.map(async (m) => {
-      const start = new Date(m.year, m.month - 1, 1);
-      const end = new Date(m.year, m.month, 1);
-      const count = await prisma.transaction.count({
-        where: {
-          status: { in: ['Returned', 'Active', 'Overdue'] },
-          createdAt: { gte: start, lt: end },
-        },
-      });
-      return count;
-    })
-  );
+    // ONE query instead of one count per month — bucket by month in JS so the
+    // remote pooler only sees a single round trip regardless of history length.
+    const rows = await prisma.transaction.findMany({
+      where: {
+        status: { in: ['Returned', 'Active', 'Overdue'] },
+        createdAt: { gte: firstMonth },
+      },
+      select: { createdAt: true },
+    });
 
-  const smaValues = sma(monthlyCounts, period);
+    const monthlyCounts = months.map(m =>
+      rows.filter(t => t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1).length
+    );
 
-  return {
-    labels: months.map(m => m.label),
-    counts: monthlyCounts,
-    sma: smaValues,
-    period,
-  };
+    const smaValues = sma(monthlyCounts, period);
+
+    return {
+      labels: months.map(m => m.label),
+      counts: monthlyCounts,
+      sma: smaValues,
+      period,
+    };
+  });
 }
 
 export async function getInsights(filter?: { start?: Date; end?: Date }) {
+  const key = filter?.start ? `insights:${filter.start.toISOString()}` : 'insights:all';
+  return cacheOrCompute(key, () => getInsightsUncached(filter));
+}
+
+async function getInsightsUncached(filter?: { start?: Date; end?: Date }) {
   const txWhere: any = { status: { in: ['Active', 'Returned', 'Overdue'] } };
   if (filter?.start) txWhere.createdAt = { gte: filter.start };
   if (filter?.end) txWhere.createdAt = { ...txWhere.createdAt, lt: filter.end };
 
+  // Light select — the previous `include: { transactions }` pulled every item
+  // plus its FULL transaction history into memory just to count them.
   const items = await prisma.inventoryItem.findMany({
-    include: { transactions: { where: txWhere, select: { id: true } } },
+    select: { id: true, name: true, category: true },
+  });
+
+  // Everything below is derived from this one transaction query:
+  // per-item rental counts, revenue by month, and revenue by category.
+  const txs = await prisma.transaction.findMany({
+    where: txWhere,
+    select: {
+      itemId: true,
+      rentalFee: true,
+      createdAt: true,
+      item: { select: { category: true } },
+    },
   });
 
   const categoryBreakdown: Record<string, { total: number; rented: number }> = {};
@@ -217,19 +247,35 @@ export async function getInsights(filter?: { start?: Date; end?: Date }) {
       categoryBreakdown[item.category] = { total: 0, rented: 0 };
     }
     categoryBreakdown[item.category].total++;
-    if (item.transactions.length > 0) {
+  }
+  const rentedItemIds = new Set(txs.map(t => t.itemId));
+  for (const itemId of rentedItemIds) {
+    const item = items.find(i => i.id === itemId);
+    if (item && categoryBreakdown[item.category]) {
       categoryBreakdown[item.category].rented++;
     }
   }
 
+  const rentalCounts = new Map<number, number>();
+  for (const t of txs) {
+    rentalCounts.set(t.itemId, (rentalCounts.get(t.itemId) || 0) + 1);
+  }
+
   const itemRentalCounts = items
-    .map(item => ({ id: item.id, name: item.name, category: item.category, rentals: item.transactions.length }))
+    .map(item => ({ id: item.id, name: item.name, category: item.category, rentals: rentalCounts.get(item.id) || 0 }))
     .sort((a, b) => b.rentals - a.rentals);
 
   const topRented = itemRentalCounts.slice(0, 5);
   const underperforming = itemRentalCounts.filter(i => i.rentals === 0).slice(0, 10);
 
   const { months } = await getDataMonths();
+  const filteredMonths = filter?.start
+    ? months.filter(m => new Date(m.year, m.month - 1, 1) >= filter.start!)
+    : months;
+
+  // Revenue prefers succeeded payments when any exist (accurate cash-in), else
+  // falls back to rental fees. Payments are fetched once and bucketed in JS —
+  // the old per-month aggregate loop is gone (6+ sequential round trips).
   const paymentWhere: any = { status: 'succeeded' };
   if (filter?.start) paymentWhere.createdAt = { gte: filter.start };
   if (filter?.end) paymentWhere.createdAt = { ...paymentWhere.createdAt, lt: filter.end };
@@ -238,38 +284,23 @@ export async function getInsights(filter?: { start?: Date; end?: Date }) {
     select: { amount: true, createdAt: true },
     orderBy: { createdAt: 'asc' },
   });
-
   const hasPayments = payments.length > 0;
-  const revenueByMonth: { label: string; revenue: number }[] = [];
 
-  const filteredMonths = filter?.start
-    ? months.filter(m => new Date(m.year, m.month - 1, 1) >= filter.start!)
-    : months;
+  const inMonth = (d: Date, m: { year: number; month: number }) =>
+    d.getFullYear() === m.year && d.getMonth() === m.month - 1;
 
-  for (const m of filteredMonths) {
-    const label = m.label;
-    const start = new Date(m.year, m.month - 1, 1);
-    const end = new Date(m.year, m.month, 1);
+  const revenueByMonth = filteredMonths.map(m => {
     const revenue = hasPayments
-      ? payments.filter(p => p.createdAt >= start && p.createdAt < end).reduce((sum, p) => sum + p.amount, 0)
-      : await prisma.transaction.aggregate({
-          _sum: { rentalFee: true },
-          where: {
-            status: { in: ['Active', 'Overdue', 'Returned'] },
-            createdAt: { gte: start, lt: end },
-          },
-        }).then(r => r._sum.rentalFee || 0);
-    revenueByMonth.push({ label, revenue });
-  }
-
-  const txWithItems = await prisma.transaction.findMany({
-    where: txWhere,
-    select: { rentalFee: true, item: { select: { category: true } } },
+      ? payments.filter(p => inMonth(p.createdAt, m)).reduce((sum, p) => sum + p.amount, 0)
+      : txs.filter(t => inMonth(t.createdAt, m)).reduce((sum, t) => sum + (t.rentalFee || 0), 0);
+    return { label: m.label, revenue };
   });
+
   const revenueByCategory: Record<string, number> = {};
-  for (const tx of txWithItems) {
-    const cat = tx.item.category;
-    revenueByCategory[cat] = (revenueByCategory[cat] || 0) + tx.rentalFee;
+  for (const t of txs) {
+    const cat = t.item?.category;
+    if (!cat) continue;
+    revenueByCategory[cat] = (revenueByCategory[cat] || 0) + (t.rentalFee || 0);
   }
 
   return {
@@ -279,6 +310,6 @@ export async function getInsights(filter?: { start?: Date; end?: Date }) {
     revenueByMonth,
     revenueByCategory,
     totalItems: items.length,
-    totalRented: items.filter(i => i.transactions.length > 0).length,
+    totalRented: rentedItemIds.size,
   };
 }

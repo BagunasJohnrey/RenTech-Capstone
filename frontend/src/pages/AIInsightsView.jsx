@@ -119,7 +119,10 @@ export default function AIInsightsView({ analyticsData, role }) {
   const [revenueChartData, setRevenueChartData] = useState(cached?.insights?.revenueByMonth ?? null);
   const [inventoryAnalytics, setInventoryAnalytics] = useState(cached?.analytics ?? null);
   const [analyticsSummary, setAnalyticsSummary] = useState(cached?.analytics?.summary ?? null);
-  const [loading, setLoading] = useState(!cached);
+  // Page renders as soon as the FIRST source arrives (KPIs load fastest), then
+  // the remaining sections fill in as their own requests resolve — no full-page
+  // skeleton waiting on all 4 endpoints.
+  const [loaded, setLoaded] = useState(!!cached);
   const [aiSuggestions, setAiSuggestions] = useState(() => readAiSuggestCache());
   const [suggestLoading, setSuggestLoading] = useState(false);
   const { error: toastError } = useToast();
@@ -128,33 +131,58 @@ export default function AIInsightsView({ analyticsData, role }) {
     const range = timeRange;
     let active = true;
     const periodParam = range === 'Overall' ? '' : `period=${range.toLowerCase()}`;
-    if (!readAiCache(range)) setLoading(true);
-    Promise.all([
-      api.get(`/dashboard/kpis?${periodParam}`),
-      api.get('/dashboard/forecast?period=3'),
-      api.get(`/dashboard/insights?${periodParam}`),
-      api.get(`/inventory/analytics?${periodParam}`),
-    ]).then(([kpiResult, forecastResult, insightsResult, analyticsFull]) => {
+
+    // Cache hit for this range: apply instantly and skip the network entirely.
+    const hit = readAiCache(range);
+    if (hit) {
+      setKpis(hit.kpis);
+      setForecast(hit.forecast);
+      setInsightsData(hit.insights);
+      setRevenueChartData(hit.insights?.revenueByMonth || []);
+      setInventoryAnalytics(hit.analytics);
+      setAnalyticsSummary(hit.analytics?.summary);
+      setLoaded(true);
+      return;
+    }
+
+    setLoaded(false);
+    let settled = false;
+    const settle = () => { if (!settled) { settled = true; if (active) setLoaded(true); } };
+    const fail = (err) => {
       if (!active) return;
-      const payload = {
-        kpis: kpiResult,
-        forecast: forecastResult,
-        insights: insightsResult,
-        analytics: analyticsFull,
-      };
-      aiCache.set(range, { data: payload, at: Date.now() });
-      setKpis(payload.kpis);
-      setForecast(payload.forecast);
-      setInsightsData(payload.insights);
-      setRevenueChartData(payload.insights?.revenueByMonth || []);
-      setInventoryAnalytics(payload.analytics);
-      setAnalyticsSummary(payload.analytics?.summary);
-    }).catch((err) => {
-      // FIX D: surface the dashboard/KPI load failure instead of silently
-      // rendering zeroed charts.
       toastError(err?.message || 'Failed to load dashboard data');
-    }).finally(() => { if (active) setLoading(false); });
+      settle();
+    };
+
+    // Each request updates its own section the moment it lands (progressive
+    // render — the page paints as soon as the fastest source arrives), and the
+    // allSettled hook writes one coherent snapshot to the 60s cache.
+    const pKpis = api.get(`/dashboard/kpis?${periodParam}`)
+      .then(r => { if (active) { setKpis(r); settle(); } return r; })
+      .catch(e => { fail(e); throw e; });
+    const pForecast = api.get('/dashboard/forecast?period=3')
+      .then(r => { if (active) { setForecast(r); settle(); } return r; })
+      .catch(e => { fail(e); throw e; });
+    const pInsights = api.get(`/dashboard/insights?${periodParam}`)
+      .then(r => { if (active) { setInsightsData(r); setRevenueChartData(r?.revenueByMonth || []); settle(); } return r; })
+      .catch(e => { fail(e); throw e; });
+    const pAnalytics = api.get(`/inventory/analytics?${periodParam}`)
+      .then(r => { if (active) { setInventoryAnalytics(r); setAnalyticsSummary(r?.summary); settle(); } return r; })
+      .catch(e => { fail(e); throw e; });
+
+    Promise.allSettled([pKpis, pForecast, pInsights, pAnalytics]).then(([k, f, i, a]) => {
+      if (!active) return;
+      if (k.status === 'fulfilled' && f.status === 'fulfilled' && i.status === 'fulfilled' && a.status === 'fulfilled') {
+        aiCache.set(range, {
+          data: { kpis: k.value, forecast: f.value, insights: i.value, analytics: a.value },
+          at: Date.now(),
+        });
+      }
+      settle();
+    });
+
     return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange]);
 
   // FIX D: surface export failures instead of throwing unhandled.
@@ -197,7 +225,7 @@ export default function AIInsightsView({ analyticsData, role }) {
     }
   };
 
-  if (loading) {
+  if (!loaded) {
     return <AIInsightsSkeleton />;
   }
 

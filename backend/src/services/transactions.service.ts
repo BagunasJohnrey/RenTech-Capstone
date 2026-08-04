@@ -3,6 +3,7 @@ import { AppError } from '../middleware/errorHandler.js';
 import { calculateFees } from '../utils/fees.js';
 import { assertItemAvailable } from '../utils/availability.js';
 import { createAuditLog } from '../utils/audit.js';
+import { clearDataCache } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { validateAndApply as applyPromo } from './promoCodes.service.js';
@@ -246,6 +247,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     }
   } catch { /* SMS is non-critical */ }
 
+  // New booking changes revenue/rental counts — drop the dashboard cache so
+  // the next load is computed from fresh data.
+  clearDataCache();
+
   return transaction;
 }
 
@@ -371,6 +376,8 @@ export async function processReturn(
     } catch { /* notification is non-critical */ }
   }
 
+  clearDataCache();
+
   return { ...updated, fees };
 }
 
@@ -446,6 +453,8 @@ export async function updateTransaction(
     newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes },
   });
 
+  clearDataCache();
+
   return updated;
 }
 
@@ -478,6 +487,8 @@ export async function cancelTransaction(transactionId: string, performedById: st
     oldValue: { status: tx.status },
   });
 
+  clearDataCache();
+
   return { message: 'Transaction cancelled' };
 }
 
@@ -503,6 +514,8 @@ export async function deleteTransaction(transactionId: string) {
       data: { status: ItemStatus.Available, outOfServiceReason: null },
     });
   }
+
+  clearDataCache();
 
   return { message: 'Transaction deleted' };
 }
@@ -547,6 +560,8 @@ export async function releaseRental(
     newValue: { status: 'Active', released: true },
     oldValue: { status: tx.status },
   });
+
+  clearDataCache();
 
   return updated;
 }

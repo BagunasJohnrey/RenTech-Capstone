@@ -38,11 +38,20 @@ describe('GET /api/dashboard/forecast', () => {
   it('should return forecast data for admin', async () => {
     const { prisma } = await import('../src/config/database.js');
     // getDataMonths spans from 3 months ago through the current month = 4 months.
-    prisma.transaction.count
-      .mockResolvedValueOnce(10)
-      .mockResolvedValueOnce(15)
-      .mockResolvedValueOnce(12)
-      .mockResolvedValueOnce(18);
+    // The service fetches createdAt rows ONCE and buckets them by month in JS,
+    // so mock a flat list of 10+15+12+18 rows spread over those 4 months.
+    const monthsAgo = (n: number) => {
+      const d = new Date();
+      d.setMonth(d.getMonth() - n);
+      d.setDate(10);
+      return d;
+    };
+    const rows: { createdAt: Date }[] = [];
+    for (let i = 0; i < 10; i++) rows.push({ createdAt: monthsAgo(3) });
+    for (let i = 0; i < 15; i++) rows.push({ createdAt: monthsAgo(2) });
+    for (let i = 0; i < 12; i++) rows.push({ createdAt: monthsAgo(1) });
+    for (let i = 0; i < 18; i++) rows.push({ createdAt: monthsAgo(0) });
+    prisma.transaction.findMany.mockResolvedValueOnce(rows);
 
     const res = await request(app)
       .get('/api/dashboard/forecast')
@@ -74,12 +83,19 @@ describe('GET /api/dashboard/forecast', () => {
 describe('GET /api/dashboard/insights', () => {
   it('should return insights data for admin', async () => {
     const { prisma } = await import('../src/config/database.js');
-    const now = new Date();
+    // Items are now fetched without their transaction history (light select) —
+    // rental counts / revenue come from a single transaction query.
     prisma.inventoryItem.findMany.mockResolvedValueOnce([
-      { id: 1, name: 'Gown A', category: 'Gown', price: 3000, status: 'Available', image: null, description: null, size: null, createdAt: now, updatedAt: now, transactions: [{ id: 'tx1' }, { id: 'tx2' }] },
-      { id: 2, name: 'Suit B', category: 'Suit', price: 4000, status: 'Available', image: null, description: null, size: null, createdAt: now, updatedAt: now, transactions: [{ id: 'tx3' }] },
-      { id: 3, name: 'Barong C', category: 'Barong', price: 3500, status: 'Available', image: null, description: null, size: null, createdAt: now, updatedAt: now, transactions: [] },
+      { id: 1, name: 'Gown A', category: 'Gown' },
+      { id: 2, name: 'Suit B', category: 'Suit' },
+      { id: 3, name: 'Barong C', category: 'Barong' },
     ]);
+    prisma.transaction.findMany.mockResolvedValueOnce([
+      { itemId: 1, rentalFee: 3000, createdAt: new Date(), item: { category: 'Gown' } },
+      { itemId: 1, rentalFee: 3000, createdAt: new Date(), item: { category: 'Gown' } },
+      { itemId: 2, rentalFee: 4000, createdAt: new Date(), item: { category: 'Suit' } },
+    ]);
+    prisma.payment.findMany.mockResolvedValueOnce([]);
 
     const res = await request(app)
       .get('/api/dashboard/insights')

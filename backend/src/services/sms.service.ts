@@ -3,6 +3,7 @@ import { AppError } from '../middleware/errorHandler.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
 import { getBusinessRules } from './settings.service.js';
+import { clearDataCache } from '../utils/ttlCache.js';
 
 export async function sendManualSms(params: {
   profileId: string;
@@ -133,6 +134,9 @@ export async function autoNotifyOverdue() {
       });
     } catch { /* notification is non-critical */ }
   }
+
+  // Overdue flags change dashboard KPIs — refresh cached dashboard data.
+  if (results.length > 0) clearDataCache();
 
   return results;
 }
