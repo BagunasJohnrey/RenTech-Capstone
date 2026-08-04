@@ -6,7 +6,7 @@ import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
-import { validateAndApply as applyPromo } from './promoCodes.service.js';
+import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -56,6 +56,11 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   const item = await prisma.inventoryItem.findUnique({ where: { id: data.itemId } });
   if (!item) throw new AppError(404, 'Item not found');
 
+  // Distinguish a bogus customerId (404) from a date overlap (409) so booking
+  // flows surface the right error instead of a confusing unavailable-dates 409.
+  const customer = await prisma.profile.findUnique({ where: { id: data.customerId } });
+  if (!customer) throw new AppError(404, 'Customer not found');
+
   // Compute effective availability
   if (item.status === ItemStatus.OutOfService) {
     throw new AppError(400, 'Item is out of service and cannot be rented');
@@ -70,14 +75,24 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   // SECURITY + validation: derive the price from the item, never the client.
   const baseFee = effectiveItemPrice(item);
 
-  // Apply a promo discount server-side (consumes a use). promoCodeId passed by
-  // the staff path is only honored when it points at a real, active promo.
+  // Resolve the promo server-side WITHOUT consuming a use yet. Consumption is
+  // deferred to inside the booking $transaction (atomic + rollback-safe), so a
+  // failed booking never burns a promo use or the per-customer cap.
   let fee = baseFee;
   let promoCodeId: string | undefined;
+  let promoToConsume: string | undefined;
   if (data.promoCode) {
-    const promo = await applyPromo(data.promoCode, baseFee, data.customerId);
+    const promo = await checkPromo(data.promoCode, baseFee);
+    // Per-customer cap: one use of a given promo per customer.
+    const priorUses = await prisma.transaction.count({
+      where: { customerId: data.customerId, promoCodeId: promo.promoCodeId },
+    });
+    if (priorUses > 0) {
+      throw new AppError(400, 'You have already used this promo code');
+    }
     fee = promo.finalFee;
     promoCodeId = promo.promoCodeId;
+    promoToConsume = promo.promoCodeId;
   } else if (data.promoCodeId) {
     const promo = await prisma.promoCode.findUnique({ where: { id: data.promoCodeId } });
     if (promo && promo.isActive) promoCodeId = promo.id;
@@ -149,6 +164,19 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
       const overlapping = await tx.transaction.findFirst({ where: overlapWhere });
       if (overlapping) {
         throw new AppError(409, 'Item is unavailable for the selected dates (rented or being cleaned)');
+      }
+
+      // Consume the promo atomically INSIDE the booking transaction. On any
+      // later failure the whole transaction rolls back, so the use is never
+      // burned for a booking that didn't commit; the atomic updateMany guard
+      // (currentUses < maxUses) prevents over-consumption under concurrency.
+      if (promoToConsume) {
+        await tx.promoCode.updateMany({
+          where: { id: promoToConsume, OR: [{ maxUses: null }, { currentUses: { lt: prisma.promoCode.fields.maxUses } }] },
+          data: { currentUses: { increment: 1 } },
+        }).then((r) => {
+          if (r.count === 0) throw new AppError(400, 'Promo code has reached its usage limit');
+        });
       }
 
       const balance = fee - downpayment;

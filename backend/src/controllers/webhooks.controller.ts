@@ -54,6 +54,9 @@ export async function handlePayMongoWebhook(req: Request, res: Response, next: N
       if (!transactionId) {
         throw new AppError(400, 'Missing transactionId in payment metadata');
       }
+      if (!(amount > 0)) {
+        throw new AppError(400, 'Invalid payment amount');
+      }
 
       const tx = await prisma.transaction.findUnique({ where: { id: transactionId } });
       if (!tx) throw new AppError(404, 'Transaction not found');
@@ -66,16 +69,26 @@ export async function handlePayMongoWebhook(req: Request, res: Response, next: N
         return res.json({ received: true, duplicate: true });
       }
 
-      await prisma.payment.create({
-        data: {
-          transactionId,
-          amount,
-          method,
-          type: amount >= tx.rentalFee ? 'full_payment' : 'downpayment',
-          paymongoPiId: piId,
-          status: 'succeeded',
-        },
-      });
+      try {
+        await prisma.payment.create({
+          data: {
+            transactionId,
+            amount,
+            method,
+            type: amount >= tx.rentalFee ? 'full_payment' : 'downpayment',
+            paymongoPiId: piId,
+            status: 'succeeded',
+          },
+        });
+      } catch (err: any) {
+        // Concurrent duplicate deliveries both pass the findUnique above; the
+        // unique paymongoPiId constraint makes the loser throw P2002. Treat it
+        // as an already-applied duplicate instead of failing the webhook.
+        if (err?.code === 'P2002') {
+          return res.json({ received: true, duplicate: true });
+        }
+        throw err;
+      }
 
       const newTotalPaid = tx.totalPaid + amount;
       const newBalance = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - newTotalPaid);

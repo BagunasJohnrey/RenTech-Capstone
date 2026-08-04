@@ -62,8 +62,10 @@ export async function deletePromoCode(id: string) {
 
 // Read-only promo check (never consumes a use). Used by the public /validate
 // endpoint so probing codes can't drain maxUses or corrupt currentUses.
-export async function checkPromo(code: string, rentalFee: number) {
-  const promo = await prisma.promoCode.findUnique({ where: { code: code.toUpperCase() } });
+// Accepts a prisma client so it can run inside a caller-managed transaction.
+type PrismaTx = Pick<typeof prisma, 'promoCode' | 'transaction'>;
+export async function checkPromo(code: string, rentalFee: number, client: PrismaTx = prisma) {
+  const promo = await client.promoCode.findUnique({ where: { code: code.toUpperCase() } });
   if (!promo) throw new AppError(404, 'Invalid promo code');
   if (!promo.isActive) throw new AppError(400, 'Promo code is no longer active');
   if (promo.expiresAt && new Date() > promo.expiresAt) throw new AppError(400, 'Promo code has expired');
@@ -82,6 +84,9 @@ export async function checkPromo(code: string, rentalFee: number) {
 
 // Applies (and consumes) a promo code at booking time. Enforces a per-customer
 // cap of one use per promo so one customer can't burn an entire maxUses pool.
+// NOTE: consumption is non-atomic here; booking flows should prefer
+// checkPromo + consumePromoUse inside their own $transaction (see
+// transactions.service.createRental). Kept for any direct callers.
 export async function validateAndApply(code: string, rentalFee: number, customerId?: string) {
   const result = await checkPromo(code, rentalFee);
 
@@ -94,10 +99,22 @@ export async function validateAndApply(code: string, rentalFee: number, customer
     }
   }
 
-  // FIX B: validation now consumes a use (previously currentUses never incremented).
-  await incrementUses(result.promoCodeId);
+  await consumePromoUse(result.promoCodeId);
 
   return result;
+}
+
+// Atomically increment currentUses ONLY if still under maxUses. Prevents
+// over-consumption when two bookings race the same promo code.
+export async function consumePromoUse(id: string, client: PrismaTx = prisma) {
+  const updated = await client.promoCode.updateMany({
+    where: { id, OR: [{ maxUses: null }, { currentUses: { lt: prisma.promoCode.fields.maxUses } }] },
+    data: { currentUses: { increment: 1 } },
+  });
+  if (updated.count === 0) {
+    throw new AppError(400, 'Promo code has reached its usage limit');
+  }
+  return updated;
 }
 
 export async function incrementUses(id: string) {
