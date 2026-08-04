@@ -176,12 +176,14 @@ export async function updateProfile(userId: string, data: {
   phone?: string;
   address?: string;
   preferences?: string[];
+  notifyPrefs?: Record<string, boolean>;
 }) {
   const updateData: {
     name?: string;
     phone?: string;
     address?: string;
     preferences?: string | null;
+    notifyPrefs?: Record<string, boolean>;
   } = {};
   if (data.name !== undefined) updateData.name = data.name;
   if (data.phone !== undefined) updateData.phone = data.phone;
@@ -189,6 +191,8 @@ export async function updateProfile(userId: string, data: {
   if (data.preferences !== undefined) {
     updateData.preferences = data.preferences.length ? data.preferences.join(',') : null;
   }
+  // Notification preferences (sms on/off), stored as JSON. Default (null) = all on.
+  if (data.notifyPrefs !== undefined) updateData.notifyPrefs = data.notifyPrefs;
   const profile = await prisma.profile.update({
     where: { id: userId },
     data: updateData,

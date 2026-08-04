@@ -251,6 +251,7 @@ vi.mock('../src/config/database.js', () => {
     },
     smsTemplate: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'tmpl-new', ...args.data })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),

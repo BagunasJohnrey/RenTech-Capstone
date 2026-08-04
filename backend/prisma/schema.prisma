@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -38,7 +39,8 @@ model Profile {
   name       String
   phone      String?
   address    String?
-  preferences String? @map("preferences")
+  preferences String?  @map("preferences")
+  notifyPrefs Json?    @map("notify_prefs")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -96,6 +98,9 @@ model Transaction {
   returnPhoto     String?           @map("return_photo")
   dueReminderSent Boolean           @default(false) @map("due_reminder_sent")
   noShowNotified  Boolean           @default(false) @map("no_show_notified")
+  overdueSmsSent        Boolean     @default(false) @map("overdue_sms_sent")
+  overdueSmsRetried     Boolean     @default(false) @map("overdue_sms_retried")
+  overdueEscalationSent Boolean     @default(false) @map("overdue_escalation_sent")
   damageReason    String?           @map("damage_reason")
   notes           String?
   size            String?           @map("size")
@@ -113,6 +118,10 @@ model Transaction {
   sentSms       SentSms[]
 
   @@index([itemId, status])
+  @@index([customerId, status])
+  @@index([status, dueDate])
+  @@index([processedById])
+  @@index([createdAt])
   @@map("transactions")
 }
 
@@ -144,6 +153,8 @@ model Payment {
 
   transaction Transaction @relation(fields: [transactionId], references: [id])
 
+  @@index([transactionId])
+  @@index([createdAt])
   @@map("payments")
 }
 
@@ -160,6 +171,8 @@ model Notification {
   profile     Profile?     @relation(fields: [profileId], references: [id])
   transaction Transaction? @relation(fields: [transactionId], references: [id])
 
+  @@index([profileId, isRead])
+  @@index([createdAt])
   @@map("notifications")
 }
 
@@ -178,6 +191,8 @@ model SentSms {
   transaction Transaction? @relation(fields: [transactionId], references: [id])
   template    SmsTemplate? @relation(fields: [templateId], references: [id])
 
+  @@index([profileId])
+  @@index([createdAt])
   @@map("sent_sms")
 }
 

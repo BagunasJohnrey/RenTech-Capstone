@@ -8,7 +8,7 @@ import { requestId } from './middleware/requestId.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
-import { autoNotifyOverdue, notifyDueToday, checkNoShowAndNotify } from './services/sms.service.js';
+import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNotify } from './services/sms.service.js';
 import { ensureBucket } from './services/storage.service.js';
 import { getKpis, getForecast, getInsights, getTodayTasks } from './services/dashboard.service.js';
 import { getInventoryAnalytics } from './services/inventoryAnalytics.service.js';
@@ -109,6 +109,11 @@ app.listen(env.PORT, () => {
         autoNotifyOverdue().then((overdue) => {
           if (overdue.length > 0) {
             console.log(`[Overdue] Processed ${overdue.length} overdue transaction(s)`);
+          }
+        }),
+        notifyOverdue3Days().then((esc) => {
+          if (esc.length > 0) {
+            console.log(`[Overdue+3d] Escalated ${esc.length} long-overdue rental(s)`);
           }
         }),
         notifyDueToday().then((dueToday) => {

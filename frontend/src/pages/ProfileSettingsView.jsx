@@ -57,8 +57,11 @@ export default function ProfileSettingsView({
   const [localPolicies, setLocalPolicies] = useState(policies);
   const [polMsg, setPolMsg] = useState('');
 
-  // Notification Preferences
-  const [notifPrefs, setNotifPrefs] = useState(() => loadJSON(LS_NOTIF, DEFAULT_NOTIF));
+  // Notification Preferences (profile-backed; falls back to localStorage default)
+  const [notifPrefs, setNotifPrefs] = useState(() =>
+    (profile?.notifyPrefs && typeof profile.notifyPrefs === 'object')
+      ? { ...DEFAULT_NOTIF, ...profile.notifyPrefs }
+      : loadJSON(LS_NOTIF, DEFAULT_NOTIF));
   const [notifMsg, setNotifMsg] = useState('');
 
   // Load business rules from backend on mount
@@ -123,6 +126,8 @@ export default function ProfileSettingsView({
     localStorage.setItem(LS_NOTIF, JSON.stringify(next));
     setNotifPrefs(next);
     setNotifMsg('Preferences updated!');
+    // Persist to the profile so the SMS scheduler honors the opt-out.
+    api.put('/auth/me', { notifyPrefs: next }).catch(() => {});
     setTimeout(() => setNotifMsg(''), 2000);
   };
 

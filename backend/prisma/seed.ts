@@ -28,12 +28,12 @@ async function main() {
     },
     {
       name: 'due_reminder',
-      content: 'Hi {customer}, this is a reminder that your rental of {item} is due on {date}. Please return on time to avoid late penalties. Thank you!',
+      content: 'Hi {customer}, this is a reminder that your rental of {item} is due on {date}. Please return on time. Thank you!',
       isDefault: true,
     },
     {
       name: 'late_return',
-      content: 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return immediately to minimize penalties. Thank you!',
+      content: 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return as soon as possible. Thank you!',
       isDefault: true,
     },
   ];

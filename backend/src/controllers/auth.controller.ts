@@ -30,6 +30,7 @@ export const updateProfileSchema = z.object({
     phone: z.string().optional(),
     address: z.string().optional(),
     preferences: z.array(z.string()).optional(),
+    notifyPrefs: z.record(z.boolean()).optional(),
   }),
 });
 

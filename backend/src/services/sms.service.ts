@@ -55,76 +55,87 @@ export async function sendManualSms(params: {
   return sentSms;
 }
 
+// Overdue notification policy:
+//  - On the day a rental goes overdue we text the customer ONCE (overdueSmsSent
+//    once-guard). If the send fails the flag stays false so the NEXT scheduler
+//    tick retries — but once it succeeds we never double-send.
+//  - After overdue_escalation_days (default 3) still-overdue rentals get ONE
+//    escalation text (overdueEscalationSent once-guard).
+//  - Customers with no phone are marked sent immediately (nothing to send) so
+//    the scheduler doesn't retry every minute; staff still get the in-app alert.
+// Message text deliberately carries NO late-fee/penalty amounts.
+
+const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return it as soon as possible.';
+
 export async function autoNotifyOverdue() {
   const now = new Date();
 
   const overdueTxs = await prisma.transaction.findMany({
     where: {
-      status: 'Active',
+      status: { in: ['Active', 'Overdue'] },
       dueDate: { lt: now },
+      overdueSmsSent: false,
     },
     include: {
-      customer: { select: { id: true, name: true, phone: true } },
+      customer: { select: { id: true, name: true, phone: true, notifyPrefs: true } },
       item: { select: { id: true, name: true } },
     },
   });
 
   if (overdueTxs.length === 0) return [];
 
-  const template = await prisma.smsTemplate.findFirst({
-    where: { name: 'late_return' },
-  });
+  const template = await prisma.smsTemplate.findFirst({ where: { name: 'late_return' } });
 
   const results: { transactionId: string; customerName: string; message: string; status: string }[] = [];
 
   for (const tx of overdueTxs) {
-    if (!tx.customer.phone) continue;
-
-    let message = template?.content ?? 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return immediately.';
-
     const daysOverdue = Math.max(1, Math.ceil((now.getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)));
 
-    message = applyTemplate(message, {
-      customer: tx.customer.name,
-      item: tx.item.name,
-      date: tx.dueDate.toLocaleDateString('en-PH'),
-      days: String(daysOverdue),
-    });
+    // Always flip to Overdue status even if SMS fails (status ≠ delivery flag).
+    await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
 
-    try {
-      const smsResult = await sendSms(tx.customer.phone, message);
+    // Respect customer opt-out (notifyPrefs.lateReturn === false → skip SMS,
+    // still notify staff). A null/undefined pref means "on" (default).
+    const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
+    const wantsSms = !prefs || prefs.lateReturn !== false;
 
-      await prisma.sentSms.create({
-        data: {
-          profileId: tx.customer.id,
-          transactionId: tx.id,
-          templateId: template?.id ?? null,
-          message,
-          status: smsResult.messageId ? 'sent' : 'queued',
-        },
+    if (!tx.customer.phone || !wantsSms) {
+      // Nothing to send (no phone or opted out) — flag as done so we don't retry.
+      await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsSent: true } });
+      results.push({ transactionId: tx.id, customerName: tx.customer.name, message: '', status: 'skipped' });
+    } else {
+      let message = template?.content ?? OVERDUE_TEMPLATE_FALLBACK;
+      message = applyTemplate(message, {
+        customer: tx.customer.name,
+        item: tx.item.name,
+        date: tx.dueDate.toLocaleDateString('en-PH'),
+        days: String(daysOverdue),
       });
 
-      results.push({
-        transactionId: tx.id,
-        customerName: tx.customer.name,
-        message,
-        status: smsResult.messageId ? 'sent' : 'queued',
-      });
-    } catch {
-      results.push({
-        transactionId: tx.id,
-        customerName: tx.customer.name,
-        message,
-        status: 'failed',
-      });
+      try {
+        const smsResult = await sendSms(tx.customer.phone, message);
+        await prisma.sentSms.create({
+          data: {
+            profileId: tx.customer.id,
+            transactionId: tx.id,
+            templateId: template?.id ?? null,
+            message,
+            status: smsResult.messageId ? 'sent' : 'queued',
+          },
+        });
+        // Mark SENT — once-guard. On success the scheduler won't retry.
+        await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsSent: true } });
+        results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: smsResult.messageId ? 'sent' : 'queued' });
+      } catch {
+        // Send failed: leave overdueSmsSent FALSE so the next tick retries,
+        // but record that a retry has been attempted (overdueSmsRetried) for
+        // observability. The once-guard only flips on actual success.
+        await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsRetried: true } });
+        results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: 'failed' });
+      }
     }
 
-    await prisma.transaction.update({
-      where: { id: tx.id },
-      data: { status: 'Overdue' },
-    });
-
-    // Staff alert: transaction became overdue.
+    // Staff alert (independent of customer SMS delivery) — once per transaction.
     try {
       await notifyStaffMembers({
         transactionId: tx.id,
@@ -137,6 +148,63 @@ export async function autoNotifyOverdue() {
 
   // Overdue flags change dashboard KPIs — refresh cached dashboard data.
   if (results.length > 0) clearDataCache();
+
+  return results;
+}
+
+// Day-N escalation: rentals still overdue after `overdue_escalation_days` get a
+// single follow-up text. Guarded by overdueEscalationSent so it fires once.
+export async function notifyOverdue3Days() {
+  const now = new Date();
+
+  let escalationDays = 3;
+  try {
+    const rules = await getBusinessRules();
+    const raw = rules['overdue_escalation_days'];
+    const parsed = raw != null ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) escalationDays = parsed;
+  } catch { /* keep default */ }
+
+  const txs = await prisma.transaction.findMany({
+    where: {
+      status: { in: ['Active', 'Overdue'] },
+      overdueEscalationSent: false,
+      dueDate: { lt: new Date(now.getTime() - (escalationDays - 1) * 24 * 60 * 60 * 1000) },
+    },
+    include: {
+      customer: { select: { id: true, name: true, phone: true, notifyPrefs: true } },
+      item: { select: { id: true, name: true } },
+    },
+  });
+
+  if (txs.length === 0) return [];
+
+  const results: { transactionId: string; customerName: string; sent: boolean }[] = [];
+
+  for (const tx of txs) {
+    const daysOverdue = Math.max(escalationDays, Math.ceil((now.getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
+    const wantsSms = !prefs || prefs.lateReturn !== false;
+
+    let sent = false;
+    if (tx.customer.phone && wantsSms) {
+      const message = `Hi ${tx.customer.name}, your rental of ${tx.item.name} is now ${daysOverdue} day(s) overdue. Please contact Mylene's Boutique to arrange a return.`;
+      try {
+        await sendSms(tx.customer.phone, message);
+        await prisma.sentSms.create({
+          data: { profileId: tx.customer.id, transactionId: tx.id, message, status: 'sent' },
+        });
+        sent = true;
+      } catch {
+        // failed: leave flag false to retry next tick
+      }
+    }
+
+    if (sent || !tx.customer.phone || !wantsSms) {
+      await prisma.transaction.update({ where: { id: tx.id }, data: { overdueEscalationSent: true } });
+      results.push({ transactionId: tx.id, customerName: tx.customer.name, sent });
+    }
+  }
 
   return results;
 }
@@ -154,36 +222,31 @@ export async function notifyDueToday() {
       dueReminderSent: false,
     },
     include: {
-      customer: { select: { id: true, name: true, phone: true } },
+      customer: { select: { id: true, name: true, phone: true, notifyPrefs: true } },
       item: { select: { id: true, name: true } },
     },
   });
 
   if (dueToday.length === 0) return [];
 
-  // Reuse existing due_reminder template + the configurable late fee so the
-  // customer sees the penalty for returning late.
+  // Due-today reminder. Deliberately carries NO late-fee amount — reminder text
+  // must stay fee-free per the notification policy.
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'due_reminder' } });
-  let latePerDay = 500;
-  try {
-    const rules = await getBusinessRules();
-    const raw = rules['late_fee_per_day'] ?? rules['late_penalty_per_day'];
-    const parsed = raw != null ? parseFloat(raw) : NaN;
-    if (Number.isFinite(parsed) && parsed >= 0) latePerDay = parsed;
-  } catch { /* keep default */ }
 
   const results: { transactionId: string; customerName: string; itemName: string; sent: boolean }[] = [];
   for (const tx of dueToday) {
-    // Text the customer their due-today reminder (if they have a phone).
+    // Text the customer their due-today reminder (if they have a phone + opted in).
     let sent = false;
-    if (tx.customer.phone) {
+    const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
+    const wantsSms = !prefs || prefs.reminder !== false;
+    if (tx.customer.phone && wantsSms) {
       const message = template?.content
         ? applyTemplate(template.content, {
             customer: tx.customer.name,
             item: tx.item.name,
             date: tx.dueDate.toLocaleDateString('en-PH'),
-          }) + ` Late fee: ₱${latePerDay}/day.`
-        : `Hi ${tx.customer.name}, your rental of ${tx.item.name} is due today (${tx.dueDate.toLocaleDateString('en-PH')}). Please return on time to avoid a ₱${latePerDay}/day late fee.`;
+          })
+        : `Hi ${tx.customer.name}, a reminder that your rental of ${tx.item.name} is due today (${tx.dueDate.toLocaleDateString('en-PH')}). See you at the boutique!`;
 
       try {
         const smsResult = await sendSms(tx.customer.phone, message);
