@@ -352,11 +352,11 @@ export default function AIInsightsView({ analyticsData, role }) {
             <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Business Intelligence</h2>
             <p className="text-sm text-gray-500 mt-1">Real-time analytics powered by your transaction and inventory data.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
             <div className="flex bg-gray-100 rounded-full p-0.5">
               {TIME_OPTIONS.map(t => (
                 <button key={t} onClick={() => setTimeRange(t)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-full transition-colors ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  className={`px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold rounded-full transition-colors ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                   {t}
                 </button>
               ))}
@@ -378,7 +378,7 @@ export default function AIInsightsView({ analyticsData, role }) {
         </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
             <div className="p-2 bg-emerald-50 rounded-xl inline-block text-emerald-500 mb-2">
               <DollarSign size={16} />
@@ -614,7 +614,7 @@ export default function AIInsightsView({ analyticsData, role }) {
                 <p className="text-xs font-semibold text-orange-500 mb-2">{underperforming.length} item(s) never rented</p>
                 <div className="flex flex-wrap gap-1.5">
                   {underperforming.slice(0, 4).map(item => (
-                    <span key={item.id} className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-[11px] font-medium">{item.name}</span>
+                    <span key={item.id} className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-[11px] font-medium max-w-full truncate">{item.name}</span>
                   ))}
                   {underperforming.length > 4 && <span className="px-2 py-1 bg-gray-50 text-gray-400 rounded-lg text-[11px]">+{underperforming.length - 4}</span>}
                 </div>
