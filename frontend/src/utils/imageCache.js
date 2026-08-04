@@ -36,7 +36,13 @@ function getFresh(path) {
 }
 
 function put(path, url) {
-  const entry = { url, expiresAt: Date.now() + TTL };
+  const now = Date.now();
+  // Prune expired entries on every write so the sessionStorage store can't
+  // grow unbounded with dead URLs across long browsing sessions.
+  for (const k of Object.keys(store)) {
+    if (!store[k]?.expiresAt || store[k].expiresAt <= now) delete store[k];
+  }
+  const entry = { url, expiresAt: now + TTL };
   mem.set(path, entry);
   store[path] = entry;
   persist();

@@ -29,10 +29,13 @@ function mapKnownError(err: unknown): { status: number; message: string } | null
 
 export function errorHandler(
   err: Error,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ): void {
+  const requestId = (req as unknown as { requestId?: string }).requestId;
+  if (requestId) res.setHeader('x-request-id', requestId);
+  if (requestId) console.error(`[${requestId}]`, err.message ?? 'error');
   if (err instanceof AppError) {
     // L7: never echo internal details (upstream API bodies, stack traces, etc.)
     // to clients. Details are dev-only; production sends the sanitized message.

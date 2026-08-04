@@ -91,6 +91,7 @@ export async function chatWithAi(message: string, history?: { role: string; text
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
       {
         method: 'POST',
+        signal: AbortSignal.timeout(15000), // LLM latency — cap at 15s
         // C7: key goes in a header, never the URL — query-string keys end up
         // in gateway/proxy access logs.
         headers: {
@@ -194,6 +195,7 @@ ${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
       {
         method: 'POST',
+        signal: AbortSignal.timeout(15000),
         headers: {
           'Content-Type': 'application/json',
           'x-goog-api-key': env.GEMINI_API_KEY,

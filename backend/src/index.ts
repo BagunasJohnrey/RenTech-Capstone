@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requestId } from './middleware/requestId.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
@@ -49,6 +50,7 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
+app.use(requestId);
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use('/api/webhooks', express.raw({ type: 'application/json' }), (req, _res, next) => {

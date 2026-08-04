@@ -8,7 +8,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 function cspPlugin() {
   const CSP = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline' https://cdn.paymongo.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",

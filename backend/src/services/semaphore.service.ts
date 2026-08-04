@@ -29,6 +29,7 @@ export async function sendSms(phone: string, message: string) {
 
   const response = await fetch(`${SEMAPHORE_API}/messages`, {
     method: 'POST',
+    signal: AbortSignal.timeout(10000), // don't hang on a dead SMS gateway
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       api_key: env.SEMAPHORE_API_KEY,

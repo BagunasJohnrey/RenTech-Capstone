@@ -32,6 +32,7 @@ export async function createPaymentIntent(
 
   const response = await fetch(`${PAYMONGO_API}/payment_intents`, {
     method: 'POST',
+    signal: AbortSignal.timeout(10000), // don't hang on a dead upstream
     headers: {
       'Content-Type': 'application/json',
       Authorization: getAuthHeader(),
@@ -83,6 +84,7 @@ export async function retrievePaymentIntent(paymentIntentId: string) {
   }
 
   const response = await fetch(`${PAYMONGO_API}/payment_intents/${paymentIntentId}`, {
+    signal: AbortSignal.timeout(10000),
     headers: { Authorization: getAuthHeader() },
   });
 

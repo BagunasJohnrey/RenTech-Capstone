@@ -8,6 +8,8 @@ export function setTokenGetter(fn) {
   tokenGetter = fn;
 }
 
+const FETCH_TIMEOUT_MS = 20000; // abort requests the server never answers
+
 async function request(method, path, body = undefined, _retried = false) {
   const headers = { 'Content-Type': 'application/json' };
   const token = tokenGetter ? tokenGetter() : null;
@@ -15,11 +17,19 @@ async function request(method, path, body = undefined, _retried = false) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (res.status === 401 && !_retried) {
     const refreshed = await refreshSession();
@@ -40,14 +50,28 @@ async function request(method, path, body = undefined, _retried = false) {
   return res.json();
 }
 
-async function downloadBlob(path, filename) {
+async function downloadBlob(path, filename, _retried = false) {
   const headers = {};
   const token = tokenGetter ? tokenGetter() : null;
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { headers });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { headers, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // A 401 here (expired token mid-session) should silently refresh + retry once,
+  // matching the JSON request path — otherwise CSV exports fail after long idle.
+  if (res.status === 401 && !_retried) {
+    const refreshed = await refreshSession();
+    if (refreshed) return downloadBlob(path, filename, true);
+  }
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));

@@ -33,6 +33,23 @@ export function AuthProvider({ children }) {
     fetchProfile();
   }, [fetchProfile]);
 
+  // Multi-tab sync: when another tab clears the session (logout) or refreshes
+  // it, mirror that here so all tabs converge on the same auth state.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== 'rentech_token') return;
+      if (e.newValue === null) {
+        // Logged out in another tab.
+        setProfile(null);
+      } else if (e.newValue && !e.oldValue) {
+        // Logged in elsewhere — pick up the fresh session.
+        fetchProfile();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [fetchProfile]);
+
   const login = useCallback(async (email, password) => {
     const result = await api.post('/auth/login', { email, password });
     setSession(result.session);

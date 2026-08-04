@@ -2,6 +2,7 @@ import { supabaseClient } from './supabaseClient';
 
 const ACCESS_KEY = 'rentech_token';
 const SESSION_KEY = 'rentech_session';
+const IMG_CACHE_KEY = 'rt_img_cache_v1';
 
 // One-time cleanup of stale/orphaned storage keys left behind by earlier
 // versions of the app (no code references them anymore). Runs on module init.
@@ -14,14 +15,32 @@ export function getAccessToken() {
   return localStorage.getItem(ACCESS_KEY);
 }
 
+// Persist ONLY the token material needed to refresh a session. The backend
+// returns a full Supabase session (with an embedded user object, metadata, etc.)
+// that we deliberately do NOT write to localStorage — trimming it shrinks the
+// persisted surface and keeps PII out of long-lived storage.
+const toStoredSession = (s) => ({
+  access_token: s.access_token,
+  refresh_token: s.refresh_token,
+  token_type: s.token_type,
+  expires_in: s.expires_in,
+  expires_at: s.expires_at,
+});
+
 export function setSession(session) {
   if (!session || !session.access_token) {
     localStorage.removeItem(ACCESS_KEY);
     localStorage.removeItem(SESSION_KEY);
+    // Logout hygiene: drop the signed image URL cache + orphan keys too.
+    try {
+      sessionStorage.removeItem(IMG_CACHE_KEY);
+      localStorage.removeItem('customer_products_list');
+      localStorage.removeItem('rentech_templates');
+    } catch { /* storage unavailable */ }
     return;
   }
   localStorage.setItem(ACCESS_KEY, session.access_token);
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(toStoredSession(session)));
 }
 
 function getRefreshToken() {
