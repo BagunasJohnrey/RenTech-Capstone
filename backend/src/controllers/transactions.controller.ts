@@ -5,12 +5,27 @@ import * as transactionService from '../services/transactions.service.js';
 import { AuthenticatedRequest, Role } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 
+// L6: clamp pagination so a crafted ?limit=9e99 can't force the DB to stream
+// every row (memory/CPU DoS). Anything absent/non-numeric/negative → default.
+function clampLimit(raw: unknown, def = 50, max = 200): number {
+  const n = typeof raw === 'string' ? Number(raw) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return def;
+  return Math.min(Math.floor(n), max);
+}
+function clampOffset(raw: unknown, def = 0): number {
+  const n = typeof raw === 'string' ? Number(raw) : NaN;
+  if (!Number.isFinite(n) || n < 0) return def;
+  return Math.floor(n);
+}
+
 export const createRentalSchema = z.object({
   body: z.object({
     itemId: z.number().int().positive(),
-    rentalDate: z.string(),
-    dueDate: z.string(),
-    rentalFee: z.number().positive(),
+    rentalDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid rental date'),
+    dueDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid due date'),
+    // SECURITY: rentalFee is deliberately NOT accepted — the fee is always
+    // derived server-side from the item (sale-aware). Downpayment may be
+    // supplied by staff (0 allowed for walk-ins) but is capped server-side.
     downpayment: z.number().min(0).optional(),
     customerId: z.string().optional(),
     customerName: z.string().optional(),
@@ -42,8 +57,12 @@ export async function createRental(req: AuthenticatedRequest, res: Response, nex
       : req.body.customerId;
 
     if (!customerId && req.body.customerName) {
+      // C5: strip LIKE wildcards before the Prisma `contains` search —
+      // an untrimmed `%`/`_` would match every customer and corrupt the
+      // lookup (e.g. searching "%" returns the first profile in the DB).
+      const customerName = String(req.body.customerName).replace(/[%_]/g, '').trim();
       const profile = await prisma.profile.findFirst({
-        where: { name: { contains: req.body.customerName, mode: 'insensitive' } },
+        where: { name: { contains: customerName, mode: 'insensitive' } },
       });
       if (profile) {
         customerId = profile.id;
@@ -57,7 +76,7 @@ export async function createRental(req: AuthenticatedRequest, res: Response, nex
           data: {
             userId: `walkin_${walkInId}`,
             email: `walkin_${walkInId}@rentech.invalid`,
-            name: req.body.customerName.trim(),
+            name: customerName,
             phone: req.body.contact ?? null,
             address: req.body.address ?? null,
             role: 'Customer',
@@ -116,8 +135,8 @@ export async function listTransactions(req: AuthenticatedRequest, res: Response,
       role: req.user.role,
       profileId: req.user.id,
       status: req.query.status as string | undefined,
-      limit: req.query.limit ? Number(req.query.limit) : undefined,
-      offset: req.query.offset ? Number(req.query.offset) : undefined,
+      limit: clampLimit(req.query.limit),
+      offset: clampOffset(req.query.offset),
     });
 
     res.json(result);
@@ -201,6 +220,16 @@ export async function cancelTransaction(req: AuthenticatedRequest, res: Response
 
     if (req.user.role === Role.Customer && tx.customerId !== req.user.id) {
       throw new AppError(403, 'You can only cancel your own transactions');
+    }
+
+    // SECURITY: a customer may not cancel a rental once the item has been
+    // picked up — that would free the item while it is still in their
+    // possession. Only staff/admin can cancel Active/Overdue rentals.
+    if (
+      req.user.role === Role.Customer &&
+      (tx.status === 'Active' || tx.status === 'Overdue')
+    ) {
+      throw new AppError(400, 'Item already picked up — contact the boutique to arrange a return');
     }
 
     const result = await transactionService.cancelTransaction(String(req.params.id), req.user.id);

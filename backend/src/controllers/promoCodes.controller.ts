@@ -66,7 +66,8 @@ export async function deletePromoCode(req: AuthenticatedRequest, res: Response, 
 
 export async function validatePromoCode(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const result = await promoCodesService.validateAndApply(req.body.code, req.body.rentalFee);
+    // Read-only check — does NOT consume a use (see promoCodes.service.checkPromo).
+    const result = await promoCodesService.checkPromo(req.body.code, req.body.rentalFee);
     res.json(result);
   } catch (err) { next(err); }
 }

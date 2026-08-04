@@ -2,6 +2,35 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// H3 (security): inject a strict Content-Security-Policy meta into the BUILT
+// index.html only. Dev mode intentionally keeps no CSP meta because Vite's HMR
+// inline scripts would be blocked. The API already sends its own helmet CSP.
+function cspPlugin() {
+  const CSP = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.supabase.co https://*.paymongo.com wss://localhost:* https://www.google.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+  ].join('; ')
+  return {
+    name: 'inject-csp',
+    apply: 'build',
+    enforce: 'post',
+    transformIndexHtml(html) {
+      return html.replace(
+        '<meta name="theme-color"',
+        `<meta http-equiv="Content-Security-Policy" content="${CSP}" /><meta name="theme-color"`
+      )
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -30,6 +59,7 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//],
       },
     }),
+    cspPlugin(),
   ],
   resolve: { dedupe: ['react', 'react-dom'] },
   build: {

@@ -5,6 +5,7 @@ import { assertItemAvailable } from '../utils/availability.js';
 import { createAuditLog } from '../utils/audit.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
+import { validateAndApply as applyPromo } from './promoCodes.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -12,18 +13,42 @@ import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 // Available once cleaning is finished.
 const CLEANING_DELAY_DAYS = 1;
 
+// SECURITY: the price charged for a rental is ALWAYS derived server-side from
+// the item. Client-supplied rentalFee values are ignored (never trusted).
+// Applies the sale price when the item's sale is active.
+export function effectiveItemPrice(item: {
+  price: number;
+  onSale?: boolean | null;
+  discountPct?: number | null;
+  salePrice?: number | null;
+  saleEndsAt?: Date | null;
+}): number {
+  if (
+    item.onSale &&
+    (!item.saleEndsAt || item.saleEndsAt > new Date())
+  ) {
+    if (item.salePrice != null && item.salePrice > 0) return item.salePrice;
+    if (item.discountPct != null && item.discountPct > 0) {
+      return Math.round(item.price * (1 - item.discountPct / 100) * 100) / 100;
+    }
+  }
+  return item.price;
+}
+
 interface CreateRentalInput {
   customerId: string;
   itemId: number;
   rentalDate: string;
   dueDate: string;
-  rentalFee: number;
+  rentalFee?: number;            // IGNORED — derived from the item server-side
   downpayment?: number;
   notes?: string;
   conditionPhoto?: string;
-  promoCodeId?: string;
+  promoCode?: string;            // resolved + consumed server-side
+  promoCodeId?: string;          // legacy: only honored when it matches a real promo
   size?: string;
   measurements?: unknown;
+  requireMinimumDownpayment?: boolean; // customers must put down >= 50% of the fee
 }
 
 export async function createRental(data: CreateRentalInput, processedById?: string) {
@@ -41,15 +66,51 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     throw new AppError(409, 'Item is unavailable for the selected dates (being cleaned)');
   }
 
+  // SECURITY + validation: derive the price from the item, never the client.
+  const baseFee = effectiveItemPrice(item);
+
+  // Apply a promo discount server-side (consumes a use). promoCodeId passed by
+  // the staff path is only honored when it points at a real, active promo.
+  let fee = baseFee;
+  let promoCodeId: string | undefined;
+  if (data.promoCode) {
+    const promo = await applyPromo(data.promoCode, baseFee, data.customerId);
+    fee = promo.finalFee;
+    promoCodeId = promo.promoCodeId;
+  } else if (data.promoCodeId) {
+    const promo = await prisma.promoCode.findUnique({ where: { id: data.promoCodeId } });
+    if (promo && promo.isActive) promoCodeId = promo.id;
+  }
+
+  const downpayment = Math.min(data.downpayment ?? 0, fee);
+  if (downpayment < 0 || downpayment > fee) {
+    throw new AppError(400, `Downpayment must be between ₱0 and ₱${fee.toLocaleString()}`);
+  }
+  if (data.requireMinimumDownpayment) {
+    const min = Math.min(Math.round(fee * 0.5), fee);
+    if (downpayment < min) {
+      throw new AppError(400, `Downpayment must be at least ₱${min.toLocaleString()}`);
+    }
+  }
+
   const start = new Date(data.rentalDate);
   const end = new Date(data.dueDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new AppError(400, 'Invalid rentalDate/dueDate');
+  }
+  if (start.getTime() > end.getTime()) {
+    throw new AppError(400, 'Pickup date must be on or before the due date');
+  }
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  if (start.getTime() < todayStart.getTime()) {
+    throw new AppError(400, 'Pickup date cannot be in the past');
+  }
 
   // A booking whose rental starts in the future is an "upcoming hold": the
   // transaction is created as Reserved (and the item held as Reserved) until
   // staff release/pick it up, at which point it becomes Active/Rented.
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const isFuture = start > todayStart;
+  const isFuture = start.getTime() > todayStart.getTime();
 
   // Only currently-active rentals/reservations block a new booking. Returned
   // transactions are no longer shown — the item is in Cleaning status instead.
@@ -89,7 +150,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
         throw new AppError(409, 'Item is unavailable for the selected dates (rented or being cleaned)');
       }
 
-      const balance = data.rentalFee - (data.downpayment || 0);
+      const balance = fee - downpayment;
 
       const created = await tx.transaction.create({
         data: {
@@ -99,10 +160,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           rentalDate: start,
           dueDate: end,
           status: isFuture ? TransactionStatus.Reserved : TransactionStatus.Active,
-          rentalFee: data.rentalFee,
-          downpayment: data.downpayment || 0,
+          rentalFee: fee,
+          downpayment,
           balance,
-          promoCodeId: data.promoCodeId ?? null,
+          promoCodeId: promoCodeId ?? null,
           size: data.size ?? null,
           measurements: data.measurements as Prisma.InputJsonValue | undefined,
           notes: data.notes ?? null,

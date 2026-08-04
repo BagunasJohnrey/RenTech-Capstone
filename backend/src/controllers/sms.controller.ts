@@ -33,10 +33,17 @@ export async function sendManualSms(req: AuthenticatedRequest, res: Response, ne
 
 export async function getSmsHistory(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const history = await smsService.getSmsHistory({
-      limit: req.query.limit ? Number(req.query.limit) : undefined,
-      offset: req.query.offset ? Number(req.query.offset) : undefined,
-    });
+    // L6: clamp pagination (same caps as transactions listing).
+    const limitRaw = req.query.limit;
+    const offsetRaw = req.query.offset;
+    const limit = typeof limitRaw === 'string' && Number.isFinite(Number(limitRaw)) && Number(limitRaw) > 0
+      ? Math.min(Math.floor(Number(limitRaw)), 200)
+      : 50;
+    const offset = typeof offsetRaw === 'string' && Number.isFinite(Number(offsetRaw)) && Number(offsetRaw) > 0
+      ? Math.floor(Number(offsetRaw))
+      : 0;
+
+    const history = await smsService.getSmsHistory({ limit, offset });
 
     res.json(history);
   } catch (err) {

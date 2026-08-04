@@ -10,7 +10,9 @@ const router = Router();
 router.use(authMiddleware);
 
 router.get('/rules', requireRole(Role.Admin, Role.Staff), settingsController.getRules);
-router.put('/rules', requireRole(Role.Admin, Role.Staff), validate(settingsController.updateRulesSchema), settingsController.updateRules);
+// SECURITY: only Admin may change business rules (late penalties, damage
+// fees) — a staff member tampering with these would alter every invoice.
+router.put('/rules', requireRole(Role.Admin), validate(settingsController.updateRulesSchema), settingsController.updateRules);
 
 router.get('/sms-templates', requireRole(Role.Admin, Role.Staff), settingsController.listTemplates);
 router.post('/sms-templates', requireRole(Role.Admin), validate(settingsController.createTemplateSchema), settingsController.createTemplate);

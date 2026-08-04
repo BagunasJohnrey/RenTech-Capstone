@@ -255,7 +255,6 @@ export async function checkAvailability(itemId: number, rentalDate: string, dueD
     return {
       available: false,
       reason: 'Item is already reserved or rented for the selected dates',
-      conflictingTransactionId: overlappingTx.id,
     };
   }
 
@@ -271,12 +270,11 @@ export async function getBlockedDates(itemId: number) {
       itemId,
       status: { in: ['Active', 'Overdue', 'Reserved'] },
     },
-    include: {
-      customer: { select: { name: true } },
-    },
     orderBy: { rentalDate: 'asc' },
   });
 
+  // SECURITY: this endpoint is public — customer names must never be exposed
+  // (previously returned `customerName`, leaking who rented an item and when).
   const blockedRanges = transactions.map(tx => {
     // Extend the blocked range by the cleaning delay so the calendar shades
     // the day the item is being cleaned as unavailable.
@@ -287,7 +285,6 @@ export async function getBlockedDates(itemId: number) {
       start: tx.rentalDate.toISOString().split('T')[0],
       end: end.toISOString().split('T')[0],
       status: tx.status,
-      customerName: tx.customer?.name || null,
     };
   });
 

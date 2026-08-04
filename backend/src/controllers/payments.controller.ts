@@ -18,11 +18,27 @@ export async function createPaymentIntent(req: AuthenticatedRequest, res: Respon
 
     const { transactionId, amount } = req.body;
 
-    const tx = await prisma.transaction.findUnique({ where: { id: transactionId } });
+    const tx = await prisma.transaction.findUnique({
+      where: { id: transactionId },
+      include: { payments: true },
+    });
     if (!tx) throw new AppError(404, 'Transaction not found');
     if (tx.customerId !== req.user.id) throw new AppError(403, 'Not your transaction');
     if (tx.status === 'Returned' || tx.status === 'Cancelled') {
       throw new AppError(400, 'Transaction is already closed');
+    }
+
+    // SECURITY: the payment amount must be within the required downpayment
+    // (>= 50% of the fee) and the still-owed balance. Client-controlled amounts
+    // outside this range are rejected — no more paying ₱1 for a ₱5,000 gown.
+    const due = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - tx.totalPaid);
+    if (due <= 0) throw new AppError(400, 'Transaction is already fully paid');
+    const minPayment = Math.min(Math.round(tx.rentalFee * 0.5), due);
+    if (!Number.isFinite(amount) || amount < minPayment || amount > due) {
+      throw new AppError(
+        400,
+        `Payment must be between ₱${minPayment.toLocaleString()} and ₱${due.toLocaleString()}`
+      );
     }
 
     const intent = await paymongoService.createPaymentIntent(
@@ -54,6 +70,16 @@ export async function getPayment(req: AuthenticatedRequest, res: Response, next:
     const paymentId = String(req.params.id);
 
     if (paymentId.startsWith('pi_')) {
+      // Resolve local ownership before querying the gateway, so one customer
+      // can't poll another customer's payment intent.
+      const local = await prisma.payment.findUnique({
+        where: { paymongoPiId: paymentId },
+        include: { transaction: { select: { customerId: true } } },
+      });
+      if (req.user?.role === 'Customer' && local?.transaction.customerId !== req.user.id) {
+        throw new AppError(403, 'Not your payment');
+      }
+
       const intent = await paymongoService.retrievePaymentIntent(paymentId);
       res.json(intent);
       return;

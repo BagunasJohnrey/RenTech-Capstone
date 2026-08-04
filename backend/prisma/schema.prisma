@@ -138,7 +138,7 @@ model Payment {
   amount        Float
   method        String
   type          String
-  paymongoPiId  String?  @map("paymongo_pi_id")
+  paymongoPiId  String?  @unique @map("paymongo_pi_id")
   status        String   @default("pending")
   createdAt     DateTime @default(now()) @map("created_at")
 

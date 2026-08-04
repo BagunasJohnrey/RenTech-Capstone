@@ -37,13 +37,12 @@ describe('SMA utility', () => {
 describe('GET /api/dashboard/forecast', () => {
   it('should return forecast data for admin', async () => {
     const { prisma } = await import('../src/config/database.js');
+    // getDataMonths spans from 3 months ago through the current month = 4 months.
     prisma.transaction.count
       .mockResolvedValueOnce(10)
       .mockResolvedValueOnce(15)
       .mockResolvedValueOnce(12)
-      .mockResolvedValueOnce(18)
-      .mockResolvedValueOnce(20)
-      .mockResolvedValueOnce(22);
+      .mockResolvedValueOnce(18);
 
     const res = await request(app)
       .get('/api/dashboard/forecast')
@@ -53,9 +52,9 @@ describe('GET /api/dashboard/forecast', () => {
     expect(res.body).toHaveProperty('labels');
     expect(res.body).toHaveProperty('counts');
     expect(res.body).toHaveProperty('sma');
-    expect(res.body.counts).toEqual([10, 15, 12, 18, 20, 22]);
-    expect(res.body.labels).toHaveLength(6);
-    expect(res.body.sma).toHaveLength(6);
+    expect(res.body.counts).toEqual([10, 15, 12, 18]);
+    expect(res.body.labels).toHaveLength(4);
+    expect(res.body.sma).toHaveLength(4);
   });
 
   it('should reject for staff', async () => {

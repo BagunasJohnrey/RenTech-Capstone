@@ -12,8 +12,10 @@ app.use(errorHandler);
 describe('GET /api/inventory', () => {
   it('should list items without auth', async () => {
     const { prisma } = await import('../src/config/database.js');
+    // The service includes each item's active transactions for the effective
+    // status — the fixture must mirror that shape.
     prisma.inventoryItem.findMany.mockResolvedValueOnce([
-      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available' },
+      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [] },
     ]);
 
     const res = await request(app).get('/api/inventory');
@@ -47,7 +49,7 @@ describe('GET /api/inventory/:id', () => {
   it('should return item by id', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
-      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [],
     });
 
     const res = await request(app).get('/api/inventory/1');
@@ -212,8 +214,10 @@ describe('GET /api/inventory/availability', () => {
 
   it('should return unavailable for damaged item', async () => {
     const { prisma } = await import('../src/config/database.js');
+    // 'Damaged' + 'Maintenance' were merged into 'OutOfService' in the
+    // unified lifecycle — the availability check must honor the new status.
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
-      id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'Damaged',
+      id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'OutOfService',
     });
 
     const res = await request(app)

@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as inventoryService from '../services/inventory.service.js';
 import * as transactionService from '../services/transactions.service.js';
-import * as promoService from '../services/promoCodes.service.js';
 import * as customerService from '../services/customer.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
@@ -11,9 +10,8 @@ import { AppError } from '../middleware/errorHandler.js';
 export const createBookingSchema = z.object({
   body: z.object({
     itemId: z.number().int().positive(),
-    rentalDate: z.string(),
-    dueDate: z.string(),
-    rentalFee: z.number().positive(),
+    rentalDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid rental date'),
+    dueDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid due date'),
     downpayment: z.number().min(0).optional(),
     notes: z.string().optional(),
     promoCode: z.string().optional(),
@@ -47,28 +45,22 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
 
-    const { itemId, rentalDate, dueDate, rentalFee, downpayment, notes, promoCode, size, measurements } = req.body;
-
-    // FIX B: apply the promo discount server-side and link it to the transaction.
-    let finalRentalFee = rentalFee;
-    let promoCodeId: string | undefined;
-    if (promoCode) {
-      const promo = await promoService.validateAndApply(promoCode, rentalFee);
-      finalRentalFee = promo.finalFee;
-      promoCodeId = promo.promoCodeId;
-    }
+    // SECURITY: the rental price is NEVER taken from the client. It is derived
+    // server-side from the item (sale-aware) in transactions.service.createRental;
+    // only an optional promo code is accepted, and it is resolved server-side.
+    const { itemId, rentalDate, dueDate, downpayment, notes, promoCode, size, measurements } = req.body;
 
     const tx = await transactionService.createRental({
       customerId: req.user.id,
       itemId,
       rentalDate,
       dueDate,
-      rentalFee: finalRentalFee,
       downpayment,
       notes,
-      promoCodeId,
+      promoCode,
       size,
       measurements,
+      requireMinimumDownpayment: true, // customers must pay the 50% downpayment
     });
 
     res.status(201).json(tx);

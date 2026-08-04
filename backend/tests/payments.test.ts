@@ -76,7 +76,7 @@ describe('POST /api/payments/create-intent', () => {
         data: {
           id: 'pi_mock123',
           attributes: {
-            amount: 100000,
+            amount: 250000,
             currency: 'PHP',
             status: 'awaiting_payment_method',
             client_key: 'ck_mock123',
@@ -89,11 +89,29 @@ describe('POST /api/payments/create-intent', () => {
     const res = await request(app)
       .post('/api/payments/create-intent')
       .set('Authorization', 'Bearer customer-token')
-      .send({ transactionId: 'tx-1', amount: 1000 });
+      // 2500 = the 50% minimum downpayment of the 5000 fee (security rule:
+      // payments must be within [50% of fee, outstanding balance]).
+      .send({ transactionId: 'tx-1', amount: 2500 });
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('paymentIntentId', 'pi_mock123');
     expect(res.body).toHaveProperty('clientKey');
+  });
+
+  it('should reject a payment below the 50% minimum downpayment', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', txNumber: 1001, customerId: 'customer-id-111',
+      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      status: 'Active', totalPaid: 0, latePenalty: 0, damageFee: 0,
+    });
+
+    const res = await request(app)
+      .post('/api/payments/create-intent')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'tx-1', amount: 1000 });
+
+    expect(res.status).toBe(400);
   });
 
   it('should reject for another customer\'s transaction', async () => {

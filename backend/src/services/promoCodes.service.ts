@@ -60,7 +60,9 @@ export async function deletePromoCode(id: string) {
   return { deleted: true };
 }
 
-export async function validateAndApply(code: string, rentalFee: number) {
+// Read-only promo check (never consumes a use). Used by the public /validate
+// endpoint so probing codes can't drain maxUses or corrupt currentUses.
+export async function checkPromo(code: string, rentalFee: number) {
   const promo = await prisma.promoCode.findUnique({ where: { code: code.toUpperCase() } });
   if (!promo) throw new AppError(404, 'Invalid promo code');
   if (!promo.isActive) throw new AppError(400, 'Promo code is no longer active');
@@ -69,9 +71,6 @@ export async function validateAndApply(code: string, rentalFee: number) {
 
   const discountAmount = Math.round(rentalFee * (promo.discountPct / 100) * 100) / 100;
 
-  // FIX B: validation now consumes a use (previously currentUses never incremented).
-  await incrementUses(promo.id);
-
   return {
     promoCodeId: promo.id,
     code: promo.code,
@@ -79,6 +78,26 @@ export async function validateAndApply(code: string, rentalFee: number) {
     discountAmount,
     finalFee: Math.max(0, rentalFee - discountAmount),
   };
+}
+
+// Applies (and consumes) a promo code at booking time. Enforces a per-customer
+// cap of one use per promo so one customer can't burn an entire maxUses pool.
+export async function validateAndApply(code: string, rentalFee: number, customerId?: string) {
+  const result = await checkPromo(code, rentalFee);
+
+  if (customerId) {
+    const priorUses = await prisma.transaction.count({
+      where: { customerId, promoCodeId: result.promoCodeId },
+    });
+    if (priorUses > 0) {
+      throw new AppError(400, 'You have already used this promo code');
+    }
+  }
+
+  // FIX B: validation now consumes a use (previously currentUses never incremented).
+  await incrementUses(result.promoCodeId);
+
+  return result;
 }
 
 export async function incrementUses(id: string) {

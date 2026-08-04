@@ -211,11 +211,12 @@ export default function CustomerRentalFlow({
   const finalFee = promoApplied?.finalFee ?? effectiveItemPrice ?? 0;
 
   // Build the booking payload sent to POST /bookings.
+  // SECURITY: rentalFee is intentionally NOT sent — the server derives the
+  // fee from the item (sale-aware) and enforces the min downpayment itself.
   const buildBookingData = () => ({
     itemId: selectedItem.id,
     rentalDate,
     dueDate,
-    rentalFee: finalFee,
     downpayment: Number(downpaymentAmount),
     notes: customer.notes,
     promoCode: promoApplied?.code || undefined,

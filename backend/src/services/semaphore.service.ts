@@ -5,14 +5,27 @@ const SEMAPHORE_API = process.env.SEMAPHORE_BASE_URL || 'https://api.semaphore.c
 
 export async function sendSms(phone: string, message: string) {
   // No key configured -> simulate a successful send so the booking/reminder
-  // flows work in dev without real SMS credits.
+  // flows work in dev without real SMS credits. Fail loudly in production:
+  // a silently "simulated" send would report success to the boutique while
+  // customers never actually receive confirmations/reminders.
   if (!env.SEMAPHORE_API_KEY) {
+    if (env.NODE_ENV === 'production') {
+      throw new AppError(503, 'SMS service is not configured');
+    }
     return { messageId: `sim_${Date.now()}` };
   }
 
-  const normalizedPhone = phone.startsWith('0')
-    ? `63${phone.slice(1)}`
-    : phone.replace(/[^0-9]/g, '');
+  // Normalize to an international PH number. Strip formatting first, then
+  // reject clearly-invalid numbers before they cost real SMS credits.
+  const digits = phone.replace(/[^0-9]/g, '');
+  const normalizedPhone = /^63\d{10}$/.test(digits)
+    ? digits
+    : digits.startsWith('0')
+      ? `63${digits.slice(1)}`
+      : digits;
+  if (!/^63\d{10}$/.test(normalizedPhone)) {
+    throw new AppError(400, 'Invalid phone number');
+  }
 
   const response = await fetch(`${SEMAPHORE_API}/messages`, {
     method: 'POST',
@@ -25,8 +38,11 @@ export async function sendSms(phone: string, message: string) {
   });
 
   if (!response.ok) {
+    // C1: log the upstream body server-side but never forward it to the
+    // client (it echoes the phone number and message text).
     const errorBody = await response.text();
-    throw new AppError(502, `Semaphore API error: ${response.status}`, errorBody);
+    console.error('[semaphore] send failed:', response.status, errorBody);
+    throw new AppError(502, `Semaphore API error: ${response.status}`);
   }
 
   const data = await response.json() as { message_id?: string }[];

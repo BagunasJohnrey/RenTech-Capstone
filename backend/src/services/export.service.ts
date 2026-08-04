@@ -3,10 +3,14 @@ import { prisma } from '../config/database.js';
 function escapeCsv(val: unknown): string {
   if (val === null || val === undefined) return '';
   const str = String(val);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
+  // L1: CSV formula injection — a customer name, note or item name that begins
+  // with = + - @ (or a tab/CR inside) would execute as a formula when the file
+  // is opened in Excel/Sheets. Prefix a single quote to neutralize it.
+  const guarded = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  if (guarded.includes(',') || guarded.includes('"') || guarded.includes('\n')) {
+    return `"${guarded.replace(/"/g, '""')}"`;
   }
-  return str;
+  return guarded;
 }
 
 function toCsv(rows: Record<string, unknown>[]): string {

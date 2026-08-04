@@ -216,6 +216,10 @@ vi.mock('../src/config/database.js', () => {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
+      aggregate: vi.fn().mockResolvedValue({
+        _count: { id: 0 },
+        _sum: { rentalFee: 0, totalPaid: 0, latePenalty: 0, damageFee: 0 },
+      }),
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'tx-new', ...args.data })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
     },
@@ -235,6 +239,7 @@ vi.mock('../src/config/database.js', () => {
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'notif-new', ...args.data })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     sentSms: {
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'sms-new', ...args.data })),
@@ -252,6 +257,7 @@ vi.mock('../src/config/database.js', () => {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       delete: vi.fn().mockResolvedValue({ id: 'tmpl-deleted' }),
     },
+    $transaction: (fn: any) => Promise.resolve(fn(mockPrisma)),
     $disconnect: vi.fn(),
   };
 

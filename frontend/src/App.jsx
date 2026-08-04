@@ -320,24 +320,13 @@ export default function RentechApp() {
       if (created.itemId) markItemStatus(created.itemId, 'Rented');
       return created;
     };
-    try {
-      const created = await doCreate();
-      toastSuccess('Rental created successfully');
-      return created;
-    } catch (err) {
-      if (err.status === 404) {
-        const slug = data.customer.toLowerCase().replace(/\s+/g, '_');
-        await api.post('/auth/signup', {
-          email: `${slug}_${Date.now()}@walkin.rentech.local`,
-          password: 'temppass123',
-          name: data.customer,
-          phone: data.contact || '',
-          address: data.address || '',
-        });
-        return await doCreate(); // throws naturally on failure → UI shows error, not success
-      }
-      throw err; // re-throw so StaffNewRental's catch handles it (no false success toast)
-    }
+    // SECURITY (L2): the backend already auto-creates *synthetic* walk-in
+    // profiles (no auth account → can't log in) when customerName has no
+    // profile. We deliberately removed the old 404 fallback that created real
+    // Supabase auth accounts with a known password.
+    const created = await doCreate(); // throws naturally on failure → UI shows the error
+    toastSuccess('Rental created successfully');
+    return created;
   };
 
   // Roll back a customer booking that was committed before payment confirmation.

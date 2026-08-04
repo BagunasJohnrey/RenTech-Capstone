@@ -4,13 +4,16 @@ import * as geminiService from '../services/gemini.service.js';
 import * as dashboardService from '../services/dashboard.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
+// L5: the chat history is reflected into the AI prompt, so the shape must be
+// strictly controlled — only 'user'/'assistant' roles, bounded text length,
+// and a cap on entries (else an attacker feeds the model infinite context).
 export const chatSchema = z.object({
   body: z.object({
     message: z.string().min(1).max(1000),
     history: z.array(z.object({
-      role: z.string(),
-      text: z.string(),
-    })).optional(),
+      role: z.enum(['user', 'assistant']),
+      text: z.string().min(1).max(1000),
+    })).max(10).optional(),
   }),
 });
 

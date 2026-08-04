@@ -13,7 +13,7 @@ describe('GET /api/catalog', () => {
   it('should list available items without auth', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findMany.mockResolvedValueOnce([
-      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available' },
+      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [] },
     ]);
 
     const res = await request(app).get('/api/catalog');
@@ -36,7 +36,7 @@ describe('GET /api/catalog/:id', () => {
   it('should return item detail', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
-      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [],
     });
 
     const res = await request(app).get('/api/catalog/1');
@@ -61,19 +61,22 @@ describe('POST /api/bookings', () => {
     });
     prisma.transaction.findFirst.mockResolvedValueOnce(null);
 
+    // Security contract: fee is derived server-side (₱5000), customer must put
+    // down >= 50% (₱2500), and pickup can't be in the past.
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: '2026-08-01', dueDate: '2026-08-04', rentalFee: 5000, downpayment: 1000 });
+      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
 
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('id');
+    expect(res.body.rentalFee).toBe(5000);
   });
 
   it('should reject when not authenticated', async () => {
     const res = await request(app)
       .post('/api/bookings')
-      .send({ itemId: 1, rentalDate: '2026-08-01', dueDate: '2026-08-04', rentalFee: 5000 });
+      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
 
     expect(res.status).toBe(401);
   });
@@ -82,9 +85,24 @@ describe('POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer admin-token')
-      .send({ itemId: 1, rentalDate: '2026-08-01', dueDate: '2026-08-04', rentalFee: 5000 });
+      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
 
     expect(res.status).toBe(403);
+  });
+
+  it('should reject a downpayment below the 50% minimum', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 1000 });
+
+    expect(res.status).toBe(400);
   });
 
   it('should reject when item unavailable', async () => {
@@ -92,13 +110,16 @@ describe('POST /api/bookings', () => {
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
       id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'Rented',
     });
+    // An active rental exists on the item → both the status check and the
+    // overlap check must see it (persistent mock: findFirst is called twice).
+    prisma.transaction.findFirst.mockResolvedValue({ id: 'tx-1' });
 
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: '2026-08-01', dueDate: '2026-08-04', rentalFee: 5000 });
+      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
   });
 });
 

@@ -18,7 +18,10 @@ export async function signupCustomer(data: {
   });
 
   if (error || !authData.user) {
-    throw new AppError(400, error?.message ?? 'Failed to create user');
+    // C2: never echo the Supabase error — it reveals whether the email is
+    // already registered (account enumeration). Log the real reason instead.
+    console.error('[auth] signup failed:', error?.message ?? 'no user returned');
+    throw new AppError(400, 'Unable to create account. Please try again.');
   }
 
   const profile = await prisma.profile.create({
@@ -52,11 +55,12 @@ export async function signupCustomer(data: {
 }
 
 export async function loginUser(email: string, password: string) {
-  // Differentiate "account does not exist" from "wrong password" so the UI
-  // can prompt users to sign up instead of showing a generic error.
+  // L3: uniform error for both "no account" and "wrong password" so the API
+  // can't be used to enumerate registered emails. The sign-up CTA on the
+  // login screen serves as the generic fallback for new users.
   const existing = await prisma.profile.findUnique({ where: { email } });
   if (!existing) {
-    throw new AppError(404, 'No account found with this email. Please create one.');
+    throw new AppError(401, 'Invalid email or password');
   }
 
   const { data, error } = await supabaseAdmin.auth.signInWithPassword({
@@ -210,7 +214,9 @@ export async function createStaffAccount(adminId: string, data: {
   });
 
   if (error || !authData.user) {
-    throw new AppError(400, error?.message ?? 'Failed to create staff user');
+    // C2: same as signupCustomer — generic message, real reason logged only.
+    console.error('[auth] create staff failed:', error?.message);
+    throw new AppError(400, 'Unable to create account. Please try again.');
   }
 
   const profile = await prisma.profile.create({

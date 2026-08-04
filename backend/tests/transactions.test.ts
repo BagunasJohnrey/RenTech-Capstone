@@ -15,30 +15,26 @@ describe('POST /api/transactions', () => {
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
       id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
     });
-    prisma.transaction.findFirst.mockResolvedValueOnce(null);
+    prisma.transaction.findFirst.mockResolvedValue(null);
 
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-07-20', dueDate: '2026-07-23', rentalFee: 5000, downpayment: 1000 });
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 1000 });
 
+    // Security: rentalFee is NOT accepted from the client — derived server-side.
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('id');
+    expect(res.body.rentalFee).toBe(5000);
   });
 
-  it('should create rental when customer (own)', async () => {
-    const { prisma } = await import('../src/config/database.js');
-    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
-      id: 2, name: 'Test Suit', category: 'Suit', price: 3000, status: 'Available',
-    });
-    prisma.transaction.findFirst.mockResolvedValueOnce(null);
-
+  it('should reject when customer posts directly (customers use /bookings)', async () => {
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 2, rentalDate: '2026-08-01', dueDate: '2026-08-04', rentalFee: 3000 });
+      .send({ itemId: 2, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 1500 });
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(403);
   });
 
   it('should reject when item not found', async () => {
@@ -48,7 +44,7 @@ describe('POST /api/transactions', () => {
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 999, rentalDate: '2026-07-20', dueDate: '2026-07-23', rentalFee: 5000 });
+      .send({ customerId: 'customer-id-111', itemId: 999, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
 
     expect(res.status).toBe(404);
   });
@@ -56,13 +52,13 @@ describe('POST /api/transactions', () => {
   it('should reject when item is not available', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
-      id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'Rented',
+      id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'OutOfService',
     });
 
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-07-20', dueDate: '2026-07-23', rentalFee: 5000 });
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
 
     expect(res.status).toBe(400);
   });
@@ -72,12 +68,13 @@ describe('POST /api/transactions', () => {
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
       id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'Available',
     });
-    prisma.transaction.findFirst.mockResolvedValueOnce({ id: 'overlapping-tx' });
+    // Persistent: the availability + overlap checks both hit findFirst.
+    prisma.transaction.findFirst.mockResolvedValue({ id: 'overlapping-tx' });
 
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-07-20', dueDate: '2026-07-23', rentalFee: 5000 });
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
 
     expect(res.status).toBe(409);
   });
@@ -85,24 +82,23 @@ describe('POST /api/transactions', () => {
   it('should reject unauthenticated', async () => {
     const res = await request(app)
       .post('/api/transactions')
-      .send({ itemId: 1, rentalDate: '2026-07-20', dueDate: '2026-07-23', rentalFee: 5000 });
+      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
 
     expect(res.status).toBe(401);
   });
 
-  it('should ignore customerId for customer (uses own id)', async () => {
+  it('should reject a past pickup date', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
       id: 1, name: 'Test', category: 'Gown', price: 5000, status: 'Available',
     });
-    prisma.transaction.findFirst.mockResolvedValueOnce(null);
 
     const res = await request(app)
       .post('/api/transactions')
-      .set('Authorization', 'Bearer customer-token')
-      .send({ customerId: 'some-other-id', itemId: 1, rentalDate: '2026-07-20', dueDate: '2026-07-23', rentalFee: 5000 });
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-07-20', dueDate: '2026-07-23', downpayment: 2500 });
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(400);
   });
 });
 
@@ -239,7 +235,8 @@ describe('PUT /api/transactions/:id/return', () => {
 describe('PUT /api/transactions/:id/cancel', () => {
   it('should cancel transaction when admin', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce({
+    // Persistent: the controller looks up the tx, then the service re-fetches.
+    prisma.transaction.findUnique.mockResolvedValue({
       id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date(), dueDate: new Date(),
       rentalFee: 5000, balance: 4000, status: 'Active',
@@ -263,7 +260,7 @@ describe('PUT /api/transactions/:id/cancel', () => {
 
   it('should reject already cancelled', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce({
+    prisma.transaction.findUnique.mockResolvedValue({
       id: 'tx-cancelled', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date(), dueDate: new Date(),
       rentalFee: 5000, balance: 0, status: 'Cancelled',

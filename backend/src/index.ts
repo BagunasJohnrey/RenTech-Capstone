@@ -32,6 +32,19 @@ app.use((req, res, next) => {
 
 app.use(helmet({
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  contentSecurityPolicy: {
+    directives: {
+      // API serves JSON only — no scripts, styles, images or frames needed.
+      // This also kills a whole class of HTML-injection/reflected-XSS on API
+      // responses. The SPA (Vite) sets its own CSP for the browser assets.
+      defaultSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
@@ -63,28 +76,37 @@ app.listen(env.PORT, () => {
 
   // Check for overdue / due-today transactions every 1 minute so SMS
   // reminders go out within ~60s of the relevant date boundary.
-  const runScheduledChecks = () => {
-    autoNotifyOverdue()
-      .then(results => {
-        if (results.length > 0) {
-          console.log(`[Overdue] Processed ${results.length} overdue transaction(s)`);
-        }
-      })
-      .catch(err => console.error('[Overdue] scheduler error:', err));
-    notifyDueToday()
-      .then(results => {
-        if (results.length > 0) {
-          console.log(`[Due Today] Flagged ${results.length} transaction(s) due today`);
-        }
-      })
-      .catch(err => console.error('[Due Today] scheduler error:', err));
-    checkNoShowAndNotify()
-      .then(results => {
-        if (results.length > 0) {
-          console.log(`[No-Show] Flagged ${results.length} no-show pickup(s)`);
-        }
-      })
-      .catch(err => console.error('[No-Show] scheduler error:', err));
+  // C4: never run two passes concurrently — a slow SMS batch (Semaphore
+  // latency) colliding with the next 60-second tick would double-send
+  // billable reminders (overdue/due-today/no-show all share this cron).
+  let scheduledChecksRunning = false;
+  const runScheduledChecks = async () => {
+    if (scheduledChecksRunning) return;
+    scheduledChecksRunning = true;
+    try {
+      const results = await Promise.allSettled([
+        autoNotifyOverdue().then((overdue) => {
+          if (overdue.length > 0) {
+            console.log(`[Overdue] Processed ${overdue.length} overdue transaction(s)`);
+          }
+        }),
+        notifyDueToday().then((dueToday) => {
+          if (dueToday.length > 0) {
+            console.log(`[Due Today] Flagged ${dueToday.length} transaction(s) due today`);
+          }
+        }),
+        checkNoShowAndNotify().then((noShows) => {
+          if (noShows.length > 0) {
+            console.log(`[No-Show] Flagged ${noShows.length} no-show pickup(s)`);
+          }
+        }),
+      ]);
+      for (const r of results) {
+        if (r.status === 'rejected') console.error('[Scheduler] job error:', r.reason);
+      }
+    } finally {
+      scheduledChecksRunning = false;
+    }
   };
   runScheduledChecks();
   const scheduler = setInterval(runScheduledChecks, 60 * 1000);

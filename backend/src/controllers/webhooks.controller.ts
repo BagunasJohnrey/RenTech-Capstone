@@ -57,6 +57,14 @@ export async function handlePayMongoWebhook(req: Request, res: Response, next: N
       const tx = await prisma.transaction.findUnique({ where: { id: transactionId } });
       if (!tx) throw new AppError(404, 'Transaction not found');
 
+      // Idempotency: PayMongo retries webhooks on transient failures. If this
+      // payment intent was already applied, acknowledge silently instead of
+      // double-recording the payment and corrupting the balance.
+      const existing = await prisma.payment.findUnique({ where: { paymongoPiId: piId } });
+      if (existing) {
+        return res.json({ received: true, duplicate: true });
+      }
+
       await prisma.payment.create({
         data: {
           transactionId,

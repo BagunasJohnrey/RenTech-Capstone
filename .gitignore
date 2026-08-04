@@ -8,6 +8,9 @@ dist-ssr
 # Environment files (never commit secrets)
 .env
 .env.local
+.env.production
+.env.development
+.env.test
 .env.*.local
 
 # Logs

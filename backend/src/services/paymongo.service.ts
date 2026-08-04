@@ -15,8 +15,11 @@ export async function createPaymentIntent(
 ) {
   if (!env.PAYMONGO_SECRET_KEY) {
     // Simulation mode: no real gateway configured yet. Return a fake succeeded
-    // intent so the client can complete the booking flow end-to-end. Once
-    // PAYMONGO_SECRET_KEY is set, the real PayMongo call runs instead.
+    // intent so the client can complete the booking flow end-to-end. NEVER
+    // allowed in production — this would "confirm" payments that were never made.
+    if (env.NODE_ENV === 'production') {
+      throw new AppError(503, 'Payments are not configured. Please contact the boutique.');
+    }
     return {
       id: `sim_${crypto.randomBytes(8).toString('hex')}`,
       amount,
@@ -46,8 +49,8 @@ export async function createPaymentIntent(
   });
 
   if (!response.ok) {
-    const errorBody = await response.text();
-    throw new AppError(502, `PayMongo API error: ${response.status}`, errorBody);
+    // L7: never forward the raw upstream error body to the client.
+    throw new AppError(502, `Payment provider error (${response.status})`);
   }
 
   const data = await response.json() as {

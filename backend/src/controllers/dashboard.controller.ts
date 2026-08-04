@@ -35,7 +35,10 @@ export async function getTodayTasks(req: AuthenticatedRequest, res: Response, ne
 
 export async function getForecast(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const period = req.query.period ? Number(req.query.period) : 3;
+    // L6: clamp the forecast window (1–12) — a huge period would fan out
+    // unbounded aggregation work.
+    const raw = Number(req.query.period);
+    const period = Number.isFinite(raw) && raw >= 1 && raw <= 12 ? Math.floor(raw) : 3;
     const data = await dashboardService.getForecast(period);
     res.json(data);
   } catch (err) {
