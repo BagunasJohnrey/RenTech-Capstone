@@ -50,15 +50,18 @@ const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCc
 
 const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];
 
-// 60s TTL cache per time range — same pattern as useKpis/useTodayTasks so
-// tab switches and range toggles render instantly instead of re-querying.
-const AI_CACHE_TTL_MS = 60_000;
+// Cache per time range — same pattern as useKpis/useTodayTasks so tab switches
+// and range toggles render instantly instead of re-querying. Fresh snapshots
+// (<= FRESH_TTL) skip the network entirely; older-but-present snapshots
+// (<= STALE_TTL) still paint instantly and refresh silently in the background.
+const AI_CACHE_FRESH_MS = 60_000;
+const AI_CACHE_STALE_MS = 10 * 60_000;
 const aiCache = new Map(); // timeRange -> { data, at }
 
 function readAiCache(range) {
   const hit = aiCache.get(range);
   if (!hit) return null;
-  if (Date.now() - hit.at > AI_CACHE_TTL_MS) return null;
+  if (Date.now() - hit.at > AI_CACHE_STALE_MS) return null;
   return hit.data;
 }
 
@@ -132,7 +135,9 @@ export default function AIInsightsView({ analyticsData, role }) {
     let active = true;
     const periodParam = range === 'Overall' ? '' : `period=${range.toLowerCase()}`;
 
-    // Cache hit for this range: apply instantly and skip the network entirely.
+    // Snapshot present for this range: apply instantly (no skeleton), then fall
+    // through to refresh silently in the background below — the requests are
+    // server-cached, so the freshness update is cheap and invisible.
     const hit = readAiCache(range);
     if (hit) {
       setKpis(hit.kpis);
@@ -142,10 +147,9 @@ export default function AIInsightsView({ analyticsData, role }) {
       setInventoryAnalytics(hit.analytics);
       setAnalyticsSummary(hit.analytics?.summary);
       setLoaded(true);
-      return;
+    } else {
+      setLoaded(false);
     }
-
-    setLoaded(false);
     let settled = false;
     const settle = () => { if (!settled) { settled = true; if (active) setLoaded(true); } };
     const fail = (err) => {

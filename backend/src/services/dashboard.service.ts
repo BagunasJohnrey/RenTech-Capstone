@@ -122,6 +122,15 @@ async function aggregateMonthlyRevenue() {
 }
 
 export async function getTodayTasks() {
+  // Cached like the rest of the dashboard endpoints: the staff/admin dashboard
+  // reads this every mount, and repeat hits re-run 3 queries against the remote
+  // pooler for no user-facing gain. Mutations (booking, return, item status)
+  // clear the whole cache via clearDataCache(), so the digest is never older
+  // than the latest change.
+  return cacheOrCompute('today', () => getTodayTasksUncached());
+}
+
+async function getTodayTasksUncached() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);

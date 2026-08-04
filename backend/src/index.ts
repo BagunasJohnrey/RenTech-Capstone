@@ -9,7 +9,7 @@ import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import { autoNotifyOverdue, notifyDueToday, checkNoShowAndNotify } from './services/sms.service.js';
 import { ensureBucket } from './services/storage.service.js';
-import { getKpis, getForecast, getInsights } from './services/dashboard.service.js';
+import { getKpis, getForecast, getInsights, getTodayTasks } from './services/dashboard.service.js';
 import { getInventoryAnalytics } from './services/inventoryAnalytics.service.js';
 
 const app = express();
@@ -85,6 +85,7 @@ app.listen(env.PORT, () => {
     getForecast(3),
     getInsights(),
     getInventoryAnalytics(),
+    getTodayTasks(),
   ]).then(() => console.log('[Cache] dashboard data pre-warmed'));
 
   // Check for overdue / due-today transactions every 1 minute so SMS

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
+import { DashboardSkeleton } from '../components/PageSkeletons';
 import { api } from '../utils/api';
 import { txPill } from '../utils/statusColors';
 
@@ -10,6 +11,14 @@ export default function DashboardView({ role, transactions, inventory, customerI
   const todayStats = useTodayTasks(role);
   const kpis = useKpis(role);
   const [showCleaningQueue, setShowCleaningQueue] = useState(false);
+  // If the server KPIs/today-digest never resolve (e.g. API unreachable), stop
+  // holding the skeleton after a few seconds and fall back to client-derived
+  // numbers instead of blocking the dashboard forever.
+  const [serverDataTimedOut, setServerDataTimedOut] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setServerDataTimedOut(true), 5000);
+    return () => clearTimeout(t);
+  }, []);
 
   // Admin bulk-clean action — mirror of what Staff do in Tasks, available
   // directly from the dashboard modal so the admin never has to switch pages.
@@ -395,6 +404,13 @@ export default function DashboardView({ role, transactions, inventory, customerI
   }
 
   // ---------- Admin dashboard ----------
+  // Server-backed KPIs are cached (server + SWR client), so on revisits this
+  // gate resolves instantly. On the very first load it holds the skeleton until
+  // both the KPI numbers and the today-digest arrive, so the cards paint once
+  // with real values instead of client-derived fallbacks that swap in late.
+  if (role === 'Admin' && !serverDataTimedOut && (!kpis || !todayStats)) {
+    return <DashboardSkeleton />;
+  }
   // Business KPIs come from the server (/dashboard/today + /dashboard/kpis) with
   // client-side fallbacks; the layout reuses the staff dashboard's visual language.
   const overdueCount = todayStats ? todayStats.overdue.length : transactions.filter(tx =>
@@ -505,7 +521,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Active Rentals</p>
             <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueReturns > 0 ? 'text-red-500' : 'text-gray-900'}`}>{activeRentals}</p>
-            <p className="text-[10px] font-bold mt-0.5 text-gray-400">{overdueReturns > 0 ? `${overdueReturns} overdue` : 'all on time'}</p>
+            <p className={`text-[10px] font-bold mt-0.5 ${overdueReturns > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+              {overdueReturns > 0 ? `${overdueReturns} overdue` : 'all on time'}
+            </p>
           </button>
           <button onClick={() => onNavigate('Tasks')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
