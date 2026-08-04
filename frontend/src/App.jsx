@@ -314,6 +314,8 @@ export default function RentechApp() {
       downpayment: data.downpayment || 0,
       notes: data.notes || '',
       conditionPhoto: data.conditionPhoto || undefined,
+      size: data.size || undefined,
+      measurements: data.measurements || undefined,
     };
     const doCreate = async () => {
       const created = await createTransaction(payload);

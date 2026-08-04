@@ -67,6 +67,11 @@ app.use(express.json({ limit: '25mb' }));
 
 app.use('/api', rateLimiter, routes);
 
+// JSON 404 for unmatched API routes (must come before the error handler).
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
 app.use(errorHandler);
 
 app.listen(env.PORT, () => {

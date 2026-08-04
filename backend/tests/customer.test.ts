@@ -232,3 +232,26 @@ describe('POST /api/ai/chat', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('GET /api/catalog/:id validation', () => {
+  it('non-numeric id → 400 (not 500)', async () => {
+    const res = await request(app).get('/api/catalog/abc');
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/bookings query validation', () => {
+  it('garbage status → 400', async () => {
+    const res = await request(app)
+      .get('/api/bookings?status=garbage')
+      .set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(400);
+  });
+
+  it('valid status → not 400', async () => {
+    const res = await request(app)
+      .get('/api/bookings?status=Active')
+      .set('Authorization', 'Bearer customer-token');
+    expect(res.status).not.toBe(400);
+  });
+});

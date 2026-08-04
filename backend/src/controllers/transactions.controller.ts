@@ -35,12 +35,15 @@ export const createRentalSchema = z.object({
     address: z.string().optional(),
     notes: z.string().optional(),
     conditionPhoto: z.string().optional(),
+    size: z.string().optional(),
+    measurements: z.record(z.unknown()).optional(),
   }),
 });
 
 export const returnSchema = z.object({
   body: z.object({
-    returnDate: z.string().optional(),     // server falls back to "now" if omitted
+    // Validate the date shape so a bad string is a 400, not a 500 from new Date().
+    returnDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid return date').optional(),     // server falls back to "now" if omitted
     isDamaged: z.boolean().optional().default(false),
     isLate: z.boolean().optional(),        // informational; late fee computed by date anyway
     returnPhoto: z.string().optional(),
@@ -129,14 +132,21 @@ export async function getTransaction(req: AuthenticatedRequest, res: Response, n
   }
 }
 
+const TX_STATUSES = ['Active', 'Reserved', 'Overdue', 'Returned', 'Late', 'Cancelled', 'Completed'] as const;
+
 export async function listTransactions(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
 
+    const status = req.query.status as string | undefined;
+    if (status !== undefined && !TX_STATUSES.includes(status as (typeof TX_STATUSES)[number])) {
+      throw new AppError(400, `Invalid status filter: ${status}`);
+    }
+
     const result = await transactionService.listTransactions({
       role: req.user.role,
       profileId: req.user.id,
-      status: req.query.status as string | undefined,
+      status,
       limit: clampLimit(req.query.limit),
       offset: clampOffset(req.query.offset),
     });

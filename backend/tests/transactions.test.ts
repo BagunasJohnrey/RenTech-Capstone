@@ -342,3 +342,29 @@ describe('GET /api/dashboard/today', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('Query param validation (500→400)', () => {
+  it('GET /transactions with garbage status → 400', async () => {
+    const res = await request(app)
+      .get('/api/transactions?status=garbage')
+      .set('Authorization', 'Bearer admin-token');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /transactions with valid status → not 400', async () => {
+    const res = await request(app)
+      .get('/api/transactions?status=Active')
+      .set('Authorization', 'Bearer admin-token');
+    expect(res.status).not.toBe(400);
+  });
+});
+
+describe('Return date validation', () => {
+  it('PUT /transactions/:id/return with bad returnDate → 400', async () => {
+    const res = await request(app)
+      .put('/api/transactions/tx-new/return')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ returnDate: 'garbage' });
+    expect(res.status).toBe(400);
+  });
+});

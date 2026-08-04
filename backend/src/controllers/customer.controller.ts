@@ -34,6 +34,7 @@ export async function getCatalog(req: Request, res: Response, next: NextFunction
 export async function getCatalogItem(req: Request, res: Response, next: NextFunction) {
   try {
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new AppError(400, 'Invalid item id');
     const item = await inventoryService.getItem(id);
     res.json(item);
   } catch (err) {
@@ -69,14 +70,21 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
   }
 }
 
+const TX_STATUSES = ['Active', 'Reserved', 'Overdue', 'Returned', 'Late', 'Cancelled', 'Completed'] as const;
+
 export async function getBookings(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
 
+    const status = req.query.status as string | undefined;
+    if (status !== undefined && !TX_STATUSES.includes(status as (typeof TX_STATUSES)[number])) {
+      throw new AppError(400, `Invalid status filter: ${status}`);
+    }
+
     const result = await transactionService.listTransactions({
       role: 'Customer',
       profileId: req.user.id,
-      status: req.query.status as string | undefined,
+      status,
     });
 
     res.json(result);

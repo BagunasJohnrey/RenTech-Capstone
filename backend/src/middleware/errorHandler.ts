@@ -11,6 +11,22 @@ export class AppError extends Error {
   }
 }
 
+// Map well-known Prisma error codes + oversized-payload errors to the right
+// HTTP status instead of a blanket 500.
+function mapKnownError(err: unknown): { status: number; message: string } | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as { type?: unknown; status?: unknown; statusCode?: unknown; code?: unknown };
+  if (e.type === 'entity.too.large' || e.status === 413 || e.statusCode === 413) {
+    return { status: 413, message: 'Request payload too large' };
+  }
+  switch (e.code) {
+    case 'P2002': return { status: 409, message: 'A record with that unique value already exists' };
+    case 'P2003': return { status: 400, message: 'Invalid reference (foreign key constraint failed)' };
+    case 'P2025': return { status: 404, message: 'Record not found' };
+    default: return null;
+  }
+}
+
 export function errorHandler(
   err: Error,
   _req: Request,
@@ -33,6 +49,13 @@ export function errorHandler(
   }
 
   console.error('Unhandled error:', err);
+
+  const known = mapKnownError(err);
+  if (known) {
+    res.status(known.status).json({ error: known.message });
+    return;
+  }
+
   res.status(500).json({
     error: 'Internal server error',
   });

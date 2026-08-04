@@ -6,12 +6,20 @@ import { AppError } from '../middleware/errorHandler.js';
 import { ItemStatus } from '@prisma/client';
 
 // Accept numbers or numeric strings (frontend may send strings, e.g. from a
-// stale build) and normalize blank/null to null.
+// stale build) and normalize blank/null to null. Missing keys stay undefined
+// so they are stripped from the parsed body (keeps empty-body detection sane).
 const numOrNull = (schema: z.ZodTypeAny) =>
-  z.preprocess((v) => (v === '' || v === null || v === undefined ? null : Number(v)), schema.nullable().optional());
+  z.preprocess((v) => (v === undefined ? undefined : (v === '' || v === null ? null : Number(v))), schema.nullable().optional());
 
 const isoDateOrNull = z.preprocess(
-  (v) => (v === '' || v === null || v === undefined ? null : new Date(v as string).toISOString()),
+  // Missing → undefined (stripped). Blank/null → null (explicit clear).
+  // Anything else goes through .datetime(), which rejects garbage with a 400
+  // (never throwing a RangeError that would surface as a 500).
+  (v) => {
+    if (v === undefined) return undefined;
+    if (v === '' || v === null) return null;
+    return v;
+  },
   z.string().datetime().nullable().optional()
 );
 
@@ -46,6 +54,8 @@ export const updateItemSchema = z.object({
     discountPct: numOrNull(z.number().min(0).max(100)),
     salePrice: numOrNull(z.number().positive()),
     saleEndsAt: isoDateOrNull,
+  }).refine((b) => Object.keys(b).length > 0, {
+    message: 'At least one field must be provided',
   }),
 });
 
@@ -59,11 +69,28 @@ export const bulkStatusSchema = z.object({
 
 export const availabilitySchema = z.object({
   query: z.object({
-    itemId: z.string().transform(Number),
-    rentalDate: z.string(),
-    dueDate: z.string(),
+    // Numeric guard: transform would yield NaN for "abc"; reject as 400 not 500.
+    itemId: z.string().transform(Number).pipe(z.number().int().positive()),
+    rentalDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid rental date'),
+    dueDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid due date'),
   }),
 });
+
+// Parse a positive-int route param, throwing 400 (not 500) on garbage ids.
+function parseIdParam(raw: string | string[], label = 'id'): number {
+  const s = Array.isArray(raw) ? raw[0] : raw;
+  const n = Number(s);
+  if (!Number.isInteger(n) || n <= 0) throw new AppError(400, `Invalid ${label}`);
+  return n;
+}
+
+// Length-cap free-text query params (search/category) to keep LIKE scans sane.
+const MAX_Q = 120;
+function capQuery(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const s = String(raw).slice(0, MAX_Q);
+  return s === '' ? undefined : s;
+}
 
 const SALE_FIELDS = ['onSale', 'discountPct', 'salePrice', 'saleEndsAt'] as const;
 
@@ -78,9 +105,9 @@ export async function listItems(req: Request, res: Response, next: NextFunction)
   try {
     const authReq = req as AuthenticatedRequest;
     const isAuthenticated = !!authReq.user;
-    const status = req.query.status as string | undefined;
-    const category = req.query.category as string | undefined;
-    const search = req.query.search as string | undefined;
+    const status = capQuery(req.query.status as string | undefined);
+    const category = capQuery(req.query.category as string | undefined);
+    const search = capQuery(req.query.search as string | undefined);
 
     const isAdmin = authReq.user?.role === Role.Admin;
     const items = await inventoryService.listItems(
@@ -108,7 +135,7 @@ export async function listItems(req: Request, res: Response, next: NextFunction)
 
 export async function getItem(req: Request, res: Response, next: NextFunction) {
   try {
-    const id = Number(req.params.id);
+    const id = parseIdParam(req.params.id);
     const item = await inventoryService.getItem(id);
     res.json(item);
   } catch (err) {
@@ -128,7 +155,7 @@ export async function createItem(req: AuthenticatedRequest, res: Response, next:
 
 export async function updateItem(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const id = Number(req.params.id);
+    const id = parseIdParam(req.params.id);
 
     // Strip sale fields for non-admins before the Staff field allow-list runs.
     assertSaleAdminOnly(req.body, req.user?.role);
@@ -151,7 +178,7 @@ export async function updateItem(req: AuthenticatedRequest, res: Response, next:
 
 export async function deleteItem(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const id = Number(req.params.id);
+    const id = parseIdParam(req.params.id);
     await inventoryService.deleteItem(id);
     res.json({ message: 'Item deleted successfully' });
   } catch (err) {
@@ -186,7 +213,7 @@ export async function checkAvailability(req: Request, res: Response, next: NextF
 
 export async function getBlockedDates(req: Request, res: Response, next: NextFunction) {
   try {
-    const id = Number(req.params.id);
+    const id = parseIdParam(req.params.id);
     const result = await inventoryService.getBlockedDates(id);
     res.json(result);
   } catch (err) {

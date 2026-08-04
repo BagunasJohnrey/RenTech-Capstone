@@ -3,6 +3,13 @@ import { supabaseClient } from './supabaseClient';
 const ACCESS_KEY = 'rentech_token';
 const SESSION_KEY = 'rentech_session';
 
+// One-time cleanup of stale/orphaned storage keys left behind by earlier
+// versions of the app (no code references them anymore). Runs on module init.
+try {
+  localStorage.removeItem('customer_products_list');
+  localStorage.removeItem('rentech_templates');
+} catch { /* storage unavailable (SSR/privacy mode) */ }
+
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_KEY);
 }

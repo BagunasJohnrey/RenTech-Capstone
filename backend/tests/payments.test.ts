@@ -47,6 +47,12 @@ app.use(express.json());
 app.use('/api', routes);
 app.use(errorHandler);
 
+// Tiny body limit to exercise the 413 path deterministically.
+const smallBodyApp = express();
+smallBodyApp.use(express.json({ limit: '1kb' }));
+smallBodyApp.use('/api', routes);
+smallBodyApp.use(errorHandler);
+
 const webhookApp = express();
 webhookApp.use('/api/webhooks', express.raw({ type: 'application/json' }), (req, _res, next) => {
   if (Buffer.isBuffer(req.body)) {
@@ -241,5 +247,17 @@ describe('POST /api/webhooks/paymongo', () => {
       .send(JSON.stringify({ data: { attributes: { type: 'payment_intent.payment_succeeded', data: {} } } }));
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe('Error handler: 413', () => {
+  it('oversized JSON body → 413 (not 500)', async () => {
+    const big = 'x'.repeat(2048);
+    const res = await request(smallBodyApp)
+      .post('/api/payments/create-intent')
+      .set('Content-Type', 'application/json')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ notes: big, amount: 100, transactionId: 't' });
+    expect(res.status).toBe(413);
   });
 });
