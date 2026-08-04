@@ -1,11 +1,22 @@
+import { useState } from 'react';
 import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
+import CleaningQueueModal from '../components/CleaningQueueModal';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
+import { api } from '../utils/api';
 import { txPill } from '../utils/statusColors';
 
 export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onCustomerBook }) {
   const todayStats = useTodayTasks(role);
   const kpis = useKpis(role);
+  const [showCleaningQueue, setShowCleaningQueue] = useState(false);
+
+  // Admin bulk-clean action — mirror of what Staff do in Tasks, available
+  // directly from the dashboard modal so the admin never has to switch pages.
+  // inventory prop is refreshed after a successful bulk update by the parent.
+  const handleBulkClean = async (ids) => {
+    await api.patch('/inventory/bulk-status', { ids, status: 'Available' });
+  };
 
   // Normalize customer/item to a display name — client transactions carry a
   // string, while server /dashboard/today returns { id, name, phone } objects.
@@ -390,7 +401,10 @@ export default function DashboardView({ role, transactions, inventory, customerI
     tx.status === 'Overdue' || (tx.status === 'Active' && new Date(tx.dueDate || tx.date) < dayStart)
   ).length;
   const availableCount = inventory.filter(i => i.status === 'Available').length;
-  const cleaningCount = todayStats ? todayStats.inCleaning : inventory.filter(i => i.status === 'Cleaning').length;
+  // Client-derived (not the KPI) so it stays in sync with the inventory that
+  // the Cleaning Queue modal reads — otherwise the card would show a stale count
+  // for up to 60s after a bulk clean.
+  const cleaningCount = inventory.filter(i => i.status === 'Cleaning').length;
   const pickupsToday = transactions.filter(tx => {
     if (!tx.rentalDate || (tx.status !== 'Reserved' && tx.status !== 'Active')) return false;
     return new Date(tx.rentalDate).toDateString() === today.toDateString();
@@ -429,7 +443,18 @@ export default function DashboardView({ role, transactions, inventory, customerI
     });
     revByMonth.push({ label, revenue: txs.reduce((s, tx) => s + (tx.rentalFee || 0), 0) });
   }
+  // Cap the visual scale so an extreme outlier month doesn't squash every other
+  // month into invisible slivers. =5x the median of non-zero months, the bar
+  // is rendered at 60% height and marked as "capped"; the label still shows the
+  // true value so the data is never falsified.
   const maxRevenue = Math.max(...revByMonth.map(m => m.revenue), 1);
+  const nonZero = revByMonth.map(m => m.revenue).filter(r => r > 0);
+  const medianRevenue = nonZero.length > 0
+    ? [...nonZero].sort((a, b) => a - b)[Math.floor(nonZero.length / 2)]
+    : 0;
+  const rawVisualCap = medianRevenue * 5;
+  const isOutlier = (rev) => rev > 0 && rawVisualCap > 0 && rev > rawVisualCap;
+  const visualCap = isOutlier(maxRevenue) ? rawVisualCap : maxRevenue;
 
   const itemCounts = {};
   transactions.forEach(tx => {
@@ -505,14 +530,33 @@ export default function DashboardView({ role, transactions, inventory, customerI
               <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">₱{revenueToday.toLocaleString()} collected today</span>
             </div>
             <div className="h-36 flex items-end justify-between gap-2">
-              {revByMonth.map((m) => (
-                <div key={m.label} className="flex-1 flex flex-col items-center justify-end h-full group">
-                  <span className="text-[10px] text-gray-500 font-semibold mb-1 opacity-0 group-hover:opacity-100 transition-opacity">₱{m.revenue.toLocaleString()}</span>
-                  <div className="w-full bg-[#bf4a53]/15 rounded-t-lg transition-all duration-500 group-hover:bg-[#bf4a53]/30 cursor-pointer"
-                    style={{ height: `${(m.revenue / maxRevenue) * 100}%`, minHeight: m.revenue > 0 ? '4px' : '0' }} />
-                  <span className="text-[9px] text-gray-400 font-semibold mt-1.5">{m.label}</span>
-                </div>
-              ))}
+              {revByMonth.map((m) => {
+                const isEmpty = m.revenue <= 0;
+                const capped = isOutlier(m.revenue);
+                const pct = (m.revenue / visualCap) * 100;
+                return (
+                  <div key={m.label} title={capped ? `₱${m.revenue.toLocaleString()} (bar truncated — outlier month)` : `₱${m.revenue.toLocaleString()}`}
+                    className="flex-1 flex flex-col items-center justify-end h-full group">
+                    <span className={`text-[10px] font-semibold mb-1 transition-opacity ${
+                      isEmpty ? 'text-gray-300' : 'text-gray-500 opacity-0 group-hover:opacity-100'}`}>
+                      {isEmpty ? '₱0' : `₱${m.revenue.toLocaleString()}${capped ? ' ↑' : ''}`}
+                    </span>
+                    {/* Empty months: dashed placeholder bar. Outlier months: capped at 60% with
+                        a dashed cap so the scale stays readable; the true value is in the label. */}
+                    <div
+                      className={`w-full rounded-t-lg transition-all duration-500 ${
+                        isEmpty
+                          ? 'bg-gray-50 border border-dashed border-gray-300 group-hover:border-gray-400'
+                          : capped
+                            ? 'bg-[#bf4a53]/20 border-2 border-dashed border-[#bf4a53]/40 group-hover:bg-[#bf4a53]/30 cursor-pointer'
+                            : 'bg-[#bf4a53]/15 group-hover:bg-[#bf4a53]/30 cursor-pointer'
+                      }`}
+                      style={{ height: capped ? '60%' : isEmpty ? '12%' : `${pct}%`, minHeight: '4px' }}
+                    />
+                    <span className={`text-[9px] font-semibold mt-1.5 ${isEmpty ? 'text-gray-300' : capped ? 'text-[#bf4a53]/60' : 'text-gray-400'}`}>{m.label}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -538,26 +582,36 @@ export default function DashboardView({ role, transactions, inventory, customerI
             )}
           </div>
 
-          {/* Overdue Follow-ups */}
-          {overdueCount > 0 && (
-            <div className="bg-white rounded-2xl border border-red-100 shadow-sm p-4 sm:p-5 lg:p-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Overdue Follow-ups</h3>
-                <button onClick={() => onNavigate('Tasks')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
-              </div>
-              <div className="space-y-2.5">
-                {overdueTxs.map(tx => (
-                  <div key={tx.id} className="flex items-center justify-between gap-2 py-1">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
-                      <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
-                    </div>
-                    <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">{daysLate(tx)}d late</span>
+          {/* Cleaning Queue Health — admin-beneficial operational KPI */}
+          {cleaningCount > 0 && (() => {
+            const oldest = inventory
+              .filter(i => i.status === 'Cleaning')
+              .sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt))[0];
+            const daysWaiting = oldest ? Math.max(1, Math.ceil((today - new Date(oldest.updatedAt)) / 86400000)) : null;
+            return (
+              <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 lg:p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Cleaning Queue</h3>
+                  <button onClick={() => setShowCleaningQueue(true)} className="text-xs font-semibold text-[#bf4a53] hover:underline">View Queue</button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-orange-50 text-orange-500 flex items-center justify-center shrink-0">
+                    <Droplets size={18} />
                   </div>
-                ))}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-2xl font-extrabold text-gray-900">{cleaningCount}
+                      <span className="text-sm font-medium text-gray-400 ml-1.5">item{cleaningCount === 1 ? '' : 's'} awaiting cleaning</span>
+                    </p>
+                    {daysWaiting !== null && (
+                      <p className={`text-xs mt-0.5 font-semibold ${daysWaiting >= 3 ? 'text-red-500' : daysWaiting >= 2 ? 'text-orange-500' : 'text-gray-500'}`}>
+                        Oldest in queue: {daysWaiting}d
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Right rail — Business Health + Inventory Health + AI Insights */}
@@ -642,6 +696,16 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </div>
         </aside>
       </div>
+
+      {/* Admin Cleaning Queue modal — view the backlog and bulk-mark items cleaned
+          without switching to the Staff Tasks page. */}
+      {showCleaningQueue && (
+        <CleaningQueueModal
+          items={inventory.filter(i => i.status === 'Cleaning')}
+          onClose={() => setShowCleaningQueue(false)}
+          onBulkClean={handleBulkClean}
+        />
+      )}
     </div>
   );
 }

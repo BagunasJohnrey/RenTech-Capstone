@@ -32,6 +32,19 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
+// Revenue-chart tooltip: shows the full "Mar 2026" label and clearly marks the
+// projection bar so it isn't mistaken for actual revenue.
+const RevenueTooltip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
+      <p className="font-bold text-gray-900">{p.full}{p.forecast ? ' (projected)' : ''}</p>
+      <p className="text-gray-600">{p.rev <= 0 && !p.forecast ? 'No revenue' : fmt(p.rev)}</p>
+    </div>
+  );
+};
+
 const STATUS_COLORS = { Active: TX_STATUS_HEX.Active, Overdue: TX_STATUS_HEX.Overdue, Returned: TX_STATUS_HEX.Returned, Cancelled: TX_STATUS_HEX.Cancelled };
 const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCcw, Cancelled: XCircle };
 
@@ -230,10 +243,14 @@ export default function AIInsightsView({ analyticsData, role }) {
   const prevSmaVal = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
   const smaTrend = latestSmaVal > prevSmaVal ? 'up' : latestSmaVal < prevSmaVal ? 'down' : 'stable';
 
-  const avgPrice = fCounts.length > 0 && fCounts[fCounts.length - 1] > 0
+  const avgPriceKnown = fCounts.length > 0 && fCounts[fCounts.length - 1] > 0;
+  const avgPrice = avgPriceKnown
     ? (revByMonth[revByMonth.length - 1]?.revenue || 0) / fCounts[fCounts.length - 1]
     : 1500;
   const forecastRev = latestSmaVal * avgPrice;
+  // With < 2 real months of revenue, a peso projection is a guess (avg price falls
+  // back to a hard-coded 1500), so show the SMA direction rather than an inflated bar.
+  const forecastRevValue = avgPriceKnown ? forecastRev : latestSmaVal;
 
   const nextLabel = fLabels.length > 0
     ? (() => {
@@ -264,15 +281,13 @@ export default function AIInsightsView({ analyticsData, role }) {
   const hasSma = validSmaCount >= 2;
   const countChart = fLabels.map(l => ({ label: shortMonth(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
 
+  // Keep every month (even ₱0) so the trend reads as a continuous timeline
+  // and each bar sits under its correct label. Key on the full label ("Mar 2026")
+  // so months from different years never collide on the X-axis.
   const revChart = (revByMonth || [])
-    .map(d => ({ label: shortMonth(d.label), full: d.label, rev: d.revenue }))
-    .filter(d => d.rev > 0);
-  if (revChart.length === 0 && revByMonth.length > 0) {
-    const last = revByMonth[revByMonth.length - 1];
-    revChart.push({ label: shortMonth(last.label), full: last.label, rev: 0 });
-  }
-  if (forecastRev > 0 || revChart.length > 0)
-    revChart.push({ label: shortMonth(nextLabel), full: nextLabel, rev: forecastRev, forecast: true });
+    .map(d => ({ label: d.label || shortMonth(d.label), full: d.label, rev: d.revenue }));
+  if (forecastRevValue > 0 && revChart.length > 0)
+    revChart.push({ label: nextLabel, full: nextLabel, rev: forecastRevValue, forecast: true });
 
   // -- Insights --
   const insights = [];
@@ -400,18 +415,24 @@ export default function AIInsightsView({ analyticsData, role }) {
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
             <h3 className="font-bold text-gray-900 text-base md:text-lg px-5 md:px-7 pt-5 md:pt-7 pb-2">Monthly Revenue</h3>
             <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">Revenue trend with next month projection</p>
-            {revChart.length === 0 || revChart.every(d => d.rev === 0) ? (
-              <p className="text-sm text-gray-400 text-center py-12">No revenue data yet.</p>
+            {revChart.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-12">No transaction data yet.</p>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={revChart} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={revChart.length > 7 ? -35 : 0} textAnchor={revChart.length > 7 ? 'end' : 'middle'} height={revChart.length > 7 ? 56 : 30} />
                   <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={44} />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f9fafb' }} />
-                  <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56}>
+                  <Tooltip content={<RevenueTooltip />} cursor={{ fill: '#f9fafb' }} />
+                  <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56} minPointSize={4}>
                     {revChart.map((e, i) => (
-                      <Cell key={i} fill={e.forecast ? '#bf4a53' : '#1f2937'} fillOpacity={e.forecast ? 0.25 : 1} stroke={e.forecast ? '#bf4a53' : 'none'} strokeWidth={e.forecast ? 2 : 0} strokeDasharray={e.forecast ? '4 3' : 'none'} />
+                      <Cell key={i}
+                        fill={e.rev <= 0 ? '#e5e7eb' : e.forecast ? '#bf4a53' : '#1f2937'}
+                        fillOpacity={e.forecast ? 0.22 : e.rev <= 0 ? 0.5 : 1}
+                        stroke={e.forecast ? '#bf4a53' : 'none'}
+                        strokeWidth={e.forecast ? 2 : 0}
+                        strokeDasharray={e.forecast ? '4 3' : 'none'}
+                      />
                     ))}
                   </Bar>
                   <ReferenceLine y={0} stroke="#e5e7eb" />

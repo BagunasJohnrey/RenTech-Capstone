@@ -5,9 +5,11 @@ import * as transactionService from '../services/transactions.service.js';
 import { AuthenticatedRequest, Role } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 
-// L6: clamp pagination so a crafted ?limit=9e99 can't force the DB to stream
-// every row (memory/CPU DoS). Anything absent/non-numeric/negative → default.
-function clampLimit(raw: unknown, def = 50, max = 200): number {
+// L6: clamp pagination but keep the default high enough to cover every month
+// the dashboard chart needs — Mar–Jun were disappearing from Admin's Revenue
+// Trend because a limit of 50 dropped all but the newest 50 transactions and the
+// dashboard needs the past 6 months to render month-on-month.
+function clampLimit(raw: unknown, def = 500, max = 500): number {
   const n = typeof raw === 'string' ? Number(raw) : NaN;
   if (!Number.isFinite(n) || n <= 0) return def;
   return Math.min(Math.floor(n), max);

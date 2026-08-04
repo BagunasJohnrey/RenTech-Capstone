@@ -585,6 +585,19 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                         <Undo2 size={16} />
                       </button>
                     )}
+                    {/* Edit rental — mirror of the desktop-table action; opens the
+                        same EditRentalModal so dates/notes/customer edits work on
+                        mobile/iPad too. */}
+                    {(role === 'Admin' || role === 'Staff') && (
+                      <button
+                        onClick={() => setEditRental(tx)}
+                        className="p-2 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
+                        title="Edit rental"
+                        aria-label={`Edit rental ${tx.txNumber ?? tx.id}`}
+                      >
+                        <Pencil size={15} />
+                      </button>
+                    )}
                     {(role === 'Admin' || role === 'Staff') && ['Active', 'Reserved', 'Overdue'].includes(tx.status) && (
                       <button
                         onClick={() => {
