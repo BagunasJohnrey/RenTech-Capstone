@@ -1,4 +1,4 @@
-import { Edit3, Trash2, RotateCcw, Calendar, Eye } from 'lucide-react';
+import { Edit3, Trash2, Calendar, Eye, CheckCircle2, Wrench, Lock } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { itemPill } from '../utils/statusColors';
 
@@ -23,7 +23,6 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
   return (
     <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group">
       <div className="relative aspect-[9/16] bg-gray-50 overflow-hidden">
-        <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
           <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] sm:text-[10px] font-bold shadow-sm text-[#bf4a53]">
@@ -86,36 +85,58 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
           </button>
         )}
 
-        {/* Manual lifecycle actions only. Rented/Reserved are derived from
-            transactions (read-only) — staff can't flip them by hand. */}
+        {/* Lifecycle — exactly one surface per status so an Available card
+            never sits next to a red pill. All pills stretch full width
+            (max-w-xs, centered) so the tap target is obvious and the row
+            doesn't collapse to slivers on narrow cards. */}
         {onStatusChange && item.status !== 'Deleted' && (
-          <div>
-            <span className="text-[8px] font-bold text-gray-400 uppercase tracking-wider">Actions</span>
-            <div className="flex flex-wrap items-center gap-1 mt-1">
-              {item.status === 'Cleaning' && (
-                <button onClick={() => onStatusChange(item.id, 'Available')}
-                  className="flex-1 text-[9px] font-bold py-1 rounded-md border transition-all bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm hover:bg-emerald-100">
-                  Mark Cleaned
-                </button>
-              )}
-              {item.status === 'OutOfService' && (
-                <button onClick={() => onStatusChange(item.id, 'Available')}
-                  className="flex-1 text-[9px] font-bold py-1 rounded-md border transition-all bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm hover:bg-emerald-100">
-                  Restore
-                </button>
-              )}
-              {(item.status === 'Available' || item.status === 'Cleaning') && onMarkOutOfService && (
-                <button onClick={() => onMarkOutOfService(item)}
-                  className="flex-1 text-[9px] font-bold py-1 rounded-md border transition-all bg-white text-red-500 border-red-200 hover:bg-red-50">
-                  Out of Service
-                </button>
-              )}
-              {item.status !== 'Cleaning' && item.status !== 'OutOfService' && (
-                <span className="text-[9px] font-medium text-gray-400 py-1">
-                  Status auto-syncs with bookings
-                </span>
-              )}
-            </div>
+          <div className="pt-0.5 flex justify-center">
+            {(() => {
+              const base = 'inline-flex items-center justify-center gap-1.5 w-full max-w-xs px-4 py-2.5 text-[11px] font-bold rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
+
+              if (item.status === 'Available' && onMarkOutOfService) {
+                return (
+                  <button onClick={() => onMarkOutOfService(item)}
+                    title="Item is damaged or needs repair — remove it from the catalog until restored"
+                    className={`${base} bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 focus-visible:ring-red-400/50`}>
+                    <Wrench size={12} />
+                    Pull from rental
+                  </button>
+                );
+              }
+
+              if (item.status === 'Cleaning') {
+                return (
+                  <button onClick={() => onStatusChange(item.id, 'Available')}
+                    className={`${base} bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm focus-visible:ring-emerald-400/50`}>
+                    <CheckCircle2 size={13} />
+                    Mark as clean
+                  </button>
+                );
+              }
+
+              if (item.status === 'OutOfService') {
+                return (
+                  <button onClick={() => onStatusChange(item.id, 'Available')}
+                    title="Repair complete — put the item back in the catalog"
+                    className={`${base} bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 focus-visible:ring-emerald-400/50`}>
+                    <CheckCircle2 size={12} />
+                    Restore to Available
+                  </button>
+                );
+              }
+
+              if (item.status === 'Rented' || item.status === 'Reserved') {
+                return (
+                  // Derived from bookings — no destructive action available.
+                  <span className={`${base} bg-gray-50 text-gray-400 border border-gray-200/60`}>
+                    <Lock size={11} />
+                    Managed by bookings
+                  </span>
+                );
+              }
+              return null;
+            })()}
           </div>
         )}
       </div>

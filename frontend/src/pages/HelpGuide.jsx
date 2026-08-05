@@ -1,44 +1,49 @@
 import { useState } from 'react';
-import { HelpCircle, LayoutGrid, ShoppingBag, Undo2, MessageCircle, ChevronDown, ChevronUp, Calendar, User, CreditCard } from 'lucide-react';
-
-const staffTutorialCards = [
-  { icon: LayoutGrid, title: 'Your Dashboard', desc: 'Your daily tasks and key metrics are right here.' },
-  { icon: ShoppingBag, title: 'New Rentals', desc: 'Create a rental in 3 easy steps — pick, details, confirm.' },
-  { icon: Undo2, title: 'Processing Returns', desc: 'Check condition, assess fees, and confirm returns.' },
-  { icon: MessageCircle, title: 'Need Help?', desc: 'Tap Help anytime in the sidebar menu.' },
-];
+import { HelpCircle, ChevronDown, ChevronUp, CheckCircle2, Wrench } from 'lucide-react';
+import { itemPill } from '../utils/statusColors';
 
 const staffFaqs = [
-  { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental" or use the FAB button. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
-  { q: 'How do I process a return?', a: 'From Dashboard tap "Process Return" or go to Transactions and find the active rental. Review condition, toggle late/damage fees, then confirm.' },
-  { q: 'How do I add inventory items?', a: 'Tap the "+ Add Item" button in the header. Fill in name, category, price, and photo. Only Admins and Staff can add items.' },
-  { q: 'How do I view business insights?', a: 'Admins can access "AI Insights" from the sidebar. View demand forecasts, utilisation rates, and generate AI-powered reports.' },
-  { q: 'What happens when I go offline?', a: 'You can still create rentals and process returns. They will be queued and synced automatically when your connection returns.' },
-];
-
-const customerTutorialCards = [
-  { icon: ShoppingBag, title: 'Browse Collection', desc: 'Explore gowns, suits, and formal wear available for rent.' },
-  { icon: Calendar, title: 'Book an Item', desc: 'Select your dates, choose your size, and confirm your booking.' },
-  { icon: User, title: 'My Transactions', desc: 'View your booking history, receipts, and upcoming rentals.' },
-  { icon: CreditCard, title: 'Payments & Downpayment', desc: 'Secure your booking with a 50% downpayment via GCash or card.' },
+  { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental", or open Catalog, find an Available item, and tap "Book for Customer" on its card. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
+  { q: 'How do I process a return?', a: 'From Dashboard tap "Process Return", or find the active rental under Transactions. Check the condition, toggle any late/damage fees, then confirm. The item automatically flips to Cleaning — it goes back to Available once someone marks it cleaned.' },
+  { q: 'How do I add an item to inventory?', a: 'Tap "+ Add Item" in the header or inside Catalog. Fill in the name, category, price, and photo. Only Admins and Staff can add items; Admins can also set them on sale.' },
+  { q: 'How do I take an item off the floor temporarily?', a: 'Open Catalog, find the item, and tap "Pull from rental" — the item flips to Out of Service so customers can no longer book it. When the repair or cleaning is done, tap "Restore to Available" on the same card to put it back.' },
+  { q: 'How do I view demand forecasts and reports?', a: 'Admins can open "AI Insights" from the sidebar — demand forecast, utilization breakdown, monthly revenue, and the "Generate AI Report" button that drafts a summary for you.' },
 ];
 
 const customerFaqs = [
-  { q: 'How do I rent an item?', a: 'Browse the Collection, pick an item that is "Available", tap "Book", and follow the booking wizard. Select your pickup and event dates, choose a size, and complete the downpayment to confirm.' },
-  { q: 'Can I choose my own pickup and return dates?', a: 'Yes. You select the pickup date and the event date. The item must be picked up before your event and is due back the day after the event.' },
+  { q: 'How do I rent an item?', a: 'Browse the Collection, pick an item that is "Available", tap "Rent Now", and follow the booking wizard. Select your pickup and event dates, choose a size, and complete the downpayment to confirm.' },
+  { q: 'Can I choose my own pickup and return dates?', a: 'Yes. You select the pickup date and the event date. The item must be picked up before your event and is due back the day after.' },
   { q: 'How much do I need to pay upfront?', a: 'A 50% downpayment is required to secure your booking. The remaining balance is payable at pickup. You can pay via GCash or card.' },
-  { q: 'What if I need to cancel or reschedule?', a: 'Contact the boutique directly to discuss cancellations or rescheduling. Downpayment refunds are subject to the store policy.' },
-  { q: 'How do I view my bookings?', a: 'Go to the Transactions tab in your account to see your booking history, payment status, and upcoming rental schedule.' },
+  { q: 'What if I need to cancel or reschedule?', a: 'Contact the boutique directly — downpayment refunds follow the store policy.' },
+  { q: 'How do I view my bookings?', a: 'Open the Transactions tab in your account for your booking history, payment status, and upcoming rentals.' },
 ];
 
-export default function HelpGuide({ role, onStartTutorial }) {
+// Inventory lifecycle legend (Staff/Admin only) — maps each on-card action
+// button to what it actually does, so nobody has to guess from the icon.
+const inventoryActions = [
+  { status: 'Available', PillIcon: Wrench, pillCls: 'bg-red-50 text-red-700 border border-red-200', btnLabel: 'Pull from rental',
+    desc: 'For damaged or maintenance-needed pieces. The item flips to Out of Service, is hidden from the catalog, and existing bookings stay intact.' },
+  { status: 'Cleaning', PillIcon: CheckCircle2, pillCls: 'bg-emerald-600 text-white', btnLabel: 'Mark as clean',
+    desc: 'After a return lands in Cleaning, press this once the item is washed. It flips straight to Available and can be rented again.' },
+  { status: 'OutOfService', PillIcon: CheckCircle2, pillCls: 'bg-emerald-50 text-emerald-700 border border-emerald-300', btnLabel: 'Restore to Available',
+    desc: 'After a repair or cleaning finishes on an item you pulled. One tap puts it back in the catalog.' },
+];
+
+// Status reference for the two "no action" states, so staff know the card
+// isn't missing a button.
+const statusReference = [
+  { status: 'Rented', desc: 'A customer has the item. Status moves automatically as the booking progresses — no manual change needed.' },
+  { status: 'Reserved', desc: 'The item is locked into an upcoming booking. Same as Rented: handled by the booking itself.' },
+  { status: 'Deleted', desc: 'Soft-archived. Hidden from the catalog; only Admin can bring it back via the Restore (Undo2) icon on the card corner.' },
+];
+
+export default function HelpGuide({ role }) {
   const [openFaq, setOpenFaq] = useState(null);
   const isCustomer = role?.toLowerCase() === 'customer';
-  const tutorialCards = isCustomer ? customerTutorialCards : staffTutorialCards;
   const faqs = isCustomer ? customerFaqs : staffFaqs;
 
   return (
-    <div className="max-w-2xl mx-auto space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <div className="max-w-2xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       {/* Hero */}
       <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-8 md:p-10 text-white shadow-lg relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3" />
@@ -47,36 +52,54 @@ export default function HelpGuide({ role, onStartTutorial }) {
           <h2 className="text-3xl font-bold tracking-tight">Help Guide</h2>
         </div>
         <p className="text-gray-400 font-medium max-w-xl relative z-10 leading-relaxed">
-          Quick tutorials and answers to common questions for {role.toLowerCase()} users.
+          {isCustomer
+            ? 'Answers to common booking questions and how to rent from us.'
+            : 'Inventory button reference and answers to common questions.'}
         </p>
       </div>
 
-      {/* Tutorial cards */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-gray-900">Quick Tutorials</h3>
-          {onStartTutorial && (
-            <button onClick={onStartTutorial}
-              className="text-xs font-bold text-[#bf4a53] hover:text-red-700 transition-colors underline underline-offset-2">
-              Start Tutorial
-            </button>
-          )}
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {tutorialCards.map((card, i) => {
-            const Icon = card.icon;
-            return (
-              <div key={i} className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm hover:shadow-md transition-shadow">
-                <div className="p-3 bg-red-50 rounded-2xl inline-block mb-4">
-                  <Icon size={24} className="text-[#bf4a53]" />
+      {/* Inventory actions legend — Staff & Admin only */}
+      {!isCustomer && (
+        <div>
+          <h3 className="text-lg font-bold text-gray-900 mb-1">Inventory item actions</h3>
+          <p className="text-sm text-gray-500 mb-4">What the buttons on a catalog card mean, status by status.</p>
+          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100/60 overflow-hidden">
+            {inventoryActions.map(({ status, PillIcon, pillCls, btnLabel, desc }) => {
+              const meta = itemPill(status);
+              const StatusIcon = meta.icon;
+              return (
+                <div key={status} className="flex items-start gap-3 p-4">
+                  <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
+                    <StatusIcon size={10} />
+                    {meta.label}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    {/* Live pill preview so the doc looks like the card. */}
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold mb-1.5 ${pillCls}`}>
+                      <PillIcon size={11} />
+                      {btnLabel}
+                    </span>
+                    <p className="text-sm text-gray-600 leading-relaxed">{desc}</p>
+                  </div>
                 </div>
-                <h4 className="font-bold text-gray-900 mb-1">{card.title}</h4>
-                <p className="text-sm text-gray-500 leading-relaxed">{card.desc}</p>
-              </div>
-            );
-          })}
+              );
+            })}
+            {statusReference.map(({ status, desc }) => {
+              const meta = itemPill(status);
+              const StatusIcon = meta.icon;
+              return (
+                <div key={status} className="flex items-start gap-3 p-4 bg-gray-50/40">
+                  <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
+                    <StatusIcon size={10} />
+                    {meta.label}
+                  </span>
+                  <p className="text-sm text-gray-600 leading-relaxed flex-1">{desc}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* FAQ */}
       <div>

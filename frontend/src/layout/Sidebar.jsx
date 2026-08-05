@@ -39,16 +39,19 @@ export default function Sidebar({ role, activeTab, setActiveTab, navItems, onReq
         })}
       </nav>
 
-      {/* Bottom actions: Help + Sign Out */}
+      {/* Bottom actions: Help is a Customer-only tab (admin/staff read it
+          inside Settings), so don't render a sidebar entry for them. */}
       <div className="p-6 space-y-3 border-t border-gray-100/50">
-        <button data-tab="Help"
-          onClick={() => setActiveTab('Help')}
-          className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13px] font-semibold transition-all duration-300 ${
-            activeTab === 'Help' ? 'bg-red-50/80 text-[#bf4a53]' : 'text-gray-500 hover:bg-gray-50/80 hover:text-gray-900'
-          }`}>
-          <HelpCircle size={18} className={`${activeTab === 'Help' ? 'text-[#bf4a53]' : 'text-gray-400'} shrink-0`} strokeWidth={activeTab === 'Help' ? 2.5 : 2} />
-          <span className="truncate flex-1 text-left">Help Guide</span>
-        </button>
+        {role === 'Customer' && (
+          <button data-tab="Help"
+            onClick={() => setActiveTab('Help')}
+            className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13px] font-semibold transition-all duration-300 ${
+              activeTab === 'Help' ? 'bg-red-50/80 text-[#bf4a53]' : 'text-gray-500 hover:bg-gray-50/80 hover:text-gray-900'
+            }`}>
+            <HelpCircle size={18} className={`${activeTab === 'Help' ? 'text-[#bf4a53]' : 'text-gray-400'} shrink-0`} strokeWidth={activeTab === 'Help' ? 2.5 : 2} />
+            <span className="truncate flex-1 text-left">Help Guide</span>
+          </button>
+        )}
         <button onClick={onRequestLogout}
           className="w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[13px] font-semibold text-gray-500 hover:bg-red-50/50 hover:text-[#bf4a53] transition-colors">
           <LogOut size={18} className="shrink-0" />

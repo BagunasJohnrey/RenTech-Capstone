@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell } from 'lucide-react';
 import { api } from '../utils/api';
-import HelpGuide from './HelpGuide';
 import PromoCodesManager from '../components/PromoCodesManager';
 import { SkeletonList } from '../components/Skeleton';
+import HelpGuide from './HelpGuide';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
@@ -652,9 +652,10 @@ export default function ProfileSettingsView({
         </div>
       )}
 
-      {/* Help Guide (Staff) */}
-      {role === 'Staff' && (
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8">
+      {/* Help Guide — Admin/Staff read it from here (customers use the
+          top-level Help tab). No own URL, matches their portal layout. */}
+      {role !== 'Customer' && (
+        <div className="border-t border-gray-100/60 pt-6">
           <HelpGuide role={role} />
         </div>
       )}

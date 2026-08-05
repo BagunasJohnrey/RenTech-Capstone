@@ -4,9 +4,9 @@ import { useEscapeClose } from '../hooks/useEscapeClose';
 import ItemImage from './ItemImage';
 
 const REASONS = [
-  { key: 'damaged', label: 'Damaged', icon: AlertTriangle, color: 'text-red-600 border-red-300 bg-red-50' },
-  { key: 'maintenance', label: 'Maintenance', icon: Wrench, color: 'text-amber-600 border-amber-300 bg-amber-50' },
-  { key: 'other', label: 'Other', icon: HelpCircle, color: 'text-gray-600 border-gray-300 bg-gray-50' },
+  { key: 'damaged', label: 'Damaged', hint: 'Torn, stained, broken zipper', icon: AlertTriangle, color: 'text-red-600 border-red-300 bg-red-50' },
+  { key: 'maintenance', label: 'Cleaning / Repair', hint: 'Deep-clean, minor fixes', icon: Wrench, color: 'text-amber-600 border-amber-300 bg-amber-50' },
+  { key: 'other', label: 'Other', hint: 'Something else', icon: HelpCircle, color: 'text-gray-600 border-gray-300 bg-gray-50' },
 ];
 
 export default function OutOfServiceModal({ item, onClose, onConfirm }) {
@@ -37,7 +37,7 @@ export default function OutOfServiceModal({ item, onClose, onConfirm }) {
               <AlertTriangle size={18} className="text-red-500" />
             </div>
             <div>
-              <h3 id="dialog-title-out-of-service" className="font-bold text-lg text-gray-900">Mark Out of Service</h3>
+              <h3 id="dialog-title-out-of-service" className="font-bold text-lg text-gray-900">Pull from Rental</h3>
               <p className="text-xs text-gray-500">Item can't be rented until restored</p>
             </div>
           </div>
@@ -58,17 +58,18 @@ export default function OutOfServiceModal({ item, onClose, onConfirm }) {
 
           <div>
             <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2">Reason</p>
-            <div className="grid grid-cols-1 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {REASONS.map((r) => {
                 const Icon = r.icon;
                 const active = reason === r.key;
                 return (
                   <button key={r.key} type="button" onClick={() => setReason(r.key)} aria-pressed={active}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-2xl border-2 font-bold text-sm transition-all text-left ${
+                    className={`flex flex-col items-center gap-1 px-2 py-3 rounded-2xl border-2 transition-all text-center ${
                       active ? `${r.color} shadow-sm` : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'
                     }`}>
-                    <Icon size={16} />
-                    {r.label}
+                    <Icon size={18} />
+                    <span className="font-bold text-xs">{r.label}</span>
+                    <span className="text-[9px] opacity-60 font-medium leading-tight">{r.hint}</span>
                   </button>
                 );
               })}
@@ -84,16 +85,19 @@ export default function OutOfServiceModal({ item, onClose, onConfirm }) {
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-5 py-2.5 text-[13px] font-bold text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2.5 rounded-full text-xs font-bold text-gray-600 hover:bg-gray-100 transition-colors">
               Cancel
             </button>
             <button type="button" onClick={handleSubmit} disabled={!canSubmit}
-              className={`px-6 py-2.5 text-[13px] font-bold text-white rounded-full transition-all flex items-center gap-2 ${
-                canSubmit ? 'bg-[#bf4a53] hover:bg-red-700 shadow-sm shadow-red-500/20' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              className={`inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full text-xs font-bold transition-all ${
+                canSubmit
+                  ? 'bg-[#bf4a53] text-white hover:bg-red-700 shadow-sm shadow-red-500/20'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
               }`}>
-              <AlertTriangle size={14} />
-              Take Out of Service
+              <AlertTriangle size={13} />
+              Pull from rental
             </button>
           </div>
         </div>
