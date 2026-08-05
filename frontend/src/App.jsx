@@ -555,11 +555,7 @@ export default function RentechApp() {
   if (isLoggedIn && activeTab == null) {
     if (roleOwnsPath && roleOwnsPath !== viewRole) {
       return (
-        <UnauthorizedPage
-          signedInRole={viewRole}
-          requiredRole={roleOwnsPath}
-          onHome={() => navigate(HOME_PATH[viewRole], { replace: true })}
-        />
+        <UnauthorizedPage onHome={() => navigate(HOME_PATH[viewRole], { replace: true })} />
       );
     }
     return <NotFoundPage signedIn onGoHome={() => navigate(HOME_PATH[viewRole], { replace: true })} />;
