@@ -1,6 +1,7 @@
 ﻿import { useState } from 'react';
 import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
+import DateRangePicker, { formatDateRangeLabel } from '../components/DateRangePicker';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
@@ -28,6 +29,11 @@ const statusColors = Object.fromEntries(
 
 const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved', 'Released'];  // Released = Active/Overdue with conditionPhoto
 
+// Date filter: the heavy lifting (two-month popover, presets, hover-range
+// highlight, single-tap vs range, future-date support) lives in
+// `components/DateRangePicker.jsx`. This page only deals in [from, to]
+// strings and a single popover-open flag.
+
 export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, loading, onNavigateDetail }) {
   const isStaff = role !== 'Customer';
   const [searchQuery, setSearchQuery] = useState('');
@@ -48,18 +54,23 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   // otherwise fall back to the local modal (e.g. standalone usage).
   const openDetail = (tx) => {
     if (onNavigateDetail) onNavigateDetail(tx);
-    else openDetail(tx);
+    else setDetailTx(tx);
   };
 
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
-    + (dateFrom !== '' ? 1 : 0)
-    + (dateTo !== '' ? 1 : 0);
+    + ((dateFrom !== '' || dateTo !== '') ? 1 : 0);
 
   const clearFilters = () => {
     setActiveStatusFilter('All');
 
     setDateFrom('');
     setDateTo('');
+    setCurrentPage(1);
+  };
+
+  const applyDateRange = ({ from, to }) => {
+    setDateFrom(from);
+    setDateTo(to);
     setCurrentPage(1);
   };
 
@@ -224,71 +235,44 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               </div>
             </div>
 
-            {/* Date range + Active only + Clear */}
-            <div className="px-4 py-3">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                {isStaff && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                        <Calendar size={11} /> From
-                      </span>
-                      <input type="date" value={dateFrom}
-                        onChange={e => { setDateFrom(e.target.value); setCurrentPage(1); }}
-                        className="px-2.5 py-1.5 bg-gray-50 border border-gray-200/60 rounded-lg text-xs font-medium focus:outline-none focus:border-gray-400 transition-colors" />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                        <Calendar size={11} /> To
-                      </span>
-                      <input type="date" value={dateTo}
-                        onChange={e => { setDateTo(e.target.value); setCurrentPage(1); }}
-                        className="px-2.5 py-1.5 bg-gray-50 border border-gray-200/60 rounded-lg text-xs font-medium focus:outline-none focus:border-gray-400 transition-colors" />
-                    </div>
-                  </>
-                )}
-                {activeFilterCount > 0 && (
-                  <button onClick={clearFilters}
-                    className="flex items-center gap-1 text-xs font-bold text-gray-500 hover:text-[#bf4a53] transition-colors">
-                    <RotateCcw size={12} />
-                    Clear
-                  </button>
-                )}
+            {/* Date row — the trigger pill doubles as the visible selection
+                summary; clicking opens a two-month calendar popover (portal
+                to <body>, so the panel's `overflow-hidden` can't clip it). */}
+            {isStaff && (
+              <div className="px-4 py-3 border-b border-gray-50">
+                <DateRangePicker
+                  from={dateFrom}
+                  to={dateTo}
+                  onChange={applyDateRange}
+                />
               </div>
-            </div>
+            )}
 
-            {/* Active filter chips */}
+            {/* Active filter chips + Clear all */}
             {activeFilterCount > 0 && (
               <div className="px-4 py-2 bg-gray-50/80 border-t border-gray-50 flex items-center gap-2 overflow-x-auto hide-scrollbar">
                 {activeStatusFilter !== 'All' && (
                   <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
                     {activeStatusFilter}
-                    <button onClick={() => setActiveStatusFilter('All')} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                    <button onClick={() => { setActiveStatusFilter('All'); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
                       <X size={11} />
                     </button>
                   </span>
                 )}
-                {dateFrom && (
+                {(dateFrom || dateTo) && (
                   <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
-                    From {new Date(dateFrom).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    <button onClick={() => setDateFrom('')} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                    <Calendar size={11} className="text-gray-400" />
+                    {formatDateRangeLabel(dateFrom, dateTo)}
+                    <button onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
                       <X size={11} />
                     </button>
                   </span>
                 )}
-                {dateTo && (
-                  <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
-                    To {new Date(dateTo).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    <button onClick={() => setDateTo('')} className="text-gray-400 hover:text-gray-600 ml-0.5">
-                      <X size={11} />
-                    </button>
-                  </span>
-                )}
-                {activeFilterCount > 1 && (
-                  <button onClick={clearFilters} className="shrink-0 text-[10px] font-bold text-gray-400 hover:text-[#bf4a53] transition-colors ml-0.5">
-                    Clear all
-                  </button>
-                )}
+                <button onClick={clearFilters}
+                  className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-gray-400 hover:text-[#bf4a53] transition-colors ml-auto">
+                  <RotateCcw size={11} />
+                  Clear all
+                </button>
               </div>
             )}
           </div>

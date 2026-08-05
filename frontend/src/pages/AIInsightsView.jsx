@@ -412,24 +412,32 @@ export default function AIInsightsView({ analyticsData, role }) {
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl mx-auto">
 
         {/* Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="space-y-3">
           <div>
             <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Business Intelligence</h2>
             <p className="text-sm text-gray-500 mt-1">Real-time analytics powered by your transaction and inventory data.</p>
           </div>
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-            <div className="flex bg-gray-100 rounded-full p-0.5">
+
+          {/* Controls — mobile/tablet stack the rows, desktop keeps a single
+              right-aligned row exactly as before. Order below md: range pills,
+              optional month/year, exports; md+: same as desktop. */}
+          <div className="flex flex-wrap items-center gap-2">
+
+            {/* Range pills — tags look and behave like segmented control */}
+            <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
               {TIME_OPTIONS.map(t => (
                 <button key={t} onClick={() => setTimeRange(t)}
-                  className={`px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold rounded-full transition-colors ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  className={`px-3 py-1.5 text-[11px] sm:text-xs font-bold rounded-full transition-colors ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                   {t}
                 </button>
               ))}
             </div>
-            {/* Month/year picker for Monthly, year picker for Yearly — clamped
-                to the past so you can't select an unfinished future month. */}
+
+            {/* Month + Year — own pill so they optically pair with the range
+                pills. Hidden on Overall; on small screens they drop onto the
+                next line instead of squishing. */}
             {timeRange !== 'Overall' && (
-              <div className="flex items-center gap-1.5 bg-gray-100 rounded-full px-1.5 py-1">
+              <div className="flex items-center gap-1.5 bg-gray-100 rounded-full px-1.5 py-1 shrink-0 order-last md:order-none">
                 {timeRange === 'Monthly' && (
                   <select
                     aria-label="Month"
@@ -457,19 +465,24 @@ export default function AIInsightsView({ analyticsData, role }) {
               </div>
             )}
 
-            <div className="w-px h-6 bg-gray-200" />
-            <button onClick={() => handleExport('/export/transactions', 'transactions.csv')}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Transactions">
-              <Download size={16} />
-            </button>
-            <button onClick={() => handleExport('/export/revenue', 'revenue.csv')}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Revenue">
-              <DollarSign size={16} />
-            </button>
-            <button onClick={() => handleExport('/export/inventory', 'inventory.csv')}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Inventory">
-              <BarChart3 size={16} />
-            </button>
+            {/* Divider + exports collapse into a right-aligned cluster on
+                md+; on small screens the divider is hidden and exports align
+                flush-right on the same row as the pills. */}
+            <div className="ml-auto md:ml-0 flex items-center gap-2">
+              <div className="w-px h-6 bg-gray-200 hidden md:block" />
+              <button onClick={() => handleExport('/export/transactions', 'transactions.csv')}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Transactions">
+                <Download size={16} />
+              </button>
+              <button onClick={() => handleExport('/export/revenue', 'revenue.csv')}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Revenue">
+                <DollarSign size={16} />
+              </button>
+              <button onClick={() => handleExport('/export/inventory', 'inventory.csv')}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Inventory">
+                <BarChart3 size={16} />
+              </button>
+            </div>
           </div>
         </div>
 
