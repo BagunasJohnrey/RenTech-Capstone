@@ -27,4 +27,8 @@ export const env = {
   SEMAPHORE_API_KEY: process.env.SEMAPHORE_API_KEY || '',
 
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+
+  // OpenRouter fallback so the AI stylist still answers when Gemini is down /
+  // unconfigured. Key is optional; only free-capable models are tried.
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
 };

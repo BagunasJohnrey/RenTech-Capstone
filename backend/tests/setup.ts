@@ -16,6 +16,12 @@ process.env.FRONTEND_URL = 'http://localhost:5173';
 process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
 
+// Unit tests must never hit live AI providers: backend/.env contains real
+// Gemini/OpenRouter keys, and dotenv only fills vars that aren't already set —
+// blanking them here forces the deterministic in-app fallback paths.
+process.env.GEMINI_API_KEY = '';
+process.env.OPENROUTER_API_KEY = '';
+
 const { mockUsers, mockSessions } = vi.hoisted(() => {
   const users: Record<string, { id: string; email: string }> = {
     'customer-token': { id: 'auth-customer-id', email: 'customer@example.com' },

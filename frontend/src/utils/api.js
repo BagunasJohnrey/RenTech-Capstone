@@ -10,15 +10,21 @@ export function setTokenGetter(fn) {
 
 const FETCH_TIMEOUT_MS = 20000; // abort requests the server never answers
 
-async function request(method, path, body = undefined, _retried = false) {
+// A short, human-readable abort reason so timeouts surface as "the request took
+// too long" instead of the cryptic "signal was aborted without any reason".
+const TIMEOUT_REASON = () =>
+  new DOMException('The request took too long. The server may be offline — please try again.', 'TimeoutError');
+
+async function request(method, path, body = undefined, _retried = false, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   const token = tokenGetter ? tokenGetter() : null;
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  const timeoutMs = opts.timeout || FETCH_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(TIMEOUT_REASON()), timeoutMs);
   let res;
   try {
     res = await fetch(`${API_BASE}${path}`, {
@@ -34,7 +40,7 @@ async function request(method, path, body = undefined, _retried = false) {
   if (res.status === 401 && !_retried) {
     const refreshed = await refreshSession();
     if (refreshed) {
-      return request(method, path, body, true);
+      return request(method, path, body, true, opts);
     }
   }
 
@@ -92,10 +98,10 @@ async function downloadBlob(path, filename, _retried = false) {
 }
 
 export const api = {
-  get: (path) => request('GET', path),
-  post: (path, body) => request('POST', path, body),
-  put: (path, body) => request('PUT', path, body),
-  patch: (path, body) => request('PATCH', path, body),
-  delete: (path) => request('DELETE', path),
+  get: (path, opts) => request('GET', path, undefined, false, opts),
+  post: (path, body, opts) => request('POST', path, body, false, opts),
+  put: (path, body, opts) => request('PUT', path, body, false, opts),
+  patch: (path, body, opts) => request('PATCH', path, body, false, opts),
+  delete: (path, opts) => request('DELETE', path, undefined, false, opts),
   download: (path, filename) => downloadBlob(path, filename),
 };
