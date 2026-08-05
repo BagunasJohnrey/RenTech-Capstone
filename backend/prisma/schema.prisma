@@ -41,6 +41,7 @@ model Profile {
   address    String?
   preferences String?  @map("preferences")
   notifyPrefs Json?    @map("notify_prefs")
+  styleNotes  String?  @map("style_notes")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 

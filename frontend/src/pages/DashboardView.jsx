@@ -1,16 +1,39 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets } from 'lucide-react';
+import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets, Tag, Copy, Check, CalendarClock, Sparkle } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
 import { DashboardSkeleton } from '../components/PageSkeletons';
 import { api } from '../utils/api';
 import { txPill } from '../utils/statusColors';
+import { promoService } from '../services/promo';
 
 export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onCustomerBook }) {
   const todayStats = useTodayTasks(role);
   const kpis = useKpis(role);
   const [showCleaningQueue, setShowCleaningQueue] = useState(false);
+
+  // Live promo codes for the customer "Promotions & Offers" section.
+  const [promos, setPromos] = useState([]);
+  const [copiedCode, setCopiedCode] = useState(null);
+  useEffect(() => {
+    if (role !== 'Customer') return;
+    let active = true;
+    promoService.listPublic()
+      .then((d) => { if (active && Array.isArray(d)) setPromos(d); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [role]);
+
+  const copyCode = async (code) => {
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      // clipboard API may be unavailable (http); fall through silently
+    }
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode((c) => (c === code ? null : c)), 1600);
+  };
   // If the server KPIs/today-digest never resolve (e.g. API unreachable), stop
   // holding the skeleton after a few seconds and fall back to client-derived
   // numbers instead of blocking the dashboard forever.
@@ -47,6 +70,18 @@ export default function DashboardView({ role, transactions, inventory, customerI
       .slice(0, 4);
     const itemName = (tx) => (typeof tx.item === 'string' ? tx.item : tx.item?.name) || 'Item';
 
+    // New arrivals — newest available items this customer may not have seen.
+    const newArrivals = [...available]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 4);
+
+    // Upcoming rentals (Reserved/Active with a future pickup) so the customer
+    // sees at a glance what to pick up and when.
+    const upcoming = (transactions || [])
+      .filter((tx) => (tx.status === 'Reserved' || tx.status === 'Active') && tx.rentalDate)
+      .sort((a, b) => new Date(a.rentalDate) - new Date(b.rentalDate))
+      .slice(0, 3);
+
     return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         {/* Hero */}
@@ -65,6 +100,82 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </button>
         </div>
 
+        {/* Promotions & Offers — real promo codes (admin-created) + sale items */}
+        {(promos.length > 0 || onSale.length > 0) && (
+          <div>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Tag size={18} className="text-[#bf4a53]" /> Promotions & Offers
+                </h3>
+                <p className="text-xs text-gray-500">Discounts you can use on your next booking</p>
+              </div>
+            </div>
+
+            {/* Promo codes */}
+            {promos.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+                {promos.map((p) => (
+                  <div key={p.code} className="relative overflow-hidden rounded-2xl border-2 border-dashed border-[#bf4a53]/30 bg-gradient-to-br from-red-50 to-orange-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xl font-extrabold text-[#bf4a53]">{p.discountPct}% OFF</p>
+                        <p className="text-[11px] text-gray-500 font-medium">
+                          {p.expiresAt ? `Until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No expiry'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => copyCode(p.code)}
+                        className="flex items-center gap-1.5 bg-white border border-[#bf4a53]/30 text-gray-900 px-3 py-2 rounded-xl font-mono font-bold text-sm hover:bg-[#bf4a53] hover:text-white transition-colors shrink-0"
+                        title="Copy code"
+                      >
+                        {copiedCode === p.code ? <Check size={14} /> : <Copy size={14} />}
+                        {p.code}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Sale items pulled into the promo section */}
+            {onSale.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+                {onSale.map((item) => (
+                  <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Upcoming — a quick heads-up of what to pick up / when, filling the gap
+            when the customer has rentals in flight but nothing else to show. */}
+        {upcoming.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2">
+                <CalendarClock size={15} className="text-[#bf4a53]" /> Upcoming Pickups
+              </h3>
+              <button onClick={() => onNavigate('History')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
+            </div>
+            <div className="space-y-3">
+              {upcoming.map((tx) => (
+                <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
+                    <ShoppingBag size={16} className="text-[#bf4a53]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">{itemName(tx)}</p>
+                    <p className="text-xs text-gray-500 truncate">Pickup {new Date(tx.rentalDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Recommended for You — personalized */}
         <div>
           <div className="flex items-center justify-between mb-6">
@@ -81,21 +192,23 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </div>
         </div>
 
-        {/* On Sale collection */}
-        {onSale.length > 0 && (
+        {/* On Sale items already surfaced inside "Promotions & Offers" above —
+            removed the standalone duplicate block. */}
+
+        {/* New Arrivals — helps discovery beyond recommendations */}
+        {newArrivals.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                  <span className="bg-[#bf4a53]/10 text-[#bf4a53] px-2 py-0.5 rounded-md text-xs">SALE</span>
-                  On Sale
+                  <Sparkle size={18} className="text-[#bf4a53]" /> New Arrivals
                 </h3>
-                <p className="text-xs text-gray-500">Limited-time discounts</p>
+                <p className="text-xs text-gray-500">Fresh additions to the collection</p>
               </div>
               <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-              {onSale.map((item) => (
+              {newArrivals.map((item) => (
                 <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
               ))}
             </div>

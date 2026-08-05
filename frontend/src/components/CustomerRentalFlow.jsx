@@ -10,8 +10,25 @@ import BookingCalendar from './BookingCalendar';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useToast } from './Toast';
+import { SIZE_PRESETS } from '../utils/sizePresets';
 
 const ITEMS_PER_LOAD = 6;
+
+// Customer-saved "usual sizes" (Settings) — used to prefill the booking size.
+const LS_SIZES = 'rentech_pref_sizes';
+
+// Parses "Bust 34 / Waist 27" style free-text into the measurement field keys.
+function parseStyleNotesToMeasurements(text, keys) {
+  if (!text) return {};
+  const out = {};
+  for (const key of keys) {
+    const label = key.replace(/([A-Z])/g, ' $1').trim().replace(/\s+/g, '\\s+');
+    const re = new RegExp(`${label}[^\\d]*([\\d.]+)`, 'i');
+    const m = text.match(re);
+    if (m) out[key] = m[1];
+  }
+  return out;
+}
 
 const generateQRPattern = (data) => {
   let hash = 0;
@@ -68,7 +85,11 @@ export default function CustomerRentalFlow({
     notes: '',
   });
   const [paymentMethod, setPaymentMethod] = useState('gcash');
-  const [selectedSize, setSelectedSize] = useState('');
+  // Prefill size from the customer's saved "usual sizes" (Settings) when available.
+  const savedSizes = useMemo(() => {
+    try { const v = JSON.parse(localStorage.getItem(LS_SIZES)); return Array.isArray(v) ? v : []; } catch { return []; }
+  }, []);
+  const [selectedSize, setSelectedSize] = useState(() => savedSizes[0] || '');
   const [measurementsExpanded, setMeasurementsExpanded] = useState(false);
   const [measurements, setMeasurements] = useState({});
   const saleInfo = selectedItem ? getSaleInfo(selectedItem) : null;

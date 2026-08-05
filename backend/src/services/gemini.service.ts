@@ -100,7 +100,14 @@ export async function chatWithAi(message: string, history?: { role: string; text
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 300, temperature: 0.6 },
+          generationConfig: {
+            maxOutputTokens: 1024,
+            temperature: 0.6,
+            // Gemini 2.5 Flash spends part of maxOutputTokens on hidden
+            // "thinking" tokens, which truncated visible replies mid-sentence.
+            // Disable thinking so the full budget goes to the visible answer.
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         }),
       }
     );
@@ -118,6 +125,45 @@ export async function chatWithAi(message: string, history?: { role: string; text
       reply: 'I\'m having trouble connecting to my knowledge base. Please try again later or contact the boutique directly.',
       source: 'error',
     };
+  }
+}
+
+// Admin-facing connectivity probe. Makes a tiny low-token Gemini generateContent
+// call to confirm the API key is valid and the model is reachable — used by the
+// admin "AI Status" check. Never throws; returns a structured status.
+export async function checkAiHealth() {
+  if (!env.GEMINI_API_KEY) {
+    return { configured: false, reachable: false, detail: 'GEMINI_API_KEY is not set' };
+  }
+  const started = Date.now();
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
+      {
+        method: 'POST',
+        signal: AbortSignal.timeout(10000),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': env.GEMINI_API_KEY,
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: 'ping' }] }],
+          generationConfig: { maxOutputTokens: 8, thinkingConfig: { thinkingBudget: 0 } },
+        }),
+      }
+    );
+    const latencyMs = Date.now() - started;
+    if (!response.ok) {
+      return { configured: true, reachable: false, latencyMs, detail: `Gemini API returned ${response.status}` };
+    }
+    const data = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    if (!text) {
+      return { configured: true, reachable: false, latencyMs, detail: 'Empty response from Gemini' };
+    }
+    return { configured: true, reachable: true, latencyMs, detail: 'OK', sample: text.slice(0, 80) };
+  } catch (err) {
+    return { configured: true, reachable: false, latencyMs: Date.now() - started, detail: (err as Error)?.message || 'Connection failed' };
   }
 }
 

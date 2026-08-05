@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
-import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell } from 'lucide-react';
+import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell, Ruler, Tag, RefreshCw } from 'lucide-react';
 import { api } from '../utils/api';
 import PromoCodesManager from '../components/PromoCodesManager';
 import { SkeletonList } from '../components/Skeleton';
 import HelpGuide from './HelpGuide';
+import { promoService } from '../services/promo';
+import { settingsService } from '../services/settings';
+import { SIZE_PRESETS } from '../utils/sizePresets';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
 const LS_BUSINESS = 'rental_business_profile';
 const LS_POLICIES = 'rental_policies';
 const LS_NOTIF = 'rental_notif_prefs';
+const LS_SIZES = 'rentech_pref_sizes';
 
 function loadJSON(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
@@ -42,8 +46,25 @@ export default function ProfileSettingsView({
   const [newStaffName, setNewStaffName] = useState('');
   const [staffError, setStaffError] = useState('');
   const [editCustomer, setEditCustomer] = useState(false);
-  const [localCustomer, setLocalCustomer] = useState(customerInfo || { name: '', contact: '', address: '', preferences: [] });
+  const [localCustomer, setLocalCustomer] = useState(customerInfo || { name: '', contact: '', address: '', preferences: [], styleNotes: '' });
   const [saveMessage, setSaveMessage] = useState('');
+
+  // Customer-specific settings
+  const [prefSizes, setPrefSizes] = useState(() => loadJSON(LS_SIZES, []));
+  const [sizesMsg, setSizesMsg] = useState('');
+  const [styleNotes, setStyleNotes] = useState(customerInfo?.styleNotes || '');
+  const [styleMsg, setStyleMsg] = useState('');
+  const [myPromos, setMyPromos] = useState([]);
+
+  // Load active promo codes for customers to discover available discounts.
+  useEffect(() => {
+    if (role !== 'Customer') return;
+    let active = true;
+    promoService.listPublic()
+      .then((d) => { if (active && Array.isArray(d)) setMyPromos(d); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [role]);
 
   // Business Profile
   const [business, setBusiness] = useState(() => loadJSON(LS_BUSINESS, DEFAULT_BUSINESS));
@@ -63,6 +84,25 @@ export default function ProfileSettingsView({
       ? { ...DEFAULT_NOTIF, ...profile.notifyPrefs }
       : loadJSON(LS_NOTIF, DEFAULT_NOTIF));
   const [notifMsg, setNotifMsg] = useState('');
+
+  // Live integrations health (Admin) — Gemini / Semaphore / PayMongo.
+  const [integrations, setIntegrations] = useState(null);
+  const [integrationsLoading, setIntegrationsLoading] = useState(false);
+  const loadIntegrations = async () => {
+    setIntegrationsLoading(true);
+    try {
+      const data = await settingsService.getIntegrationsStatus();
+      setIntegrations(data);
+    } catch {
+      setIntegrations(null);
+    } finally {
+      setIntegrationsLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (role === 'Admin') loadIntegrations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
 
   // Load business rules from backend on mount
   useEffect(() => {
@@ -183,6 +223,30 @@ export default function ProfileSettingsView({
     setEditCustomer(false);
     setSaveMessage('Profile updated!');
     setTimeout(() => setSaveMessage(''), 2000);
+  };
+
+  // Customer-only handlers: preferred sizes (local) + style notes (profile-backed).
+  const toggleSize = (size) => {
+    setPrefSizes((prev) => {
+      const next = prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size];
+      localStorage.setItem(LS_SIZES, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const saveSizes = () => {
+    setSizesMsg('Preferred sizes saved!');
+    setTimeout(() => setSizesMsg(''), 2000);
+  };
+
+  const saveStyleNotes = async () => {
+    try {
+      await onUpdateCustomer({ ...customerInfo, styleNotes });
+      setStyleMsg('Measurements & style notes saved!');
+    } catch {
+      setStyleMsg('Could not save. Try again.');
+    }
+    setTimeout(() => setStyleMsg(''), 2000);
   };
 
   // ---------- SMS Template handlers ----------
@@ -380,6 +444,112 @@ export default function ProfileSettingsView({
         </div>
       </div>
 
+      {/* Customer-only settings */}
+      {role === 'Customer' && (
+        <>
+          {/* Fit & Style Preferences */}
+          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base">
+              <Ruler size={18} className="text-gray-500" /> Fit & Style Preferences
+            </h3>
+
+            {/* Preferred sizes */}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-2">My usual sizes</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {SIZE_PRESETS.map((s) => {
+                  const active = prefSizes.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => toggleSize(s)}
+                      className={`min-w-[2.5rem] px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${active ? 'bg-[#bf4a53] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+                {prefSizes.length > 0 && (
+                  <button type="button" onClick={saveSizes} className="ml-1 px-4 py-1.5 rounded-full text-xs font-bold bg-gray-900 text-white hover:bg-gray-700 transition-colors">
+                    Save
+                  </button>
+                )}
+              </div>
+              {sizesMsg && <p className="text-xs text-emerald-600 font-bold mt-2">{sizesMsg}</p>}
+              <p className="text-[11px] text-gray-400 mt-2">Saved on this device to speed up future bookings.</p>
+            </div>
+
+            {/* Measurement / style notes */}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-2">Measurements & style notes</p>
+              <textarea
+                value={styleNotes}
+                onChange={(e) => setStyleNotes(e.target.value)}
+                placeholder="e.g. Bust 34 / Waist 27 / Hips 36, prefer off-shoulder gowns, no sequins…"
+                className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[90px] focus:outline-none focus:border-[#bf4a53]"
+              />
+              <div className="flex items-center gap-3 mt-2">
+                <button type="button" onClick={saveStyleNotes} className="px-4 py-2 bg-[#bf4a53] text-white rounded-full text-xs font-bold hover:bg-red-700 transition-colors">
+                  Save Notes
+                </button>
+                {styleMsg && <p className="text-xs text-emerald-600 font-bold">{styleMsg}</p>}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2">Shared with the boutique so fittings and recommendations are faster.</p>
+            </div>
+          </div>
+
+          {/* Notifications (customer) */}
+          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base mb-4 md:mb-6">
+              <Bell size={18} className="text-gray-500" /> Notification Preferences
+            </h3>
+            <div className="space-y-3 max-w-lg">
+              {[
+                { key: 'reminder', label: 'Due Date Reminders', desc: 'SMS the day before your rental is due.' },
+                { key: 'lateReturn', label: 'Late Return Alerts', desc: 'SMS if a rental becomes overdue.' },
+              ].map(({ key, label, desc }) => (
+                <div key={key} className="flex items-center justify-between p-3.5 bg-gray-50 rounded-xl">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{label}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                  </div>
+                  <button onClick={() => toggleNotif(key)}
+                    className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${notifPrefs[key] ? 'bg-[#bf4a53]' : 'bg-gray-300'}`}>
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${notifPrefs[key] ? 'translate-x-4' : ''}`} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {notifMsg && <p className="text-xs text-emerald-600 font-bold mt-3">{notifMsg}</p>}
+          </div>
+
+          {/* My Offers */}
+          {myPromos.length > 0 && (
+            <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base mb-4 md:mb-6">
+                <Tag size={18} className="text-gray-500" /> My Offers
+              </h3>
+              <div className="space-y-2 max-w-lg">
+                {myPromos.map((p) => (
+                  <div key={p.code} className="flex items-center justify-between p-3.5 bg-red-50 border border-[#bf4a53]/20 rounded-xl">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900 font-mono">{p.code}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {p.discountPct}% off rental
+                        {p.expiresAt ? ` · until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
+                      </p>
+                    </div>
+                    <span className="text-sm font-extrabold text-[#bf4a53]">-{p.discountPct}%</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-3">Apply a code at checkout to get the discount.</p>
+            </div>
+          )}
+        </>
+      )}
+
       {/* Operations Settings — Admin only */}
       {role === 'Admin' && (
         <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100">
@@ -500,27 +670,76 @@ export default function ProfileSettingsView({
         </div>
       )}
 
-      {/* System Integrations (Admin only) */}
+      {/* System Integrations (Admin only) — live connectivity, not hardcoded */}
       {role === 'Admin' && (
         <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
-          <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <ShieldCheck className="text-emerald-500" size={20} /> System Integrations
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2">
+              <ShieldCheck className="text-emerald-500" size={20} /> System Integrations
+            </h3>
+            <button
+              onClick={loadIntegrations}
+              disabled={integrationsLoading}
+              className="flex items-center gap-1.5 text-xs font-bold text-[#bf4a53] hover:underline disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={integrationsLoading ? 'animate-spin' : ''} />
+              {integrationsLoading ? 'Checking…' : 'Refresh'}
+            </button>
+          </div>
+
           <div className="space-y-3">
-            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
-              <div>
-                <p className="font-bold text-sm text-gray-900">Semaphore SMS Gateway</p>
-                <p className="text-xs text-gray-500 mt-0.5">Automated return reminders & booking confirmations.</p>
-              </div>
-              <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full">Connected</span>
-            </div>
-            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
-              <div>
-                <p className="font-bold text-sm text-gray-900">PayMongo Payments</p>
-                <p className="text-xs text-gray-500 mt-0.5">Secure GCash & Credit Card downpayments.</p>
-              </div>
-              <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full">Active</span>
-            </div>
+            {[
+              { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Powers outfit suggestions & business insights.', status: integrations?.gemini },
+              { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Automated return reminders & booking confirmations.', status: integrations?.semaphore },
+              { key: 'paymongo', name: 'PayMongo Payments', desc: 'Secure GCash & Credit Card downpayments.', status: integrations?.paymongo },
+            ].map(({ key, name, desc, status }) => {
+              const online = status?.configured && status?.reachable;
+              const simulated = status?.simulated && !status?.configured;
+              const offline = status && !status.reachable && status.configured;
+              return (
+                <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl gap-3">
+                  <div className="min-w-0">
+                    <p className="font-bold text-sm text-gray-900">{name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                    {integrationsLoading && !status ? (
+                      <p className="text-[11px] text-gray-400 mt-1">Checking…</p>
+                    ) : status ? (
+                      <p className="text-[11px] mt-1 truncate font-medium"
+                        title={status.detail}>
+                        <span className={online ? 'text-emerald-600' : simulated ? 'text-amber-600' : 'text-red-500'}>
+                          {online ? 'Connected'
+                            : simulated ? 'Not configured — simulated'
+                            : status.detail?.includes('401') ? 'Invalid key'
+                            : 'Offline'}
+                        </span>
+                        {online && status.latencyMs != null && <span className="text-gray-400"> · {status.latencyMs}ms</span>}
+                        {!online && status.detail && !simulated && <span className="text-gray-400"> — {status.detail}</span>}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-gray-400 mt-1">Not checked yet</p>
+                    )}
+                  </div>
+                  <span className={`shrink-0 flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full ${
+                    online ? 'bg-emerald-50 text-emerald-600'
+                    : simulated ? 'bg-amber-50 text-amber-600'
+                    : offline ? 'bg-red-50 text-red-500'
+                    : 'bg-gray-100 text-gray-400'
+                  }`}>
+                    <span className={`relative flex h-2 w-2`}>
+                      {(online || integrationsLoading) && <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${online ? 'bg-emerald-400' : 'bg-amber-400'}`} />}
+                      <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                        online ? 'bg-emerald-500' : simulated ? 'bg-amber-400' : offline ? 'bg-red-500' : 'bg-gray-300'
+                      }`} />
+                    </span>
+                    {integrationsLoading && !status ? 'Checking'
+                      : online ? 'Live'
+                      : simulated ? 'Simulated'
+                      : offline ? 'Error'
+                      : '—'}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

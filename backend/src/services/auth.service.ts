@@ -177,6 +177,7 @@ export async function updateProfile(userId: string, data: {
   address?: string;
   preferences?: string[];
   notifyPrefs?: Record<string, boolean>;
+  styleNotes?: string | null;
 }) {
   const updateData: {
     name?: string;
@@ -184,6 +185,7 @@ export async function updateProfile(userId: string, data: {
     address?: string;
     preferences?: string | null;
     notifyPrefs?: Record<string, boolean>;
+    styleNotes?: string | null;
   } = {};
   if (data.name !== undefined) updateData.name = data.name;
   if (data.phone !== undefined) updateData.phone = data.phone;
@@ -193,6 +195,9 @@ export async function updateProfile(userId: string, data: {
   }
   // Notification preferences (sms on/off), stored as JSON. Default (null) = all on.
   if (data.notifyPrefs !== undefined) updateData.notifyPrefs = data.notifyPrefs;
+  // Saved measurements / style notes — lets the boutique pre-fill fittings and
+  // personalize recommendations. Empty string clears it back to null.
+  if (data.styleNotes !== undefined) updateData.styleNotes = data.styleNotes?.trim() || null;
   const profile = await prisma.profile.update({
     where: { id: userId },
     data: updateData,

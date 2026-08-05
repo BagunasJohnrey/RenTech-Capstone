@@ -1,20 +1,26 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Send, Sparkles, Loader2, ShoppingBag } from 'lucide-react';
+import { X, Send, Sparkles, Loader2, ShoppingBag, Tag, ArrowRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../utils/api';
 import { storageService } from '../services';
 import { imageCache } from '../utils/imageCache';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { getSaleInfo } from './ItemCard';
 
-const SUGGESTIONS = [
-  'Suggest a gown for a wedding',
-  'Outfit for a debut party',
-  'Suit for graduation',
-  'Filipiniana for a formal event',
-  'What are your store hours?',
-  'How much is the downpayment?',
-  'How do I measure my size?',
-  'What if I return late?',
+// Quick replies that appear after the greeting
+const WELCOME_SUGGESTIONS = [
+  'Find outfit for my event',
+  'What sizes do you have?',
+  'How much is rental?',
+  'Store location & hours',
+];
+
+// General suggestions that appear after answers
+const FOLLOW_UP_SUGGESTIONS = [
+  'Show me more options',
+  'What sizes do you have?',
+  'How do I book?',
+  'Check available items',
 ];
 
 // Item images are stored as Supabase paths (private bucket), not URLs. Resolve
@@ -108,11 +114,12 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
     {
       sender: 'bot',
       text:
-        "Hi! I'm your AI stylist. Tell me about your event (wedding, graduation, debut…) and I'll suggest outfits from our collection you can book right away.",
+        "Hi! I'm your AI stylist for Mylene's Boutique in Balayan, Batangas. Tell me about your event (wedding, graduation, debut…) and I'll suggest outfits from our collection you can book right away.",
     },
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState(WELCOME_SUGGESTIONS);
   const messagesEndRef = useRef(null);
 
   const chatHistoryRef = useRef([]);
@@ -162,6 +169,8 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
         reply += "\n\nI couldn't find any available items matching that right now. You're welcome to visit our physical store in Balayan, Batangas to check what's on hand, or try a different style or event!";
       }
       setMessages((prev) => [...prev, { sender: 'bot', text: reply, products: productsWithImages }]);
+      // Update suggestions for follow-up questions
+      setSuggestions(FOLLOW_UP_SUGGESTIONS);
     } finally {
       setIsLoading(false);
     }
@@ -199,8 +208,12 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
             </div>
             <div>
               <h3 id="dialog-title-ai-stylist" className="font-bold text-gray-900">AI Stylist</h3>
-              <p className="text-xs text-gray-500">
-                AI Stylist
+              <p className="text-xs text-gray-500 flex items-center gap-1">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
+                Online
               </p>
             </div>
           </div>
@@ -237,32 +250,45 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
 
                     {msg.products?.length > 0 && (
                       <div className="mt-3 grid grid-cols-2 gap-2">
-                        {msg.products.map((item) => (
-                          <div
-                            key={item.id}
-                            className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden flex flex-col"
-                          >
-                            {item.image ? (
-                              <img src={item.image} alt={item.name} className="w-full h-24 object-cover bg-gray-100" />
-                            ) : (
-                              <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-gray-300">
-                                <ShoppingBag size={20} />
-                              </div>
-                            )}
-                            <div className="p-2 flex-1 flex flex-col">
-                              <p className="text-[11px] font-bold text-gray-900 leading-tight truncate">{item.name}</p>
-                              <p className="text-[10px] text-gray-500">₱{Number(item.price || 0).toLocaleString()}</p>
-                              {onBook && (
-                                <button
-                                  onClick={() => handleBook(item)}
-                                  className="mt-1.5 w-full py-1 rounded-full text-[10px] font-bold bg-[#bf4a53] text-white hover:bg-red-700 transition-colors"
-                                >
-                                  Book
-                                </button>
+                        {msg.products.map((item) => {
+                          const sale = getSaleInfo(item);
+                          const displayPrice = sale.active ? sale.effectivePrice : item.price;
+                          const originalPrice = sale.active ? item.price : null;
+                          return (
+                            <div
+                              key={item.id}
+                              className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden flex flex-col"
+                            >
+                              {item.image ? (
+                                <img src={item.image} alt={item.name} className="w-full h-24 object-cover bg-gray-100" />
+                              ) : (
+                                <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-gray-300">
+                                  <ShoppingBag size={20} />
+                                </div>
                               )}
+                              <div className="p-2 flex-1 flex flex-col">
+                                <p className="text-[11px] font-bold text-gray-900 leading-tight truncate">{item.name}</p>
+                                {sale.active ? (
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <span className="text-[11px] font-bold text-[#bf4a53]">₱{Number(displayPrice || 0).toLocaleString()}</span>
+                                    <span className="text-[10px] text-gray-400 line-through">₱{Number(originalPrice || 0).toLocaleString()}</span>
+                                    <span className="bg-[#bf4a53]/10 text-[#bf4a53] text-[9px] font-bold px-1.5 py-0.5 rounded">SALE</span>
+                                  </div>
+                                ) : (
+                                  <p className="text-[10px] text-gray-500">₱{Number(item.price || 0).toLocaleString()}</p>
+                                )}
+                                {onBook && (
+                                  <button
+                                    onClick={() => handleBook(item)}
+                                    className="mt-1.5 w-full py-1 rounded-full text-[10px] font-bold bg-[#bf4a53] text-white hover:bg-red-700 transition-colors"
+                                  >
+                                    Book
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </>
@@ -283,16 +309,17 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Suggestions */}
+        {/* Suggestions - dynamic based on conversation state */}
         <div className="px-4 py-2 flex gap-2 overflow-x-auto bg-white border-t border-gray-100">
-          {SUGGESTIONS.map((suggestion) => (
+          {suggestions.map((suggestion) => (
             <button
               key={suggestion}
               onClick={() => handleSuggestionClick(suggestion)}
               disabled={isLoading}
-              className="whitespace-nowrap px-3 py-1.5 bg-gray-100 rounded-full text-xs font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
+              className="whitespace-nowrap px-3 py-1.5 bg-gray-100 rounded-full text-xs font-medium hover:bg-gray-200 transition-colors disabled:opacity-50 flex items-center gap-1"
             >
               {suggestion}
+              {suggestion === 'Find outfit for my event' && <ArrowRight size={12} />}
             </button>
           ))}
         </div>

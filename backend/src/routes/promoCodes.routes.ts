@@ -10,6 +10,8 @@ const router = Router();
 router.use(authMiddleware);
 
 router.get('/', requireRole(Role.Admin, Role.Staff), promoCodesController.listPromoCodes);
+// Register /public BEFORE /:id so it isn't swallowed by the id param.
+router.get('/public', requireRole(Role.Admin, Role.Staff, Role.Customer), promoCodesController.listPublicPromoCodes);
 router.get('/:id', requireRole(Role.Admin, Role.Staff), promoCodesController.getPromoCode);
 router.post('/', requireRole(Role.Admin), validate(promoCodesController.createPromoCodeSchema), promoCodesController.createPromoCode);
 router.put('/:id', requireRole(Role.Admin), validate(promoCodesController.updatePromoCodeSchema), promoCodesController.updatePromoCode);

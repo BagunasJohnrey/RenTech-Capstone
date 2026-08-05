@@ -71,3 +71,11 @@ export async function validatePromoCode(req: AuthenticatedRequest, res: Response
     res.json(result);
   } catch (err) { next(err); }
 }
+
+// Customer-facing: only currently-usable codes, minimal fields (no usage internals).
+export async function listPublicPromoCodes(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const codes = await promoCodesService.listPublicPromoCodes();
+    res.json(codes);
+  } catch (err) { next(err); }
+}

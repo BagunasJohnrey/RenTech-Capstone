@@ -19,4 +19,8 @@ router.post('/sms-templates', requireRole(Role.Admin), validate(settingsControll
 router.put('/sms-templates/:id', requireRole(Role.Admin), validate(settingsController.updateTemplateSchema), settingsController.updateTemplate);
 router.delete('/sms-templates/:id', requireRole(Role.Admin), settingsController.deleteTemplate);
 
+// Admin-only: live connectivity/health probe for external integrations
+// (Gemini AI, Semaphore SMS, PayMongo payments).
+router.get('/integrations-status', requireRole(Role.Admin), settingsController.getIntegrationsStatus);
+
 export default router;

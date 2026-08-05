@@ -135,3 +135,34 @@ export function verifyWebhookSignature(payload: string, signature: string): bool
 
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
+
+// Admin "System Integrations" health probe — authenticates the secret key via a
+// harmless list call (no payment intent created). 401 = bad key. In dev with no
+// key the payment path simulates success, so we report that explicitly.
+export async function checkPaymongoHealth() {
+  if (!env.PAYMONGO_SECRET_KEY) {
+    return {
+      configured: false,
+      reachable: false,
+      detail: 'PAYMONGO_SECRET_KEY is not set — payments are simulated (dev mode)',
+      simulated: true,
+    };
+  }
+  const started = Date.now();
+  try {
+    const response = await fetch(`${PAYMONGO_API}/payment_intents?limit=1`, {
+      signal: AbortSignal.timeout(10000),
+      headers: { Authorization: getAuthHeader() },
+    });
+    const latencyMs = Date.now() - started;
+    if (response.status === 401) {
+      return { configured: true, reachable: false, latencyMs, detail: 'Invalid secret key (401)' };
+    }
+    if (!response.ok) {
+      return { configured: true, reachable: false, latencyMs, detail: `PayMongo API error (${response.status})` };
+    }
+    return { configured: true, reachable: true, latencyMs, detail: 'Active' };
+  } catch (err) {
+    return { configured: true, reachable: false, latencyMs: Date.now() - started, detail: (err as Error)?.message || 'Connection failed' };
+  }
+}

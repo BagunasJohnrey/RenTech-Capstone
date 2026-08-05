@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 
 // Manages the editable customer profile (settings) and its sync with auth profile.
 export function useCustomerProfile(updateProfile) {
-  const [customerInfo, setCustomerInfo] = useState({ name: '', contact: '', address: '', preferences: [] });
+  const [customerInfo, setCustomerInfo] = useState({ name: '', contact: '', address: '', preferences: [], styleNotes: '' });
 
   const parsePreferences = (value) => {
     if (Array.isArray(value)) return value;
@@ -17,6 +17,7 @@ export function useCustomerProfile(updateProfile) {
       contact: profile.phone || '',
       address: profile.address || '',
       preferences: parsePreferences(profile.preferences),
+      styleNotes: profile.styleNotes || '',
     });
   }, []);
 
@@ -30,6 +31,7 @@ export function useCustomerProfile(updateProfile) {
         phone: data.contact,
         address: data.address,
         preferences: data.preferences || [],
+        styleNotes: data.styleNotes,
       });
     } catch (err) {
       console.error('Profile update failed:', err);

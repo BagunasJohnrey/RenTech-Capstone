@@ -15,4 +15,7 @@ export const promoService = {
 
   validate: ({ code, rentalFee }) =>
     api.post('/promo-codes/validate', { code, rentalFee }),
+
+  // Customer-facing: currently-usable codes (active, unexpired, has uses left).
+  listPublic: () => api.get('/promo-codes/public'),
 };

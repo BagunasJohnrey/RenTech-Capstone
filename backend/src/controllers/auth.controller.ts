@@ -31,6 +31,7 @@ export const updateProfileSchema = z.object({
     address: z.string().optional(),
     preferences: z.array(z.string()).optional(),
     notifyPrefs: z.record(z.boolean()).optional(),
+    styleNotes: z.string().max(500).nullable().optional(),
   }),
 });
 

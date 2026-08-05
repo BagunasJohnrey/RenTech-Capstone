@@ -57,3 +57,30 @@ export function applyTemplate(template: string, variables: Record<string, string
   }
   return result;
 }
+
+// Admin "System Integrations" health probe — validates the API key authenticity
+// against Semaphore's /account endpoint WITHOUT spending an SMS credit. In dev
+// with no key the send path simulates success, so we report that explicitly.
+export async function checkSemaphoreHealth() {
+  if (!env.SEMAPHORE_API_KEY) {
+    return {
+      configured: false,
+      reachable: false,
+      detail: 'SEMAPHORE_API_KEY is not set — SMS are simulated (dev mode)',
+      simulated: true,
+    };
+  }
+  const started = Date.now();
+  try {
+    const response = await fetch(`${SEMAPHORE_API}/account?apikey=${env.SEMAPHORE_API_KEY}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    const latencyMs = Date.now() - started;
+    if (!response.ok) {
+      return { configured: true, reachable: false, latencyMs, detail: `Semaphore API error (${response.status}) — check the key` };
+    }
+    return { configured: true, reachable: true, latencyMs, detail: 'Connected' };
+  } catch (err) {
+    return { configured: true, reachable: false, latencyMs: Date.now() - started, detail: (err as Error)?.message || 'Connection failed' };
+  }
+}

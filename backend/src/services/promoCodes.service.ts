@@ -5,6 +5,27 @@ export async function listPromoCodes() {
   return prisma.promoCode.findMany({ orderBy: { createdAt: 'desc' } });
 }
 
+// Public, read-only view of currently-usable codes (active, not expired,
+// not exhausted). Used by the customer dashboard so shoppers can discover
+// real promotions created by the admin. Exposes only shareable fields.
+export async function listPublicPromoCodes() {
+  const now = new Date();
+  const codes = await prisma.promoCode.findMany({
+    where: {
+      isActive: true,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return codes
+    .filter((c) => c.maxUses === null || c.currentUses < c.maxUses)
+    .map((c) => ({
+      code: c.code,
+      discountPct: c.discountPct,
+      expiresAt: c.expiresAt,
+    }));
+}
+
 export async function getPromoCode(id: string) {
   const pc = await prisma.promoCode.findUnique({ where: { id } });
   if (!pc) throw new AppError(404, 'Promo code not found');

@@ -1,6 +1,9 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as settingsService from '../services/settings.service.js';
+import * as geminiService from '../services/gemini.service.js';
+import * as semaphoreService from '../services/semaphore.service.js';
+import * as paymongoService from '../services/paymongo.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
 export const updateRulesSchema = z.object({
@@ -72,6 +75,22 @@ export async function deleteTemplate(req: AuthenticatedRequest, res: Response, n
   try {
     const result = await settingsService.deleteSmsTemplate(String(req.params.id));
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin "System Integrations" status — live-probes Gemini, Semaphore, and
+// PayMongo in parallel (each with its own timeout) so one down service can't
+// delay or mask the others. Never throws; each provider reports its own status.
+export async function getIntegrationsStatus(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const [gemini, semaphore, paymongo] = await Promise.all([
+      geminiService.checkAiHealth(),
+      semaphoreService.checkSemaphoreHealth(),
+      paymongoService.checkPaymongoHealth(),
+    ]);
+    res.json({ gemini, semaphore, paymongo });
   } catch (err) {
     next(err);
   }

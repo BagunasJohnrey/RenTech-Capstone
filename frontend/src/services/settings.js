@@ -15,4 +15,7 @@ export const settingsService = {
     api.put(`/settings/sms-templates/${id}`, patch),
 
   deleteSmsTemplate: (id) => api.delete(`/settings/sms-templates/${id}`),
+
+  // Admin-only: live connectivity/health for Gemini, Semaphore, PayMongo.
+  getIntegrationsStatus: () => api.get('/settings/integrations-status'),
 };
