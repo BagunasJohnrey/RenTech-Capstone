@@ -50,16 +50,21 @@ const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCc
 
 const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];
 
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Pickers clamp to now* so users can look BACK at any past month/year but not
+// into the future. (* milliseconds-since-epoch comparison.)
+
 // Cache per time range — same pattern as useKpis/useTodayTasks so tab switches
 // and range toggles render instantly instead of re-querying. Fresh snapshots
 // (<= FRESH_TTL) skip the network entirely; older-but-present snapshots
 // (<= STALE_TTL) still paint instantly and refresh silently in the background.
 const AI_CACHE_FRESH_MS = 60_000;
 const AI_CACHE_STALE_MS = 10 * 60_000;
-const aiCache = new Map(); // timeRange -> { data, at }
+const aiCache = new Map(); // cache key -> { data, at }
 
-function readAiCache(range) {
-  const hit = aiCache.get(range);
+function readAiCache(key) {
+  const hit = aiCache.get(key);
   if (!hit) return null;
   if (Date.now() - hit.at > AI_CACHE_STALE_MS) return null;
   return hit.data;
@@ -113,13 +118,30 @@ export default function AIInsightsView({ analyticsData, role }) {
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [activePie, setActivePie] = useState(null);
-  const [timeRange, setTimeRange] = useState('Overall');
+  const [timeRange, setTimeRange] = useState('Monthly');
+  const now0 = new Date();
+  const [selYear, setSelYear] = useState(now0.getFullYear());
+  const [selMonth, setSelMonth] = useState(now0.getMonth() + 1); // 1-12
+  const isCurrentMonth = (y, m) => now0.getFullYear() === y && now0.getMonth() + 1 === m;
+  const isCurrentYear = (y) => now0.getFullYear() === y;
+  // Clamp the *applied* month/year so picking a future value can't leak into
+  // the request — the dropdown options are filtered to the past, but the
+  // state setter can hold a stale future value between renders.
+  const appliedYear = timeRange === 'Overall' ? undefined : Math.min(Math.max(selYear, 2000), now0.getFullYear());
+  const appliedMonth = timeRange === 'Monthly'
+    ? (appliedYear === now0.getFullYear() ? Math.min(selMonth, now0.getMonth() + 1) : selMonth)
+    : undefined;
 
-  const cached = readAiCache(timeRange);
+  const cacheKey = timeRange === 'Monthly' ? `Monthly:${appliedYear}-${appliedMonth}`
+    : timeRange === 'Yearly' ? `Yearly:${appliedYear}`
+    : 'Overall';
+
+  const cached = readAiCache(cacheKey);
   const [kpis, setKpis] = useState(cached?.kpis ?? null);
   const [forecast, setForecast] = useState(cached?.forecast ?? null);
   const [insightsData, setInsightsData] = useState(cached?.insights ?? null);
   const [revenueChartData, setRevenueChartData] = useState(cached?.insights?.revenueByMonth ?? null);
+  const [revenueWeeklyData, setRevenueWeeklyData] = useState(cached?.insights?.revenueByWeek ?? null);
   const [inventoryAnalytics, setInventoryAnalytics] = useState(cached?.analytics ?? null);
   const [analyticsSummary, setAnalyticsSummary] = useState(cached?.analytics?.summary ?? null);
   // Page renders as soon as the FIRST source arrives (KPIs load fastest), then
@@ -134,16 +156,25 @@ export default function AIInsightsView({ analyticsData, role }) {
     const range = timeRange;
     let active = true;
     const periodParam = range === 'Overall' ? '' : `period=${range.toLowerCase()}`;
+    // Month/year selectors pin the window for both KPI cards and the revenue
+    // chart. Only the SMA forecast stays global (a full-history trend is the
+    // point of that chart).
+    const monthParam = range === 'Monthly' ? `&year=${appliedYear}&month=${appliedMonth}` : '';
+    const yearParam = range === 'Yearly' ? `&year=${appliedYear}` : '';
+    const cacheKey = range === 'Monthly' ? `Monthly:${appliedYear}-${appliedMonth}`
+      : range === 'Yearly' ? `Yearly:${appliedYear}`
+      : 'Overall';
 
     // Snapshot present for this range: apply instantly (no skeleton), then fall
     // through to refresh silently in the background below — the requests are
     // server-cached, so the freshness update is cheap and invisible.
-    const hit = readAiCache(range);
+    const hit = readAiCache(cacheKey);
     if (hit) {
       setKpis(hit.kpis);
       setForecast(hit.forecast);
       setInsightsData(hit.insights);
       setRevenueChartData(hit.insights?.revenueByMonth || []);
+      setRevenueWeeklyData(hit.insights?.revenueByWeek || null);
       setInventoryAnalytics(hit.analytics);
       setAnalyticsSummary(hit.analytics?.summary);
       setLoaded(true);
@@ -161,14 +192,14 @@ export default function AIInsightsView({ analyticsData, role }) {
     // Each request updates its own section the moment it lands (progressive
     // render — the page paints as soon as the fastest source arrives), and the
     // allSettled hook writes one coherent snapshot to the 60s cache.
-    const pKpis = api.get(`/dashboard/kpis?${periodParam}`)
+    const pKpis = api.get(`/dashboard/kpis?${periodParam}${monthParam}${yearParam}`)
       .then(r => { if (active) { setKpis(r); settle(); } return r; })
       .catch(e => { fail(e); throw e; });
     const pForecast = api.get('/dashboard/forecast?period=3')
       .then(r => { if (active) { setForecast(r); settle(); } return r; })
       .catch(e => { fail(e); throw e; });
-    const pInsights = api.get(`/dashboard/insights?${periodParam}`)
-      .then(r => { if (active) { setInsightsData(r); setRevenueChartData(r?.revenueByMonth || []); settle(); } return r; })
+    const pInsights = api.get(`/dashboard/insights?${periodParam}${monthParam}${yearParam}`)
+      .then(r => { if (active) { setInsightsData(r); setRevenueChartData(r?.revenueByMonth || []); setRevenueWeeklyData(r?.revenueByWeek || null); settle(); } return r; })
       .catch(e => { fail(e); throw e; });
     const pAnalytics = api.get(`/inventory/analytics?${periodParam}`)
       .then(r => { if (active) { setInventoryAnalytics(r); setAnalyticsSummary(r?.summary); settle(); } return r; })
@@ -177,7 +208,7 @@ export default function AIInsightsView({ analyticsData, role }) {
     Promise.allSettled([pKpis, pForecast, pInsights, pAnalytics]).then(([k, f, i, a]) => {
       if (!active) return;
       if (k.status === 'fulfilled' && f.status === 'fulfilled' && i.status === 'fulfilled' && a.status === 'fulfilled') {
-        aiCache.set(range, {
+        aiCache.set(cacheKey, {
           data: { kpis: k.value, forecast: f.value, insights: i.value, analytics: a.value },
           at: Date.now(),
         });
@@ -187,7 +218,7 @@ export default function AIInsightsView({ analyticsData, role }) {
 
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange]);
+  }, [timeRange, appliedYear, appliedMonth]);
 
   // FIX D: surface export failures instead of throwing unhandled.
   const handleExport = async (url, filename) => {
@@ -239,7 +270,10 @@ export default function AIInsightsView({ analyticsData, role }) {
   const fSma = forecast?.sma || [];
 
 
+  const isMonthlyView = timeRange === 'Monthly';
+
   const revByMonth = revenueChartData || insightsData?.revenueByMonth || [];
+  const revByWeek = revenueWeeklyData || insightsData?.revenueByWeek || null;
   const thisMonthRev = kpis?.monthlyRevenue || 0;
   const prevMonthRev = kpis?.prevMonthRevenue || 0;
   const revChange = prevMonthRev > 0 ? ((thisMonthRev - prevMonthRev) / prevMonthRev) * 100 : 0;
@@ -313,13 +347,44 @@ export default function AIInsightsView({ analyticsData, role }) {
   const hasSma = validSmaCount >= 2;
   const countChart = fLabels.map(l => ({ label: shortMonth(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
 
-  // Keep every month (even ₱0) so the trend reads as a continuous timeline
+  // Keep every bucket (even ₱0) so the trend reads as a continuous timeline
   // and each bar sits under its correct label. Key on the full label ("Mar 2026")
-  // so months from different years never collide on the X-axis.
-  const revChart = (revByMonth || [])
-    .map(d => ({ label: d.label || shortMonth(d.label), full: d.label, rev: d.revenue }));
-  if (forecastRevValue > 0 && revChart.length > 0)
-    revChart.push({ label: nextLabel, full: nextLabel, rev: forecastRevValue, forecast: true });
+  // so months from different years never collide on the X-axis. Monthly view
+  // switches the series to weekly buckets (Wk 1..5) computed server-side.
+  const viewingCurrentMonth = isMonthlyView && isCurrentMonth(appliedYear, appliedMonth);
+  const selectedMonthName = isMonthlyView ? SHORT_MONTHS[appliedMonth - 1] : null;
+  const monthName = selectedMonthName; // label used in tooltips / empty state
+
+  let revChart;
+  let revChartEmptyLabel = 'No transaction data yet.';
+  if (isMonthlyView && revByWeek && revByWeek.length > 0) {
+    revChart = revByWeek.map(w => ({ label: w.label, full: `${monthName} ${appliedYear} · ${w.label}`, rev: w.revenue }));
+    revChartEmptyLabel = isCurrentMonth(appliedYear, appliedMonth)
+      ? 'No revenue this month yet.'
+      : `No revenue in ${monthName} ${appliedYear}.`;
+  } else {
+    revChart = (revByMonth || [])
+      .map(d => ({ label: d.label || shortMonth(d.label), full: d.label, rev: d.revenue }));
+  }
+
+  // Projection bar appended to the chart:
+  //  - Current-month Monthly view: pace-project the REST of this month onto a
+  //    "Next Wk" bar (days-left × daily pace). Past pinned months and the
+  //    Yearly/Overall monthly series keep the full-month SMA->peso projection
+  //    appended as next month's bar.
+  if (isMonthlyView) {
+    if (viewingCurrentMonth && revChart.length > 0 && thisMonthRev > 0) {
+      const now = new Date();
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      const daysLeft = Math.max(0, Math.ceil((endOfMonth.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+      const dailyPace = thisMonthRev / now.getDate();
+      const projectedNextWeek = Math.round(dailyPace * Math.min(7, daysLeft));
+      if (projectedNextWeek > 0)
+        revChart = [...revChart, { label: 'Next Wk', full: 'Projected · next week', rev: projectedNextWeek, forecast: true }];
+    }
+  } else if (forecastRevValue > 0 && revChart.length > 0) {
+    revChart = [...revChart, { label: nextLabel, full: nextLabel, rev: forecastRevValue, forecast: true }];
+  }
 
   // -- Insights --
   const insights = [];
@@ -361,6 +426,37 @@ export default function AIInsightsView({ analyticsData, role }) {
                 </button>
               ))}
             </div>
+            {/* Month/year picker for Monthly, year picker for Yearly — clamped
+                to the past so you can't select an unfinished future month. */}
+            {timeRange !== 'Overall' && (
+              <div className="flex items-center gap-1.5 bg-gray-100 rounded-full px-1.5 py-1">
+                {timeRange === 'Monthly' && (
+                  <select
+                    aria-label="Month"
+                    value={appliedMonth}
+                    onChange={e => setSelMonth(Number(e.target.value))}
+                    className="bg-transparent text-xs font-bold text-gray-700 focus:outline-none cursor-pointer pl-1"
+                  >
+                    {SHORT_MONTHS.map((name, i) => {
+                      const m = i + 1;
+                      const disabledFuture = appliedYear === now0.getFullYear() && m > now0.getMonth() + 1;
+                      return <option key={m} value={m} disabled={disabledFuture}>{name}</option>;
+                    })}
+                  </select>
+                )}
+                <select
+                  aria-label="Year"
+                  value={appliedYear}
+                  onChange={e => setSelYear(Number(e.target.value))}
+                  className="bg-transparent text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
+                >
+                  {Array.from({ length: now0.getFullYear() - 2000 + 1 }, (_, i) => 2000 + i).map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="w-px h-6 bg-gray-200" />
             <button onClick={() => handleExport('/export/transactions', 'transactions.csv')}
               className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Transactions">
@@ -395,7 +491,7 @@ export default function AIInsightsView({ analyticsData, role }) {
             <div className="p-2 bg-orange-50 rounded-xl inline-block text-orange-500 mb-2">
               <BarChart3 size={16} />
             </div>
-            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Items Rented</p>
+            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Pieces Rented</p>
             <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{rentedCount}<span className="text-xs md:text-sm font-medium text-gray-400">/{totalItems}</span></h4>
             <span className="text-[10px] md:text-xs font-semibold text-gray-500">{totalItems > 0 ? Math.round((rentedCount / totalItems) * 100) : 0}%</span>
           </div>
@@ -445,16 +541,22 @@ export default function AIInsightsView({ analyticsData, role }) {
         {/* Row 1: Revenue Chart + Status Distribution */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
-            <h3 className="font-bold text-gray-900 text-base md:text-lg px-5 md:px-7 pt-5 md:pt-7 pb-2">Monthly Revenue</h3>
-            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">Revenue trend with next month projection</p>
+            <h3 className="font-bold text-gray-900 text-base md:text-lg px-5 md:px-7 pt-5 md:pt-7 pb-2">
+              {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : 'Monthly Revenue'}
+            </h3>
+            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">
+              {isMonthlyView
+                ? (viewingCurrentMonth ? 'Week-by-week revenue with next week projection' : 'Week-by-week revenue for the selected month')
+                : 'Revenue trend with next month projection'}
+            </p>
             {revChart.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-12">No transaction data yet.</p>
+              <p className="text-sm text-gray-400 text-center py-12">{revChartEmptyLabel}</p>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={revChart} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+                <BarChart data={revChart} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={revChart.length > 7 ? -35 : 0} textAnchor={revChart.length > 7 ? 'end' : 'middle'} height={revChart.length > 7 ? 56 : 30} />
-                  <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={44} />
+                  <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} />
                   <Tooltip content={<RevenueTooltip />} cursor={{ fill: '#f9fafb' }} />
                   <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56} minPointSize={4}>
                     {revChart.map((e, i) => (
@@ -479,12 +581,12 @@ export default function AIInsightsView({ analyticsData, role }) {
               <p className="text-sm text-gray-400 text-center py-8">No transactions yet.</p>
             ) : (
               <>
-                <ResponsiveContainer width="100%" height={200}>
+                <ResponsiveContainer width="100%" height={220}>
                   <PieChart>
                     <Pie
                       data={statusDist}
                       cx="50%" cy="50%"
-                      innerRadius={55} outerRadius={85}
+                      innerRadius={58} outerRadius={82}
                       dataKey="value"
                       activeIndex={activePie}
                       activeShape={(props) => { const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props; return <g><Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 6} startAngle={startAngle} endAngle={endAngle} fill={fill} /><Sector cx={cx} cy={cy} innerRadius={innerRadius - 4} outerRadius={innerRadius - 2} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.3} /></g>; }}
@@ -522,11 +624,11 @@ export default function AIInsightsView({ analyticsData, role }) {
             <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">3‑month moving average with rental counts</p>
             {!hasSma ? (
               <div>
-                <ResponsiveContainer width="100%" height={220}>
-                  <ComposedChart data={countChart} margin={{ top: 8, right: 20, bottom: 8, left: 0 }}>
+                <ResponsiveContainer width="100%" height={230}>
+                  <ComposedChart data={countChart} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={44} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} angle={countChart.length > 7 ? -35 : 0} textAnchor={countChart.length > 7 ? 'end' : 'middle'} height={countChart.length > 7 ? 52 : 30} interval={0} />
+                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} />
                     <Tooltip content={<CustomTooltip />} />
                     <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#1f2937" />
                   </ComposedChart>
@@ -535,11 +637,11 @@ export default function AIInsightsView({ analyticsData, role }) {
               </div>
             ) : (
               <div>
-                <ResponsiveContainer width="100%" height={260}>
-                  <ComposedChart data={forecastData} margin={{ top: 16, right: 24, bottom: 8, left: 0 }}>
+                <ResponsiveContainer width="100%" height={270}>
+                  <ComposedChart data={forecastData} margin={{ top: 16, right: 16, bottom: 8, left: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={44} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} angle={forecastData.length > 8 ? -35 : 0} textAnchor={forecastData.length > 8 ? 'end' : 'middle'} height={forecastData.length > 8 ? 52 : 30} interval={0} />
+                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} />
                     <Tooltip
                       content={({ active, payload, label }) => {
                         if (!active || !payload?.length) return null;

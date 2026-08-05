@@ -11,8 +11,11 @@ function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
 export async function getKpis(filter?: { start?: Date; end?: Date }) {
   // Cached server-side so every consumer (customer Home, staff today-view,
   // admin dashboard, AI Insights) shares one computation instead of repeating
-  // the same 8+ queries per request.
-  const key = filter?.start ? `kpis:${filter.start.toISOString()}` : 'kpis:all';
+  // the same 8+ queries per request. Start AND end go into the key so a
+  // pinned month (bounded) doesn't collide with the current-month window.
+  const key = filter?.start
+    ? `kpis:${filter.start.toISOString()}${filter.end ? `:${filter.end.toISOString()}` : ''}`
+    : 'kpis:all';
   return cacheOrCompute(key, () => getKpisUncached(filter));
 }
 
@@ -32,7 +35,7 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     prisma.transaction.count({ where: { status: 'Returned' } }),
     prisma.transaction.count({ where: { status: 'Cancelled' } }),
     prisma.inventoryItem.count({ where: { status: 'OutOfService' } }),
-    filter?.start ? aggregateRevenueFrom(filter.start) : aggregateMonthlyRevenue(),
+    filter?.start ? aggregateRevenueFrom(filter.start, filter.end) : aggregateMonthlyRevenue(),
     prisma.inventoryItem.count(),
     prisma.inventoryItem.count({ where: { status: 'Available' } }),
   ]);
@@ -199,9 +202,12 @@ export async function getForecast(period: number = 3) {
 
     // ONE query instead of one count per month — bucket by month in JS so the
     // remote pooler only sees a single round trip regardless of history length.
+    // Cancelled bookings count too: they still represent demand (the customer
+    // tried to rent), so the SMA isn't artificially depressed on a
+    // cancellation-heavy month.
     const rows = await prisma.transaction.findMany({
       where: {
-        status: { in: ['Returned', 'Active', 'Overdue'] },
+        status: { in: ['Returned', 'Active', 'Overdue', 'Cancelled'] },
         createdAt: { gte: firstMonth },
       },
       select: { createdAt: true },
@@ -222,12 +228,16 @@ export async function getForecast(period: number = 3) {
   });
 }
 
-export async function getInsights(filter?: { start?: Date; end?: Date }) {
-  const key = filter?.start ? `insights:${filter.start.toISOString()}` : 'insights:all';
+// Cache key includes both start AND end so "current month" and "a pinned
+// month from a past year" never collide.
+export async function getInsights(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }) {
+  const startKey = filter?.start ? filter.start.toISOString() : 'all';
+  const endKey = filter?.end ? `:${filter.end.toISOString()}` : '';
+  const key = `insights:${startKey}${endKey}`;
   return cacheOrCompute(key, () => getInsightsUncached(filter));
 }
 
-async function getInsightsUncached(filter?: { start?: Date; end?: Date }) {
+async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }) {
   const txWhere: any = { status: { in: ['Active', 'Returned', 'Overdue'] } };
   if (filter?.start) txWhere.createdAt = { gte: filter.start };
   if (filter?.end) txWhere.createdAt = { ...txWhere.createdAt, lt: filter.end };
@@ -305,6 +315,28 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date }) {
     return { label: m.label, revenue };
   });
 
+  // Weekly zoom for whichever month `filter.start` sits in. Works for the
+  // current month (open-ended window, no `filter.end`) AND a pinned past month
+  // (bounded window, `filter.end` set by the controller). Built from the same
+  // payment/tx source already in memory — the month label lets the frontend
+  // tell apart "This month · Wk 2" from "Jun 2025 · Wk 2".
+  let revenueByWeek: { label: string; revenue: number }[] | undefined;
+  if (filter?.weekly && filter?.start) {
+    const y = filter.start.getFullYear();
+    const mo = filter.start.getMonth();
+    const inThisMonth = (d: Date) => d.getFullYear() === y && d.getMonth() === mo;
+    const inRange = hasPayments
+      ? payments.filter(p => inThisMonth(p.createdAt))
+      : txs.filter(t => inThisMonth(t.createdAt));
+    const weekOf = (day: number) => Math.min(4, Math.floor((day - 1) / 7)); // 0..4
+    const buckets = [0, 0, 0, 0, 0];
+    for (const r of inRange) {
+      const d = (r as any).createdAt as Date;
+      buckets[weekOf(d.getDate())] += hasPayments ? (r as any).amount : ((r as any).rentalFee || 0);
+    }
+    revenueByWeek = buckets.map((revenue, i) => ({ label: `Wk ${i + 1}`, revenue }));
+  }
+
   const revenueByCategory: Record<string, number> = {};
   for (const t of txs) {
     const cat = t.item?.category;
@@ -317,6 +349,12 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date }) {
     topRented,
     underperforming,
     revenueByMonth,
+    // Only present when a month was pinned (current or past). Other views keep
+    // the monthly series (undefined fields are dropped by JSON).
+    ...(revenueByWeek ? { revenueByWeek } : {}),
+    // Echo the queried window so the frontend can label the weekly chart for
+    // a past month (e.g. "Jun 2025 · Wk 2") instead of assuming "this month".
+    ...(filter?.start ? { insightsPeriod: { start: filter.start.toISOString() } } : {}),
     revenueByCategory,
     totalItems: items.length,
     totalRented: rentedItemIds.size,
