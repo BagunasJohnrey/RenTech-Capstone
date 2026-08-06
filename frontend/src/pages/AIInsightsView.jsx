@@ -105,12 +105,42 @@ function writeAiSuggestCache(data) {
   }
 }
 
+// Pulls the numbered recommendations out of the AI report text. Provider models
+// format loosely (markdown **bold** headers, "Recommendations:", trailing
+// colons), so this accepts a header with optional markdown framing and falls
+// back to any numbered lines — the prompt forces recommendations to be numbered
+// 1..N with no gaps, so numbered lines are almost always the recommendation list.
 function extractRecommendations(report) {
   if (!report) return [];
-  const lines = String(report).split('\n').map(l => l.trim());
-  const idx = lines.findIndex(l => /^recommendations\s*:?$/i.test(l));
-  if (idx === -1) return [];
-  return lines.slice(idx + 1).filter(l => l.length > 0);
+  const lines = String(report)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const strip = (l) =>
+    l
+      .replace(/^[#*_>-\s]+/, '')
+      .replace(/\s*[#*_>]+$/, '')
+      .trim()
+      .replace(/^\d{1,2}[.)]\s*\*{0,2}\s*/, '')
+      .trim();
+
+  const isHeader = (l) => /^[\s#*_>]*recommendations\s*:?[\s#*_]*$/i.test(l);
+
+  const isMeta = (l) =>
+    /^([-#\d.]*)?\s*(executive summary|key performance indicators?|revenue analysis|inventory\s*&?\s*utilization|operational health|demand forecast|data:|kpis?:|insights?:|forecast:|underperforming items)/i.test(l);
+
+  const idx = lines.findIndex(isHeader);
+  if (idx !== -1) {
+    const recs = lines.slice(idx + 1).map(strip).filter((l) => l.length > 10 && !isMeta(l));
+    if (recs.length) return recs;
+  }
+
+  const numbered = lines
+    .filter((l) => /^\d{1,2}[.)]\s+\S/.test(l))
+    .map(strip)
+    .filter((l) => l.length > 10);
+  return numbered;
 }
 
 export default function AIInsightsView({ analyticsData, role }) {
@@ -243,7 +273,18 @@ export default function AIInsightsView({ analyticsData, role }) {
     }
     setSuggestLoading(true);
     try {
-      const r = await api.post('/ai/generate-report');
+      const r = await api.post('/ai/generate-report', undefined, { timeout: 60000 });
+      // Provider down / rate-limited / hallucination-flagged → keep static
+      // insights and say so plainly, instead of a confusing format error.
+      if (r?.source === 'error') {
+        setAiSuggestions(null);
+        toastError(r?.retryable
+          ? 'AI is currently experiencing high traffic — showing static insights. Please try again in a moment.'
+          : /flagged/.test(r.report || '')
+            ? 'AI report was rejected because it invented figures — showing static insights.'
+            : 'AI generation is temporarily unavailable. Showing static insights — try again in a few minutes.');
+        return;
+      }
       const suggestions = extractRecommendations(r.report || r);
       if (suggestions.length === 0) {
         toastError('AI report came back in an unexpected format — showing static insights.');
@@ -829,7 +870,7 @@ export default function AIInsightsView({ analyticsData, role }) {
 
         {/* AI Report button */}
         <div className="flex justify-end">
-          <button onClick={() => { setReportLoading(true); api.post('/ai/generate-report').then(r => { setAiReport(r.report || r); setShowReportModal(true); }).catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); }).finally(() => setReportLoading(false)); }}
+          <button onClick={() => { setReportLoading(true); api.post('/ai/generate-report', undefined, { timeout: 60000 }).then(r => { setAiReport(r.report || r); setShowReportModal(true); }).catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); }).finally(() => setReportLoading(false)); }}
             disabled={reportLoading}
             className="flex items-center gap-2 px-6 py-3 bg-[#bf4a53] text-white font-semibold rounded-full shadow-md shadow-red-500/20 hover:bg-red-700 transition-colors disabled:opacity-50"
           >

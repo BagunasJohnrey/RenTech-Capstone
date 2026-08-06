@@ -1,20 +1,37 @@
 import { useState } from 'react';
 import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { supabaseClient } from '../utils/supabaseClient';
 import Field from './ui/Field';
+import { Link, useNavigate } from 'react-router-dom';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
 // Real-time field validators. Return `true` when valid, or an error string.
-const validators = {
+export const validators = {
   name: (v) => (v && v.trim().length >= 2) || 'Enter your full name',
   email: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v || '') || 'Enter a valid email address',
   phone: (v) => (v && v.replace(/\D/g, '').length === 11) || 'Phone must be exactly 11 digits',
   address: (v) => (v && v.trim().length >= 5) || 'Enter your full address',
-  password: (v) => (v && v.length >= 8) || 'Must be 8+ characters',
+  // Phase 4: password policy — 12+ chars, upper + lower + digit + symbol
+  password: (v) => {
+    if (!v || v.length < 12) return 'Must be at least 12 characters';
+    if (!/[A-Z]/.test(v)) return 'Must contain an uppercase letter';
+    if (!/[a-z]/.test(v)) return 'Must contain a lowercase letter';
+    if (!/[0-9]/.test(v)) return 'Must contain a number';
+    if (!/[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;'`~]/.test(v)) return 'Must contain a symbol (!@#$%^&*...)';
+    return true;
+  },
   confirm: (v, all) => v === all.password || 'Passwords do not match',
 };
+
+// Phase 4: password requirements checklist for the signup form.
+export const PASSWORD_REQUIREMENTS = [
+  { label: 'At least 12 characters', test: (v) => v.length >= 12 },
+  { label: 'Contains uppercase letter', test: (v) => /[A-Z]/.test(v) },
+  { label: 'Contains lowercase letter', test: (v) => /[a-z]/.test(v) },
+  { label: 'Contains a number', test: (v) => /[0-9]/.test(v) },
+  { label: 'Contains a symbol', test: (v) => /[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;'`~]/.test(v) },
+];
 
 function GoogleGlyph() {
   return (
@@ -50,7 +67,7 @@ function Divider() {
   );
 }
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onVerifyMfa }) {
   const { signup: authSignup } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -85,11 +102,40 @@ export default function Login({ onLogin }) {
     setError('');
     setLoading(true);
     try {
-      await onLogin(email, password);
+      const result = await onLogin(email, password);
+       // W2.7: If MFA is required, the backend already stored the challenge
+      // tokens in the rt_mfa_pending httpOnly cookie. We just show the TOTP prompt.
+      if (result?.requiresMfa) {
+        setMfaChallenge({ email: result.email || result.user?.email });
+        return;
+      }
     } catch (err) {
       setError(err.message || 'Invalid email or password');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [mfaChallenge, setMfaChallenge] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [trustDevice, setTrustDevice] = useState(false);
+
+  const handleMfaSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMfaLoading(true);
+    try {
+      // W2.7: MFA challenge tokens are stored in the rt_mfa_pending httpOnly
+      // cookie by the backend — we only send the 6-digit code.
+      // trustDevice opts into the 30-day rt_mfa_trusted cookie: future logins
+      // on this browser skip the TOTP prompt.
+      const result = await onVerifyMfa({ code: mfaCode, trustDevice });
+      void result;
+    } catch (err) {
+      setError(err.message || 'Invalid code');
+    } finally {
+      setMfaLoading(false);
     }
   };
 
@@ -152,12 +198,10 @@ export default function Login({ onLogin }) {
     setError('');
     setGoogleLoading(true);
     try {
-      const { error } = await supabaseClient.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: `${window.location.origin}${window.location.pathname}` },
-      });
-      if (error) throw error;
-      // Supabase redirects to Google; App.jsx finishes the handshake on return.
+      // Phase 3: redirect to the backend's server-side OAuth endpoint.
+      // The backend handles the entire Google handshake and sets httpOnly
+      // cookies — no tokens pass through the browser.
+      window.location.href = '/api/auth/oauth/redirect?provider=google';
     } catch (err) {
       setError(err.message || 'Google sign-in failed');
       setGoogleLoading(false);
@@ -220,8 +264,60 @@ export default function Login({ onLogin }) {
               <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
               <p className="text-gray-500 text-sm mt-1 mb-7">Sign in to your RenTech account to continue.</p>
 
-              <GoogleButton label="Continue with Google" onClick={handleGoogle} loading={googleLoading} />
-              <Divider />
+               {/* Phase 5: MFA challenge screen */}
+               {mfaChallenge && (
+                 <div className="space-y-4">
+                   <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Two-Factor Authentication</h2>
+                   <p className="text-gray-500 text-sm mt-1 mb-4">
+                     Enter the 6-digit code from your authenticator app to sign in as <span className="font-semibold">{mfaChallenge.email}</span>.
+                   </p>
+                   <form onSubmit={handleMfaSubmit} className="space-y-4">
+                     <Field
+                       label="Authentication Code"
+                       type="text"
+                       required
+                       value={mfaCode}
+                       onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                       className={inputClass}
+                       placeholder="000000"
+                       autoComplete="one-time-code"
+                     />
+                     {error && (
+                       <div className="text-red-500 text-xs font-semibold text-center">
+                         <p>{error}</p>
+                       </div>
+                     )}
+                     <label className="flex items-start gap-2 text-sm text-gray-500 cursor-pointer select-none">
+                       <input
+                         type="checkbox"
+                         checked={trustDevice}
+                         onChange={(e) => setTrustDevice(e.target.checked)}
+                         className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#bf4a53] focus:ring-[#bf4a53]"
+                       />
+                       <span>Trust this device for 30 days — skip this code on your next sign-in on this browser.</span>
+                     </label>
+                     <button
+                       type="submit"
+                       disabled={mfaLoading || mfaCode.length !== 6}
+                       className="w-full py-3 bg-gray-900 text-white font-bold text-sm rounded-xl hover:bg-gray-800 transition-colors shadow-sm shadow-gray-900/20 disabled:opacity-50"
+                     >
+                       {mfaLoading ? 'Verifying...' : 'Verify'}
+                     </button>
+                   </form>
+                   <button
+                     type="button"
+                     onClick={() => setMfaChallenge(null)}
+                     className="text-sm text-gray-400 hover:text-gray-600 font-medium w-full"
+                   >
+                     Back to sign in
+                   </button>
+                 </div>
+               )}
+
+               {!mfaChallenge && (
+               <>
+               <GoogleButton label="Continue with Google" onClick={handleGoogle} loading={googleLoading} />
+               <Divider />
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <Field label="Email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="you@example.com" autoComplete="email" />
@@ -236,31 +332,42 @@ export default function Login({ onLogin }) {
                     </button>
                   }
                 />
-                {error && (
-                  <div className="text-red-500 text-xs font-semibold text-center space-y-1">
-                    <p>{error}</p>
-                    {error.toLowerCase().includes('create one') && (
-                      <button
-                        type="button"
-                        onClick={() => { setError(''); setIsSignup(true); setSignupStep(1); }}
-                        className="text-[#bf4a53] font-bold hover:underline"
-                      >
-                        Create an account
-                      </button>
-                    )}
-                  </div>
-                )}
-                <button type="submit" disabled={loading}
-                  className="w-full py-3 bg-gray-900 text-white font-bold text-sm rounded-xl hover:bg-gray-800 transition-colors shadow-sm shadow-gray-900/20 disabled:opacity-50">
-                  {loading ? 'Signing in...' : 'Sign In'}
-                </button>
+                 {error && (
+                   <div className="text-red-500 text-xs font-semibold text-center space-y-1">
+                     <p>{error}</p>
+                     {error.toLowerCase().includes('create one') && (
+                       <button
+                         type="button"
+                         onClick={() => { setError(''); setIsSignup(true); setSignupStep(1); }}
+                         className="text-[#bf4a53] font-bold hover:underline"
+                       >
+                         Create an account
+                       </button>
+                     )}
+                   </div>
+                 )}
+                 <button type="submit" disabled={loading}
+                   className="w-full py-3 bg-gray-900 text-white font-bold text-sm rounded-xl hover:bg-gray-800 transition-colors shadow-sm shadow-gray-900/20 disabled:opacity-50">
+                   {loading ? 'Signing in...' : 'Sign In'}
+                 </button>
+                 <div className="flex items-center justify-between text-sm">
+                   <button
+                     type="button"
+                     onClick={() => navigate('/forgot-password')}
+                     className="text-[#bf4a53] hover:underline font-semibold"
+                   >
+                     Forgot password?
+                   </button>
+                 </div>
               </form>
               <p className="text-center text-gray-500 text-sm mt-6">
                 Don't have an account?{' '}
                 <button onClick={toggleMode} className="text-[#bf4a53] font-bold hover:underline">Sign Up</button>
               </p>
             </>
-          ) : (
+          )}
+        </>
+      ) : (
             <>
               <div className="lg:hidden flex items-center justify-center mb-8">
                 <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
@@ -351,10 +458,21 @@ export default function Login({ onLogin }) {
                     onChange={(e) => updateSignup('confirm', e.target.value)} onBlur={() => markTouched('confirm')}
                     className={inputClass + ' ' + glowClass('confirm')}
                     error={touched.confirm && !fieldState('confirm').valid ? fieldState('confirm').error : undefined} />
-                  <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1.5">
-                    <CheckCircle size={12} className={signupData.password.length >= 8 ? 'text-emerald-500' : 'text-gray-300'} />
-                    Must be 8+ characters
-                  </p>
+                   <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1.5 mb-2">
+                     <ShieldCheck size={12} className="text-gray-300" />
+                     Password requirements
+                   </p>
+                   <div className="space-y-1.5 mb-4">
+                     {PASSWORD_REQUIREMENTS.map((req) => {
+                       const met = req.test(signupData.password || '');
+                       return (
+                         <div key={req.label} className="flex items-center gap-2">
+                           <CheckCircle size={12} className={met ? 'text-emerald-500' : 'text-gray-300'} />
+                           <span className={`text-xs ${met ? 'text-emerald-600' : 'text-gray-400'}`}>{req.label}</span>
+                         </div>
+                       );
+                     })}
+                   </div>
                   {error && <p className="text-red-500 text-xs font-semibold text-center">{error}</p>}
                   <div className="flex gap-3">
                     <button onClick={handleSignupBack}

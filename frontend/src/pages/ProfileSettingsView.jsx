@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell, Ruler, Tag, RefreshCw } from 'lucide-react';
+import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell, Ruler, Tag, RefreshCw, Key, Copy } from 'lucide-react';
 import { api } from '../utils/api';
 import PromoCodesManager from '../components/PromoCodesManager';
 import { SkeletonList } from '../components/Skeleton';
@@ -55,6 +55,82 @@ export default function ProfileSettingsView({
   const [styleNotes, setStyleNotes] = useState(customerInfo?.styleNotes || '');
   const [styleMsg, setStyleMsg] = useState('');
   const [myPromos, setMyPromos] = useState([]);
+
+  // Phase 5: MFA management (Admin only)
+  const [mfaStep, setMfaStep] = useState(profile?.mfaEnabled ? 'enabled' : 'idle');
+  const [mfaSecret, setMfaSecret] = useState('');
+  const [mfaQrUri, setMfaQrUri] = useState('');
+  const [mfaQrDataUri, setMfaQrDataUri] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaBackupCodes, setMfaBackupCodes] = useState([]);
+  const [mfaError, setMfaError] = useState('');
+  const [mfaLoading, setMfaLoading] = useState(false);
+
+  const handleMfaSetup = async () => {
+    setMfaError('');
+    setMfaLoading(true);
+    try {
+      const res = await api.post('/auth/mfa/setup');
+      setMfaSecret(res.secret);
+      setMfaQrUri(res.qrUri);
+      setMfaQrDataUri(res.qrDataUri || '');
+      setMfaStep('setup');
+    } catch (err) {
+      setMfaError(err?.message || 'Failed to set up MFA');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleMfaEnable = async () => {
+    setMfaError('');
+    if (mfaCode.length !== 6) {
+      setMfaError('Please enter the 6-digit code from your authenticator app');
+      return;
+    }
+    setMfaLoading(true);
+    try {
+      // Server generates cryptographically random backup codes; we don't send
+      // client-generated ones. They're shown once — save them.
+      const res = await api.post('/auth/mfa/enable', { code: mfaCode });
+      setMfaBackupCodes(res.backupCodes || []);
+      setMfaStep('backupCodes'); // new step: show generated backup codes
+      setMfaError('');
+      if (profile) profile.mfaEnabled = true;
+    } catch (err) {
+      setMfaError(err?.message || 'Failed to enable MFA');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleMfaDisable = async () => {
+    setMfaError('');
+    setMfaLoading(true);
+    try {
+      await api.post('/auth/mfa/disable');
+      setMfaStep('idle');
+      setMfaSecret('');
+      setMfaQrUri('');
+      setMfaQrDataUri('');
+      if (profile) profile.mfaEnabled = false;
+    } catch (err) {
+      setMfaError(err?.message || 'Failed to disable MFA');
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const copyBackupCodes = async () => {
+    if (!mfaBackupCodes.length) return;
+    try {
+      await navigator.clipboard.writeText(mfaBackupCodes.join('\n'));
+    } catch {
+      // clipboard API unavailable — just leave the codes visible for manual copy
+    }
+  };
+
+  // (Backup codes are generated server-side on /auth/mfa/enable and shown once.)
 
   // Load active promo codes for customers to discover available discounts.
   useEffect(() => {
@@ -204,8 +280,8 @@ export default function ProfileSettingsView({
     e.preventDefault();
     setStaffError('');
     if (!newUsername || !newPassword) return;
-    if (newPassword.length < 8) {
-      setStaffError('Password must be at least 8 characters');
+    if (newPassword.length < 12) {
+      setStaffError('Password must be at least 12 characters with upper, lower, digit, and symbol');
       return;
     }
     try {
@@ -826,14 +902,15 @@ export default function ProfileSettingsView({
               className="flex-1 bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
               required
             />
-            <input
-              type="password"
-              placeholder="Password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="flex-1 bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
-              required
-            />
+              <input
+                type="password"
+                placeholder="Password (12+ chars w/ upper, lower, digit, symbol)"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="flex-1 bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
+                required
+                minLength={12}
+              />
             <button
               type="submit"
               className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center gap-2 shadow-sm shadow-red-500/20"
@@ -866,6 +943,136 @@ export default function ProfileSettingsView({
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phase 5: MFA Management (Admin only) */}
+      {role === 'Admin' && (
+        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
+          <h3 className="font-bold text-gray-900 flex items-center gap-2">
+            <ShieldCheck size={20} className="text-[#bf4a53]" /> Two-Factor Authentication
+          </h3>
+
+          {mfaError && (
+            <div className="flex items-center gap-2 p-3 bg-red-50 rounded-2xl text-sm text-red-600 font-medium">
+              <AlertCircle size={16} /> {mfaError}
+            </div>
+          )}
+
+          {mfaStep === 'idle' && (
+            <>
+              <p className="text-sm text-gray-500">
+                {profile?.mfaEnabled
+                  ? 'MFA is currently enabled for your account.'
+                  : 'Add an extra layer of security to your admin account with TOTP-based two-factor authentication.'}
+              </p>
+              {profile?.mfaEnabled ? (
+                <button
+                  onClick={handleMfaDisable}
+                  disabled={mfaLoading}
+                  className="px-4 py-2 border border-red-200 bg-red-50 text-[#bf4a53] font-semibold rounded-xl hover:bg-red-100 transition-colors disabled:opacity-50"
+                >
+                  {mfaLoading ? 'Disabling...' : 'Disable MFA'}
+                </button>
+              ) : (
+                <button
+                  onClick={handleMfaSetup}
+                  disabled={mfaLoading}
+                  className="px-4 py-2 bg-gray-900 text-white font-semibold rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50"
+                >
+                  {mfaLoading ? 'Setting up...' : 'Set Up MFA'}
+                </button>
+              )}
+            </>
+          )}
+
+          {mfaStep === 'setup' && mfaQrUri && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">
+                Scan the QR code below with your authenticator app (Google Authenticator, Authy, etc.),
+                then enter the 6-digit code it generates.
+              </p>
+              <div className="flex items-center justify-center p-4 bg-gray-50 rounded-2xl">
+                {mfaQrDataUri ? (
+                  <img
+                    src={mfaQrDataUri}
+                    alt="MFA QR Code"
+                    className="w-48 h-48 object-contain"
+                  />
+                ) : (
+                  /* Fallback: show the typed-out setup key if the QR image is unavailable */
+                  <div className="text-center p-4">
+                    <p className="text-xs text-gray-500 mb-2">QR unavailable — enter this key manually:</p>
+                    <p className="font-mono text-sm font-semibold text-gray-900 break-all">{mfaSecret}</p>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Authentication Code</label>
+                <input
+                  type="text"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono text-center text-gray-900 focus:outline-none focus:bg-white focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
+                  maxLength={6}
+                />
+              </div>
+              <button
+                onClick={handleMfaEnable}
+                disabled={mfaLoading || mfaCode.length !== 6}
+                className="w-full px-4 py-3 bg-[#bf4a53] text-white font-bold rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {mfaLoading ? 'Enabling...' : 'Enable MFA'}
+              </button>
+            </div>
+          )}
+
+          {mfaStep === 'backupCodes' && mfaBackupCodes.length > 0 && (
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <p className="text-sm font-medium text-amber-800">Save these backup codes now</p>
+                <p className="text-xs text-amber-600 mt-1">You won't see them again. Each code can be used once if you lose access to your authenticator app.</p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                {mfaBackupCodes.map((code, i) => (
+                  <div key={i} className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 font-mono text-sm text-center">
+                    {code}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={copyBackupCodes}
+                  className="flex-1 px-4 py-2 border border-gray-200 bg-white text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors text-sm"
+                >
+                  Copy Codes
+                </button>
+                <button
+                  onClick={() => { setMfaStep('enabled'); setMfaQrUri(''); setMfaQrDataUri(''); setMfaCode(''); }}
+                  className="flex-1 px-4 py-2 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mfaStep === 'enabled' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-emerald-50 rounded-2xl">
+                <ShieldCheck size={20} className="text-emerald-500" />
+                <span className="text-sm font-medium text-emerald-800">MFA is active on this account</span>
+              </div>
+              <button
+                onClick={handleMfaDisable}
+                disabled={mfaLoading}
+                className="px-4 py-2 border border-red-200 bg-red-50 text-[#bf4a53] font-semibold rounded-xl hover:bg-red-100 transition-colors disabled:opacity-50"
+              >
+                {mfaLoading ? 'Disabling...' : 'Disable MFA'}
+              </button>
             </div>
           )}
         </div>

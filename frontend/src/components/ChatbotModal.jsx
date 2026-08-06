@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Send, Sparkles, Loader2, ShoppingBag, Tag, ArrowRight } from 'lucide-react';
+import { X, Send, Sparkles, Loader2, ShoppingBag, Tag, ArrowRight, Zap, WifiOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../utils/api';
 import { storageService } from '../services';
@@ -15,13 +15,37 @@ const WELCOME_SUGGESTIONS = [
   'Store location & hours',
 ];
 
-// General suggestions that appear after answers
-const FOLLOW_UP_SUGGESTIONS = [
+// Follow-up chips adapt to what the customer was just asking about.
+const GENERAL_FOLLOW_UPS = [
   'Show me more options',
   'What sizes do you have?',
   'How do I book?',
-  'Check available items',
+  'Store location & hours',
 ];
+
+// Short human-readable name for the model behind an AI reply.
+function shortModelName(provider, model) {
+  if (provider === 'gemini') return 'Gemini';
+  if (provider === 'openrouter' && model) {
+    const slug = String(model).split('/').pop()?.replace(':free', '') || 'AI';
+    return slug
+      .split('-')
+      .map((w, i) => (i === 0 ? w[0]?.toUpperCase() + w.slice(1) : w))
+      .join(' ');
+  }
+  return 'AI';
+}
+
+// Contextual follow-up chips: after an event query, suggest drilling into the
+// same event; after product results, nudge toward booking/sizing.
+function nextSuggestions(userText, products, source) {
+  if (source === 'error') return GENERAL_FOLLOW_UPS;
+  const lower = (userText || '').toLowerCase();
+  const event = Object.keys(EVENT_KEYWORDS).find((k) => lower.includes(k));
+  if (event) return [`Show more ${event} options`, 'What sizes do you have?', 'How do I book?', 'Store location & hours'];
+  if (products.length > 0) return ['What sizes do you have?', 'How do I book?', 'Store location & hours', 'Show me more options'];
+  return GENERAL_FOLLOW_UPS;
+}
 
 // Item images are stored as Supabase paths (private bucket), not URLs. Resolve
 // a path to a short-lived signed URL; already-absolute URLs are used as-is.
@@ -136,19 +160,24 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
     try {
       const result = await api.post('/ai/chat', {
         message: userText,
-        history: chatHistoryRef.current,
-      });
+        // The backend validates history roles; send the schema-accepted
+        // 'assistant' (never the raw Gemini 'model' role).
+        history: chatHistoryRef.current.map((h) => ({
+          role: h.role === 'model' ? 'assistant' : 'user',
+          text: h.text,
+        })),
+      }, { timeout: 45000 });
       chatHistoryRef.current = [
         ...chatHistoryRef.current,
         { role: 'user', text: userText },
-        { role: 'model', text: result.reply },
+        { role: 'assistant', text: result.reply },
       ];
-      return result.reply;
+      return result;
     } catch (err) {
       if (err?.status === 429) {
-        return err.body?.error || "You're sending messages too quickly. Please wait a moment and try again.";
+        return { reply: err.body?.error || "You're sending messages too quickly. Please wait a moment and try again.", source: 'error' };
       }
-      return "I'm having trouble connecting. Try asking about booking, sizing, or gowns!";
+      return { reply: "I'm having trouble connecting. Try asking about booking, sizing, or gowns!", source: 'error' };
     }
   };
 
@@ -161,16 +190,38 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
     setIsLoading(true);
 
     try {
-      const botText = await getResponse(userText);
-      const products = isOutfitQuery(userText) ? findSuggestions(userText, inventory) : [];
-      const productsWithImages = await Promise.all(products.map(resolveImage));
-      let reply = botText;
+      const botResult = await getResponse(userText);
+      let products = isOutfitQuery(userText) ? findSuggestions(userText, inventory) : [];
+      let reply = botResult.reply;
+      const hasEventKeyword = Object.keys(EVENT_KEYWORDS).some((k) => userText.toLowerCase().includes(k));
       if (isOutfitQuery(userText) && products.length === 0) {
-        reply += "\n\nI couldn't find any available items matching that right now. You're welcome to visit our physical store in Balayan, Batangas to check what's on hand, or try a different style or event!";
+        // Fall back to showing available items that have a photo so the chat
+        // always surfaces pictures - the default 'Find outfit for my event'
+        // chip never matches a keyword, so without this the cards never show.
+        // Prefer photo items; skip data-URI blobs (slow to render).
+        products = inventory
+          .filter((i) => i.status === 'Available' && i.image && !String(i.image).startsWith('data:'))
+          .slice(0, 4);
+        if (products.length > 0 && hasEventKeyword) {
+          reply += "\n\nI couldn't find exact matches for that, so here are some favorites available right now!";
+        } else if (products.length === 0 && hasEventKeyword) {
+          reply += "\n\nI couldn't find any available items matching that right now. You're welcome to visit our physical store in Balayan, Batangas to check what's on hand, or try a different style or event!";
+        }
       }
-      setMessages((prev) => [...prev, { sender: 'bot', text: reply, products: productsWithImages }]);
-      // Update suggestions for follow-up questions
-      setSuggestions(FOLLOW_UP_SUGGESTIONS);
+      const productsWithImages = await Promise.all(products.map(resolveImage));
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: 'bot',
+          text: reply,
+          products: productsWithImages,
+          source: botResult.source,
+          provider: botResult.provider,
+          model: botResult.model,
+        },
+      ]);
+      // Follow-up chips adapt to what was just asked about
+      setSuggestions(nextSuggestions(userText, productsWithImages, botResult.source));
     } finally {
       setIsLoading(false);
     }
@@ -247,6 +298,30 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
                     >
                       {msg.text}
                     </ReactMarkdown>
+
+                    {/* Source indicator: shows whether the reply came from the AI
+                        model, the built-in FAQ, or fell back to offline mode. */}
+                    {msg.source && (
+                      <div className="mt-2 flex items-center gap-1.5">
+                        {msg.source === 'ai' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[9px] font-bold">
+                            <Sparkles size={9} /> AI · {shortModelName(msg.provider, msg.model)}
+                          </span>
+                        ) : msg.source === 'faq' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[9px] font-bold">
+                            <Zap size={9} /> Instant Answer
+                          </span>
+                        ) : msg.source === 'error' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-600 text-[9px] font-bold">
+                            <WifiOff size={9} /> Offline
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[9px] font-bold">
+                            <Sparkles size={9} /> Assistant
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {msg.products?.length > 0 && (
                       <div className="mt-3 grid grid-cols-2 gap-2">

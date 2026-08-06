@@ -16,10 +16,20 @@ process.env.FRONTEND_URL = 'http://localhost:5173';
 process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
 
+// Unit tests must never hit live AI providers: backend/.env contains real
+// Gemini/OpenRouter keys, and dotenv only fills vars that aren't already set —
+// blanking them here forces the deterministic in-app fallback paths.
+process.env.GEMINI_API_KEY = '';
+process.env.OPENROUTER_API_KEY = '';
+// Tests verify JWTs locally with this secret — must be set BEFORE jwtVerify.ts loads.
+process.env.SUPABASE_JWT_SECRET = 'test-jwt-secret';
+// W3.9: MFA_SECRET_KEY exercises the AES-256-GCM encrypt/decrypt path.
+process.env.MFA_SECRET_KEY = 'test-mfa-secret-key-for-encryption';
+
 const { mockUsers, mockSessions } = vi.hoisted(() => {
-  const users: Record<string, { id: string; email: string }> = {
+  const users: Record<string, { id: string; email: string; app_metadata?: any }> = {
     'customer-token': { id: 'auth-customer-id', email: 'customer@example.com' },
-    'admin-token': { id: 'auth-admin-id-789', email: 'admin@example.com' },
+    'admin-token': { id: 'auth-admin-id-789', email: 'admin@example.com', app_metadata: { aal: 2 } },
     'staff-token': { id: 'auth-staff-id-456', email: 'staff@example.com' },
     'valid-token': { id: 'auth-user-id-123', email: 'test@example.com' },
   };
@@ -45,6 +55,11 @@ vi.mock('@supabase/supabase-js', () => {
           error: null,
         }),
         deleteUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
+        signOut: vi.fn().mockResolvedValue({ error: null }),
+        updateUserById: vi.fn().mockResolvedValue({
+          data: { user: { id: 'auth-user-id-123', email: 'test@example.com' } },
+          error: null,
+        }),
       },
       getUser: vi.fn().mockImplementation((token: string) => {
         const user = mockUsers[token] || { id: 'auth-user-id-123', email: 'test@example.com' };
@@ -56,6 +71,26 @@ vi.mock('@supabase/supabase-js', () => {
           data: { user, session: { access_token: 'mock-access-token-xyz', refresh_token: 'mock-refresh-token' } },
           error: null,
         });
+      }),
+      // Phase 1: refresh token rotation mock
+      refreshSession: vi.fn().mockResolvedValue({
+        data: {
+          session: {
+            access_token: 'refreshed-access-token',
+            refresh_token: 'refreshed-refresh-token',
+            token_type: 'bearer',
+            expires_in: 3600,
+            user: { id: 'auth-user-id-123', email: 'test@example.com' },
+          },
+          user: { id: 'auth-user-id-123', email: 'test@example.com' },
+        },
+        error: null,
+      }),
+      // Phase 2: password reset
+      resetPasswordForEmail: vi.fn().mockResolvedValue({ data: {}, error: null }),
+      verifyOtp: vi.fn().mockResolvedValue({
+        data: { user: { id: 'auth-user-id-123', email: 'test@example.com' }, session: null },
+        error: null,
       }),
       signOut: vi.fn().mockResolvedValue({ error: null }),
     },
@@ -100,6 +135,9 @@ vi.mock('../src/config/database.js', () => {
       name: 'Admin User',
       phone: null,
       address: null,
+      mfaEnabled: true,
+      totpSecret: 'JBSWY3DPEHPK3PXP',
+      backupCodes: JSON.stringify(['a1b2c3d4', 'e5f6g7h8']),
       createdAt: now,
       updatedAt: now,
     },
@@ -177,6 +215,9 @@ vi.mock('../src/config/database.js', () => {
       name: 'Admin User',
       phone: null,
       address: null,
+      mfaEnabled: true,
+      totpSecret: 'JBSWY3DPEHPK3PXP',
+      backupCodes: JSON.stringify(['a1b2c3d4', 'e5f6g7h8']),
       createdAt: now,
       updatedAt: now,
     },

@@ -1,7 +1,9 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { env } from '../config/env.js';
 import type { Role } from '@prisma/client';
+import * as crypto from 'crypto';
 
 export async function signupCustomer(data: {
   email: string;
@@ -14,7 +16,7 @@ export async function signupCustomer(data: {
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
     email: data.email,
     password: data.password,
-    email_confirm: true,
+    email_confirm: env.AUTH_EMAIL_CONFIRM,
   });
 
   if (error || !authData.user) {
@@ -51,10 +53,11 @@ export async function signupCustomer(data: {
       expires_in: sessionData.session?.expires_in ?? null,
     },
     user: profile,
+    requiresMfa: false,
   };
 }
 
-export async function loginUser(email: string, password: string) {
+export async function loginUser(email: string, password: string, trustedDevice = false) {
   // L3: uniform error for both "no account" and "wrong password" so the API
   // can't be used to enumerate registered emails. The sign-up CTA on the
   // login screen serves as the generic fallback for new users.
@@ -80,6 +83,24 @@ export async function loginUser(email: string, password: string) {
     throw new AppError(401, 'Profile not found');
   }
 
+  // Phase 5: If MFA is enabled for this user, don't establish the session yet —
+  // return the access_token as a challenge token so the frontend can prompt
+  // for the TOTP code. Trusted devices (rt_mfa_trusted cookie verified by the
+  // controller for this email) skip the prompt — this browser already proved
+  // the second factor within the last 30 days.
+  if (profile.mfaEnabled && profile.role === 'Admin' && !trustedDevice) {
+    return {
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        token_type: data.session.token_type,
+        expires_in: data.session.expires_in,
+      },
+      user: profile,
+      requiresMfa: true,
+    };
+  }
+
   return {
     session: {
       access_token: data.session.access_token,
@@ -88,6 +109,7 @@ export async function loginUser(email: string, password: string) {
       expires_in: data.session.expires_in,
     },
     user: profile,
+    requiresMfa: false,
   };
 }
 
@@ -168,7 +190,11 @@ export async function getProfile(userId: string) {
   if (!profile) {
     throw new AppError(404, 'Profile not found');
   }
-  return profile;
+  // Phase 5: never leak MFA secrets to the client. The frontend only needs the
+  // boolean `mfaEnabled` to render the toggle — totpSecret + backupCodes must
+  // stay server-side.
+  const { totpSecret: _secret, backupCodes: _codes, ...safeProfile } = profile as any;
+  return safeProfile;
 }
 
 export async function updateProfile(userId: string, data: {
@@ -219,7 +245,7 @@ export async function createStaffAccount(adminId: string, data: {
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
     email: data.email,
     password: data.password,
-    email_confirm: true,
+    email_confirm: env.AUTH_EMAIL_CONFIRM,
   });
 
   if (error || !authData.user) {
@@ -272,4 +298,142 @@ export async function removeStaffAccount(adminId: string, staffId: string) {
   await prisma.sentSms.deleteMany({ where: { profileId: staffId } });
   await prisma.sentSms.deleteMany({ where: { sentById: staffId } });
   await prisma.profile.delete({ where: { id: staffId } });
+}
+
+// Exchange a refresh token for a fresh access+refresh token pair via the
+// Supabase admin client. Returns a trimmed session object suitable for
+// setSessionCookies. Throws AppError(401) on invalid/expired refresh tokens
+// so the caller can clear stale cookies.
+export async function refreshWithRefreshToken(refreshToken: string) {
+  const { data, error } = await supabaseAdmin.auth.refreshSession({
+    refresh_token: refreshToken,
+  });
+
+  if (error || !data.session) {
+    throw new AppError(401, 'Invalid or expired refresh token');
+  }
+
+  return {
+    access_token: data.session.access_token,
+    refresh_token: data.session.refresh_token,
+    token_type: data.session.token_type ?? 'bearer',
+    expires_in: data.session.expires_in ?? null,
+    user: data.user,
+  };
+}
+
+// Revoke a refresh token (session-scoped sign-out). The access token stays
+// valid until its natural JWT expiry (stateless residual — documented), but
+// the user can no longer obtain new tokens once it expires.
+export async function revokeRefreshToken(refreshToken: string) {
+  try {
+    await supabaseAdmin.auth.admin.signOut(refreshToken);
+  } catch {
+    // Best-effort: if Supabase can't revoke (e.g. already rotated), we still
+    // clear the cookies client-side.
+  }
+}
+
+// W2.8: Revoke ALL refresh tokens for a user (forces re-login on every device).
+// Supabase's admin signOut with scope 'global' takes a JWT and invalidates all
+// sessions for that user. We need a valid access token to call it; if we don't
+// have one, the password change itself will rotate refresh tokens and invalidate
+// sessions.
+export async function revokeAllUserSessions(userId: string, accessToken?: string) {
+  if (!accessToken) return;
+  try {
+    await supabaseAdmin.auth.admin.signOut(accessToken, 'global');
+  } catch {
+    // Best-effort: sessions will naturally expire.
+  }
+}
+
+// Convenience: given a Supabase session object, return a trimmed session
+// for cookie storage.
+export function toRtSession(session: {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  token_type?: string;
+  expires_in?: number | null;
+}) {
+  return {
+    access_token: session.access_token ?? null,
+    refresh_token: session.refresh_token ?? null,
+    token_type: session.token_type ?? 'bearer',
+    expires_in: session.expires_in ?? null,
+  };
+}
+
+// Phase 3: Server-side OAuth redirect URL.
+// Generates a PKCE code_verifier + code_challenge and builds the Supabase
+// OAuth URL. Returns both so the callback can verify the challenge.
+export interface OauthRedirectResult {
+  url: string;
+  codeVerifier: string;
+}
+
+export function buildOauthRedirectUrl(redirectTo: string, provider: string = 'google'): OauthRedirectResult {
+  // PKCE: code_verifier is a high-entropy random string (43–128 chars).
+  const codeVerifier = base64url(crypto.randomBytes(32));
+  const codeChallenge = base64url(
+    crypto.createHash('sha256').update(codeVerifier).digest()
+  );
+
+  const params = new URLSearchParams({
+    provider,
+    redirect_to: redirectTo,
+    response_type: 'code',
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+
+  const url = `${env.SUPABASE_URL}/auth/v1/authorize?${params.toString()}`;
+  return { url, codeVerifier };
+}
+
+function base64url(buffer: Buffer): string {
+  return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+// Phase 3: Exchange the OAuth code for tokens via the Supabase token endpoint.
+// Uses the anon key (sufficient for token exchange). Returns the full session.
+export interface OauthTokenData {
+  access_token: string;
+  refresh_token: string;
+  token_type?: string;
+  expires_in?: number;
+  user?: Record<string, unknown>;
+}
+
+export async function exchangeOauthCode(
+  code: string,
+  codeVerifier: string,
+  redirectTo: string
+): Promise<OauthTokenData> {
+  // Modern GoTrue (the `pkce` grant) expects an application/json body of
+  // { auth_code, code_verifier } with grant_type=pkce in the query — identical
+  // to how supabase-js v2 serializes its token request (this repo's pinned
+  // @supabase/auth-js sends `Content-Type: application/json;charset=UTF-8` +
+  // JSON.stringify body). The older `grant_type=authorization_code` + JSON
+  // body produced `unsupported_grant_type`, and a form-urlencoded body was
+  // rejected with "Could not parse request body as JSON".
+  void redirectTo; // PKCE grant doesn't need redirect_to at exchange time
+  const res = await fetch(`${env.SUPABASE_URL}/auth/v1/token?grant_type=pkce`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json;charset=UTF-8',
+      apikey: env.SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+    },
+    body: JSON.stringify({ auth_code: code, code_verifier: codeVerifier }),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    throw new AppError(401, (body.error_description as string) || (body.msg as string) || (body.error as string) || 'OAuth token exchange failed');
+  }
+
+  const data: OauthTokenData = await res.json() as OauthTokenData;
+  // data = { access_token, refresh_token, expires_in, token_type, user }
+  return data;
 }

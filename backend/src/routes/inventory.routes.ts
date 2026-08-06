@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { validate } from '../middleware/validate.js';
 import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth.js';
-import { requireRole } from '../middleware/rbac.js';
+import { requireRole, requireMfaAdmin } from '../middleware/rbac.js';
 import { Role } from '../types/index.js';
 import * as inventoryController from '../controllers/inventory.controller.js';
 import * as analyticsController from '../controllers/inventoryAnalytics.controller.js';
@@ -13,7 +13,8 @@ const router = Router();
 router.get('/availability', validate(inventoryController.availabilitySchema), inventoryController.checkAvailability);
 router.get('/blocked-dates/:id', inventoryController.getBlockedDates);
 
-router.get('/analytics', authMiddleware, requireRole(Role.Admin), analyticsController.getInventoryAnalytics);
+// Admin-only analytics with MFA enforcement
+router.get('/analytics', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, analyticsController.getInventoryAnalytics);
 
 // Optional auth: guests browse the public catalog, but logged-in staff/admin
 // receive the full raw catalog (incl. Deleted/OutOfService statuses).
