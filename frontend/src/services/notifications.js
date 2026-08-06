@@ -14,4 +14,8 @@ export const notificationsService = {
   unreadCount: () => api.get('/notifications/unread-count'),
 
   markRead: (id) => api.put(`/notifications/${id}/read`),
+
+  remove: (id) => api.delete(`/notifications/${id}`),
+
+  clearAll: () => api.delete('/notifications'),
 };

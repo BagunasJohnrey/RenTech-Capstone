@@ -46,6 +46,7 @@ const AIInsightsView = lazy(() => import('./pages/AIInsightsView'));
 const InventoryAnalyticsView = lazy(() => import('./pages/InventoryAnalyticsView'));
 const ProfileSettingsView = lazy(() => import('./pages/ProfileSettingsView'));
 const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
+const NotificationsView = lazy(() => import('./pages/NotificationsView'));
 
 const navItems = {
   Admin: [
@@ -750,6 +751,9 @@ export default function RentechApp() {
             {activeTab === 'Help' && (
               <HelpGuide role={viewRole} onStartTutorial={() => setShowOnboarding(true)} />
             )}
+            {activeTab === 'Notifications' && (
+              <NotificationsView />
+            )}
     </>
   );
 
@@ -930,6 +934,10 @@ export default function RentechApp() {
       onOpenHelp={() => goTab('Help')}
       showNotifications={showNotifications}
       onToggleNotifications={() => setShowNotifications((s) => !s)}
+      onViewAllNotifications={() => {
+        setShowNotifications(false);
+        goTab('Notifications');
+      }}
       taskBadge={taskBadge}
       onFabClick={() => {
         if (viewRole === 'Admin') goTab('AI Insights');

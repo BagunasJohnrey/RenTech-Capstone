@@ -9,6 +9,7 @@ export const TAB_PATHS = {
     Catalog: '/admin/inventory',
     History: '/admin/transactions',
     'AI Insights': '/admin/ai-insights',
+    Notifications: '/admin/notifications',
     Settings: '/admin/settings',
   },
   Staff: {
@@ -16,12 +17,14 @@ export const TAB_PATHS = {
     Tasks: '/staff/tasks',
     Catalog: '/staff/catalog',
     History: '/staff/logs',
+    Notifications: '/staff/notifications',
     Settings: '/staff/settings',
   },
   Customer: {
     Home: '/',
     Catalog: '/collection',
     History: '/transactions',
+    Notifications: '/notifications',
     Profile: '/profile',
     Help: '/help',
   },
@@ -82,6 +85,6 @@ export function txDetailPath(role, txId) {
 export function pathRequiresRole(pathname) {
   if (/^\/admin\b/.test(pathname)) return 'Admin';
   if (/^\/staff\b/.test(pathname)) return 'Staff';
-  if (pathname === '/' || /^\/(collection|transactions|profile|help)(\/|$)/.test(pathname)) return 'Customer';
+  if (pathname === '/' || /^\/(collection|transactions|notifications|profile|help)(\/|$)/.test(pathname)) return 'Customer';
   return null;
 }

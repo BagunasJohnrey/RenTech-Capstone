@@ -42,11 +42,11 @@ export async function notifyStaffMembers(data: {
   }
 }
 
-export async function listNotifications(profileId: string) {
+export async function listNotifications(profileId: string, take = 50) {
   return prisma.notification.findMany({
     where: { profileId },
     orderBy: { createdAt: 'desc' },
-    take: 50,
+    take,
   });
 }
 
@@ -66,6 +66,19 @@ export async function markAllAsRead(profileId: string) {
     where: { profileId, isRead: false },
     data: { isRead: true },
   });
+}
+
+export async function deleteNotification(notificationId: string, profileId: string) {
+  const notification = await prisma.notification.findUnique({ where: { id: notificationId } });
+  if (!notification) throw new AppError(404, 'Notification not found');
+  if (notification.profileId !== profileId) throw new AppError(403, 'Not your notification');
+
+  await prisma.notification.delete({ where: { id: notificationId } });
+}
+
+export async function clearNotifications(profileId: string) {
+  const { count } = await prisma.notification.deleteMany({ where: { profileId } });
+  return count;
 }
 
 export async function getUnreadCount(profileId: string) {

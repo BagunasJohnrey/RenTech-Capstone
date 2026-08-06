@@ -61,6 +61,7 @@ export default function AppLayout({
   onOpenHelp,
   showNotifications,
   onToggleNotifications,
+  onViewAllNotifications,
   taskBadge,
   onFabClick,
   children,
@@ -156,6 +157,7 @@ export default function AppLayout({
                 role={role}
                 showNotifications={showNotifications}
                 toggle={onToggleNotifications}
+                onViewAll={onViewAllNotifications}
               />
             </div>
           </header>
