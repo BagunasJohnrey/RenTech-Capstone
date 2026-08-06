@@ -189,8 +189,8 @@ export default function NotificationsView() {
                 return (
                   <div
                     key={n.id}
-                    className={`group relative w-full text-left flex items-start gap-3 p-3 rounded-2xl transition-colors ${
-                      n.isRead ? 'hover:bg-gray-50' : 'bg-gradient-to-r from-[#bf4a53]/[0.06] to-transparent hover:bg-gray-50/80'
+                    className={`group relative w-full text-left flex items-start gap-3 p-3 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
+                      n.isRead ? '' : 'bg-gradient-to-r from-[#bf4a53]/[0.06] to-transparent'
                     }`}
                   >
                     {!n.isRead && (
