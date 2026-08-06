@@ -3,6 +3,7 @@ import { X, AlertCircle, CheckCircle2, Search, CalendarDays } from 'lucide-react
 import { api } from '../utils/api';
 import { useToast } from './Toast';
 import ItemImage from './ItemImage';
+import BookingCalendar from './BookingCalendar';
 import { getSaleInfo } from './ItemCard';
 import { Skeleton } from './Skeleton';
 import { itemPill, txPill } from '../utils/statusColors';
@@ -46,7 +47,6 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
 
   if (!item) return null;
   const sale = getSaleInfo(item);
-  const today = new Date().toISOString().split('T')[0];
 
   return (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={onClose}>
@@ -131,20 +131,12 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               <Search size={13} className="text-gray-400" />
               <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Check Dates</span>
             </div>
-            <div className="grid grid-cols-2 gap-2.5">
-              <div>
-                <label className="text-[10px] font-medium text-gray-400 mb-1 block">Start</label>
-                <input type="date" value={selectedStart} min={today}
-                  onChange={(e) => { setSelectedStart(e.target.value); setCheckResult(null); }}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors" />
-              </div>
-              <div>
-                <label className="text-[10px] font-medium text-gray-400 mb-1 block">End</label>
-                <input type="date" value={selectedEnd} min={selectedStart || today}
-                  onChange={(e) => { setSelectedEnd(e.target.value); setCheckResult(null); }}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors" />
-              </div>
-            </div>
+            <BookingCalendar
+              pickup={selectedStart}
+              event={selectedEnd}
+              onChange={(p, e) => { setSelectedStart(p); setSelectedEnd(e); setCheckResult(null); }}
+              bookedRanges={blockedRanges}
+            />
             <button onClick={checkAvailability} disabled={!selectedStart || !selectedEnd || checking}
               className="mt-2.5 w-full py-2 bg-gray-900 text-white text-sm font-bold rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
               {checking ? 'Checking...' : 'Check Availability'}
@@ -172,7 +164,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : 'bg-[#bf4a53] text-white hover:bg-[#a63f47]'
               }`}>
-              {item.status === 'Available' ? 'Rent Now' : 'Check Availability'}
+              {(item.status === 'Rented' || item.status === 'Overdue') ? 'Advance Book' : 'Rent Now'}
             </button>
           )}
         </div>

@@ -6,7 +6,21 @@ import { itemPill } from '../utils/statusColors';
 
 const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
 const STAFF_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService'];
-const CUSTOMER_STATUSES = ['All', 'Available'];
+const CUSTOMER_STATUSES = ['All', 'Available', 'Reserved', 'Advance'];
+
+// For customers/guests, "Available" means truly free: no bookings at all.
+// Items that are reserved for future dates but still free to rent outside
+// those dates get their own "Reserved" chip so the filters stay honest.
+const isFreeNow = (item) => item.status === 'Available';
+
+// "Reserved" = free now but already booked for specific future dates — rent
+// it only for non-conflicting dates (the booking flow validates this).
+const isReservedOut = (item) => item.status === 'Reserved';
+
+// "Advance" = currently rented out (in someone's hands now — including
+// overdue pieces not yet returned) but still open for advance booking on other
+// dates. The booking flow validates date conflicts.
+const isBookedOut = (item) => item.status === 'Rented' || item.status === 'Overdue';
 
 const META_MAP = {
   All: 'bg-gray-900 text-white',
@@ -52,6 +66,25 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
     [inventory]
   );
 
+  // Live "Available" count for the customer/guest rail: truly free items only.
+  const availableCount = useMemo(
+    () => inventory.filter(isFreeNow).length,
+    [inventory]
+  );
+
+  // Live "Reserved" count: free now but already booked for future dates.
+  const reservedCount = useMemo(
+    () => inventory.filter(isReservedOut).length,
+    [inventory]
+  );
+
+  // Live "Advance" count: currently rented out, still open for advance
+  // booking on other dates.
+  const bookedCount = useMemo(
+    () => inventory.filter(isBookedOut).length,
+    [inventory]
+  );
+
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
     + (selectedCategories.length > 0 ? 1 : 0)
     + (activeSizeFilter !== 'All' ? 1 : 0)
@@ -63,7 +96,22 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
       const q = searchQuery.toLowerCase();
       if (q && !item.name.toLowerCase().includes(q) && !item.category.toLowerCase().includes(q)) return false;
       if (activeStatusFilter === 'All' && item.status === 'Deleted') return false;
-      if (activeStatusFilter !== 'All' && item.status !== activeStatusFilter) return false;
+      if (activeStatusFilter !== 'All') {
+        // Customers/guests: "Available" = truly free (no bookings);
+        // "Reserved" = free now but booked for future dates; "Advance" =
+        // currently rented out but open for advance booking on other dates.
+        // Staff/admin keep exact raw-status matching.
+        const match = isStaff
+          ? item.status === activeStatusFilter
+          : activeStatusFilter === 'Available'
+            ? isFreeNow(item)
+            : activeStatusFilter === 'Reserved'
+              ? isReservedOut(item)
+              : activeStatusFilter === 'Advance'
+                ? isBookedOut(item)
+                : item.status === activeStatusFilter;
+        if (!match) return false;
+      }
       if (selectedCategories.length > 0 && !selectedCategories.includes(item.category)) return false;
       if (activeSizeFilter !== 'All' && item.size !== activeSizeFilter) return false;
       if (minPrice !== '' && item.price < Number(minPrice)) return false;
@@ -72,7 +120,10 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
       return true;
     });
     if (!isStaff) {
-      filtered.sort((a) => (a.status === 'Available' ? -1 : 1));
+      // Default sort for customers/guests: items not currently rented (free or
+      // reserved with booked dates) first, then currently rented, then the rest.
+      const rank = (st) => st === 'Available' ? 0 : st === 'Reserved' ? 1 : st === 'Rented' ? 2 : 3;
+      filtered.sort((a, b) => rank(a.status) - rank(b.status));
     }
     return filtered;
   }, [inventory, searchQuery, activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, isStaff]);
@@ -240,6 +291,36 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
         </div>
       )}
 
+      {/* Status rail — customers/guests (All + Available + Reserved + Advance, live counts) */}
+      {!isStaff && (
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
+          {CUSTOMER_STATUSES.map(s => {
+            const active = activeStatusFilter === s;
+            const count = s === 'All'
+              ? inventory.filter(i => i.status !== 'Deleted').length
+              : s === 'Available' ? availableCount : s === 'Reserved' ? reservedCount : bookedCount;
+            const title = s === 'Available'
+              ? 'No bookings — free to rent now'
+              : s === 'Reserved'
+                ? 'Free now, but already reserved for upcoming dates'
+                : s === 'Advance'
+                  ? 'Currently rented out — still open for advance booking on other dates'
+                  : undefined;
+            return (
+              <button key={s} type="button" title={title} onClick={() => setActiveStatusFilter(active ? 'All' : s)} aria-pressed={active}
+                className={`shrink-0 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                  active ? 'bg-gray-900 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-gray-300 hover:text-gray-800'
+                }`}>
+                {s}
+                <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center tabular-nums ${active ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Category rail — shown for guests/customers under the search bar */}
       {(!isStaff || guest) && allCategories.length > 0 && (
         <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
@@ -270,9 +351,11 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
             <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
               {STATUSES.map(s => {
                 const active = activeStatusFilter === s;
-                const count = s !== 'All' ? inventory.filter(i => i.status === s).length : '';
+                const count = s !== 'All'
+                  ? (s === 'Available' ? availableCount : s === 'Reserved' ? reservedCount : s === 'Advance' ? bookedCount : inventory.filter(i => i.status === s).length)
+                  : '';
                 return (
-                  <button key={s} onClick={() => setActiveStatusFilter(s)}
+                  <button key={s} onClick={() => setActiveStatusFilter(active ? 'All' : s)}
                     className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
                       active
                         ? 'bg-gray-900 text-white shadow-sm'
