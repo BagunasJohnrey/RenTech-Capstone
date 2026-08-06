@@ -193,7 +193,7 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
         </p>
         {(() => {
           const disabled = !guest && (item.status === 'OutOfService' || item.status === 'Deleted');
-          const sizingCls = 'w-full font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-2';
+          const sizingCls = 'w-full font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-1.5 whitespace-nowrap';
           if (guest) {
             return (
               <div className="mt-auto pt-3">
