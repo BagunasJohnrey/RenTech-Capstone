@@ -15,13 +15,15 @@ export default function DashboardView({ role, transactions, inventory, customerI
 
   // Live promo codes for the customer "Promotions & Offers" section.
   const [promos, setPromos] = useState([]);
+  const [promosLoading, setPromosLoading] = useState(role === 'Customer');
   const [copiedCode, setCopiedCode] = useState(null);
   useEffect(() => {
     if (role !== 'Customer') return;
     let active = true;
     promoService.listPublic()
       .then((d) => { if (active && Array.isArray(d)) setPromos(d); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (active) setPromosLoading(false); });
     return () => { active = false; };
   }, [role]);
 
@@ -101,7 +103,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
         </div>
 
         {/* Promotions & Offers — real promo codes (admin-created) + sale items */}
-        {(promos.length > 0 || onSale.length > 0) && (
+        {(promosLoading || promos.length > 0 || onSale.length > 0) && (
           <div>
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -112,30 +114,42 @@ export default function DashboardView({ role, transactions, inventory, customerI
               </div>
             </div>
 
-            {/* Promo codes */}
-            {promos.length > 0 && (
+            {/* Promo codes — skeleton placeholders so the section renders on
+                first paint instead of popping in after the fetch resolves */}
+            {promosLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-                {promos.map((p) => (
-                  <div key={p.code} className="relative overflow-hidden rounded-2xl border-2 border-dashed border-[#bf4a53]/30 bg-gradient-to-br from-red-50 to-orange-50 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-xl font-extrabold text-[#bf4a53]">{p.discountPct}% OFF</p>
-                        <p className="text-[11px] text-gray-500 font-medium">
-                          {p.expiresAt ? `Until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No expiry'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => copyCode(p.code)}
-                        className="flex items-center gap-1.5 bg-white border border-[#bf4a53]/30 text-gray-900 px-3 py-2 rounded-xl font-mono font-bold text-sm hover:bg-[#bf4a53] hover:text-white transition-colors shrink-0"
-                        title="Copy code"
-                      >
-                        {copiedCode === p.code ? <Check size={14} /> : <Copy size={14} />}
-                        {p.code}
-                      </button>
-                    </div>
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 p-4">
+                    <div className="w-24 h-6 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="w-32 h-3 bg-gray-200 rounded animate-pulse" />
                   </div>
                 ))}
               </div>
+            ) : (
+              promos.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+                  {promos.map((p) => (
+                    <div key={p.code} className="relative overflow-hidden rounded-2xl border-2 border-dashed border-[#bf4a53]/30 bg-gradient-to-br from-red-50 to-orange-50 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xl font-extrabold text-[#bf4a53]">{p.discountPct}% OFF</p>
+                          <p className="text-[11px] text-gray-500 font-medium">
+                            {p.expiresAt ? `Until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No expiry'}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => copyCode(p.code)}
+                          className="flex items-center gap-1.5 bg-white border border-[#bf4a53]/30 text-gray-900 px-3 py-2 rounded-xl font-mono font-bold text-sm hover:bg-[#bf4a53] hover:text-white transition-colors shrink-0"
+                          title="Copy code"
+                        >
+                          {copiedCode === p.code ? <Check size={14} /> : <Copy size={14} />}
+                          {p.code}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
             )}
 
             {/* Sale items pulled into the promo section */}
@@ -420,10 +434,10 @@ export default function DashboardView({ role, transactions, inventory, customerI
                   <div className="text-right shrink-0">
                     <p className="text-[11px] font-semibold text-gray-500">Due: {tx.dueDate ? new Date(tx.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Today'}</p>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                  </div>
+                ))}
+              </div>
+            )}
         </div>
 
 

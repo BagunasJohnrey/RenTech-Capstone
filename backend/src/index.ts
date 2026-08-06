@@ -2,10 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { requestId } from './middleware/requestId.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
+import { csrfGuard } from './middleware/csrfGuard.js';
 import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNotify } from './services/sms.service.js';
@@ -67,7 +69,7 @@ app.use('/api/webhooks', express.raw({ type: 'application/json' }), (req, _res, 
 }, webhookRoutes);
 
 app.use(express.json({ limit: '25mb' }));
-
+app.use(cookieParser());
 app.use('/api', rateLimiter, routes);
 
 // JSON 404 for unmatched API routes (must come before the error handler).

@@ -39,9 +39,12 @@ model Profile {
   name       String
   phone      String?
   address    String?
-  preferences String?  @map("preferences")
-  notifyPrefs Json?    @map("notify_prefs")
-  styleNotes  String?  @map("style_notes")
+   preferences String?  @map("preferences")
+   notifyPrefs Json?    @map("notify_prefs")
+   styleNotes  String?  @map("style_notes")
+   mfaEnabled  Boolean  @default(false) @map("mfa_enabled")
+   totpSecret  String?  @map("totp_secret")
+   backupCodes Json?    @map("backup_codes")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
