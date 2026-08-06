@@ -15,6 +15,7 @@ import { api } from './utils/api';
 import { useToast } from './components/Toast';
 
 import LoginPage from './pages/LoginPage';
+import ForgotPasswordView from './pages/ForgotPasswordView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
 import LandingPage from './pages/LandingPage';
 import InventoryPage from './pages/InventoryPage';
@@ -71,7 +72,7 @@ const navItems = {
 };
 
 export default function RentechApp() {
-  const { isLoggedIn, role, profile, loading, logout, updateProfile, completeOAuth } = useAuth();
+  const { isLoggedIn, role, profile, loading, logout, updateProfile, completeOAuth, cancelOAuth } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -93,51 +94,47 @@ export default function RentechApp() {
     : tabFromPath(viewRole, basePath);
   // Paths that belong to another role (for the Unauthorized page).
   const roleOwnsPath = pathRequiresRole(location.pathname);
-  const [oauthProcessing, setOauthProcessing] = useState(
-    () => new URLSearchParams(window.location.search).has('code') || window.location.hash.includes('access_token')
-  );
-  const [oauthDetails, setOauthDetails] = useState(null);
-  const oauthHandledRef = useRef(false);
+  const [showOAuthDetails, setShowOAuthDetails] = useState(false);
 
   const handleOAuthDetails = async (details) => {
     await completeOAuth(details);
-    setOauthDetails(null);
-    window.history.replaceState({}, document.title, window.location.pathname);
+    setShowOAuthDetails(false);
+    window.history.replaceState({}, document.title, '/');
+    navigate('/', { replace: true });
   };
 
-  const cancelOAuthDetails = () => {
-    setOauthDetails(null);
-    setOauthProcessing(false);
-    window.history.replaceState({}, document.title, window.location.pathname);
+  const cancelOAuthDetails = async () => {
+    try { await cancelOAuth(); } catch {}
+    setShowOAuthDetails(false);
+    window.history.replaceState({}, document.title, '/');
+    navigate('/', { replace: true });
   };
 
-  // Handle Supabase OAuth (Google) redirect: the provider bounces the user
-  // back to this SPA with ?code=... (or #access_token=...). Finish the
-  // handshake, then clean the URL so it isn't reprocessed on refresh.
+  // Phase 3: The backend redirects incomplete Google sign-ups to
+  // /oauth-details?email=... The frontend shows the profile-details form.
   useEffect(() => {
-    if (oauthHandledRef.current) return;
-    oauthHandledRef.current = true;
-    const params = new URLSearchParams(window.location.search);
-    const hasCode = params.has('code') || window.location.hash.includes('access_token');
-    if (!hasCode) return;
-    // NOTE: always clear oauthProcessing + clean the URL in .finally. We must
-    // NOT skip this on StrictMode's immediate cleanup (it would leave the
-    // loading skeleton stuck). The ref guard above already prevents duplicate
-    // handshakes, so there's no double-processing to worry about.
-    completeOAuth()
-      .then((res) => {
-        if (res && res.needsDetails) {
-          setOauthDetails({ email: res.email });
-        }
-      })
-      .catch((err) => {
-        toastError(err?.body?.error || err?.message || 'Google sign-in failed');
-      })
-      .finally(() => {
-        window.history.replaceState({}, document.title, window.location.pathname);
-        setOauthProcessing(false);
-      });
-  }, [completeOAuth]);
+    if (location.pathname === '/oauth-details') {
+      setShowOAuthDetails(true);
+    }
+  }, [location.pathname]);
+
+  // Phase 3: Google redirects the browser to /oauth/callback?code=... (the
+  // redirect_to the backend gave it). Forward the code to the backend
+  // endpoint, which exchanges it (PKCE verifier + code live in httpOnly
+  // cookies), mints session cookies, and 302s back to "/" or "/oauth-details".
+  useEffect(() => {
+    if (location.pathname !== '/oauth/callback') return;
+    const params = new URLSearchParams(location.search);
+    const oauthError = params.get('error');
+    const code = params.get('code');
+    if (oauthError) {
+      navigate('/', { replace: true });
+    } else if (code) {
+      window.location.href = `/api/auth/oauth/callback?code=${encodeURIComponent(code)}`;
+    } else {
+      navigate('/', { replace: true });
+    }
+  }, [location.pathname, location.search, navigate]);
 
   const {
     inventory,
@@ -530,7 +527,7 @@ export default function RentechApp() {
 
   const currentNav = navItems[viewRole || 'Admin'];
 
-  if (loading || oauthProcessing) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center">
         <SkeletonScreen />
@@ -538,21 +535,36 @@ export default function RentechApp() {
     );
   }
 
-  // Google OAuth sign-up: collect missing details before completing the account.
-  if (oauthDetails) {
+  // Phase 3: OAuth details form (shown after incomplete Google sign-up via
+  // the server-side redirect → /oauth-details route).
+  if (!isLoggedIn && showOAuthDetails) {
+    const email = new URLSearchParams(window.location.search).get('email') || '';
     return (
       <GoogleSignupDetails
-        email={oauthDetails.email}
+        email={email}
         onComplete={handleOAuthDetails}
         onCancel={cancelOAuthDetails}
       />
     );
   }
 
+  // Google OAuth sign-up: collect missing details before completing the account.
+
   // Fallback + role guard: unknown URL -> 404 page; URL owned by another role
   // -> Unauthorized page (no silent redirect). Runs after the auth gates so
   // role is resolved.
   if (isLoggedIn && activeTab == null) {
+    // OAuth round-trip pads: /oauth/callback and /oauth-details are transient
+    // landing spots while the code is exchanged or the details form is shown —
+    // never "not found". With a still-valid session, isLoggedIn is already
+    // true for a frame here; show a skeleton instead of flashing the 404.
+    if (location.pathname === '/oauth/callback' || location.pathname === '/oauth-details') {
+      return (
+        <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center">
+          <SkeletonScreen />
+        </div>
+      );
+    }
     if (roleOwnsPath && roleOwnsPath !== viewRole) {
       return (
         <UnauthorizedPage onHome={() => navigate(HOME_PATH[viewRole], { replace: true })} />
@@ -575,10 +587,25 @@ export default function RentechApp() {
     if (item) setDetailItem(item);
   };
 
+  // Phase 2: Password reset flows (public auth pages, accessible signed-out)
+  if (location.pathname === '/forgot-password' || location.pathname === '/reset-password') {
+    return <ForgotPasswordView />;
+  }
+
   // Render: Landing -> Login -> Main App
   if (!isLoggedIn) {
     if (showLoginPage) {
        return <LoginPage />;
+    }
+    // OAuth round-trip pads while signed out: the SPA lands on /oauth/callback
+    // (code exchange in flight) or /oauth-details (details form) before the
+    // backend round-trips it home — never flash the guest 404 for these.
+    if (location.pathname === '/oauth/callback' || location.pathname === '/oauth-details') {
+      return (
+        <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center">
+          <SkeletonScreen />
+        </div>
+      );
     }
     // Unknown URL while signed out -> 404 with a way back to the landing page.
     if (!guestView && location.pathname !== '/') {

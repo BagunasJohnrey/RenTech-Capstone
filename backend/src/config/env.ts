@@ -17,6 +17,14 @@ export const env = {
   SUPABASE_URL: requireEnv('SUPABASE_URL'),
   SUPABASE_SERVICE_ROLE_KEY: requireEnv('SUPABASE_SERVICE_ROLE_KEY'),
   SUPABASE_ANON_KEY: requireEnv('SUPABASE_ANON_KEY'),
+  // Project JWT secret (Settings → API → JWT Settings). Used to verify
+  // access tokens locally instead of calling Supabase on every request.
+  SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET || '',
+
+  // W3.9: AES-256-GCM key for encrypting TOTP secrets at rest in the database.
+  // A raw secret string is stretched via SHA-256 to 32 bytes. Empty in dev
+  // (encryption is skipped) — must be set in any deployment where MFA is used.
+  MFA_SECRET_KEY: process.env.MFA_SECRET_KEY || '',
 
   DATABASE_URL: requireEnv('DATABASE_URL'),
 
@@ -31,4 +39,13 @@ export const env = {
   // OpenRouter fallback so the AI stylist still answers when Gemini is down /
   // unconfigured. Key is optional; only free-capable models are tried.
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
+
+  // Email verification gate. When true (dev default), Supabase auto-confirms
+  // emails so the demo stays frictionless (no SMTP needed). When false (prod
+  // default), signups require email confirmation — set AUTH_EMAIL_CONFIRM=true
+  // in prod only if you have an SMTP provider configured in the Supabase
+  // dashboard to actually deliver verification links.
+  AUTH_EMAIL_CONFIRM: (process.env.NODE_ENV || 'development') === 'production'
+    ? process.env.AUTH_EMAIL_CONFIRM === 'true'
+    : true,
 };

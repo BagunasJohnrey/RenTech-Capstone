@@ -243,6 +243,39 @@ async function callOpenRouter(system: string, historyTurns: { role: string; text
   throw (lastErr instanceof Error ? lastErr : new Error('OpenRouter unavailable'));
 }
 
+// Fetch a business-report draft from Gemini (plain text). Shared by the first
+// attempt and the correction retry in generateReport. Low temperature keeps
+// the analyst restating the supplied figures instead of free-styling new
+// ones, which keeps the amount-guard happy.
+async function callGeminiReport(prompt: string): Promise<string> {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
+    {
+      method: 'POST',
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': env.GEMINI_API_KEY,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.2 },
+      }),
+    }
+  );
+  if (!response.ok) {
+    // 429/503/529 = provider busy — show the "high traffic" fallback.
+    if (response.status === 429 || response.status === 503 || response.status === 529) {
+      throw markRateLimited(new Error(`Gemini API returned ${response.status}`));
+    }
+    throw new Error(`Gemini API returned ${response.status}`);
+  }
+  const body = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+  const report = body?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!report) throw new Error('Could not generate report.');
+  return report;
+}
+
 export async function chatWithAi(message: string, history?: { role: string; text: string }[], inventory?: { name: string; category: string; price: number; onSale?: boolean; salePrice?: number | null }[]) {
   const guard = applyGuardrails(message);
   if (guard) {
@@ -429,7 +462,9 @@ CONTENT RULES:
 - Use only the numbers in the provided JSON. Do NOT invent, estimate, extrapolate, or alter any figure.
 - HONESTY RULE: If the data shows NO sales (monthlyRevenue is 0/absent, no rentals, empty revenueByCategory), write plainly "No sales data available yet" in Revenue Analysis and Executive Summary. NEVER invent sales figures, revenue, trends, promos, or "strong performance" that are not in the data.
 - Every sentence with a number must reference that number's real source in the Data (e.g. "Monthly revenue is ₱120,000 per the KPI data"). Interpretations are allowed; invented numbers are not.
+- Every sentence with a number must reference that number's real source in the Data (e.g. "Monthly revenue is ₱120,000 per the KPI data"). Interpretations are allowed; invented numbers are not.
 - A currency amount (₱…) may appear ONLY if it is present in the Data JSON (you may round to K/M within 5%). Never write any other ₱ amount.
+- NEVER write a derived or computed ₱ amount: no differences (e.g. "a drop of ₱X"), no sums, no totals, no averages, and no percentage figures in pesos. To describe a change, use words (e.g. "a sharp decline from the previous month") — never compute a new amount.
 - Promotions/clearance ideas in Recommendations are FUTURE SUGGESTIONS, never existing facts — do not claim any sale or promo is currently running unless the data says so.
 - All currency is Philippine Peso (₱). Report amounts exactly as given: if a value is below 1,000,000, write it in thousands (e.g., ₱60.3K), never as millions. Never use "M" unless the figure is truly ≥ 1,000,000.
 - Do NOT contradict yourself. If a category appears in revenue leaders or most-rented items, do not call it "underperforming".
@@ -454,37 +489,26 @@ ${underperforming.length ? `Underperforming items (never rented, promote or clea
 ${topRented.length ? `Top rented items (demand leaders — prioritize restock): ${topList}` : ''}
 ${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''}`;
 
+  // Runs a provider call, then the anti-hallucination amount-guard. When the
+  // guard flags an invented figure, retry ONCE with a targeted correction
+  // instruction instead of killing the whole report — the model gets a chance
+  // to fix its draft while fabricated figures are still rejected.
+  const runValidatedReport = async (call: (p: string) => Promise<string>) => {
+    const draft = await call(prompt);
+    const ok = validateReportAmounts(draft, data);
+    if (ok.source === 'ai') return ok;
+
+    const correction = `${prompt}
+
+CORRECTION REQUIRED: The previous draft was rejected because it contained a ₱ amount that is NOT present in the Data JSON above. Rewrite the ENTIRE report. You may repeat ONLY the exact ₱ amounts from the Data (optionally with K/M rounding within 5%). Never write derived or computed amounts — no differences, sums, totals, averages, or percentage figures in pesos. Describe changes in words.`;
+    return validateReportAmounts(await call(correction), data);
+  };
+
   // Try Gemini first, then OpenRouter, so a report is produced even when one
   // provider is down. Free OpenRouter models keep this working offline.
   if (env.GEMINI_API_KEY) {
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
-        {
-          method: 'POST',
-          signal: AbortSignal.timeout(15000),
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': env.GEMINI_API_KEY,
-          },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        // 429/503/529 = provider busy — show the "high traffic" fallback.
-        if (response.status === 429 || response.status === 503 || response.status === 529) {
-          throw markRateLimited(new Error(`Gemini API returned ${response.status}`));
-        }
-        throw new Error(`Gemini API returned ${response.status}`);
-      }
-
-      const body = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const report = body?.candidates?.[0]?.content?.parts?.[0]?.text || 'Could not generate report.';
-
-      return validateReportAmounts(report, data);
+      return await runValidatedReport(callGeminiReport);
     } catch (err) {
       if (!env.OPENROUTER_API_KEY) {
         return isRateLimited(err)
@@ -499,8 +523,10 @@ ${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''
 
   if (env.OPENROUTER_API_KEY) {
     try {
-      const { text } = await callOpenRouter(prompt, [], 'Generate the report now.');
-      return validateReportAmounts(text, data);
+      return await runValidatedReport(async (p) => {
+        const { text } = await callOpenRouter(p, [], 'Generate the report now.');
+        return text;
+      });
     } catch (err) {
       return isRateLimited(err)
         ? { report: RATE_LIMITED_REPLY, source: 'error', retryable: true }

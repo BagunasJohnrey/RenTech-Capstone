@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { ArrowRight, Heart } from 'lucide-react';
 import { api } from '../utils/api';
-import { supabaseClient } from '../utils/supabaseClient';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
@@ -42,14 +41,11 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
   const togglePreference = (type) =>
     setPreferences((p) => (p.includes(type) ? p.filter((t) => t !== type) : [...p, type]));
 
-  // Clean up the orphan account created during this OAuth session before
-  // backing out, so cancelling doesn't leave a registered profile behind.
+  // Phase 3: cancel uses the cookie-based OAuth cancel endpoint
+  // (backend reads the access token from the rt_access cookie).
   const handleCancel = async () => {
     try {
-      const { data } = await supabaseClient.auth.getSession();
-      if (data.session) {
-        await api.post('/auth/oauth-cancel', { accessToken: data.session.access_token });
-      }
+      await api.post('/auth/oauth/cancel');
     } catch {
       // best-effort cleanup; still return to the previous screen
     } finally {
@@ -68,7 +64,12 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
     }
     setLoading(true);
     try {
-      await onComplete({ name, phone, address, preferences });
+      // Phase 3: POST to the server-side details endpoint. Cookies handle auth.
+      const result = await api.post('/auth/oauth/details', {
+        name, phone, address, preferences,
+      });
+      // The backend returns the profile; notify the parent to set authed state.
+      await onComplete(result.user);
     } catch (err) {
       setError(err.message || 'Failed to complete sign up');
       setLoading(false);
@@ -153,7 +154,7 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
               <FieldError show={touched.address && !fieldState('address').valid} message={fieldState('address').error} />
             </div>
             <div>
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+              <label className="text-[11px] font-bold text-gray-500 uppercase">
                 Interested in renting? <span className="text-gray-400 font-normal normal-case">(optional)</span>
               </label>
               <div className="flex flex-wrap gap-2 mt-2">
@@ -164,9 +165,7 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
                       type="button"
                       key={type}
                       onClick={() => togglePreference(type)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
-                        active ? 'bg-[#bf4a53] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${active ? 'bg-[#bf4a53] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
                     >
                       {type}
                     </button>

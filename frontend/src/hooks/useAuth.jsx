@@ -1,29 +1,26 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { api, setTokenGetter } from '../utils/api';
-import { getAccessToken, setSession } from '../utils/authSession';
-import { supabaseClient } from '../utils/supabaseClient';
+import { api } from '../utils/api';
+import { setAuthed, clearImageCache } from '../utils/authSession';
 
 const AuthContext = createContext(null);
-
-setTokenGetter(getAccessToken);
 
 export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async () => {
-    const token = getAccessToken();
-    if (!token) {
-      setProfile(null);
-      setLoading(false);
-      return;
-    }
+    // Cookies are sent automatically (credentials: 'include' in api.js).
+    // If the session is expired and the refresh cookie is valid, the 401
+    // retry in api.js refreshes first and then retries /auth/me.
     try {
       const prof = await api.get('/auth/me');
       setProfile(prof);
+      setAuthed(true);
     } catch {
-      setSession(null);
+      // Either no cookies, or refresh also failed → logged out.
       setProfile(null);
+      setAuthed(false);
+      clearImageCache();
     } finally {
       setLoading(false);
     }
@@ -33,16 +30,17 @@ export function AuthProvider({ children }) {
     fetchProfile();
   }, [fetchProfile]);
 
-  // Multi-tab sync: when another tab clears the session (logout) or refreshes
-  // it, mirror that here so all tabs converge on the same auth state.
+  // Multi-tab sync: when another tab logs in/out, mirror that here so all
+  // tabs converge on the same auth state. We use the rentech_authed flag
+  // (NOT a token — tokens are httpOnly cookies) as the broadcast channel.
   useEffect(() => {
     const onStorage = (e) => {
-      if (e.key !== 'rentech_token') return;
+      if (e.key !== 'rentech_authed') return;
       if (e.newValue === null) {
         // Logged out in another tab.
         setProfile(null);
-      } else if (e.newValue && !e.oldValue) {
-        // Logged in elsewhere — pick up the fresh session.
+      } else {
+        // Logged in elsewhere — re-fetch profile (cookies are already shared).
         fetchProfile();
       }
     };
@@ -52,15 +50,33 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (email, password) => {
     const result = await api.post('/auth/login', { email, password });
-    setSession(result.session);
+    // W2.7: MFA challenge tokens are stored in a short-lived httpOnly cookie
+    // (rt_mfa_pending); the verifyMfa call only needs the 6-digit code.
+    if (result.requiresMfa) {
+      return { requiresMfa: true, email: result.user.email };
+    }
+    // Normal login — cookies are set by the backend (Set-Cookie headers).
     setProfile(result.user);
+    setAuthed(true);
     return result.user;
   }, []);
 
+  // W2.7: Complete MFA challenge during login. The backend reads the pending
+  // cookie for the access/refresh tokens; we only send the 6-digit code.
+  // trustDevice: opt in to the 30-day rt_mfa_trusted cookie (skip the prompt
+  // on this browser for the next 30 days).
+  const verifyMfa = useCallback(async ({ code, trustDevice = false } = {}) => {
+    const result = await api.post('/auth/login/mfa', { code, trustDevice });
+    // Re-fetch profile to ensure we have the latest state (incl. role, MFA status).
+    await fetchProfile();
+    setAuthed(true);
+    return profile;
+  }, [fetchProfile, profile]);
+
   const signup = useCallback(async ({ email, password, name, phone, address, preferences } = {}) => {
     const result = await api.post('/auth/signup', { email, password, name, phone, address, preferences });
-    setSession(result.session);
     setProfile(result.user);
+    setAuthed(true);
     return result.user;
   }, []);
 
@@ -68,27 +84,29 @@ export function AuthProvider({ children }) {
     try {
       await api.post('/auth/logout');
     } catch {}
-    setSession(null);
+    // Cookies are cleared by the backend; flag + profile cleared here.
     setProfile(null);
+    setAuthed(false);
+    clearImageCache();
   }, []);
 
-  // Completes the Supabase OAuth (Google) redirect handshake. If the linked
-  // profile already exists we log in; otherwise the backend returns
-  // { needsDetails: true } and we pass the collected details on the next call
-  // to create the account. The session is only persisted once a profile exists.
+  // Phase 3: Complete the server-side OAuth flow by submitting the profile
+  // details. The access token is already in the rt_access cookie (set during
+  // the OAuth callback), so we just POST the form data and the backend handles
+  // the rest. No client-side token needed.
   const completeOAuth = useCallback(async (details) => {
-    const { data, error } = await supabaseClient.auth.getSession();
-    if (error || !data.session) {
-      throw new Error('OAuth session not found');
-    }
-    const result = await api.post('/auth/oauth', {
-      accessToken: data.session.access_token,
-      details,
-    });
-    if (result.needsDetails) return result;
-    setSession(data.session);
+    const result = await api.post('/auth/oauth/details', details);
+    setAuthed(true);
     setProfile(result.user);
     return result.user;
+  }, []);
+
+  // Phase 3: Cancel an in-progress OAuth sign-up. Reads the access token
+  // from the cookie on the backend side.
+  const cancelOAuth = useCallback(async () => {
+    await api.post('/auth/oauth/cancel');
+    setAuthed(false);
+    clearImageCache();
   }, []);
 
   const updateProfile = useCallback(async (data) => {
@@ -107,7 +125,9 @@ export function AuthProvider({ children }) {
     logout,
     updateProfile,
     fetchProfile,
-    completeOAuth,
+     completeOAuth,
+     cancelOAuth,
+     verifyMfa,
   };
 
   return (
