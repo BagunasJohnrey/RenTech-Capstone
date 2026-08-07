@@ -75,6 +75,12 @@ export function AuthProvider({ children }) {
 
   const signup = useCallback(async ({ email, password, name, phone, address, preferences } = {}) => {
     const result = await api.post('/auth/signup', { email, password, name, phone, address, preferences });
+    // Email verification: the backend returns requiresVerification (no session)
+    // when AUTH_EMAIL_CONFIRM=false, meaning the user must click the link in
+    // the confirmation email before they can sign in. Don't set profile/flag.
+    if (result.requiresVerification) {
+      return { requiresVerification: true, email: result.user?.email || email };
+    }
     setProfile(result.user);
     setAuthed(true);
     return result.user;
@@ -90,15 +96,15 @@ export function AuthProvider({ children }) {
     clearImageCache();
   }, []);
 
-  // Phase 3: Complete the server-side OAuth flow by submitting the profile
-  // details. The access token is already in the rt_access cookie (set during
-  // the OAuth callback), so we just POST the form data and the backend handles
-  // the rest. No client-side token needed.
-  const completeOAuth = useCallback(async (details) => {
-    const result = await api.post('/auth/oauth/details', details);
+  // Phase 3: Finalize the server-side OAuth flow. GoogleSignupDetails already
+  // POSTed /oauth/details (the backend minted session cookies + returned the
+  // profile); this just adopts that profile into auth state. It must NOT
+  // re-POST — the profile's `preferences` is a comma-joined string that fails
+  // the backend's Zod array schema (400 "Validation error").
+  const completeOAuth = useCallback(async (user) => {
     setAuthed(true);
-    setProfile(result.user);
-    return result.user;
+    setProfile(user);
+    return user;
   }, []);
 
   // Phase 3: Cancel an in-progress OAuth sign-up. Reads the access token

@@ -16,6 +16,8 @@ import { useToast } from './components/Toast';
 
 import LoginPage from './pages/LoginPage';
 import ForgotPasswordView from './pages/ForgotPasswordView';
+import VerifyEmailView from './pages/VerifyEmailView';
+import OAuthErrorView from './pages/OAuthErrorView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
 import LandingPage from './pages/LandingPage';
 import InventoryPage from './pages/InventoryPage';
@@ -596,9 +598,24 @@ export default function RentechApp() {
     if (item) setDetailItem(item);
   };
 
-  // Phase 2: Password reset flows (public auth pages, accessible signed-out)
-  if (location.pathname === '/forgot-password' || location.pathname === '/reset-password') {
+  // Phase 2: Password reset flows (public auth pages, accessible signed-out).
+  // The forgot-password form is an inline step inside <Login />; only the reset
+  // step needs its own landing page because the email/action link points here
+  // with a token_hash.
+  if (location.pathname === '/reset-password') {
     return <ForgotPasswordView />;
+  }
+
+  // Email verification landing — the signup confirmation link points here with
+  // a token_hash. Public: the user is not logged in yet (unconfirmed account).
+  if (location.pathname === '/verify-email') {
+    return <VerifyEmailView />;
+  }
+
+  // OAuth error landing — the backend redirects failed Google sign-ins here
+  // (e.g. the email already belongs to an email/password account). Public.
+  if (location.pathname === '/oauth-error') {
+    return <OAuthErrorView />;
   }
 
   // Render: Landing -> Login -> Main App

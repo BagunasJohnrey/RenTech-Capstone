@@ -99,6 +99,7 @@ export function createKeyedRateLimiter(
       else localStore.set(key, { timestamps: fresh });
     }
   };
+  (limiter as any).localStore = localStore;
   localLimiters.push(limiter as unknown as Limiter);
 
   return limiter;
@@ -111,6 +112,15 @@ export function createRateLimiter(maxRequests: number, windowMs: number) {
 
 export function clearRateLimitStore() {
   store.clear();
+}
+
+// Clears the global + every per-route keyed store (test helper — supertest
+// shares one IP, so without this the Nth login/signup test in a file hits 429).
+export function clearAllRateLimiters() {
+  store.clear();
+  for (const l of localLimiters) {
+    (l as any).localStore?.clear?.();
+  }
 }
 
 export function clearLocalStore(store: Map<string, RateLimitEntry>) {

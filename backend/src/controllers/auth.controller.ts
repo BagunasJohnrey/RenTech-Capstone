@@ -72,6 +72,12 @@ export const resetPasswordSchema = z.object({
   }),
 });
 
+export const verifyEmailSchema = z.object({
+  body: z.object({
+    token_hash: z.string().min(1),
+  }),
+});
+
 // Phase 1 + 3: OAuth now also carries the refresh token so the backend can
 // mint httpOnly cookies (Phase 1). Phase 3 replaces the whole flow with a
 // server-side redirect, but the schema stays backward-compatible meanwhile.
@@ -299,12 +305,13 @@ export async function removeStaff(req: AuthenticatedRequest, res: Response, next
 }
 
 // Phase 2: password reset — always returns 200 (no account enumeration).
+// Email delivery is handled entirely by Supabase's own email service
+// (Authentication → Emails). No third-party SMTP.
 export async function forgotPassword(req: Request, res: Response, next: NextFunction) {
   try {
     const { email } = req.body;
-    await supabaseAdmin.auth.resetPasswordForEmail(email, {
-      redirectTo: `${env.FRONTEND_URL.replace(/\/$/, '')}/reset-password`,
-    });
+    const redirectTo = `${env.FRONTEND_URL.replace(/\/$/, '')}/reset-password`;
+    await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo });
     res.json({ message: 'If that email is registered, a reset link has been sent.' });
   } catch (err) {
     next(err);
@@ -337,6 +344,43 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
       setSessionCookies(res, rtSession);
     }
     res.json({ message: 'Password reset successfully' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Email verification: consume the signup confirmation token. The user was
+// created (unconfirmed) by signupCustomer via the public signUp endpoint;
+// verifyOtp({ type: 'signup' }) confirms the email and returns a session,
+// which we mint into httpOnly cookies so the user is logged in immediately.
+export async function verifyEmail(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { token_hash } = req.body;
+    const { data, error } = await supabaseAdmin.auth.verifyOtp({
+      token_hash,
+      type: 'signup',
+    });
+    if (error || !data?.user) throw new AppError(401, 'This verification link is invalid or has expired.');
+
+    // The profile was created at signup; find it by auth userId. If it's
+    // missing (e.g. signup was interrupted), create a minimal one so the
+    // verified user can use the app.
+    let profile = await prisma.profile.findUnique({ where: { userId: data.user.id } });
+    if (!profile) {
+      profile = await prisma.profile.create({
+        data: {
+          userId: data.user.id,
+          email: data.user.email ?? '',
+          role: 'Customer',
+          name: data.user.email?.split('@')[0] ?? 'Customer',
+        },
+      });
+    }
+
+    if (data.session) {
+      setSessionCookies(res, authService.toRtSession(data.session));
+    }
+    res.json({ message: 'Email verified successfully', user: profile });
   } catch (err) {
     next(err);
   }
@@ -558,6 +602,19 @@ export async function oauthCallback(req: Request, res: Response, next: NextFunct
     });
     res.redirect(302, `${env.FRONTEND_URL.replace(/\/$/, '')}/`);
   } catch (err) {
+    // User-facing OAuth errors (e.g. 409 "an account with this email already
+    // exists") must NOT dump raw JSON on the callback URL the browser was
+    // redirected to. Send the user to a friendly error page instead.
+    if (err instanceof AppError && err.statusCode >= 400 && err.statusCode < 500) {
+      clearPkceCookie(res);
+      clearSessionCookies(res);
+      clearOauthPendingCookie(res);
+      res.redirect(
+        302,
+        `${env.FRONTEND_URL.replace(/\/$/, '')}/oauth-error?message=${encodeURIComponent(err.message)}`
+      );
+      return;
+    }
     next(err);
   }
 }

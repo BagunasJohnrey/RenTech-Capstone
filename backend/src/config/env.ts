@@ -40,12 +40,9 @@ export const env = {
   // unconfigured. Key is optional; only free-capable models are tried.
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
 
-  // Email verification gate. When true (dev default), Supabase auto-confirms
-  // emails so the demo stays frictionless (no SMTP needed). When false (prod
-  // default), signups require email confirmation — set AUTH_EMAIL_CONFIRM=true
-  // in prod only if you have an SMTP provider configured in the Supabase
-  // dashboard to actually deliver verification links.
-  AUTH_EMAIL_CONFIRM: (process.env.NODE_ENV || 'development') === 'production'
-    ? process.env.AUTH_EMAIL_CONFIRM === 'true'
-    : true,
+  // Email verification gate. false (default) = signups require email
+  // confirmation: the public signUp endpoint triggers Supabase's built-in
+  // confirmation email and the account can't log in until verified. Set
+  // AUTH_EMAIL_CONFIRM=true to auto-confirm (frictionless demo).
+  AUTH_EMAIL_CONFIRM: process.env.AUTH_EMAIL_CONFIRM === 'true',
 };

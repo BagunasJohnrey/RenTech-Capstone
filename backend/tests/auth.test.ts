@@ -29,20 +29,20 @@ app.use('/api', routes);
 app.use(errorHandler);
 
 describe('POST /api/auth/signup', () => {
-  it('should create a new customer account', async () => {
+  it('should create a new customer account (email verification pending)', async () => {
     const res = await request(app)
       .post('/api/auth/signup')
       .set('Origin', 'http://localhost:5173')
       .send({ email: 'new@test.com', password: 'Password123!', name: 'New User' });
 
     expect(res.status).toBe(201);
-    expect(res.body).toHaveProperty('session');
+    // AUTH_EMAIL_CONFIRM defaults to false → verification required. No session,
+    // no auto-login cookies; the frontend shows "check your inbox" instead.
     expect(res.body).toHaveProperty('user');
     expect(res.body.user.email).toBe('new@test.com');
-    // Phase 1: cookies should be set
-    expect(res.headers['set-cookie']).toBeDefined();
-    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_access='))).toBe(true);
-    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_refresh='))).toBe(true);
+    expect(res.body.requiresVerification).toBe(true);
+    expect(res.body.session).toBeNull();
+    expect(res.headers['set-cookie']).toBeUndefined();
   });
 
   it('should reject invalid email', async () => {
@@ -390,6 +390,71 @@ describe('POST /api/auth/reset-password', () => {
       .send({ token_hash: 'bad-hash', password: 'newPassword123!' });
 
     expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /api/auth/verify-email', () => {
+  it('should confirm the email and log the user in with a valid token', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.verifyOtp).mockResolvedValueOnce({
+      data: {
+        user: { id: 'auth-user-id-123', email: 'test@example.com' },
+        session: {
+          access_token: 'verified-token',
+          refresh_token: 'rt-verified',
+          token_type: 'bearer',
+          expires_in: 3600,
+        },
+      },
+      error: null,
+    });
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token_hash: 'valid-signup-hash' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('verified');
+    expect(supabaseAdmin.auth.verifyOtp).toHaveBeenCalledWith({
+      token_hash: 'valid-signup-hash',
+      type: 'signup',
+    });
+    // Verified user gets session cookies (auto-login after clicking the link).
+    expect(res.headers['set-cookie']).toBeDefined();
+    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_access='))).toBe(true);
+  });
+
+  it('should reject an invalid or expired token', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.verifyOtp).mockResolvedValueOnce({
+      data: { user: null, session: null },
+      error: { message: 'Token expired' },
+    });
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token_hash: 'expired-hash' });
+
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /api/auth/login with unconfirmed email', () => {
+  it('should return a verify-email hint, not invalid-credentials', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    // GoTrue returns email_not_confirmed ONLY after the password was correct.
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: { id: 'auth-customer-id', email: 'customer@example.com' }, session: null },
+      error: { code: 'email_not_confirmed', message: 'Email not confirmed' },
+    });
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'customer@example.com', password: 'Password123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('verify your email');
+    expect(res.headers['set-cookie']).toBeUndefined();
   });
 });
 
@@ -816,12 +881,32 @@ describe('Phase 3: OAuth callback (PKCE exchange)', () => {
     expect(res.headers.location).toContain('new.oauth%40example.com');
   });
 
-  it('rejects a missing code', async () => {
+  it('redirects user-facing errors (e.g. missing code) to the error page', async () => {
     const res = await request(app)
       .get('/api/auth/oauth/callback')
       .set('Cookie', ['rt_oauth_pkce=some-verifier']);
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('/oauth-error');
+    expect(res.headers.location).toContain(encodeURIComponent('Missing authorization code'));
+  });
+
+  it('redirects to the error page when the email already belongs to an account', async () => {
+    stubTokenEndpoint();
+    // OAuth user email matches an existing email/password profile (test@example.com
+    // belongs to auth-user-id-123) but is a different user → oauthGetOrCreateProfile
+    // throws 409 "account with this email already exists".
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'different-user-id', email: 'test@example.com' } },
+      error: null,
+    } as never);
+    const res = await request(app)
+      .get('/api/auth/oauth/callback?code=oauth-code-123')
+      .set('Cookie', ['rt_oauth_pkce=some-verifier']);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('/oauth-error');
+    expect(decodeURIComponent(res.headers.location)).toContain('already exists');
   });
 });
 

@@ -33,6 +33,8 @@ router.post('/refresh', createRateLimiter(30, 60_000), authController.refresh);
 // Phase 2: password reset — always 200 (no enumeration), rate-limited per IP.
 router.post('/forgot-password', createRateLimiter(5, 60_000), validate(authController.forgotPasswordSchema), authController.forgotPassword);
 router.post('/reset-password', createRateLimiter(10, 60_000), validate(authController.resetPasswordSchema), authController.resetPassword);
+// Email verification: consume the signup confirmation token (from the email link).
+router.post('/verify-email', createRateLimiter(10, 60_000), validate(authController.verifyEmailSchema), authController.verifyEmail);
 
 // OAuth (Google) handshake — Phase 3 server-side redirect.
 // POST /oauth (legacy, token-in-body) kept for backward-compat but unused
