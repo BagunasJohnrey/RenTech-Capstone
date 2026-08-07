@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets, Tag, Copy, Check, CalendarClock, Sparkle } from 'lucide-react';
+import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets, Tag, Copy, Check, CalendarClock, Sparkle, ScanLine } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
 import { DashboardSkeleton } from '../components/PageSkeletons';
 import { api } from '../utils/api';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { txPill } from '../utils/statusColors';
 import { promoService } from '../services/promo';
 
-export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onCustomerBook }) {
+export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook }) {
   const todayStats = useTodayTasks(role);
   const kpis = useKpis(role);
+  const { qr_codes: qrCodesOn } = useFeatureFlags();
   const [showCleaningQueue, setShowCleaningQueue] = useState(false);
 
   // Live promo codes for the customer "Promotions & Offers" section.
@@ -154,7 +156,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
 
             {/* Sale items pulled into the promo section */}
             {onSale.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
                 {onSale.map((item) => (
                   <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
                 ))}
@@ -199,7 +201,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </div>
             <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
             {recommended.map((item) => (
               <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
             ))}
@@ -221,7 +223,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
               </div>
               <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
               {newArrivals.map((item) => (
                 <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
               ))}
@@ -365,6 +367,14 @@ export default function DashboardView({ role, transactions, inventory, customerI
               <Undo2 size={20} />
               Process Return
             </button>
+            {/* Scan QR (visible only while the QR-codes flag is ON) */}
+            {qrCodesOn && onOpenScanner && (
+              <button onClick={onOpenScanner}
+                className="w-full flex items-center justify-center gap-3 bg-white border-2 border-dashed border-gray-300 text-gray-700 font-bold text-base lg:text-[15px] py-4 lg:py-3 rounded-2xl lg:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] lg:min-h-0 shadow-sm lg:shadow-none">
+                <ScanLine size={20} />
+                Scan QR
+              </button>
+            )}
           </div>
 
           {/* Today at a Glance (desktop only) */}

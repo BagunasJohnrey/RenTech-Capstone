@@ -35,6 +35,16 @@ export async function getRules(_req: AuthenticatedRequest, res: Response, next: 
   }
 }
 
+// Non-sensitive feature flags (UI toggles) readable by any authenticated role.
+export async function getFeatureFlags(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const flags = await settingsService.getFeatureFlags();
+    res.json(flags);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function updateRules(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const result = await settingsService.updateBusinessRules(req.body);

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 // Generic confirmation dialog. Replaces the previously duplicated
@@ -22,7 +24,26 @@ export default function ConfirmModal({
     ? 'bg-red-500 hover:bg-red-600 rounded-xl'
     : 'bg-[#bf4a53] hover:bg-red-700 rounded-full shadow-sm shadow-red-500/20';
 
-  return (
+  // Close on Escape (works regardless of where the modal is mounted). The
+  // listener is attached once via a ref so it survives parent re-renders
+  // (parent callbacks get new identities every render, and tearing the
+  // listener down mid-dispatch would make Escape close the parent's other
+  // overlay while this modal stays open).
+  const cancelRef = useRef(onCancel);
+  useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') cancelRef.current?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Rendered via a portal to document.body: a `backdrop-blur` ancestor (the
+  // app header) would otherwise become the containing block for the `fixed`
+  // scrim, trapping it inside the header so clicks outside the dialog can't
+  // dismiss it (and the modal would render mispositioned).
+  return createPortal(
     <div
       className={`fixed inset-0 ${zIndex} flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm`}
       onClick={onCancel}
@@ -71,6 +92,7 @@ export default function ConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

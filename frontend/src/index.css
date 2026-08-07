@@ -11,6 +11,16 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
 * { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ---------------------------------------------------------------------------
+   QR scanner — animated scan line inside the viewfinder frame
+   --------------------------------------------------------------------------- */
+@keyframes scanline {
+  0%   { top: 4%; }
+  50%  { top: 92%; }
+  100% { top: 4%; }
+}
+.animate-scanline { animation: scanline 1.8s ease-in-out infinite; }
+
+/* ---------------------------------------------------------------------------
    AI Business Report document styling
    --------------------------------------------------------------------------- */
 .report-document {

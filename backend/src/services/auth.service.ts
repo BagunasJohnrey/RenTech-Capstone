@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '../config/supabase.js';
+import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { env } from '../config/env.js';
@@ -13,10 +13,56 @@ export async function signupCustomer(data: {
   address?: string;
   preferences?: string[];
 }) {
+  if (!env.AUTH_EMAIL_CONFIRM) {
+    // Email verification path: create the user via the PUBLIC signup endpoint
+    // (anon key). Only this endpoint makes Supabase send the confirmation
+    // email (service-role admin.createUser never does). The user is created
+    // unconfirmed and CANNOT log in until they click the emailed link, which
+    // lands on /verify-email and completes the account via POST /auth/verify-email.
+    const { data: authData, error } = await supabaseSignUp.auth.signUp({
+      email: data.email,
+      password: data.password,
+      options: {
+        emailRedirectTo: `${env.FRONTEND_URL.replace(/\/$/, '')}/verify-email`,
+      },
+    });
+
+    if (error || !authData.user) {
+      // C2: never echo the Supabase error — it reveals whether the email is
+      // already registered (account enumeration). Log the real reason instead.
+      console.error('[auth] signup (verify) failed:', error?.message ?? 'no user returned');
+      throw new AppError(400, 'Unable to create account. Please try again.');
+    }
+
+    const profile = await prisma.profile.create({
+      data: {
+        userId: authData.user.id,
+        email: data.email,
+        role: 'Customer',
+        name: data.name,
+        phone: data.phone ?? null,
+        address: data.address ?? null,
+        preferences: Array.isArray(data.preferences) && data.preferences.length
+          ? data.preferences.join(',')
+          : null,
+      },
+    });
+
+    // No session — the user must verify their email first. The controller
+    // skips setSessionCookies when session is null, so the frontend shows
+    // "check your inbox" instead of auto-logging in.
+    return {
+      session: null,
+      user: profile,
+      requiresVerification: true,
+      requiresMfa: false,
+    };
+  }
+
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
     email: data.email,
     password: data.password,
-    email_confirm: env.AUTH_EMAIL_CONFIRM,
+    email_confirm: true,
   });
 
   if (error || !authData.user) {
@@ -72,6 +118,13 @@ export async function loginUser(email: string, password: string, trustedDevice =
   });
 
   if (error || !data.session) {
+    // The "email not confirmed" error only fires when the password was
+    // CORRECT for a registered email (GoTrue checks credentials first), so
+    // surfacing it doesn't leak account enumeration. Direct the user to the
+    // verification email instead of the generic invalid-credentials message.
+    if (error?.code === 'email_not_confirmed' || /email not confirmed/i.test(error?.message ?? '')) {
+      throw new AppError(401, 'Please verify your email address first — check your inbox.');
+    }
     throw new AppError(401, 'Invalid email or password');
   }
 
@@ -242,10 +295,13 @@ export async function createStaffAccount(adminId: string, data: {
     throw new AppError(403, 'Only admins can create staff accounts');
   }
 
+  // Staff are created by an admin, so they're trusted by default — always
+  // auto-confirm (admin.createUser wouldn't send a verification email anyway,
+  // so an unconfirmed staff account would be locked out with no way in).
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
     email: data.email,
     password: data.password,
-    email_confirm: env.AUTH_EMAIL_CONFIRM,
+    email_confirm: true,
   });
 
   if (error || !authData.user) {

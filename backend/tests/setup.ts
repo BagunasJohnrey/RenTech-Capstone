@@ -4,8 +4,15 @@ import { beforeAll, afterAll, beforeEach, vi } from 'vitest';
 // leftovers) between every test so once-guard / "not called" assertions never
 // see stale calls from a previous test. Without this, any test asserting
 // `.not.toHaveBeenCalled()` is order-dependent.
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  // Rate-limit stores are in-memory and keyed by IP — with supertest every
+  // request shares one IP, so without a reset the 5/min login limiter makes
+  // the Nth login test in a file fail with 429 (order-dependent). Imported
+  // dynamically so env.ts isn't evaluated before the process.env assignments
+  // above (which would break e.g. the SEMAPHORE_API_KEY-based send path).
+  const { clearAllRateLimiters } = await import('../src/middleware/rateLimiter.js');
+  clearAllRateLimiters();
 });
 
 process.env.SUPABASE_URL = 'https://test.supabase.co';
@@ -61,6 +68,13 @@ vi.mock('@supabase/supabase-js', () => {
           error: null,
         }),
       },
+      // Public signup endpoint (anon key) — the email-verification path.
+      // Returns a user with NO session (unconfirmed) by default; the signup
+      // controller surfaces requiresVerification instead of logging in.
+      signUp: vi.fn().mockResolvedValue({
+        data: { user: { id: 'new-auth-id', email: 'new@test.com' }, session: null },
+        error: null,
+      }),
       getUser: vi.fn().mockImplementation((token: string) => {
         const user = mockUsers[token] || { id: 'auth-user-id-123', email: 'test@example.com' };
         return Promise.resolve({ data: { user }, error: null });

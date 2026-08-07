@@ -155,7 +155,9 @@ const GalleryCard = ({ item, onBrowse }) => {
     <motion.button
       type="button"
       onClick={onBrowse}
-      variants={fadeInUp}
+      initial={{ opacity: 0, y: 30 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.2 }}
       whileHover={{ y: -6 }}
       whileTap={buttonPress}
       className="group relative rounded-2xl md:rounded-[28px] overflow-hidden bg-gray-100 aspect-[3/4] cursor-pointer shadow-sm hover:shadow-xl hover:shadow-gray-950/10 transition-shadow duration-300 text-left"

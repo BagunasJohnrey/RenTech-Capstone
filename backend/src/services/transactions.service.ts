@@ -1,12 +1,15 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { calculateFees } from '../utils/fees.js';
+import QRCode from 'qrcode';
+// qrcode.toDataURL promise style
 import { assertItemAvailable } from '../utils/availability.js';
 import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
+import { getFeatureFlags } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -248,6 +251,24 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     });
   } catch { /* notification is non-critical */ }
 
+  // Attach a real, scannable QR (data URI) — but ONLY while the QR feature is
+  // enabled (`qr_booking_codes` business rule). When the admin turns QR off, the
+  // server stops shipping any QR payload so no client can render one. Encodes
+  // `RT-<8 char tx id>` matching the booking code on receipts. Non-critical: a
+  // QR generation failure must never block a booking.
+  let qrCodeDataUri: string | undefined;
+  try {
+    const flags = await getFeatureFlags();
+    if (flags.qr_booking_codes) {
+      qrCodeDataUri = await QRCode.toDataURL(`RT-${String(transaction.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`, {
+        width: 320,
+        margin: 1,
+        errorCorrectionLevel: 'M',
+      });
+    }
+  } catch { /* QR generation is non-critical */ }
+  (transaction as Record<string, unknown>).qrCodeDataUri = qrCodeDataUri;
+
   // Auto-confirmation SMS
   try {
     const customerProfile = await prisma.profile.findUnique({ where: { id: data.customerId } });
@@ -294,6 +315,28 @@ export async function getTransaction(id: string) {
   });
 
   if (!tx) throw new AppError(404, 'Transaction not found');
+  return tx;
+}
+
+// Look up a booking for the staff QR scanner by its short booking code
+// (`RT-XXXXXXXX`, the first 8 hex chars of the transaction UUID, uppercase).
+// QR payloads may also carry a shareable URL like `...?tx=RT-XXXXXXXX` — the
+// controller extracts the code before calling this.
+export async function getTransactionByBookingCode(code: string) {
+  const clean = String(code).trim().toUpperCase().replace(/^RT-/, '');
+  if (!/^[0-9A-F]{6,8}$/.test(clean)) {
+    throw new AppError(404, 'Booking not found for this QR code');
+  }
+  const tx = await prisma.transaction.findFirst({
+    where: { id: { startsWith: clean.toLowerCase() } },
+    include: {
+      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
+      processedBy: { select: { id: true, name: true } },
+      item: true,
+      payments: { orderBy: { createdAt: 'desc' } },
+    },
+  });
+  if (!tx) throw new AppError(404, 'Booking not found for this QR code');
   return tx;
 }
 

@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin } from 'lucide-react';
+import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
-import { Link, useNavigate } from 'react-router-dom';
+import { api } from '../utils/api';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
@@ -80,6 +80,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [touched, setTouched] = useState({});
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [signupNeedsVerification, setSignupNeedsVerification] = useState(false);
 
   const updateSignup = (field, value) => setSignupData(prev => ({ ...prev, [field]: value }));
   const markTouched = (field) => setTouched(prev => ({ ...prev, [field]: true }));
@@ -139,6 +140,34 @@ export default function Login({ onLogin, onVerifyMfa }) {
     }
   };
 
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+
+  const enterForgotMode = () => {
+    setError('');
+    setForgotEmail(email);
+    setForgotSent(false);
+    setForgotMode(true);
+  };
+
+  const exitForgotMode = () => setForgotMode(false);
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setForgotLoading(true);
+    try {
+      await api.post('/auth/forgot-password', { email: forgotEmail });
+      setForgotSent(true);
+    } catch (err) {
+      setError(err?.message || 'Failed to send reset link');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   const togglePreference = (type) => {
     setSignupData(prev => {
       const has = prev.preferences.includes(type);
@@ -169,7 +198,12 @@ export default function Login({ onLogin, onVerifyMfa }) {
       }
       setLoading(true);
       authSignup({ email: signupData.email, password: signupData.password, name: signupData.name, phone: signupData.phone, address: signupData.address, preferences: signupData.preferences })
-        .then(() => setSignupStep(3))
+        .then((res) => {
+          // Email verification enabled: no session was issued, so show the
+          // "check your inbox" screen instead of auto-logging in.
+          setSignupNeedsVerification(!!res?.requiresVerification);
+          setSignupStep(3);
+        })
         .catch(err => setError(err.message || 'Signup failed'))
         .finally(() => setLoading(false));
     }
@@ -185,6 +219,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setPassword(signupData.password);
     setIsSignup(false);
     setSignupStep(1);
+    setSignupNeedsVerification(false);
     setSignupData({ name: '', email: '', phone: '', address: '', password: '', confirm: '', preferences: [] });
   };
 
@@ -192,6 +227,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setIsSignup(!isSignup);
     setError('');
     setSignupStep(1);
+    setSignupNeedsVerification(false);
   };
 
   const handleGoogle = async () => {
@@ -258,11 +294,15 @@ export default function Login({ onLogin, onVerifyMfa }) {
         <div className="w-full max-w-md my-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 lg:rounded-none lg:shadow-none lg:border-0 lg:bg-transparent lg:p-0">
           {!isSignup ? (
             <>
-              <div className="lg:hidden flex items-center justify-center mb-8">
-                <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
-              <p className="text-gray-500 text-sm mt-1 mb-7">Sign in to your RenTech account to continue.</p>
+<div className="lg:hidden flex items-center justify-center mb-8">
+                 <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
+               </div>
+               {!forgotMode && (
+                 <>
+                   <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
+                   <p className="text-gray-500 text-sm mt-1 mb-7">Sign in to your RenTech account to continue.</p>
+                 </>
+               )}
 
                {/* Phase 5: MFA challenge screen */}
                {mfaChallenge && (
@@ -314,7 +354,60 @@ export default function Login({ onLogin, onVerifyMfa }) {
                  </div>
                )}
 
-               {!mfaChallenge && (
+               {forgotMode && (
+                 <div className="space-y-5">
+                   <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Reset your password</h2>
+                   <p className="text-gray-500 text-sm mt-1 -mb-2">
+                     Enter your email and we'll send you a link to reset your password.
+                   </p>
+                   {!forgotSent ? (
+                     <form onSubmit={handleForgotSubmit} className="space-y-4">
+                       <Field
+                         label="Email"
+                         type="email"
+                         required
+                         value={forgotEmail}
+                         onChange={(e) => setForgotEmail(e.target.value)}
+                         className={inputClass}
+                         placeholder="you@example.com"
+                         autoComplete="email"
+                       />
+                       {error && (
+                         <div className="text-red-500 text-xs font-semibold text-center">
+                           <p>{error}</p>
+                         </div>
+                       )}
+                       <button
+                         type="submit"
+                         disabled={forgotLoading}
+                         className="w-full py-3 bg-gray-900 text-white font-bold text-sm rounded-xl hover:bg-gray-800 transition-colors shadow-sm shadow-gray-900/20 disabled:opacity-50"
+                       >
+                         {forgotLoading ? 'Sending...' : 'Send Reset Link'}
+                       </button>
+                     </form>
+                   ) : (
+                     <div className="space-y-4">
+                       <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-center space-y-2">
+                         <CheckCircle size={28} className="mx-auto text-emerald-600" />
+                         <p className="font-bold text-gray-900 text-sm">Password reset email sent</p>
+                         <p className="text-xs text-gray-500">
+                           A reset link has been sent to{' '}
+                           <span className="font-semibold text-gray-900">{forgotEmail}</span>. Check your inbox.
+                         </p>
+                       </div>
+                     </div>
+                   )}
+                   <button
+                     type="button"
+                     onClick={exitForgotMode}
+                     className="text-sm text-gray-400 hover:text-gray-600 font-medium w-full"
+                   >
+                     Back to sign in
+                   </button>
+                 </div>
+               )}
+
+               {!forgotMode && !mfaChallenge && (
                <>
                <GoogleButton label="Continue with Google" onClick={handleGoogle} loading={googleLoading} />
                <Divider />
@@ -350,15 +443,15 @@ export default function Login({ onLogin, onVerifyMfa }) {
                    className="w-full py-3 bg-gray-900 text-white font-bold text-sm rounded-xl hover:bg-gray-800 transition-colors shadow-sm shadow-gray-900/20 disabled:opacity-50">
                    {loading ? 'Signing in...' : 'Sign In'}
                  </button>
-                 <div className="flex items-center justify-between text-sm">
-                   <button
-                     type="button"
-                     onClick={() => navigate('/forgot-password')}
-                     className="text-[#bf4a53] hover:underline font-semibold"
-                   >
-                     Forgot password?
-                   </button>
-                 </div>
+<div className="flex items-center justify-between text-sm">
+                    <button
+                      type="button"
+                      onClick={enterForgotMode}
+                      className="text-[#bf4a53] hover:underline font-semibold"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
               </form>
               <p className="text-center text-gray-500 text-sm mt-6">
                 Don't have an account?{' '}
@@ -488,6 +581,25 @@ export default function Login({ onLogin, onVerifyMfa }) {
               )}
 
               {signupStep === 3 && (
+                signupNeedsVerification ? (
+                  <div className="space-y-6 text-center py-6">
+                    <div className="p-4 bg-amber-50 rounded-full w-16 h-16 mx-auto flex items-center justify-center">
+                      <Mail size={28} className="text-amber-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-gray-900 text-xl">Check your inbox</h3>
+                      <p className="text-sm text-gray-500 mt-2">
+                        We sent a verification link to{' '}
+                        <span className="font-semibold text-gray-700">{signupData.email}</span>.
+                        Click it to activate your account, then sign in.
+                      </p>
+                    </div>
+                    <button onClick={handleFinishSignup}
+                      className="w-full py-3 bg-[#bf4a53] text-white font-bold text-sm rounded-xl hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20">
+                      Go to Sign In
+                    </button>
+                  </div>
+                ) : (
                 <div className="space-y-6 text-center py-6">
                   <div className="p-4 bg-emerald-50 rounded-full w-16 h-16 mx-auto flex items-center justify-center">
                     <CheckCircle size={28} className="text-emerald-600" />
@@ -501,6 +613,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
                     Start Browsing
                   </button>
                 </div>
+                )
               )}
 
               {signupStep !== 3 && (

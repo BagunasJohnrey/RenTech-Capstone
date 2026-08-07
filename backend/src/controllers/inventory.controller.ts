@@ -110,12 +110,16 @@ export async function listItems(req: Request, res: Response, next: NextFunction)
     const search = capQuery(req.query.search as string | undefined);
 
     const isAdmin = authReq.user?.role === Role.Admin;
+    const isStaff = isAdmin || authReq.user?.role === Role.Staff;
     const items = await inventoryService.listItems(
       isAuthenticated ? status : undefined,
       category,
       search,
       {
-        rawStatus: isAuthenticated,
+        // Staff/Admin see the true stored status (full lifecycle management).
+        // Customers get the transaction-derived effective status so a piece
+        // that is currently rented out or overdue never reads as "Available".
+        rawStatus: isStaff,
         // Guests get the full bookable catalog (available + currently-booked
         // items they can reserve for future dates), minus unbookable states.
         // Staff see everything except archived (Deleted) items — those are

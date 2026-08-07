@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Loader2, Search, Calendar, User, Check, Percent, ShieldCheck } from 'lucide-react';
+import { X, Loader2, Search, Calendar, User, Check, Percent, ShieldCheck, CheckCircle2, Printer } from 'lucide-react';
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
 import Field from '../components/ui/Field';
+import BookingReceipt from '../components/BookingReceipt';
 import { inventoryService } from '../services/inventory';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useToast } from '../components/Toast';
 
 const ITEMS_PER_LOAD = 6;
 
@@ -165,6 +167,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // modal closes (prevents duplicate rentals from double-clicking).
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+
+  // Created transaction — shown on the post-booking receipt step (with QR).
+  const [createdTx, setCreatedTx] = useState(null);
+  const { info: toastInfo } = useToast();
 
   // Live availability check (same backend overlap logic as createRental) so
   // staff can't confirm dates that clash with an existing booking.
@@ -352,8 +358,11 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         returnDate: customer.returnDate,
       };
       try {
-        await onAddTransaction(transactionData);
-        setTimeout(() => onClose(), 1200);
+        const created = await onAddTransaction(transactionData);
+        setCreatedTx(created);
+        setSubmitting(false);
+        submittingRef.current = false;
+        setStep(4);
       } catch (err) {
         setError(err?.message || 'Failed to create rental. Please try again.');
         setSubmitting(false);
@@ -365,7 +374,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   };
 
   // Progress labels for step indicator
-  const progressSteps = ['Items', 'Details', 'Confirm'];
+  const progressSteps = ['Items', 'Details', 'Confirm', 'Receipt'];
 
   return (
     <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-sm" onClick={onClose}>
@@ -389,7 +398,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 {idx + 1}
               </div>
               <span className={`text-[10px] font-bold mt-1 ${step >= idx + 1 ? 'text-[#bf4a53]' : 'text-gray-400'}`}>{label}</span>
-              {idx < 2 && (
+              {idx < progressSteps.length - 1 && (
                 <div className={`absolute top-4 left-1/2 w-full h-0.5 ${step > idx + 1 ? 'bg-[#bf4a53]' : 'bg-gray-200'}`}></div>
               )}
             </div>
@@ -685,7 +694,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   )}
                   {customer.notes && <p className="text-xs text-gray-500 italic mt-2">Notes: {customer.notes}</p>}
                 </div>
-              </div>
+</div>
 
               {/* Discount Section */}
               <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-4">
@@ -724,6 +733,28 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
             </div>
           )}
+
+          {/* STEP 4: Receipt (post-booking with scannable QR for the customer) */}
+          {step === 4 && createdTx && (
+            <div key="step4" className="step-enter overflow-y-auto pr-1 space-y-4">
+              <div className="text-center">
+                <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 size={28} className="text-emerald-500" />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900">Rental Created</h3>
+                <p className="text-sm text-gray-500">Show this receipt to the customer. They can show the QR at pickup.</p>
+              </div>
+              <BookingReceipt tx={createdTx} />
+              <button
+                onClick={() => {
+                  toastInfo('Press Ctrl+P (Cmd+P on Mac) to print this receipt.');
+                }}
+                className="w-full py-3 rounded-full font-bold text-sm bg-white border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 text-gray-700"
+              >
+                <Printer size={16} /> Print
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer navigation */}
@@ -733,17 +764,26 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               {error}
             </div>
           )}
-          <button onClick={handleBack} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
-            Back
-          </button>
-          <button
-            onClick={handleNext}
-            disabled={submitting || (step >= 2 && (availability.checking || availability.available === false))}
-            className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors shadow flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
-            {step === 3 ? (submitting ? 'Processing…' : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
-          </button>
+          {step === 4 ? (
+            <button onClick={onClose}
+              className="flex-1 py-2.5 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow">
+              Done
+            </button>
+          ) : (
+            <>
+              <button onClick={handleBack} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
+                Back
+              </button>
+              <button
+                onClick={handleNext}
+                disabled={submitting || (step >= 2 && (availability.checking || availability.available === false))}
+                className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors shadow flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
+                {step === 3 ? (submitting ? 'Processing…' : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
+              </button>
+            </>
+          )}
         </div>
       </div>
       </div>

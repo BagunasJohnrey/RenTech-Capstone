@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell, Ruler, Tag, RefreshCw, Key, Copy } from 'lucide-react';
+import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell, Ruler, Tag, RefreshCw, Key, Copy, ScanLine } from 'lucide-react';
 import { api } from '../utils/api';
 import PromoCodesManager from '../components/PromoCodesManager';
 import { SkeletonList } from '../components/Skeleton';
 import HelpGuide from './HelpGuide';
 import { promoService } from '../services/promo';
 import { settingsService } from '../services/settings';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
@@ -160,6 +161,23 @@ export default function ProfileSettingsView({
       ? { ...DEFAULT_NOTIF, ...profile.notifyPrefs }
       : loadJSON(LS_NOTIF, DEFAULT_NOTIF));
   const [notifMsg, setNotifMsg] = useState('');
+
+  // QR codes (scannable receipts + staff scanner) — admin toggle persisted as
+  // a business rule and broadcast so every open screen updates instantly.
+  const { qr_codes: qrCodesOn, refreshFlags } = useFeatureFlags();
+  const [qrMsg, setQrMsg] = useState('');
+  const toggleQr = async () => {
+    const next = !qrCodesOn;
+    try {
+      await api.put('/settings/rules', { qr_booking_codes: String(next) });
+      if (refreshFlags) await refreshFlags();
+      window.dispatchEvent(new Event('rentech:flags-changed'));
+      setQrMsg(next ? 'QR codes enabled.' : 'QR codes turned off.');
+    } catch {
+      setQrMsg('Could not update setting. Try again.');
+    }
+    setTimeout(() => setQrMsg(''), 2500);
+  };
 
   // Live integrations health (Admin) — Gemini / Semaphore / PayMongo.
   const [integrations, setIntegrations] = useState(null);
@@ -742,6 +760,24 @@ export default function ProfileSettingsView({
               ))}
             </div>
             {notifMsg && <p className="text-xs text-emerald-600 font-bold mt-3">{notifMsg}</p>}
+          </div>
+
+          {/* QR Codes */}
+          <div className="p-5 md:p-8">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <ScanLine size={18} className="text-gray-500" /> QR Codes
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">Scannable booking receipts + the staff QR scanner.</p>
+              </div>
+              <button onClick={toggleQr} aria-pressed={qrCodesOn}
+                className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${qrCodesOn ? 'bg-[#bf4a53]' : 'bg-gray-300'}`}>
+                <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${qrCodesOn ? 'translate-x-5' : ''}`} />
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-2">When on, booking receipts show a QR code the customer can present at pickup — staff scan it from the Dashboard or Records to release or return the item.</p>
+            {qrMsg && <p className="text-xs text-emerald-600 font-bold mt-2">{qrMsg}</p>}
           </div>
         </div>
       )}

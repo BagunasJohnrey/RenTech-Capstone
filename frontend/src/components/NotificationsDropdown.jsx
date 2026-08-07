@@ -1,13 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Bell, ShoppingBag, CalendarClock, Clock, CheckCircle2,
-  AlertTriangle, Smartphone, X, Circle,
+  AlertTriangle, Smartphone, X, Circle, Trash2, CheckCheck, Inbox,
 } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import ConfirmModal from './ConfirmModal';
 
-const TYPE_CONFIG = {
+export const TYPE_CONFIG = {
   new_booking: { icon: ShoppingBag, iconBg: 'bg-[#bf4a53]/10', iconColor: 'text-[#bf4a53]', chip: 'New Booking' },
   booking_confirmation: { icon: CheckCircle2, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500', chip: 'Confirmation' },
   due_today: { icon: CalendarClock, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Due Today' },
@@ -18,7 +19,20 @@ const TYPE_CONFIG = {
   default: { icon: Bell, iconBg: 'bg-gray-100', iconColor: 'text-gray-500', chip: 'Notification' },
 };
 
-const timeAgo = (iso) => {
+export const mapNotification = (n) => {
+  const cfg = TYPE_CONFIG[n.type] || TYPE_CONFIG.default;
+  return {
+    id: n.id,
+    isRead: !!n.isRead,
+    type: n.type,
+    title: n.title || cfg.chip,
+    text: n.message || n.text || '',
+    time: n.createdAt,
+    cfg,
+  };
+};
+
+export const timeAgo = (iso) => {
   if (!iso) return '';
   const d = new Date(iso).getTime();
   const s = Math.floor((Date.now() - d) / 1000);
@@ -33,13 +47,31 @@ const timeAgo = (iso) => {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-export default function NotificationsDropdown({ role, showNotifications, toggle }) {
+export default function NotificationsDropdown({ role, showNotifications, toggle, onViewAll }) {
   useEscapeClose(toggle, showNotifications);
+  const rootRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [offlineToast, setOfflineToast] = useState(false);
+  const [filter, setFilter] = useState('all'); // 'all' | 'new'
+  // Delete confirmation: { mode: 'one', id, title } | { mode: 'all' } | null
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  // Close when clicking outside the dropdown (desktop + touch). Skipped while
+  // the delete-confirm modal is up, so dismissing that modal's scrim doesn't
+  // also yank the dropdown open state out from under the user.
+  useEffect(() => {
+    if (!showNotifications || confirmDelete) return;
+    const onPointerDown = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) {
+        toggle();
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [showNotifications, confirmDelete, toggle]);
 
   useEffect(() => {
     const goOnline = () => { setIsOffline(false); setOfflineToast(false); };
@@ -60,19 +92,6 @@ export default function NotificationsDropdown({ role, showNotifications, toggle 
     return () => { clearTimeout(t); clearInterval(id); };
   }, []);
 
-  const mapNotification = (n) => {
-    const cfg = TYPE_CONFIG[n.type] || TYPE_CONFIG.default;
-    return {
-      id: n.id,
-      isRead: !!n.isRead,
-      type: n.type,
-      title: n.title || cfg.chip,
-      text: n.message || n.text || '',
-      time: n.createdAt,
-      cfg,
-    };
-  };
-
   // Load notifications when dropdown opens
   useEffect(() => {
     if (showNotifications) {
@@ -87,7 +106,7 @@ export default function NotificationsDropdown({ role, showNotifications, toggle 
     }
   }, [showNotifications]);
 
-  const allRead = notifications.length > 0 && notifications.every((n) => n.isRead);
+  const visible = filter === 'new' ? notifications.filter((n) => !n.isRead) : notifications;
 
   // Optimistic mark-all-read, reverted on failure.
   const handleMarkAllRead = async () => {
@@ -113,10 +132,47 @@ export default function NotificationsDropdown({ role, showNotifications, toggle 
     }
   };
 
+  // Optimistic per-item delete, reverted on failure.
+  const handleDelete = async (id) => {
+    const prev = notifications;
+    const target = notifications.find((n) => n.id === id);
+    setNotifications((p) => p.filter((n) => n.id !== id));
+    if (target && !target.isRead) setUnreadCount((c) => Math.max(0, c - 1));
+    try {
+      await notificationsService.remove(id);
+    } catch {
+      setNotifications(prev);
+    }
+  };
+
+  // Optimistic clear-all, reverted on failure.
+  const handleClearAll = async () => {
+    const prev = notifications;
+    const hadUnread = unreadCount;
+    setNotifications([]);
+    setUnreadCount(0);
+    try {
+      await notificationsService.clearAll();
+    } catch {
+      setNotifications(prev);
+      setUnreadCount(hadUnread);
+    }
+  };
+
+  const handleConfirmDelete = () => {
+    if (!confirmDelete) return;
+    if (confirmDelete.mode === 'all') {
+      handleClearAll();
+    } else {
+      handleDelete(confirmDelete.id);
+    }
+    setConfirmDelete(null);
+  };
+
   const hasNew = unreadCount > 0;
 
   return (
-    <div className="relative">
+    <div className="relative" ref={rootRef}>
       {offlineToast && (
         <div className="absolute -top-10 right-0 bg-orange-500 text-white text-[11px] font-semibold px-3 py-1.5 rounded-full shadow-lg whitespace-nowrap animate-in fade-in slide-in-from-top-2 z-50">
           You're offline. Changes will sync when connected.
@@ -136,33 +192,73 @@ export default function NotificationsDropdown({ role, showNotifications, toggle 
       </button>
 
       {showNotifications && (
-        <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl shadow-gray-200/60 border border-gray-100 animate-in fade-in slide-in-from-top-2 z-50 overflow-hidden">
+        <div className="absolute right-0 mt-3 w-80 sm:w-[380px] bg-white rounded-3xl shadow-[0_18px_50px_-12px_rgba(0,0,0,0.28)] ring-1 ring-black/5 animate-in fade-in slide-in-from-top-2 z-50 overflow-hidden">
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100/70">
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-gray-900 text-sm">Notifications</h3>
-              {hasNew && (
-                <span className="text-[10px] font-bold text-[#bf4a53] bg-[#bf4a53]/10 px-2 py-0.5 rounded-full">
-                  {unreadCount} new
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              {hasNew && (
+          <div className="relative px-5 pt-4 pb-3 bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] overflow-hidden">
+            <div className="absolute -right-8 -top-10 w-36 h-36 rounded-full bg-white/10" />
+            <div className="absolute -right-2 top-10 w-20 h-20 rounded-full bg-white/5" />
+            <div className="relative flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-inner">
+                  <Bell size={16} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm leading-tight">Notifications</h3>
+                  <p className="text-[10px] text-white/80 leading-tight">
+                    {hasNew ? `${unreadCount} unread · stay on top of things` : 'You are all caught up'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                {hasNew && (
+                  <button
+                    onClick={handleMarkAllRead}
+                    title="Mark all as read"
+                    className="p-1.5 text-white/80 hover:text-white hover:bg-white/15 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  >
+                    <CheckCheck size={15} />
+                  </button>
+                )}
+                {notifications.length > 0 && (
+                  <button
+                    onClick={() => setConfirmDelete({ mode: 'all' })}
+                    title="Delete all notifications"
+                    className="p-1.5 text-white/80 hover:text-white hover:bg-white/15 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
                 <button
-                  onClick={handleMarkAllRead}
-                  className="text-[11px] font-semibold text-gray-400 hover:text-[#bf4a53] px-2 py-1 rounded-full hover:bg-gray-50 transition-colors"
+                  onClick={toggle}
+                  aria-label="Close notifications"
+                  className="p-1 text-white/80 hover:text-white hover:bg-white/15 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 >
-                  Mark all read
+                  <X size={15} />
                 </button>
-              )}
-              <button
-                onClick={toggle}
-                aria-label="Close notifications"
-                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60"
-              >
-                <X size={14} />
-              </button>
+              </div>
+            </div>
+
+            {/* Filter tabs */}
+            <div className="relative flex items-center gap-1.5 mt-3">
+              {[
+                { key: 'all', label: 'All', count: notifications.length },
+                { key: 'new', label: 'New', count: notifications.filter((n) => !n.isRead).length },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setFilter(tab.key)}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-bold backdrop-blur transition-colors ${
+                    filter === tab.key
+                      ? 'bg-white text-[#bf4a53] shadow-sm'
+                      : 'bg-white/15 text-white/80 hover:bg-white/25'
+                  }`}
+                >
+                  {tab.label}
+                  {tab.count > 0 && (
+                    <span className={`ml-1.5 ${filter === tab.key ? 'text-[#bf4a53]/70' : 'text-white/70'}`}>{tab.count}</span>
+                  )}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -172,7 +268,7 @@ export default function NotificationsDropdown({ role, showNotifications, toggle 
               <div className="space-y-1.5 py-2">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="flex items-center gap-3 p-2.5">
-                    <Skeleton className="w-8 h-8 rounded-full shrink-0" />
+                    <Skeleton className="w-9 h-9 rounded-xl shrink-0" />
                     <div className="flex-1 space-y-1.5">
                       <Skeleton className="h-3 w-3/4" />
                       <Skeleton className="h-2.5 w-1/2" />
@@ -180,50 +276,93 @@ export default function NotificationsDropdown({ role, showNotifications, toggle 
                   </div>
                 ))}
               </div>
-            ) : notifications.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
-                <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mb-3">
-                  <Bell size={20} className="text-gray-300" />
+            ) : visible.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center mb-3">
+                  <Inbox size={20} className="text-gray-300" />
                 </div>
-                <p className="text-sm font-semibold text-gray-600">You're all caught up</p>
-                <p className="text-xs text-gray-400 mt-1">New notifications will appear here.</p>
+                <p className="text-sm font-semibold text-gray-600">
+                  {filter === 'new' ? 'No new notifications' : "You're all caught up"}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {filter === 'new' ? 'Everything is read — nice work!' : 'New notifications will appear here.'}
+                </p>
               </div>
             ) : (
               <div className="stagger">
-                {notifications.map((n) => {
+                {visible.map((n) => {
                   const Icon = n.cfg.icon;
                   return (
-                    <button
+                    <div
                       key={n.id}
-                      onClick={() => !n.isRead && handleMarkRead(n.id)}
-                      className={`w-full text-left flex items-start gap-3 p-3 rounded-2xl transition-colors group ${
-                        n.isRead ? 'opacity-60 hover:opacity-100 hover:bg-gray-50' : 'bg-gray-50/70 hover:bg-gray-100/70'
+                      className={`group relative w-full text-left flex items-start gap-3 p-3 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
+                        n.isRead ? '' : 'bg-gradient-to-r from-[#bf4a53]/[0.06] to-transparent'
                       }`}
                     >
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${n.cfg.iconBg}`}>
-                        <Icon size={17} className={n.cfg.iconColor} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-[13px] font-bold text-gray-900 truncate">{n.title}</p>
-                          {!n.isRead && <Circle size={7} className="text-[#bf4a53] fill-[#bf4a53] shrink-0" />}
+                      {!n.isRead && (
+                        <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-[#bf4a53]" />
+                      )}
+                      <button
+                        onClick={() => !n.isRead && handleMarkRead(n.id)}
+                        className="flex-1 min-w-0 flex items-start gap-3 text-left"
+                        aria-label={n.isRead ? n.title : `Mark ${n.title} as read`}
+                      >
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${n.cfg.iconBg}`}>
+                          <Icon size={16} className={n.cfg.iconColor} />
                         </div>
-                        <p className="text-[12px] text-gray-500 leading-snug mt-0.5 line-clamp-2">{n.text}</p>
-                        <p className="text-[10px] text-gray-400 mt-1">{timeAgo(n.time)}</p>
-                      </div>
-                    </button>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-[13px] font-bold text-gray-900 truncate">{n.title}</p>
+                            <span className={`text-[10px] font-bold px-1.5 py-px rounded-full bg-gray-100 text-gray-400 shrink-0 ${n.cfg.iconColor}`}>
+                              {n.cfg.chip}
+                            </span>
+                          </div>
+                          <p className="text-[12px] text-gray-500 leading-snug mt-0.5 line-clamp-2">{n.text}</p>
+                          <p className="text-[10px] text-gray-400 mt-1">{timeAgo(n.time)}</p>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => setConfirmDelete({ mode: 'one', id: n.id, title: n.title })}
+                        aria-label={`Delete ${n.title}`}
+                        title="Delete"
+                        className="absolute top-2 right-2 p-1.5 text-gray-300 group-hover:text-red-600 group-hover:bg-red-50 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
             )}
           </div>
 
-          {allRead && notifications.length > 0 && (
-            <div className="px-5 py-3 border-t border-gray-100/70 text-center">
-              <span className="text-[11px] text-gray-400">All caught up</span>
-            </div>
-          )}
+          <div className="px-3 py-2 border-t border-gray-100/70">
+            <button
+              onClick={onViewAll}
+              className="w-full py-2.5 rounded-xl text-[12px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 active:bg-[#bf4a53]/10 transition-colors"
+            >
+              View all notifications
+            </button>
+          </div>
         </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal
+          title={confirmDelete.mode === 'all' ? 'Delete all notifications?' : 'Delete notification?'}
+          subtitle={confirmDelete.mode === 'all' ? null : confirmDelete.title}
+          message={
+            confirmDelete.mode === 'all'
+              ? 'This will permanently remove every notification from your list. This cannot be undone.'
+              : 'This notification will be permanently removed. This cannot be undone.'
+          }
+          confirmLabel="Delete"
+          cancelLabel="Keep it"
+          variant="danger"
+          icon={<Trash2 size={18} />}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
     </div>
   );

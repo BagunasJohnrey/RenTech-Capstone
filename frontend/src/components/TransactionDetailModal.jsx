@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera } from 'lucide-react';
+import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download } from 'lucide-react';
 import { customerLabel, customerPhone, itemLabel } from '../utils/format';
 import { normalizeTx } from '../hooks/useTransactions';
+import { getBookingCode } from '../utils/receipt';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import ItemImage from './ItemImage';
+import BookingQR from './BookingQR';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 
@@ -38,6 +41,8 @@ function DetailRow({ label, value, highlight }) {
 
 export default function TransactionDetailModal({ transaction, onClose, fetchFull }) {
   useEscapeClose(onClose);
+  const flags = useFeatureFlags();
+  const [qrSaveUrl, setQrSaveUrl] = useState(null);
   // FIX G: enrich the in-memory list object with the full server record
   // (payments[], processedBy, full customer/item) when available.
   const [tx, setTx] = useState(transaction);
@@ -160,6 +165,27 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               )}
             </div>
           </div>
+
+          {/* Booking QR */}
+          {flags.qr_codes && tx.id && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Booking QR</p>
+                {qrSaveUrl && (
+                  <a
+                    href={qrSaveUrl}
+                    download={`${getBookingCode(tx)}.png`}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-[#bf4a53] hover:underline"
+                    title="Download a copy of this QR code">
+                    <Download size={11} /> Save QR
+                  </a>
+                )}
+              </div>
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-4 flex items-center justify-center flex-col">
+                <BookingQR tx={tx} size={96} showCode={false} title="Scan to open this booking" onDataUrl={setQrSaveUrl} />
+              </div>
+            </div>
+          )}
 
           {/* Measurements */}
           {tx.measurements && Object.keys(tx.measurements).length > 0 && (

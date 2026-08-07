@@ -92,14 +92,14 @@ export async function getItem(id: number) {
     throw new AppError(404, 'Item not found');
   }
 
-  const activeTx = item.transactions.find(tx => tx.status === 'Active' || tx.status === 'Overdue');
+  const activeTx = item.transactions.find(tx => tx.status === 'Active' || tx.status === 'Overdue' || tx.status === 'Reserved');
 
   let effectiveStatus: string = item.status;
 
   const terminal = item.status === 'Deleted' || item.status === 'OutOfService';
   if (!terminal) {
     if (activeTx) {
-      effectiveStatus = activeTx.status === 'Overdue' ? 'Overdue' : 'Rented';
+      effectiveStatus = activeTx.status === 'Overdue' ? 'Overdue' : activeTx.status === 'Reserved' ? 'Reserved' : 'Rented';
     } else if (item.status === 'Rented' || item.status === 'Reserved') {
       effectiveStatus = 'Available';
     } else if (item.status === 'Cleaning') {

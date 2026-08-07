@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, ScanLine, Calendar, ChevronRight } from 'lucide-react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, ScanLine, Calendar, ChevronRight, Download } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
 import { usePayments } from '../hooks/usePayments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -11,6 +11,12 @@ import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
+import BookingQR from './BookingQR';
+import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
+
+// Short booking code for the QR/receipt.
+const bookingCode = (tx) => getBookingCode(tx);
 
 const ITEMS_PER_LOAD = 6;
 
@@ -29,19 +35,6 @@ function parseStyleNotesToMeasurements(text, keys) {
   }
   return out;
 }
-
-const generateQRPattern = (data) => {
-  let hash = 0;
-  for (let i = 0; i < data.length; i++) {
-    hash = (hash << 5) - hash + data.charCodeAt(i);
-    hash |= 0;
-  }
-  let pattern = '';
-  for (let i = 0; i < 25; i++) {
-    pattern += ((hash >> (i % 32)) & 1) ? '1' : '0';
-  }
-  return pattern;
-};
 
 export default function CustomerRentalFlow({
   item: preselectedItem,
@@ -94,8 +87,12 @@ export default function CustomerRentalFlow({
   const [measurements, setMeasurements] = useState({});
   const saleInfo = selectedItem ? getSaleInfo(selectedItem) : null;
   const effectiveItemPrice = saleInfo?.active ? saleInfo.price : (selectedItem?.price || 0);
-  const minDownpayment = selectedItem ? Math.round(effectiveItemPrice * 0.5) : 0;
-  const [downpaymentAmount, setDownpaymentAmount] = useState(minDownpayment);
+  // FIX: the 50% minimum applies to the actual fee being charged (finalFee,
+  // after any promo). Same as the server's requireMinimumDownpayment rule so
+  // promo-discounted bookings can't be blocked by an over-large minimum.
+  const [downpaymentAmount, setDownpaymentAmount] = useState(() =>
+    preselectedItem ? Math.round((preselectedItem.price || 0) * 0.5) : 0
+  );
   const [confirmedTx, setConfirmedTx] = useState(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
@@ -230,6 +227,8 @@ export default function CustomerRentalFlow({
 
   // FIX B: the price actually charged is the promo-discounted fee.
   const finalFee = promoApplied?.finalFee ?? effectiveItemPrice ?? 0;
+  // 50% min of the fee actually charged (after promo) — mirrors the server rule.
+  const minDownpayment = selectedItem ? Math.min(Math.round(finalFee * 0.5), finalFee) : 0;
 
   // Build the booking payload sent to POST /bookings.
   // SECURITY: rentalFee is intentionally NOT sent — the server derives the
@@ -269,7 +268,7 @@ export default function CustomerRentalFlow({
   const handleNext = async () => {
     if (step === 0) {
       if (!selectedItem) { setFieldErrors({ item: 'Please select an item.' }); return; }
-      setDownpaymentAmount(Math.round(selectedItem.price * 0.5));
+      setDownpaymentAmount(Math.round(effectiveItemPrice * 0.5));
       setFieldErrors({});
       setStep(1);
       return;
@@ -343,7 +342,9 @@ export default function CustomerRentalFlow({
     setConfirming(false);
   };
   const handleQRTap = () => { if (confirmedTx) setShowQRDetails(true); };
-  const qrData = confirmedTx ? JSON.stringify(confirmedTx) : 'booking_info';
+  const flags = useFeatureFlags();
+  // Data URI of the confirmed receipt QR — lets the customer save/download it.
+  const [qrSaveUrl, setQrSaveUrl] = useState(null);
 
   // ---- Step 0: Catalog ----
   if (step === 0) {
@@ -625,7 +626,8 @@ export default function CustomerRentalFlow({
             </div>
           )}
 
-          {/* Promo Code */}
+          {/* Promo Code — shown only on the Payment step, never on the receipt */}
+          {step === 2 && (
           <div className="bg-gray-50 rounded-2xl p-4">
             <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block">Have a promo code?</label>
             <div className="flex gap-2">
@@ -657,6 +659,7 @@ export default function CustomerRentalFlow({
               </div>
             )}
           </div>
+          )}
 
           {step === 2 && (
             <div className="space-y-5">
@@ -680,11 +683,11 @@ export default function CustomerRentalFlow({
               </div>
                 <div className="bg-gray-50 p-5 rounded-2xl space-y-2 border border-gray-100/60">
                   <div className="flex justify-between text-sm"><span className="text-gray-600">Downpayment</span><span className="font-bold">₱{downpaymentAmount.toLocaleString()}</span></div>
+                  {promoApplied && (
+                    <div className="flex justify-between text-sm text-emerald-600"><span>Promo discount ({promoApplied.code})</span><span className="font-bold">−₱{promoApplied.discountAmount.toLocaleString()}</span></div>
+                  )}
                   <div className="flex justify-between text-sm"><span className="text-gray-600">Remaining Balance</span><span className="font-bold text-gray-900">₱{(finalFee - downpaymentAmount).toLocaleString()}</span></div>
                   <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between text-base"><span className="font-bold text-gray-900">Total</span><span className="font-bold text-[#bf4a53]">₱{finalFee.toLocaleString()}</span></div>
-                  {promoApplied && (
-                    <div className="flex justify-between text-sm text-emerald-600"><span>Promo {promoApplied.code}</span><span>-₱{promoApplied.discountAmount.toLocaleString()}</span></div>
-                  )}
                   <p className="text-[10px] text-gray-400 mt-1">Balance payable at pickup.</p>
                 </div>
             </div>
@@ -706,20 +709,41 @@ export default function CustomerRentalFlow({
                 <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="text-amber-600 font-semibold">{formatDate(dueDate)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span>{confirmedTx.customer?.name || customer.name}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Size</span><span>{confirmedTx.size}</span></div>
-                <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex justify-between"><span className="text-gray-500">Downpayment</span><span className="text-[#bf4a53] font-bold">₱{confirmedTx.downpayment.toLocaleString()}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Balance</span><span className="font-bold">₱{(confirmedTx.amount - confirmedTx.downpayment).toLocaleString()}</span></div>
+                <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex justify-between"><span className="text-gray-500">Downpayment</span><span className="text-[#bf4a53] font-bold">₱{txDownpayment(confirmedTx).toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Balance</span><span className="font-bold">₱{txBalance(confirmedTx).toLocaleString()}</span></div>
               </div>
-              <div className="flex justify-center">
-                <button onClick={handleQRTap}
-                  className="relative bg-white p-4 rounded-2xl border border-gray-200 shadow-sm group cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
-                  title="Tap to view booking details">
-                  <QrCodeDisplay pattern={generateQRPattern(qrData)} />
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 rounded-2xl">
-                    <div className="flex items-center gap-2 text-[#bf4a53] font-bold">
-                      <ScanLine size={20} /> Tap to view
-                    </div>
-                  </div>
-                </button>
+              <div className="flex flex-col items-center gap-2">
+                {flags.qr_codes ? (
+                  <>
+                    <button onClick={handleQRTap}
+                      className="relative bg-white p-4 rounded-2xl border border-gray-200 shadow-sm group cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
+                      title="Tap to view booking details">
+                      {/* Real, scannable QR (encodes the booking code). Server-rendered data URI on the booking response, otherwise generated client-side. */}
+                      <BookingQR tx={confirmedTx} size={144} showCode={false} onDataUrl={setQrSaveUrl} />
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 rounded-2xl">
+                        <div className="flex items-center gap-2 text-[#bf4a53] font-bold">
+                          <ScanLine size={20} /> Tap to view
+                        </div>
+                      </div>
+                    </button>
+                    <p className="font-mono text-[11px] font-bold tracking-wide text-gray-500">{bookingCode(confirmedTx)}</p>
+                    <p className="text-[11px] text-gray-400 text-center -mt-1">Show this code to staff on pickup — they can scan it to pull up your order.</p>
+                    {qrSaveUrl && (
+                      <a
+                        href={qrSaveUrl}
+                        download={`${bookingCode(confirmedTx)}.png`}
+                        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#bf4a53] bg-red-50 hover:bg-red-100 rounded-full px-3 py-1.5 transition-colors"
+                        title="Save a copy of this QR code">
+                        <Download size={13} /> Save QR
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <button onClick={handleQRTap}
+                    className="text-[#bf4a53] text-sm font-bold hover:underline flex items-center gap-1.5">
+                    <ScanLine size={16} /> View booking details
+                  </button>
+                )}
               </div>
               <p className="text-xs text-center text-gray-400">Transaction ID: {confirmedTx.id}</p>
               {confirmError && (
@@ -761,25 +785,29 @@ export default function CustomerRentalFlow({
               <button onClick={() => setShowQRDetails(false)} aria-label="Close booking info" className="text-gray-400 hover:bg-gray-100 rounded-full p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"><X size={18} /></button>
             </div>
             <div className="space-y-2 text-sm">
-              {[['Booking ID', confirmedTx.id, 'font-mono font-bold'], ['Customer', confirmedTx.customer?.name || customer.name, 'font-bold'], ['Item', confirmedTx.item?.name || selectedItem?.name, ''], ['Size', confirmedTx.size, ''], ['Pickup', formatDate(rentalDate), ''], ['Event Date', formatDate(eventDate), 'font-semibold'], ['Return By', formatDate(dueDate), 'text-amber-600 font-semibold'], ['Status', confirmedTx.status, 'text-emerald-600 font-bold'], ['Downpayment', `₱${confirmedTx.downpayment.toLocaleString()}`, '']].map(([label, value, cls]) => (
-                <div key={label} className="flex justify-between"><span className="text-gray-500">{label}</span><span className={cls}>{value}</span></div>
-              ))}
+              {[
+                ['Booking ID', confirmedTx.id, 'font-mono font-bold'],
+                ['Booking Code', bookingCode(confirmedTx), 'font-mono font-bold'],
+                ['Customer', confirmedTx.customer?.name || customer.name, 'font-bold'],
+                ['Item', confirmedTx.item?.name || selectedItem?.name, ''],
+                ['Size', confirmedTx.size, ''],
+                ['Pickup', formatDate(rentalDate), ''],
+                ['Event Date', formatDate(eventDate), 'font-semibold'],
+                ['Return By', formatDate(dueDate), 'text-amber-600 font-semibold'],
+                ['Status', confirmedTx.status, 'text-emerald-600 font-bold'],
+                ['Downpayment', `₱${txDownpayment(confirmedTx).toLocaleString()}`, ''],
+              ].map(([label, value, rowCls]) => {
+                if (value == null || value === '') return null;
+                return (
+                  <div key={label} className="flex justify-between"><span className="text-gray-500">{label}</span><span className={rowCls}>{value}</span></div>
+                );
+              })}
             </div>
             <button onClick={() => setShowQRDetails(false)} className="w-full mt-6 py-3 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors">Close</button>
           </div>
         </div>
       </div>
       )}
-    </div>
-  );
-}
-
-function QrCodeDisplay({ pattern }) {
-  return (
-    <div className="grid grid-cols-5 gap-1 w-32 h-32">
-      {Array.from({ length: 25 }, (_, i) => (
-        <div key={i} className={`w-full aspect-square rounded-sm ${pattern.charAt(i) === '1' ? 'bg-gray-900' : 'bg-white border border-gray-100'}`} />
-      ))}
     </div>
   );
 }

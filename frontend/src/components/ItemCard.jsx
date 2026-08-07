@@ -193,34 +193,56 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
         </p>
         {(() => {
           const disabled = !guest && (item.status === 'OutOfService' || item.status === 'Deleted');
-          const sizingCls = 'w-full mt-3 font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-2';
+          const sizingCls = 'w-full font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-1.5 whitespace-nowrap';
           if (guest) {
             return (
-              <button data-tour="book" type="button"
-                onClick={(e) => { e.stopPropagation(); onViewDetail?.(item); }}
-                className={`${sizingCls} bg-white border border-[#bf4a53]/60 text-[#bf4a53] hover:bg-[#bf4a53] hover:text-white hover:shadow-lg hover:shadow-[#bf4a53]/25 active:scale-[0.98]`}
-              >
-                <Eye size={15} />
-                View Details
-              </button>
+              <div className="mt-auto pt-3">
+                <button data-tour="book" type="button"
+                  onClick={(e) => { e.stopPropagation(); onViewDetail?.(item); }}
+                  className={`${sizingCls} bg-white border border-[#bf4a53]/60 text-[#bf4a53] hover:bg-[#bf4a53] hover:text-white hover:shadow-lg hover:shadow-[#bf4a53]/25 active:scale-[0.98]`}
+                >
+                  <Eye size={15} />
+                  View Details
+                </button>
+              </div>
             );
           }
           if (disabled) {
             return (
-              <button data-tour="book" type="button" disabled
-                className={`${sizingCls} bg-gray-100 text-gray-400 cursor-not-allowed shadow-none`}>
-                Unavailable
-              </button>
+              <div className="mt-auto pt-3">
+                <button data-tour="book" type="button" disabled
+                  className={`${sizingCls} bg-gray-100 text-gray-400 cursor-not-allowed shadow-none`}>
+                  Unavailable
+                </button>
+              </div>
+            );
+          }
+          // Currently rented out (incl. overdue) — still bookable in advance
+          // for other dates. Show a distinct "Advance Book" action instead of
+          // the loud Rent Now so customers know the piece is currently out.
+          if (item.status === 'Rented' || item.status === 'Overdue') {
+            return (
+              <div className="mt-auto pt-3">
+                <button data-tour="book" type="button"
+                  onClick={(e) => { e.stopPropagation(); onBook?.(); }}
+                  className={`${sizingCls} bg-white border border-gray-300 text-gray-700 hover:border-gray-900 hover:text-gray-900 hover:shadow-md active:scale-[0.98]`}
+                >
+                  <Calendar size={14} />
+                  <span>Advance Book</span>
+                </button>
+              </div>
             );
           }
           return (
-            <button data-tour="book" type="button"
-              onClick={(e) => { e.stopPropagation(); onBook?.(); }}
-              className={`${sizingCls} bg-gradient-to-r from-[#b33842] via-[#bf4a53] to-[#d97079] text-white shadow-md shadow-[#bf4a53]/30 hover:shadow-lg hover:shadow-[#bf4a53]/40 hover:brightness-110 active:scale-[0.98]`}
-            >
-              <Calendar size={14} />
-              <span>Rent Now</span>
-            </button>
+            <div className="mt-auto pt-3">
+              <button data-tour="book" type="button"
+                onClick={(e) => { e.stopPropagation(); onBook?.(); }}
+                className={`${sizingCls} bg-gradient-to-r from-[#b33842] via-[#bf4a53] to-[#d97079] text-white shadow-md shadow-[#bf4a53]/30 hover:shadow-lg hover:shadow-[#bf4a53]/40 hover:brightness-110 active:scale-[0.98]`}
+              >
+                <Calendar size={14} />
+                <span>Rent Now</span>
+              </button>
+            </div>
           );
         })()}
       </div>
