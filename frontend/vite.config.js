@@ -37,6 +37,12 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
+      // Dev-only: skip the service worker (it fights HMR). The production
+      // build still emits dist/manifest.webmanifest via the plugin below, and
+      // the static public/manifest.webmanifest (duplicating it) clears the
+      // "Manifest: Line: 1, column: 1, Syntax error" console warning in dev —
+      // without that file, /manifest.webmanifest falls through to the SPA
+      // catch-all and returns index.html.
       manifest: {
         name: "RenTech — Mylene's Boutique",
         short_name: 'RenTech',
