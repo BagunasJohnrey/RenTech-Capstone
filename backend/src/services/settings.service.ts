@@ -10,6 +10,15 @@ export async function getBusinessRules() {
   return map;
 }
 
+// Non-sensitive feature flags derived from business rules. Booleans default
+// to `true` (feature on) when the key has never been set.
+export async function getFeatureFlags() {
+  const rules = await getBusinessRules();
+  return {
+    qr_booking_codes: rules.qr_booking_codes !== 'false',
+  };
+}
+
 export async function updateBusinessRules(data: Record<string, string>) {
   const results: Record<string, string> = {};
   for (const [key, value] of Object.entries(data)) {

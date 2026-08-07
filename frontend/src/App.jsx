@@ -31,6 +31,7 @@ import UnauthorizedPage from './pages/UnauthorizedPage';
 import { SkeletonScreen } from './components/Skeleton';
 import { PageSkeleton } from './components/PageSkeletons';
 import ProcessReturnModal from './components/ProcessReturnModal';
+import ReleaseItemModal from './components/ReleaseItemModal';
 import TransactionDetailModal from './components/TransactionDetailModal';
 import OutOfServiceModal from './components/OutOfServiceModal';
 import ChatbotModal from './components/ChatbotModal';
@@ -38,6 +39,7 @@ import AvailabilityCalendar from './components/AvailabilityCalendar';
 import OnboardingTutorial from './components/OnboardingTutorial';
 import GlobalSearchModal from './components/GlobalSearchModal';
 import ItemDetailModal from './components/ItemDetailModal';
+import QrScannerModal from './components/QrScannerModal';
 
 // Route-level screens are code-split so the heavy recharts bundle (dashboard /
 // analytics) is only fetched when those tabs are actually opened.
@@ -211,6 +213,12 @@ export default function RentechApp() {
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
   const [routedTx, setRoutedTx] = useState(null);
+
+  // Staff QR scanner — the staff member first picks RELEASE or RETURN, then
+  // the scanned transaction opens straight into the matching modal.
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannedTx, setScannedTx] = useState(null);
+  const [scannedAction, setScannedAction] = useState(null); // 'release' | 'return'
 
   // Ctrl+K keyboard shortcut for global search
   useEffect(() => {
@@ -404,7 +412,7 @@ export default function RentechApp() {
       itemId: bookingData.itemId,
       rentalDate: bookingData.rentalDate || bookingData.date,
       dueDate: bookingData.dueDate || bookingData.returnDate,
-      rentalFee: bookingData.amount || bookingData.rentalFee,
+      // rentalFee intentionally omitted — the server derives it from the item.
       downpayment: bookingData.downpayment || 0,
       notes: bookingData.notes || '',
     });
@@ -426,7 +434,7 @@ export default function RentechApp() {
       itemId: bookingData.itemId,
       rentalDate: bookingData.rentalDate || bookingData.date,
       dueDate: bookingData.dueDate || bookingData.returnDate,
-      rentalFee: bookingData.rentalFee ?? bookingData.amount ?? 0,
+      // rentalFee intentionally omitted — the server derives it sale-aware.
       downpayment: bookingData.downpayment || 0,
       notes: bookingData.notes || '',
       promoCode: bookingData.promoCode || undefined,
@@ -696,6 +704,7 @@ export default function RentechApp() {
                 onOpenNewRental={() => setShowStaffRental(true)}
                 onNavigate={goTab}
                 onOpenChatbot={() => setShowChatbot(true)}
+                onOpenScanner={() => setShowScanner(true)}
                 onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
               />
             )}
@@ -902,6 +911,36 @@ export default function RentechApp() {
             onClose={() => setShowGlobalSearch(false)}
         onNavigate={(tab) => { goTab(tab); setShowGlobalSearch(false); }}
       />
+        )}
+
+        {/* QR Scanner – staff picks RELEASE/RETURN, then scans the booking QR */}
+        {showScanner && viewRole === 'Staff' && (
+          <QrScannerModal
+            onClose={() => setShowScanner(false)}
+            onFound={(tx, action) => {
+              setShowScanner(false);
+              setScannedAction(action);
+              setScannedTx(normalizeTx(tx));
+            }}
+          />
+        )}
+
+        {/* Scanned booking → the release (pickup) modal */}
+        {scannedTx && scannedAction === 'release' && (
+          <ReleaseItemModal
+            transaction={scannedTx}
+            onClose={() => { setScannedTx(null); setScannedAction(null); }}
+            onReleased={(updated) => { handleReleaseRental(updated); setScannedTx(null); setScannedAction(null); }}
+          />
+        )}
+
+        {/* Scanned booking → the return modal */}
+        {scannedTx && scannedAction === 'return' && (
+          <ProcessReturnModal
+            transaction={scannedTx}
+            onClose={() => { setScannedTx(null); setScannedAction(null); }}
+            onComplete={handleProcessReturn}
+          />
         )}
 
         {/* Global Logout Confirmation Modal */}

@@ -11,6 +11,10 @@ router.use(authMiddleware);
 
 router.get('/upcoming', requireRole(Role.Admin, Role.Staff), transactionController.getUpcomingReturns);
 
+// QR scan lookup — admin/staff only; static segment registered before `/:id`
+// so "scan" is never parsed as a transaction id.
+router.get('/scan/:id', requireRole(Role.Admin, Role.Staff), transactionController.scanTransaction);
+
 router.get('/', transactionController.listTransactions);
 router.get('/:id', transactionController.getTransaction);
 

@@ -132,6 +132,22 @@ export async function getTransaction(req: AuthenticatedRequest, res: Response, n
   }
 }
 
+// Staff QR scan lookup: accepts `RT-XXXXXXXX`, the raw 8-char code, or a full
+// shareable URL carrying `?tx=RT-XXXXXXXX`. Staff/Admin only (route-guarded) so
+// customer QR payloads can't be enumerated by other customers.
+export async function scanTransaction(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    let raw = String(req.params.id || '');
+    // Accept a full URL payload (e.g. https://app/rentals?tx=RT-XXXX) as well.
+    const m = raw.match(/(?:tx=)?(RT-[0-9A-Fa-f]{6,8})/i);
+    if (m) raw = m[1];
+    const tx = await transactionService.getTransactionByBookingCode(raw);
+    res.json(tx);
+  } catch (err) {
+    next(err);
+  }
+}
+
 const TX_STATUSES = ['Active', 'Reserved', 'Overdue', 'Returned', 'Late', 'Cancelled', 'Completed'] as const;
 
 export async function listTransactions(req: AuthenticatedRequest, res: Response, next: NextFunction) {
