@@ -104,6 +104,7 @@
 - `backend/src/services/paymongo.service.ts`, `controllers/payments.controller.ts`: simulated payment.
 - `backend/src/services/auth.service.ts`, `controllers/auth.controller.ts`, `prisma/schema.prisma`: preferences persistence.
 - `frontend/src/components/Login.jsx`, `hooks/useAuth.jsx`, `services/auth.js`, `hooks/useCustomerProfile.js`, `pages/ProfileSettingsView.jsx`: preferences UI/flow.
+- **Settings refactored into components** (`frontend/src/components/settings/`): `ProfileSettingsView.jsx` is now a thin shell (header + role-branched sections). Own-file components: `ProfileHeader` (profile card + customer edit), `CustomerSettings` (sizes/style notes/notif prefs/offers), `AdminSectionTabs` (+`ADMIN_SECTIONS`), `GeneralTab` (business profile, rental policies/fees, automation & data, QR toggle), `NotificationsTab` (SMS prefs + templates), `IntegrationsTab`, `TeamTab` (staff + MFA), `AccountActions`, plus primitives `SettingsCard`/`Toggle`/`SettingRow`/`InfoTile`/`NumberField` and `constants.js` (LS keys, defaults, `loadJSON`, `ITEM_TYPES`). All logic (localStorage keys, rule sync, template CRUD, MFA flow, promos) moved with its section; each tab is self-contained.
 - `frontend/src/App.jsx`: passes `customerInfo` to DashboardView; `ChatbotModal` gets `inventory` + `onBook`.
 - `frontend/src/components/ChatbotModal.jsx`: image resolution + outfit-query gating + no-match message.
 - `frontend/src/components/NotificationsDropdown.jsx`: themed redesign.
