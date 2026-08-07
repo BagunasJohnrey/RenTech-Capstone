@@ -9,7 +9,7 @@ import { clearDataCache } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
-import { getFeatureFlags } from './settings.service.js';
+import { getBusinessRules, getFeatureFlags } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -106,7 +106,14 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     throw new AppError(400, `Downpayment must be between ₱0 and ₱${fee.toLocaleString()}`);
   }
   if (data.requireMinimumDownpayment) {
-    const min = Math.min(Math.round(fee * 0.5), fee);
+    // Floor = the higher of the 50% security deposit and the admin-configured
+    // `min_downpayment` business rule (flat ₱), never more than the full fee.
+    const rules = await getBusinessRules();
+    const flatMin = parseInt(rules.min_downpayment ?? '0', 10) || 0;
+    const min = Math.min(
+      Math.max(Math.round(fee * 0.5), Number.isFinite(flatMin) && flatMin > 0 ? flatMin : 0),
+      fee,
+    );
     if (downpayment < min) {
       throw new AppError(400, `Downpayment must be at least ₱${min.toLocaleString()}`);
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell, Ruler, Tag, RefreshCw, Key, Copy, ScanLine } from 'lucide-react';
+import { User, ShieldCheck, Plus, Trash2, Users, LogOut, MessageSquare, AlertCircle, Building2, DollarSign, Bell, Ruler, Tag, RefreshCw, Key, Copy, ScanLine, Percent, Sparkles, CreditCard, HelpCircle, Clock } from 'lucide-react';
 import { api } from '../utils/api';
 import PromoCodesManager from '../components/PromoCodesManager';
 import { SkeletonList } from '../components/Skeleton';
@@ -13,6 +13,7 @@ const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
 const LS_BUSINESS = 'rental_business_profile';
 const LS_POLICIES = 'rental_policies';
+const LS_AUTOMATION = 'rental_automation';
 const LS_NOTIF = 'rental_notif_prefs';
 const LS_SIZES = 'rentech_pref_sizes';
 
@@ -21,7 +22,8 @@ function loadJSON(key, fallback) {
 }
 
 const DEFAULT_BUSINESS = { name: 'RenTech Boutique', address: '', contact: '', taxId: '' };
-const DEFAULT_POLICIES = { defaultDays: 3, latePenalty: 500, depositPct: 50 };
+const DEFAULT_POLICIES = { defaultDays: 3, latePenalty: 500, minDown: 200, damageFee: 1000 };
+const DEFAULT_AUTOMATION = { escalationDays: 3, retentionMonths: 12 };
 const DEFAULT_NOTIF = { booking: true, reminder: true, lateReturn: true };
 
 const TEMPLATE_KEYS = ['booking_confirmation', 'due_reminder', 'late_return'];
@@ -31,6 +33,74 @@ const TEMPLATE_LABELS = {
   due_reminder: 'Due Reminder',
   late_return: 'Late Return',
 };
+
+// Admin Settings is split into tabs so the operations area stays navigable
+// instead of one long wall of cards.
+const ADMIN_SECTIONS = [
+  { id: 'general', label: 'General', icon: Building2 },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'integrations', label: 'Integrations', icon: ShieldCheck },
+  { id: 'promotions', label: 'Promotions', icon: Percent },
+  { id: 'team', label: 'Team & Security', icon: Users },
+  { id: 'help', label: 'Help Guide', icon: HelpCircle },
+];
+
+const INTEGRATIONS = [
+  { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Powers outfit suggestions & business insights.', icon: Sparkles, iconClass: 'bg-purple-50 text-purple-600' },
+  { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Automated return reminders & booking confirmations.', icon: MessageSquare, iconClass: 'bg-blue-50 text-blue-600' },
+  { key: 'paymongo', name: 'PayMongo Payments', desc: 'Secure GCash & Credit Card downpayments.', icon: CreditCard, iconClass: 'bg-emerald-50 text-emerald-600' },
+];
+
+// Shared card shell with an icon tile + title + description header row.
+function SettingsSection({ icon: Icon, iconClass = 'bg-red-50 text-[#bf4a53]', title, desc, action, children }) {
+  return (
+    <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${iconClass}`}>
+            <Icon size={20} />
+          </span>
+          <div className="min-w-0">
+            <h3 className="font-bold text-gray-900 text-base">{title}</h3>
+            {desc && <p className="text-xs text-gray-500 mt-0.5">{desc}</p>}
+          </div>
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Toggle({ on, onClick }) {
+  return (
+    <button onClick={onClick} aria-pressed={on}
+      className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${on ? 'bg-[#bf4a53]' : 'bg-gray-300'}`}>
+      <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
+    </button>
+  );
+}
+
+function SettingRow({ label, desc, children }) {
+  return (
+    <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50/70 border border-gray-100">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-gray-900">{label}</p>
+        {desc && <p className="text-xs text-gray-500 mt-0.5">{desc}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function InfoTile({ label, value }) {
+  return (
+    <div className="bg-gray-50 rounded-2xl p-4">
+      <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">{label}</p>
+      <p className="text-sm font-semibold text-gray-900 break-words">{value || '—'}</p>
+    </div>
+  );
+}
 
 export default function ProfileSettingsView({
   role,
@@ -66,6 +136,9 @@ export default function ProfileSettingsView({
   const [mfaBackupCodes, setMfaBackupCodes] = useState([]);
   const [mfaError, setMfaError] = useState('');
   const [mfaLoading, setMfaLoading] = useState(false);
+
+  // Active admin settings tab (General / Notifications / Integrations / …).
+  const [adminSection, setAdminSection] = useState('general');
 
   const handleMfaSetup = async () => {
     setMfaError('');
@@ -155,6 +228,12 @@ export default function ProfileSettingsView({
   const [localPolicies, setLocalPolicies] = useState(policies);
   const [polMsg, setPolMsg] = useState('');
 
+  // Automation & data retention
+  const [automation, setAutomation] = useState(() => loadJSON(LS_AUTOMATION, DEFAULT_AUTOMATION));
+  const [editAutomation, setEditAutomation] = useState(false);
+  const [localAutomation, setLocalAutomation] = useState(automation);
+  const [autoMsg, setAutoMsg] = useState('');
+
   // Notification Preferences (profile-backed; falls back to localStorage default)
   const [notifPrefs, setNotifPrefs] = useState(() =>
     (profile?.notifyPrefs && typeof profile.notifyPrefs === 'object')
@@ -213,12 +292,20 @@ export default function ProfileSettingsView({
       localStorage.setItem(LS_BUSINESS, JSON.stringify(biz));
 
       const pol = { ...policies };
-      if (rules.default_days) pol.defaultDays = parseInt(rules.default_days) || pol.defaultDays;
-      if (rules.late_penalty) pol.latePenalty = parseInt(rules.late_penalty) || pol.latePenalty;
-      if (rules.deposit_pct) pol.depositPct = parseInt(rules.deposit_pct) || pol.depositPct;
+      if (rules.rental_period_days) pol.defaultDays = parseInt(rules.rental_period_days) || pol.defaultDays;
+      if (rules.late_penalty_per_day) pol.latePenalty = parseInt(rules.late_penalty_per_day) || pol.latePenalty;
+      if (rules.min_downpayment) pol.minDown = parseInt(rules.min_downpayment) || pol.minDown;
+      if (rules.damage_fee) pol.damageFee = parseInt(rules.damage_fee) || pol.damageFee;
       setPolicies(pol);
       setLocalPolicies(pol);
       localStorage.setItem(LS_POLICIES, JSON.stringify(pol));
+
+      const auto = { ...automation };
+      if (rules.overdue_escalation_days) auto.escalationDays = parseInt(rules.overdue_escalation_days) || auto.escalationDays;
+      if (rules.data_retention_months) auto.retentionMonths = parseInt(rules.data_retention_months) || auto.retentionMonths;
+      setAutomation(auto);
+      setLocalAutomation(auto);
+      localStorage.setItem(LS_AUTOMATION, JSON.stringify(auto));
     }).catch(() => {});
   }, [role]);
 
@@ -248,11 +335,24 @@ export default function ProfileSettingsView({
     setEditPolicies(false);
     setPolMsg('Rental policies saved!');
     syncRulesToBackend({
-      default_days: String(localPolicies.defaultDays),
-      late_penalty: String(localPolicies.latePenalty),
-      deposit_pct: String(localPolicies.depositPct),
+      rental_period_days: String(localPolicies.defaultDays),
+      late_penalty_per_day: String(localPolicies.latePenalty),
+      min_downpayment: String(localPolicies.minDown),
+      damage_fee: String(localPolicies.damageFee),
     });
     setTimeout(() => setPolMsg(''), 2000);
+  };
+
+  const saveAutomation = () => {
+    localStorage.setItem(LS_AUTOMATION, JSON.stringify(localAutomation));
+    setAutomation(localAutomation);
+    setEditAutomation(false);
+    setAutoMsg('Automation settings saved!');
+    syncRulesToBackend({
+      overdue_escalation_days: String(localAutomation.escalationDays),
+      data_retention_months: String(localAutomation.retentionMonths),
+    });
+    setTimeout(() => setAutoMsg(''), 2000);
   };
 
   const toggleNotif = (key) => {
@@ -424,7 +524,7 @@ export default function ProfileSettingsView({
               <h3 className="text-xl font-bold text-gray-900">
                 {role === 'Customer' ? (customerInfo?.name || 'Customer') : (profile?.name || role)}
               </h3>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[#bf4a53] bg-red-50 px-2 py-1 rounded-md mt-1 inline-block">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-white bg-gradient-to-r from-[#b33842] to-[#bf4a53] px-2.5 py-1 rounded-lg mt-1.5 inline-block shadow-sm shadow-red-500/20">
                 {role} Role
               </span>
           </div>
@@ -644,192 +744,331 @@ export default function ProfileSettingsView({
         </>
       )}
 
-      {/* Operations Settings — Admin only */}
+      {/* Operations Settings — Admin only, organized into tabs */}
       {role === 'Admin' && (
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100">
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+          {ADMIN_SECTIONS.map(({ id, label, icon: Icon }) => (
+            <button key={id} onClick={() => setAdminSection(id)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${
+                adminSection === id
+                  ? 'bg-gray-900 text-white shadow-md'
+                  : 'bg-white border border-gray-200/80 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+              }`}>
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── General — Business Profile, Rental Policies, QR Codes ── */}
+      {role === 'Admin' && adminSection === 'general' && (
+        <>
           {/* Business Profile */}
-          <div className="p-5 md:p-8">
-            <div className="flex items-center justify-between mb-4 md:mb-6">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base">
-                <Building2 size={18} className="text-gray-500" /> Business Profile
-              </h3>
-              {!editBusiness && <button onClick={() => { setEditBusiness(true); setLocalBusiness(business); }} className="text-xs font-bold text-[#bf4a53] hover:underline">Edit</button>}
-            </div>
+          <SettingsSection
+            icon={Building2}
+            iconClass="bg-amber-50 text-amber-600"
+            title="Business Profile"
+            desc="Store details shown in receipts and customer communications"
+            action={!editBusiness && (
+              <button onClick={() => { setEditBusiness(true); setLocalBusiness(business); }}
+                className="shrink-0 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors">
+                Edit
+              </button>
+            )}
+          >
             {editBusiness ? (
-              <div className="space-y-3 max-w-lg">
-                <input type="text" value={localBusiness.name} onChange={e => setLocalBusiness({ ...localBusiness, name: e.target.value })}
-                  className="w-full p-2.5 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" placeholder="Store Name" />
-                <input type="text" value={localBusiness.address} onChange={e => setLocalBusiness({ ...localBusiness, address: e.target.value })}
-                  className="w-full p-2.5 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" placeholder="Address" />
+              <div className="space-y-3 max-w-xl">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <input type="text" value={localBusiness.name} onChange={e => setLocalBusiness({ ...localBusiness, name: e.target.value })}
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Name" />
                   <input type="text" value={localBusiness.contact} onChange={e => setLocalBusiness({ ...localBusiness, contact: e.target.value })}
-                    className="w-full p-2.5 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" placeholder="Contact Number" />
-                  <input type="text" value={localBusiness.taxId} onChange={e => setLocalBusiness({ ...localBusiness, taxId: e.target.value })}
-                    className="w-full p-2.5 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" placeholder="Tax ID" />
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Contact Number" />
                 </div>
-                <div className="flex gap-2 pt-2">
+                <input type="text" value={localBusiness.address} onChange={e => setLocalBusiness({ ...localBusiness, address: e.target.value })}
+                  className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Address" />
+                <input type="text" value={localBusiness.taxId} onChange={e => setLocalBusiness({ ...localBusiness, taxId: e.target.value })}
+                  className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Tax ID (optional)" />
+                <div className="flex gap-2 pt-1">
                   <button onClick={saveBusiness} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
                   <button onClick={() => { setEditBusiness(false); setLocalBusiness(business); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
                 </div>
                 {bizMsg && <p className="text-xs text-emerald-600 font-bold">{bizMsg}</p>}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-                <div><p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Store</p><p className="text-sm font-medium text-gray-900">{business.name || '—'}</p></div>
-                <div><p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Address</p><p className="text-sm font-medium text-gray-900">{business.address || '—'}</p></div>
-                <div><p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Contact</p><p className="text-sm font-medium text-gray-900">{business.contact || '—'}</p></div>
-                <div><p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Tax ID</p><p className="text-sm font-medium text-gray-900">{business.taxId || '—'}</p></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <InfoTile label="Store" value={business.name} />
+                <InfoTile label="Address" value={business.address} />
+                <InfoTile label="Contact" value={business.contact} />
+                <InfoTile label="Tax ID" value={business.taxId} />
               </div>
             )}
-          </div>
+          </SettingsSection>
 
-          {/* Rental Policies */}
-          <div className="p-5 md:p-8">
-            <div className="flex items-center justify-between mb-4 md:mb-6">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base">
-                <DollarSign size={18} className="text-gray-500" /> Rental Policies
-              </h3>
-              {!editPolicies && <button onClick={() => { setEditPolicies(true); setLocalPolicies(policies); }} className="text-xs font-bold text-[#bf4a53] hover:underline">Edit</button>}
-            </div>
+          {/* Rental Policies & Fees */}
+          <SettingsSection
+            icon={DollarSign}
+            iconClass="bg-emerald-50 text-emerald-600"
+            title="Rental Policies & Fees"
+            desc="Defaults applied to every new booking and return"
+            action={!editPolicies && (
+              <button onClick={() => { setEditPolicies(true); setLocalPolicies(policies); }}
+                className="shrink-0 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors">
+                Edit
+              </button>
+            )}
+          >
             {editPolicies ? (
-              <div className="space-y-3 max-w-lg">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
                 <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">Default Rental Period</label>
+                  <label className="text-xs font-bold text-gray-500 block mb-1.5">Default Rental Period</label>
                   <div className="flex items-center gap-2">
                     <input type="number" min={1} max={30} value={localPolicies.defaultDays}
                       onChange={e => setLocalPolicies({ ...localPolicies, defaultDays: Math.max(1, parseInt(e.target.value) || 1) })}
-                      className="w-24 p-2.5 bg-gray-50 rounded-xl border text-sm text-center focus:outline-none focus:border-[#bf4a53]" />
+                      className="w-24 p-2.5 bg-gray-50 rounded-xl border border-gray-200/80 text-sm text-center font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" />
                     <span className="text-sm text-gray-500">days</span>
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">Late Penalty</label>
+                  <label className="text-xs font-bold text-gray-500 block mb-1.5">Late Penalty (charged per day)</label>
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-500">₱</span>
                     <input type="number" min={0} value={localPolicies.latePenalty}
                       onChange={e => setLocalPolicies({ ...localPolicies, latePenalty: Math.max(0, parseInt(e.target.value) || 0) })}
-                      className="w-24 p-2.5 bg-gray-50 rounded-xl border text-sm text-center focus:outline-none focus:border-[#bf4a53]" />
+                      className="w-32 p-2.5 bg-gray-50 rounded-xl border border-gray-200/80 text-sm text-center font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" />
                     <span className="text-sm text-gray-500">per day</span>
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">Downpayment</label>
+                  <label className="text-xs font-bold text-gray-500 block mb-1.5">Minimum Downpayment</label>
                   <div className="flex items-center gap-2">
-                    <input type="number" min={0} max={100} value={localPolicies.depositPct}
-                      onChange={e => setLocalPolicies({ ...localPolicies, depositPct: Math.max(0, Math.min(100, parseInt(e.target.value) || 0)) })}
-                      className="w-24 p-2.5 bg-gray-50 rounded-xl border text-sm text-center focus:outline-none focus:border-[#bf4a53]" />
-                    <span className="text-sm text-gray-500">% of rental fee</span>
+                    <span className="text-sm text-gray-500">₱</span>
+                    <input type="number" min={0} value={localPolicies.minDown}
+                      onChange={e => setLocalPolicies({ ...localPolicies, minDown: Math.max(0, parseInt(e.target.value) || 0) })}
+                      className="w-32 p-2.5 bg-gray-50 rounded-xl border border-gray-200/80 text-sm text-center font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" />
+                    <span className="text-sm text-gray-500">per booking</span>
                   </div>
                 </div>
-                <div className="flex gap-2 pt-2">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 block mb-1.5">Damage Fee</label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-500">₱</span>
+                    <input type="number" min={0} value={localPolicies.damageFee}
+                      onChange={e => setLocalPolicies({ ...localPolicies, damageFee: Math.max(0, parseInt(e.target.value) || 0) })}
+                      className="w-32 p-2.5 bg-gray-50 rounded-xl border border-gray-200/80 text-sm text-center font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" />
+                    <span className="text-sm text-gray-500">per damaged item</span>
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-1 sm:col-span-2">
                   <button onClick={savePolicies} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
                   <button onClick={() => { setEditPolicies(false); setLocalPolicies(policies); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
                 </div>
-                {polMsg && <p className="text-xs text-emerald-600 font-bold">{polMsg}</p>}
+                {polMsg && <p className="text-xs text-emerald-600 font-bold sm:col-span-2">{polMsg}</p>}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 max-w-lg">
-                <div><p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Period</p><p className="text-sm font-medium text-gray-900">{policies.defaultDays} days</p></div>
-                <div><p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Late Fee</p><p className="text-sm font-medium text-gray-900">₱{policies.latePenalty}/day</p></div>
-                <div><p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Downpayment</p><p className="text-sm font-medium text-gray-900">{policies.depositPct}%</p></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <InfoTile label="Rental Period" value={`${policies.defaultDays} days`} />
+                <InfoTile label="Late Fee" value={`₱${policies.latePenalty}/day`} />
+                <InfoTile label="Min Downpayment" value={`₱${policies.minDown}`} />
+                <InfoTile label="Damage Fee" value={`₱${policies.damageFee}`} />
               </div>
             )}
-          </div>
+          </SettingsSection>
 
+          {/* Automation & data */}
+          <SettingsSection
+            icon={Clock}
+            iconClass="bg-sky-50 text-sky-600"
+            title="Automation & Data"
+            desc="Scheduled reminders, escalations, and how long history is kept"
+            action={!editAutomation && (
+              <button onClick={() => { setEditAutomation(true); setLocalAutomation(automation); }}
+                className="shrink-0 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors">
+                Edit
+              </button>
+            )}
+          >
+            {editAutomation ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 block mb-1.5">Overdue escalation after</label>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={1} max={30} value={localAutomation.escalationDays}
+                      onChange={e => setLocalAutomation({ ...localAutomation, escalationDays: Math.max(1, parseInt(e.target.value) || 1) })}
+                      className="w-24 p-2.5 bg-gray-50 rounded-xl border border-gray-200/80 text-sm text-center font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" />
+                    <span className="text-sm text-gray-500">days overdue</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1.5">Sends the one-time escalation SMS when a rental stays overdue this long.</p>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-500 block mb-1.5">Keep history for</label>
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={3} max={60} value={localAutomation.retentionMonths}
+                      onChange={e => setLocalAutomation({ ...localAutomation, retentionMonths: Math.max(3, parseInt(e.target.value) || 3) })}
+                      className="w-24 p-2.5 bg-gray-50 rounded-xl border border-gray-200/80 text-sm text-center font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" />
+                    <span className="text-sm text-gray-500">months</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1.5">Old notifications, SMS, and audit logs older than this are purged nightly.</p>
+                </div>
+                <div className="flex gap-2 pt-1 sm:col-span-2">
+                  <button onClick={saveAutomation} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
+                  <button onClick={() => { setEditAutomation(false); setLocalAutomation(automation); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
+                </div>
+                {autoMsg && <p className="text-xs text-emerald-600 font-bold sm:col-span-2">{autoMsg}</p>}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <InfoTile label="Overdue Escalation" value={`after ${automation.escalationDays} days overdue`} />
+                <InfoTile label="History Retention" value={`${automation.retentionMonths} months`} />
+              </div>
+            )}
+          </SettingsSection>
+
+          {/* QR Codes */}
+          <SettingsSection
+            icon={ScanLine}
+            iconClass="bg-purple-50 text-purple-600"
+            title="QR Codes"
+            desc="Scannable booking receipts + the staff QR scanner"
+            action={<Toggle on={qrCodesOn} onClick={toggleQr} />}
+          >
+            <p className="text-sm text-gray-500 leading-relaxed">When on, booking receipts show a QR code the customer can present at pickup — staff scan it from the Records or Dashboard to release or return the item.</p>
+            {qrMsg && <p className="text-xs text-emerald-600 font-bold">{qrMsg}</p>}
+          </SettingsSection>
+        </>
+      )}
+
+      {/* ── Notifications — SMS toggles + templates ── */}
+      {role === 'Admin' && adminSection === 'notifications' && (
+        <>
           {/* Notification Preferences */}
-          <div className="p-5 md:p-8">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base mb-4 md:mb-6">
-              <Bell size={18} className="text-gray-500" /> Notification Preferences
-            </h3>
-            <div className="space-y-3 max-w-lg">
+          <SettingsSection
+            icon={Bell}
+            iconClass="bg-red-50 text-[#bf4a53]"
+            title="Notification Preferences"
+            desc="Which automated SMS the boutique sends out"
+          >
+            <div className="space-y-3 max-w-2xl">
               {[
                 { key: 'booking', label: 'Booking Confirmation', desc: 'SMS when a new rental is created.' },
                 { key: 'reminder', label: 'Due Reminder', desc: 'Remind customer 1 day before due date.' },
                 { key: 'lateReturn', label: 'Late Return Alert', desc: 'Notify when a rental becomes overdue.' },
               ].map(({ key, label, desc }) => (
-                <div key={key} className="flex items-center justify-between p-3.5 bg-gray-50 rounded-xl">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">{label}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-                  </div>
-                  <button onClick={() => toggleNotif(key)}
-                    className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${notifPrefs[key] ? 'bg-[#bf4a53]' : 'bg-gray-300'}`}>
-                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${notifPrefs[key] ? 'translate-x-4' :''}`} />
-                  </button>
-                </div>
+                <SettingRow key={key} label={label} desc={desc}>
+                  <Toggle on={notifPrefs[key]} onClick={() => toggleNotif(key)} />
+                </SettingRow>
               ))}
             </div>
-            {notifMsg && <p className="text-xs text-emerald-600 font-bold mt-3">{notifMsg}</p>}
-          </div>
+            {notifMsg && <p className="text-xs text-emerald-600 font-bold">{notifMsg}</p>}
+          </SettingsSection>
 
-          {/* QR Codes */}
-          <div className="p-5 md:p-8">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                  <ScanLine size={18} className="text-gray-500" /> QR Codes
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">Scannable booking receipts + the staff QR scanner.</p>
-              </div>
-              <button onClick={toggleQr} aria-pressed={qrCodesOn}
-                className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${qrCodesOn ? 'bg-[#bf4a53]' : 'bg-gray-300'}`}>
-                <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${qrCodesOn ? 'translate-x-5' : ''}`} />
-              </button>
+      {/* SMS Templates */}
+          <SettingsSection
+            icon={MessageSquare}
+            iconClass="bg-blue-50 text-blue-600"
+            title="SMS Templates"
+            desc="Customize the SMS customers receive — placeholders are filled in automatically"
+            action={
+              <button onClick={resetAllTemplates} className="shrink-0 text-xs font-bold text-red-500 hover:text-red-600">Clear all</button>
+            }
+          >
+            <div className="flex flex-wrap items-center gap-1.5 bg-gray-50 rounded-2xl px-4 py-3">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Placeholders:</span>
+              {availablePlaceholders.split(',').map((p) => (
+                <code key={p} className="px-2 py-0.5 bg-white border border-gray-200 rounded-lg font-mono text-[11px] text-gray-600">{p.trim()}</code>
+              ))}
             </div>
-            <p className="text-[11px] text-gray-400 mt-2">When on, booking receipts show a QR code the customer can present at pickup — staff scan it from the Dashboard or Records to release or return the item.</p>
-            {qrMsg && <p className="text-xs text-emerald-600 font-bold mt-2">{qrMsg}</p>}
-          </div>
-        </div>
+            {templatesLoading ? (
+              <SkeletonList count={3} />
+            ) : TEMPLATE_KEYS.map((key) => (
+              <div key={key} className="border border-gray-200 rounded-2xl p-4 md:p-5">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-3">
+                  <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                    {TEMPLATE_LABELS[key]}
+                    <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{key}</span>
+                  </h4>
+                  <div className="flex gap-2">
+                    {editingTemplate === key ? (
+                      <>
+                        <button onClick={cancelEditTemplate} className="text-xs font-semibold text-gray-500 hover:underline">Cancel</button>
+                        <button onClick={() => saveTemplate(key)} className="text-xs font-semibold text-[#bf4a53] hover:underline">Save</button>
+                      </>
+                    ) : (
+                      <button onClick={() => startEditTemplate(key)} className="text-xs font-semibold text-[#bf4a53] hover:underline">Edit</button>
+                    )}
+                    <button onClick={() => resetTemplate(key)} className="text-xs font-semibold text-gray-400 hover:text-gray-600">Clear</button>
+                  </div>
+                </div>
+                {editingTemplate === key ? (
+                  <textarea
+                    value={templateEditValue}
+                    onChange={(e) => setTemplateEditValue(e.target.value)}
+                    placeholder="Type the SMS template content here..."
+                    className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[100px] focus:outline-none focus:border-[#bf4a53]"
+                  />
+                ) : templateContent[key] ? (
+                  <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-xl whitespace-pre-wrap">{templateContent[key]}</p>
+                ) : (
+                  <p className="text-sm text-gray-400 bg-gray-50 p-3 rounded-xl italic">No template saved yet. Click Edit to create one.</p>
+                )}
+              </div>
+            ))}
+            {templateSaveMsg && <p className="text-xs text-emerald-600 font-bold">{templateSaveMsg}</p>}
+          </SettingsSection>
+        </>
       )}
 
-      {/* System Integrations (Admin only) — live connectivity, not hardcoded */}
-      {role === 'Admin' && (
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2">
-              <ShieldCheck className="text-emerald-500" size={20} /> System Integrations
-            </h3>
+      {/* System Integrations */}
+      {role === 'Admin' && adminSection === 'integrations' && (
+        <SettingsSection
+          icon={ShieldCheck}
+          iconClass="bg-emerald-50 text-emerald-600"
+          title="System Integrations"
+          desc="Live connectivity status for AI, SMS and payments"
+          action={
             <button
               onClick={loadIntegrations}
               disabled={integrationsLoading}
-              className="flex items-center gap-1.5 text-xs font-bold text-[#bf4a53] hover:underline disabled:opacity-50"
+              className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
             >
               <RefreshCw size={13} className={integrationsLoading ? 'animate-spin' : ''} />
               {integrationsLoading ? 'Checking…' : 'Refresh'}
             </button>
-          </div>
-
+          }
+        >
           <div className="space-y-3">
-            {[
-              { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Powers outfit suggestions & business insights.', status: integrations?.gemini },
-              { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Automated return reminders & booking confirmations.', status: integrations?.semaphore },
-              { key: 'paymongo', name: 'PayMongo Payments', desc: 'Secure GCash & Credit Card downpayments.', status: integrations?.paymongo },
-            ].map(({ key, name, desc, status }) => {
+            {INTEGRATIONS.map(({ key, name, desc, icon: Icon, iconClass }) => {
+              const status = integrations?.[key];
               const online = status?.configured && status?.reachable;
               const simulated = status?.simulated && !status?.configured;
               const offline = status && !status.reachable && status.configured;
               return (
-                <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl gap-3">
-                  <div className="min-w-0">
-                    <p className="font-bold text-sm text-gray-900">{name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-                    {integrationsLoading && !status ? (
-                      <p className="text-[11px] text-gray-400 mt-1">Checking…</p>
-                    ) : status ? (
-                      <p className="text-[11px] mt-1 truncate font-medium"
-                        title={status.detail}>
-                        <span className={online ? 'text-emerald-600' : simulated ? 'text-amber-600' : 'text-red-500'}>
-                          {online ? 'Connected'
-                            : simulated ? 'Not configured — simulated'
-                            : status.detail?.includes('401') ? 'Invalid key'
-                            : 'Offline'}
-                        </span>
-                        {online && status.latencyMs != null && <span className="text-gray-400"> · {status.latencyMs}ms</span>}
-                        {!online && status.detail && !simulated && <span className="text-gray-400"> — {status.detail}</span>}
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-gray-400 mt-1">Not checked yet</p>
-                    )}
+                <div key={key} className="flex items-center justify-between gap-3 p-4 rounded-2xl bg-gray-50/70 border border-gray-100">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconClass}`}>
+                      <Icon size={18} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-bold text-sm text-gray-900">{name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                      {integrationsLoading && !status ? (
+                        <p className="text-[11px] text-gray-400 mt-1">Checking…</p>
+                      ) : status ? (
+                        <p className="text-[11px] mt-1 truncate font-medium"
+                          title={status.detail}>
+                          <span className={online ? 'text-emerald-600' : simulated ? 'text-amber-600' : 'text-red-500'}>
+                            {online ? 'Connected'
+                              : simulated ? 'Not configured — simulated'
+                              : status.detail?.includes('401') ? 'Invalid key'
+                              : 'Offline'}
+                          </span>
+                          {online && status.latencyMs != null && <span className="text-gray-400"> · {status.latencyMs}ms</span>}
+                          {!online && status.detail && !simulated && <span className="text-gray-400"> — {status.detail}</span>}
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-gray-400 mt-1">Not checked yet</p>
+                      )}
+                    </div>
                   </div>
                   <span className={`shrink-0 flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full ${
                     online ? 'bg-emerald-50 text-emerald-600'
@@ -853,149 +1092,110 @@ export default function ProfileSettingsView({
               );
             })}
           </div>
-        </div>
+        </SettingsSection>
       )}
 
-      {/* SMS Templates – Admin only */}
-      {role === 'Admin' && (
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2">
-              <MessageSquare size={20} className="text-[#bf4a53]" /> SMS Templates
-            </h3>
-            <button onClick={resetAllTemplates} className="text-xs font-bold text-red-500 hover:underline sm:self-center">Clear all</button>
-          </div>
-          <p className="text-sm text-gray-500">Customize SMS sent to customers. Placeholders are replaced automatically.</p>
-          <div className="text-xs text-gray-400 bg-gray-50 p-3 rounded-xl">
-            Available placeholders: {availablePlaceholders}
-          </div>
-          {templatesLoading ? (
-            <SkeletonList count={3} />
-          ) : TEMPLATE_KEYS.map((key) => (
-            <div key={key} className="border border-gray-200 rounded-2xl p-4 md:p-5">
-              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-3">
-                <h4 className="text-sm font-bold text-gray-900">{TEMPLATE_LABELS[key]}</h4>
-                <div className="flex gap-2">
-                  {editingTemplate === key ? (
-                    <>
-                      <button onClick={cancelEditTemplate} className="text-xs font-semibold text-gray-500 hover:underline">Cancel</button>
-                      <button onClick={() => saveTemplate(key)} className="text-xs font-semibold text-[#bf4a53] hover:underline">Save</button>
-                    </>
-                  ) : (
-                    <button onClick={() => startEditTemplate(key)} className="text-xs font-semibold text-[#bf4a53] hover:underline">Edit</button>
-                  )}
-                  <button onClick={() => resetTemplate(key)} className="text-xs font-semibold text-gray-400 hover:text-gray-600">Clear</button>
-                </div>
-              </div>
-              {editingTemplate === key ? (
-                <textarea
-                  value={templateEditValue}
-                  onChange={(e) => setTemplateEditValue(e.target.value)}
-                  placeholder="Type the SMS template content here..."
-                  className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[100px] focus:outline-none focus:border-[#bf4a53]"
-                />
-              ) : templateContent[key] ? (
-                <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-xl whitespace-pre-wrap">{templateContent[key]}</p>
-              ) : (
-                <p className="text-sm text-gray-400 bg-gray-50 p-3 rounded-xl italic">No template saved yet. Click Edit to create one.</p>
-              )}
-            </div>
-          ))}
-          {templateSaveMsg && <p className="text-xs text-emerald-600 font-bold">{templateSaveMsg}</p>}
-        </div>
-      )}
+      {/* ── Promotions ── */}
+      {role === 'Admin' && adminSection === 'promotions' && <PromoCodesManager />}
 
-      {/* Promo Codes (Admin only) */}
-      {role === 'Admin' && (
-        <PromoCodesManager />
-      )}
-
-      {/* Staff Management (Admin only) */}
-      {role === 'Admin' && staffList !== undefined && (
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
-          <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <Users size={20} className="text-[#bf4a53]" /> Staff Management
-          </h3>
-
-          {staffError && (
-            <div className="flex items-center gap-2 p-3 bg-red-50 rounded-2xl text-sm text-red-600 font-medium">
-              <AlertCircle size={16} /> {staffError}
-            </div>
-          )}
-          <form onSubmit={handleAddStaff} className="flex flex-col sm:flex-row gap-3">
-            <input
-              type="text"
-              placeholder="Name"
-              value={newStaffName}
-              onChange={(e) => setNewStaffName(e.target.value)}
-              className="flex-1 bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
-            />
-            <input
-              type="text"
-              placeholder="Username"
-              value={newUsername}
-              onChange={(e) => setNewUsername(e.target.value)}
-              className="flex-1 bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
-              required
-            />
-              <input
-                type="password"
-                placeholder="Password (12+ chars w/ upper, lower, digit, symbol)"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="flex-1 bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
-                required
-                minLength={12}
-              />
-            <button
-              type="submit"
-              className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center gap-2 shadow-sm shadow-red-500/20"
+      {/* ── Team & Security — Staff Management + MFA ── */}
+      {role === 'Admin' && adminSection === 'team' && (
+        <>
+          {/* Staff Management */}
+          {staffList !== undefined && (
+            <SettingsSection
+              icon={Users}
+              iconClass="bg-red-50 text-[#bf4a53]"
+              title="Staff Management"
+              desc="Create and manage staff accounts"
             >
-              <Plus size={16} /> Add
-            </button>
-          </form>
-
-          {staffList.length === 0 ? (
-            <p className="text-sm text-gray-500 py-4">No staff accounts yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {staffList.map((staff) => (
-                <div
-                  key={staff.id}
-                  className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl"
-                >
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">{staff.name || staff.email}</p>
-                    <p className="text-xs text-gray-500">{staff.email}</p>
-                    {staff.createdAt && (
-                      <p className="text-[10px] text-gray-400">Added {new Date(staff.createdAt).toLocaleDateString()}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => onRemoveStaff(staff)}
-                    className="text-red-400 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 size={18} />
-                  </button>
+              {staffError && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
+                  <AlertCircle size={16} /> {staffError}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+              )}
+              <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3">
+                <input
+                  type="text"
+                  placeholder="Name"
+                  value={newStaffName}
+                  onChange={(e) => setNewStaffName(e.target.value)}
+                  className="bg-gray-50 border border-gray-200/80 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  className="bg-gray-50 border border-gray-200/80 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
+                  required
+                />
+                <input
+                  type="password"
+                  placeholder="Password (12+ chars)"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="bg-gray-50 border border-gray-200/80 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400"
+                  required
+                  minLength={12}
+                />
+                <button
+                  type="submit"
+                  className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-red-500/20"
+                >
+                  <Plus size={16} /> Add
+                </button>
+              </form>
 
-      {/* Phase 5: MFA Management (Admin only) */}
-      {role === 'Admin' && (
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
-          <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <ShieldCheck size={20} className="text-[#bf4a53]" /> Two-Factor Authentication
-          </h3>
-
-          {mfaError && (
-            <div className="flex items-center gap-2 p-3 bg-red-50 rounded-2xl text-sm text-red-600 font-medium">
-              <AlertCircle size={16} /> {mfaError}
-            </div>
+              {staffList.length === 0 ? (
+                <p className="text-sm text-gray-500 py-4">No staff accounts yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {staffList.map((staff) => (
+                    <div
+                      key={staff.id}
+                      className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-gray-50/70 border border-gray-100"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="w-10 h-10 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                          {(staff.name || staff.email || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase() || '?'}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 truncate">{staff.name || staff.email}</p>
+                          <p className="text-xs text-gray-500 truncate">{staff.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        {staff.createdAt && (
+                          <span className="text-[10px] text-gray-400 hidden sm:block">Added {new Date(staff.createdAt).toLocaleDateString()}</span>
+                        )}
+                        <button
+                          onClick={() => onRemoveStaff(staff)}
+                          className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-full transition-colors"
+                          title={`Remove ${staff.name || staff.email}`}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SettingsSection>
           )}
+
+          {/* Two-Factor Authentication */}
+          <SettingsSection
+            icon={Key}
+            iconClass="bg-gray-900 text-white"
+            title="Two-Factor Authentication"
+            desc="Protect this admin account with a TOTP authenticator app"
+          >
+            {mfaError && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
+                <AlertCircle size={16} /> {mfaError}
+              </div>
+            )}
 
           {mfaStep === 'idle' && (
             <>
@@ -1111,16 +1311,12 @@ export default function ProfileSettingsView({
               </button>
             </div>
           )}
-        </div>
+          </SettingsSection>
+        </>
       )}
 
-      {/* Help Guide — Admin/Staff read it from here (customers use the
-          top-level Help tab). No own URL, matches their portal layout. */}
-      {role !== 'Customer' && (
-        <div className="border-t border-gray-100/60 pt-6">
-          <HelpGuide role={role} />
-        </div>
-      )}
+      {/* Help Guide — its own Settings tab (users get the portal Help page). */}
+      {role === 'Admin' && adminSection === 'help' && <HelpGuide role={role} />}
 
       {/* Sign Out */}
       <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

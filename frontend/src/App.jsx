@@ -540,8 +540,10 @@ export default function RentechApp() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center">
-        <SkeletonScreen />
+      <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center px-5 md:px-10">
+        <div className="w-full max-w-7xl">
+          <PageSkeleton tab={activeTab} />
+        </div>
       </div>
     );
   }

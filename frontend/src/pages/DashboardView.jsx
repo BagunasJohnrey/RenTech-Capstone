@@ -156,7 +156,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
 
             {/* Sale items pulled into the promo section */}
             {onSale.length > 0 && (
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
                 {onSale.map((item) => (
                   <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
                 ))}
@@ -201,7 +201,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </div>
             <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
           </div>
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             {recommended.map((item) => (
               <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
             ))}
@@ -223,7 +223,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
               </div>
               <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
             </div>
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
               {newArrivals.map((item) => (
                 <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
               ))}

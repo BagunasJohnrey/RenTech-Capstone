@@ -7,6 +7,10 @@ import * as settingsController from '../controllers/settings.controller.js';
 
 const router = Router();
 
+// Public rental-suggestion defaults (rental period + min downpayment) — safe
+// for logged-out customers mid-booking, so registered before authMiddleware.
+router.get('/rental-defaults', settingsController.getRentalDefaults);
+
 router.use(authMiddleware);
 
 router.get('/rules', requireRole(Role.Admin, Role.Staff), settingsController.getRules);

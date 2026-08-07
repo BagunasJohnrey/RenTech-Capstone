@@ -16,10 +16,10 @@ export function SkeletonText({ lines = 3, className = '' }) {
 }
 
 // Item-card placeholder (matches ItemCard aspect + copy lines).
-export function SkeletonCard({ className = '' }) {
+export function SkeletonCard({ className = '', imageRatio = 'aspect-[4/5]' }) {
   return (
     <div className={`bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm ${className}`}>
-      <Skeleton className="aspect-[4/5] w-full rounded-none" />
+      <Skeleton className={`${imageRatio} w-full rounded-none`} />
       <div className="p-4 space-y-2.5">
         <Skeleton className="h-2.5 w-1/3" />
         <Skeleton className="h-3.5 w-3/4" />
@@ -29,11 +29,11 @@ export function SkeletonCard({ className = '' }) {
   );
 }
 
-export function SkeletonGrid({ count = 8, columns = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4' }) {
+export function SkeletonGrid({ count = 8, columns = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4', gap = 'gap-4', imageRatio }) {
   return (
-    <div className={`grid gap-4 ${columns}`}>
+    <div className={`grid ${gap} ${columns}`}>
       {Array.from({ length: count }).map((_, i) => (
-        <SkeletonCard key={i} />
+        <SkeletonCard key={i} imageRatio={imageRatio} />
       ))}
     </div>
   );
@@ -70,7 +70,7 @@ export function SkeletonList({ count = 6 }) {
 export function SkeletonScreen() {
   return (
     <div className="w-full h-full p-5 md:p-10 max-w-7xl mx-auto space-y-6">
-      <SkeletonGrid count={8} columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-4" />
+      <SkeletonGrid count={8} columns="grid-cols-2 xl:grid-cols-4" />
     </div>
   );
 }

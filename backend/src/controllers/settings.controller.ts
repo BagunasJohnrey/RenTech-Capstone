@@ -45,6 +45,17 @@ export async function getFeatureFlags(_req: AuthenticatedRequest, res: Response,
   }
 }
 
+// Public rental-suggestion defaults (rental period + min downpayment) for
+// booking flows — no auth required.
+export async function getRentalDefaults(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const defaults = await settingsService.getRentalDefaults();
+    res.json(defaults);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function updateRules(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const result = await settingsService.updateBusinessRules(req.body);

@@ -14,6 +14,7 @@ import { SIZE_PRESETS } from '../utils/sizePresets';
 import BookingQR from './BookingQR';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { api } from '../utils/api';
 
 // Short booking code for the QR/receipt.
 const bookingCode = (tx) => getBookingCode(tx);
@@ -60,9 +61,28 @@ export default function CustomerRentalFlow({
 
   const [eventDate, setEventDate] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() + 2);
+    d.setDate(d.getDate() + 3);
     return d.toISOString().split('T')[0];
   });
+  const eventDateTouched = useRef(false);
+  // Suggested rental period + minimum downpayment come from the admin's
+  // business rules (public endpoint) — fall back to the 3-day / 50% defaults.
+  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, min_downpayment: 200 });
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/settings/rental-defaults')
+      .then((d) => {
+        if (cancelled || !d || typeof d.rental_period_days !== 'number') return;
+        setRentalDefaults({ rental_period_days: d.rental_period_days, min_downpayment: d.min_downpayment || 0 });
+        if (!eventDateTouched.current) {
+          const dt = new Date();
+          dt.setDate(dt.getDate() + d.rental_period_days);
+          setEventDate(dt.toISOString().split('T')[0]);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const dueDate = useMemo(() => {
     if (!eventDate) return '';
     const d = new Date(eventDate);
@@ -227,8 +247,11 @@ export default function CustomerRentalFlow({
 
   // FIX B: the price actually charged is the promo-discounted fee.
   const finalFee = promoApplied?.finalFee ?? effectiveItemPrice ?? 0;
-  // 50% min of the fee actually charged (after promo) — mirrors the server rule.
-  const minDownpayment = selectedItem ? Math.min(Math.round(finalFee * 0.5), finalFee) : 0;
+  // 50% min of the fee actually charged (after promo) — mirrors the server rule,
+  // plus the admin-configured flat `min_downpayment` floor (same as the backend).
+  const minDownpayment = selectedItem
+    ? Math.min(Math.max(Math.round(finalFee * 0.5), rentalDefaults.min_downpayment || 0), finalFee)
+    : 0;
 
   // Build the booking payload sent to POST /bookings.
   // SECURITY: rentalFee is intentionally NOT sent — the server derives the
@@ -535,6 +558,7 @@ export default function CustomerRentalFlow({
                   event={eventDate}
                   bookedRanges={bookedRanges}
                   onChange={(p, e) => {
+                    eventDateTouched.current = true;
                     setRentalDate(p);
                     setEventDate(e);
                     clearFieldError('rentalDate');
@@ -621,7 +645,9 @@ export default function CustomerRentalFlow({
                       error={fieldErrors.downpayment || undefined} />
                   </div>
                 </div>
-                <p className="text-[10px] text-gray-400 mt-1">Minimum 50% (₱{minDownpayment.toLocaleString()}) required to secure booking.</p>
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Minimum of 50% or ₱{rentalDefaults.min_downpayment.toLocaleString()} (₱{minDownpayment.toLocaleString()}) required to secure booking.
+                </p>
               </div>
             </div>
           )}

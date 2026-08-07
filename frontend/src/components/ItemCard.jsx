@@ -21,8 +21,8 @@ export function getSaleInfo(item) {
 function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, showBook }) {
   const sale = getSaleInfo(item);
   return (
-    <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group">
-      <div className="relative aspect-[9/16] bg-gray-50 overflow-hidden">
+    <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
+      <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
         <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
           <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] sm:text-[10px] font-bold shadow-sm text-[#bf4a53]">
@@ -57,7 +57,7 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
         </div>
       </div>
 
-      <div className="p-2.5 sm:p-3 space-y-2">
+      <div className="p-3 sm:p-4 space-y-2 flex flex-col flex-1">
         <div className="min-w-0">
           <div className="flex items-center gap-1">
             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</span>

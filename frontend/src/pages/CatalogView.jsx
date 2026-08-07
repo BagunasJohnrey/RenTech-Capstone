@@ -500,27 +500,12 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
       {/* Items */}
       <div>
       {loading && inventory.length === 0 ? (
-          <SkeletonGrid count={isStaff ? 8 : 8} columns={isStaff ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'} />
+          <SkeletonGrid count={8} columns="grid-cols-2 xl:grid-cols-4" gap="gap-4" />
         ) : filteredInventory.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
             <Search size={32} className="text-gray-300" />
             <p className="text-sm font-medium">No items found</p>
             <button onClick={clearFilters} className="text-xs font-bold text-[#bf4a53] hover:underline">Clear filters</button>
-          </div>
-        ) : isStaff ? (
-          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 xl:grid-cols-5 2xl:grid-cols-5 gap-3">
-            {filteredInventory.map(item => (
-              <ItemCard key={item.id} item={item} role={role} guest={guest}
-                onBook={() => handleItemAction(item)}
-                onViewDetail={onViewDetail}
-                onEdit={() => onEdit(item)}
-                onDelete={role === 'Admin' && onRequestDelete ? () => onRequestDelete(item) : undefined}
-                onRestore={role === 'Admin' && onRestore ? () => onRestore(item.id) : undefined}
-                onCheckAvailability={() => onCheckAvailability(item)}
-                onStatusChange={onStatusChange}
-                onMarkOutOfService={onMarkOutOfService}
-              />
-            ))}
           </div>
         ) : (
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
