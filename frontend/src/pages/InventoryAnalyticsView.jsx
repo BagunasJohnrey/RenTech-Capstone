@@ -106,8 +106,9 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
         </div>
       )}
 
-      {/* Top Performers */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {/* Top Performers — 1-up on phones, 2-up on tablet (3rd spans full),
+          3-up on desktop */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
           <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
             <DollarSign size={16} className="text-emerald-500" /> Top by Revenue
@@ -142,7 +143,7 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
             {topByUtilization.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
           </div>
         </div>
-        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
+        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm md:col-span-2 xl:col-span-1">
           <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
             <RotateCcw size={16} className="text-orange-500" /> Top by Frequency
           </h3>

@@ -12,8 +12,33 @@
 const TTL_MS = 5 * 60_000;
 const store = new Map<string, { data: unknown; at: number }>();
 
+// Background cache-warmer. `clearDataCache()` drops the whole store on every
+// mutation, so the very next dashboard hit would pay the full query cost (~200
+// ms per round trip against the remote pooler) if we only warmed lazily. A
+// single registered warmer refills the hot keys (KPIs, today digest, insights,
+// forecast, inventory analytics) right after a mutation, so by the time staff
+// navigates back the numbers are already cached. The guard collapses a burst
+// of rapid mutations into one recompute.
+type Warmer = () => void | Promise<unknown>;
+let warmFn: Warmer | null = null;
+let warming = false;
+
 export function clearDataCache() {
   store.clear();
+  if (warmFn && !warming) {
+    warming = true;
+    Promise.resolve()
+      .then(() => warmFn!())
+      .catch(() => {})
+      .finally(() => { warming = false; });
+  }
+}
+
+// Registered once from the dashboard service (which transitively imports this
+// module) to avoid a circular import. The warmer is fire-and-forget and only
+// refills the hot, always-needed keys.
+export function setDataCacheWarmer(fn: Warmer) {
+  warmFn = fn;
 }
 
 export async function cacheOrCompute<T>(key: string, compute: () => Promise<T>): Promise<T> {

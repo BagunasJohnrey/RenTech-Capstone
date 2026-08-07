@@ -1,6 +1,23 @@
 import { prisma } from '../config/database.js';
 import { sma } from '../utils/sma.js';
-import { cacheOrCompute } from '../utils/ttlCache.js';
+import { cacheOrCompute, setDataCacheWarmer } from '../utils/ttlCache.js';
+import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
+
+// Refill the hot dashboard keys right after a mutation clears the cache, in the
+// background. Without this, the first dashboard visit after any booking /
+// return / payment pays the full query cost; with it, that visit is already
+// a warm cache hit. Self-registered here (dashboard.service is loaded by the
+// routes) so ttlCache doesn't have to import us (circular).
+setDataCacheWarmer(() => {
+  return Promise.allSettled([
+    getKpis(),
+    getTodayTasks(),
+    getInsights({}),
+    getForecast(3),
+    getInventoryAnalytics(),
+  ]).then(() => {});
+});
+
 
 function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
   if (filter?.start) where.createdAt = { gte: filter.start };
@@ -359,4 +376,44 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     totalItems: items.length,
     totalRented: rentedItemIds.size,
   };
+}
+
+// One cached round trip for the entire AI Insights page. The frontend used to
+// fire 4 separate requests (kpis, insights, forecast, inventory-analytics) —
+// each hit paid its own ~200 ms pooler round trip, and the independent keys
+// meant a single mutation could warm one endpoint while leaving another cold
+// until its own first load. Bundling them under one key gets all four with a
+// single fetch and a single invalidate/warm cycle.
+export async function getDashboardBundle(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }, forecastPeriod: number = 3) {
+  const startKey = filter?.start ? filter.start.toISOString() : 'all';
+  const endKey = filter?.end ? `:${filter.end.toISOString()}` : '';
+  const weeklyKey = filter?.weekly ? ':weekly' : '';
+  const key = `dashboardBundle:${startKey}${endKey}${weeklyKey}:fp${forecastPeriod}`;
+  return cacheOrCompute(key, async () => {
+    const [kpis, insights, forecast, analytics] = await Promise.all([
+      getKpis(filter ? { start: filter.start, end: filter.end } : undefined),
+      getInsightsUncached(filter),
+      (async () => {
+        const { months, firstMonth } = await getDataMonths();
+        const rows = await prisma.transaction.findMany({
+          where: {
+            status: { in: ['Returned', 'Active', 'Overdue', 'Cancelled'] },
+            createdAt: { gte: firstMonth },
+          },
+          select: { createdAt: true },
+        });
+        const monthlyCounts = months.map(m =>
+          rows.filter(t => t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1).length
+        );
+        return {
+          labels: months.map(m => m.label),
+          counts: monthlyCounts,
+          sma: sma(monthlyCounts, forecastPeriod),
+          period: forecastPeriod,
+        };
+      })(),
+      getInventoryAnalytics(),
+    ]);
+    return { kpis, insights, forecast, analytics };
+  });
 }

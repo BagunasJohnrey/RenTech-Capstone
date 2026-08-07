@@ -19,29 +19,23 @@ import ForgotPasswordView from './pages/ForgotPasswordView';
 import VerifyEmailView from './pages/VerifyEmailView';
 import OAuthErrorView from './pages/OAuthErrorView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
-import LandingPage from './pages/LandingPage';
 import InventoryPage from './pages/InventoryPage';
-import HistoryPage from './pages/HistoryPage';
 import TasksPage from './pages/TasksPage';
 import HelpGuide from './pages/HelpGuide';
 import ConfirmModal from './components/ConfirmModal';
 import ItemForm from './components/ItemForm';
 import AppLayout from './layout/AppLayout';
-import CustomerRentalFlow from './components/CustomerRentalFlow';
 import NotFoundPage from './pages/NotFoundPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 import { SkeletonScreen } from './components/Skeleton';
 import { PageSkeleton } from './components/PageSkeletons';
 import ProcessReturnModal from './components/ProcessReturnModal';
 import ReleaseItemModal from './components/ReleaseItemModal';
-import TransactionDetailModal from './components/TransactionDetailModal';
 import OutOfServiceModal from './components/OutOfServiceModal';
-import ChatbotModal from './components/ChatbotModal';
 import AvailabilityCalendar from './components/AvailabilityCalendar';
 import OnboardingTutorial from './components/OnboardingTutorial';
 import GlobalSearchModal from './components/GlobalSearchModal';
 import ItemDetailModal from './components/ItemDetailModal';
-import QrScannerModal from './components/QrScannerModal';
 
 // Route-level screens are code-split so the heavy recharts bundle (dashboard /
 // analytics) is only fetched when those tabs are actually opened.
@@ -51,6 +45,14 @@ const InventoryAnalyticsView = lazy(() => import('./pages/InventoryAnalyticsView
 const ProfileSettingsView = lazy(() => import('./pages/ProfileSettingsView'));
 const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
 const NotificationsView = lazy(() => import('./pages/NotificationsView'));
+const HistoryPage = lazy(() => import('./pages/HistoryPage'));
+// Modal/large components that drag heavy deps (framer-motion, qrcode,
+// html5-qrcode, react-markdown) into the boot bundle — deferred until opened.
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const CustomerRentalFlow = lazy(() => import('./components/CustomerRentalFlow'));
+const ChatbotModal = lazy(() => import('./components/ChatbotModal'));
+const QrScannerModal = lazy(() => import('./components/QrScannerModal'));
+const TransactionDetailModal = lazy(() => import('./components/TransactionDetailModal'));
 
 const navItems = {
   Admin: [
@@ -702,11 +704,13 @@ export default function RentechApp() {
       );
     }
     return (
-      <LandingPage
-        onLogin={() => setShowLoginPage(true)}
-        onBrowse={() => setGuestView(true)}
-        onViewFeatured={handleViewFeatured}
-      />
+      <Suspense fallback={<SkeletonScreen />}>
+        <LandingPage
+          onLogin={() => setShowLoginPage(true)}
+          onBrowse={() => setGuestView(true)}
+          onViewFeatured={handleViewFeatured}
+        />
+      </Suspense>
     );
   }
 
@@ -834,23 +838,27 @@ export default function RentechApp() {
         )}
 
         {customerRental && (
-        <CustomerRentalFlow
-          item={customerRental.item}
-          selectedDate={customerRental.date}
-          inventory={inventory}
-          customerInfo={customerInfo}
-          onClose={() => setCustomerRental(null)}
-          onSubmitBooking={handleSubmitBooking}
-          onCancelBooking={handleCancelBooking}
-        />
+        <Suspense fallback={null}>
+          <CustomerRentalFlow
+            item={customerRental.item}
+            selectedDate={customerRental.date}
+            inventory={inventory}
+            customerInfo={customerInfo}
+            onClose={() => setCustomerRental(null)}
+            onSubmitBooking={handleSubmitBooking}
+            onCancelBooking={handleCancelBooking}
+          />
+        </Suspense>
         )}
 
         {showChatbot && (
-          <ChatbotModal
-            onClose={() => setShowChatbot(false)}
-            inventory={inventory}
-            onBook={(item) => setCustomerRental({ item })}
-          />
+          <Suspense fallback={null}>
+            <ChatbotModal
+              onClose={() => setShowChatbot(false)}
+              inventory={inventory}
+              onBook={(item) => setCustomerRental({ item })}
+            />
+          </Suspense>
         )}
 
         {calendarItem && (
@@ -915,11 +923,13 @@ export default function RentechApp() {
         {/* Routed transaction detail — URL like /transactions/12,
             /admin/transactions/12 or /staff/logs/12. */}
         {isLoggedIn && txDetailMatch && routedTx && (
-          <TransactionDetailModal
-            transaction={routedTx}
-            fetchFull={getById}
-            onClose={() => navigate(basePath, { replace: true })}
-          />
+          <Suspense fallback={null}>
+            <TransactionDetailModal
+              transaction={routedTx}
+              fetchFull={getById}
+              onClose={() => navigate(basePath, { replace: true })}
+            />
+          </Suspense>
         )}
 
         {/* Global Search Modal */}
@@ -934,14 +944,16 @@ export default function RentechApp() {
 
         {/* QR Scanner – staff picks RELEASE/RETURN, then scans the booking QR */}
         {showScanner && viewRole === 'Staff' && (
-          <QrScannerModal
-            onClose={() => setShowScanner(false)}
-            onFound={(tx, action) => {
-              setShowScanner(false);
-              setScannedAction(action);
-              setScannedTx(normalizeTx(tx));
-            }}
-          />
+          <Suspense fallback={null}>
+            <QrScannerModal
+              onClose={() => setShowScanner(false)}
+              onFound={(tx, action) => {
+                setShowScanner(false);
+                setScannedAction(action);
+                setScannedTx(normalizeTx(tx));
+              }}
+            />
+          </Suspense>
         )}
 
         {/* Scanned booking → the release (pickup) modal */}

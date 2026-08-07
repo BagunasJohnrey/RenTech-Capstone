@@ -75,3 +75,19 @@ export async function getInsights(req: AuthenticatedRequest, res: Response, next
     next(err);
   }
 }
+
+// Single payload for the AI Insights page — replaces the old 4-request fan-out
+// (kpis + insights + forecast + inventory-analytics) with one cached bundle.
+export async function getBundle(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const period = String(req.query.period || 'all');
+    const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
+    const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
+    const fp = Number(req.query.fp);
+    const forecastPeriod = Number.isFinite(fp) && fp >= 1 && fp <= 12 ? Math.floor(fp) : 3;
+    const data = await dashboardService.getDashboardBundle(getPeriodFilter(period, year, month), forecastPeriod);
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+}

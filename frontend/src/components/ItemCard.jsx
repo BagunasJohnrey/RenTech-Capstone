@@ -1,4 +1,4 @@
-import { Edit3, Trash2, Calendar, Eye, CheckCircle2, Wrench, Lock } from 'lucide-react';
+import { Edit3, Trash2, Calendar, Eye, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { itemPill } from '../utils/statusColors';
 

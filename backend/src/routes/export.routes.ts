@@ -6,32 +6,34 @@ import * as exportService from '../services/export.service.js';
 
 const router = Router();
 
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+function sendXlsx(res: Response, buffer: Buffer, filename: string) {
+  res.setHeader('Content-Type', XLSX_TYPE);
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buffer);
+}
+
 router.use(authMiddleware);
 
 router.get('/transactions', requireRole(Role.Admin, Role.Staff), async (_req, res: Response, next: NextFunction) => {
   try {
-    const csv = await exportService.exportTransactions();
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="transactions.csv"');
-    res.send(csv);
+    const buffer = await exportService.exportTransactions();
+    sendXlsx(res, buffer, 'transactions.xlsx');
   } catch (err) { next(err); }
 });
 
 router.get('/revenue', requireRole(Role.Admin, Role.Staff), async (_req, res: Response, next: NextFunction) => {
   try {
-    const csv = await exportService.exportRevenue();
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="revenue.csv"');
-    res.send(csv);
+    const buffer = await exportService.exportRevenue();
+    sendXlsx(res, buffer, 'revenue.xlsx');
   } catch (err) { next(err); }
 });
 
 router.get('/inventory', requireRole(Role.Admin, Role.Staff), async (_req, res: Response, next: NextFunction) => {
   try {
-    const csv = await exportService.exportInventory();
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="inventory.csv"');
-    res.send(csv);
+    const buffer = await exportService.exportInventory();
+    sendXlsx(res, buffer, 'inventory.xlsx');
   } catch (err) { next(err); }
 });
 

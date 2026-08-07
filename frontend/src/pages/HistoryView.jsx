@@ -200,9 +200,9 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             </div>
 
             {isStaff && (
-              <button onClick={() => api.download('/export/transactions', 'transactions.csv')}
+<button onClick={() => api.download('/export/transactions', 'transactions.xlsx')}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors shrink-0">
-                <Download size={14} /> CSV
+                <Download size={14} /> Excel
               </button>
             )}
           </div>

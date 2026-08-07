@@ -23,7 +23,7 @@ export function AIInsightsSkeleton() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm space-y-2.5">
             <Skeleton className="h-8 w-9 rounded-xl" />

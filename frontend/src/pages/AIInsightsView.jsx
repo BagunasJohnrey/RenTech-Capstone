@@ -15,7 +15,7 @@ import { AIInsightsSkeleton } from '../components/PageSkeletons';
 import { Skeleton } from '../components/Skeleton';
 import { TX_STATUS_HEX } from '../utils/statusColors';
 
-const fmt = (n) => `₱${Number(n).toLocaleString()}`;
+const fmt = (n) => `₱${Math.round(Number(n)).toLocaleString()}`;
 const shortMonth = (l) => l?.split(' ')[0] || '';
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -219,31 +219,36 @@ export default function AIInsightsView({ analyticsData, role }) {
       settle();
     };
 
-    // Each request updates its own section the moment it lands (progressive
-    // render — the page paints as soon as the fastest source arrives), and the
-    // allSettled hook writes one coherent snapshot to the 60s cache.
-    const pKpis = api.get(`/dashboard/kpis?${periodParam}${monthParam}${yearParam}`)
-      .then(r => { if (active) { setKpis(r); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
-    const pForecast = api.get('/dashboard/forecast?period=3')
-      .then(r => { if (active) { setForecast(r); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
-    const pInsights = api.get(`/dashboard/insights?${periodParam}${monthParam}${yearParam}`)
-      .then(r => { if (active) { setInsightsData(r); setRevenueChartData(r?.revenueByMonth || []); setRevenueWeeklyData(r?.revenueByWeek || null); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
-    const pAnalytics = api.get(`/inventory/analytics?${periodParam}`)
-      .then(r => { if (active) { setInventoryAnalytics(r); setAnalyticsSummary(r?.summary); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
+    // One request for the whole page. The old four-call fan-out (kpis /
+    // insights / forecast / inventory-analytics) each paid its own remote
+    // pooler round trip on a cold cache and could warm independently — one
+    // fresh, one stale. The bundle returns everything under one key so the
+    // page paints once, consistently, from a single fetch.
+    const params = [`fp=3`, periodParam, monthParam ? monthParam.replace(/^&/, '') : '', yearParam ? yearParam.replace(/^&/, '') : '']
+      .filter(Boolean).join('&');
+    const pBundle = api.get(`/dashboard/bundle?${params}`)
+      .then(r => {
+        if (!active) return r;
+        setKpis(r?.kpis ?? null);
+        setForecast(r?.forecast ?? null);
+        setInsightsData(r?.insights ?? null);
+        setRevenueChartData(r?.insights?.revenueByMonth || []);
+        setRevenueWeeklyData(r?.insights?.revenueByWeek || null);
+        setInventoryAnalytics(r?.analytics ?? null);
+        setAnalyticsSummary(r?.analytics?.summary ?? null);
+        settle();
+        return r;
+      });
 
-    Promise.allSettled([pKpis, pForecast, pInsights, pAnalytics]).then(([k, f, i, a]) => {
-      if (!active) return;
-      if (k.status === 'fulfilled' && f.status === 'fulfilled' && i.status === 'fulfilled' && a.status === 'fulfilled') {
-        aiCache.set(cacheKey, {
-          data: { kpis: k.value, forecast: f.value, insights: i.value, analytics: a.value },
-          at: Date.now(),
-        });
-      }
+    pBundle.then(r => {
+      if (!active || !r) return;
+      aiCache.set(cacheKey, {
+        data: { kpis: r.kpis, forecast: r.forecast, insights: r.insights, analytics: r.analytics },
+        at: Date.now(),
+      });
       settle();
+    }).catch(() => {
+      if (active) fail(new Error('Failed to load dashboard data'));
     });
 
     return () => { active = false; };
@@ -511,15 +516,15 @@ export default function AIInsightsView({ analyticsData, role }) {
                 flush-right on the same row as the pills. */}
             <div className="ml-auto md:ml-0 flex items-center gap-2">
               <div className="w-px h-6 bg-gray-200 hidden md:block" />
-              <button onClick={() => handleExport('/export/transactions', 'transactions.csv')}
+              <button onClick={() => handleExport('/export/transactions', 'transactions.xlsx')}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Transactions">
                 <Download size={16} />
               </button>
-              <button onClick={() => handleExport('/export/revenue', 'revenue.csv')}
+              <button onClick={() => handleExport('/export/revenue', 'revenue.xlsx')}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Revenue">
                 <DollarSign size={16} />
               </button>
-              <button onClick={() => handleExport('/export/inventory', 'inventory.csv')}
+              <button onClick={() => handleExport('/export/inventory', 'inventory.xlsx')}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Inventory">
                 <BarChart3 size={16} />
               </button>
@@ -527,8 +532,8 @@ export default function AIInsightsView({ analyticsData, role }) {
           </div>
         </div>
 
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        {/* KPI Cards — 2-up on phones, 3-up on tablets/iPads, 6-up on desktop */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
           <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
             <div className="p-2 bg-emerald-50 rounded-xl inline-block text-emerald-500 mb-2">
               <DollarSign size={16} />
