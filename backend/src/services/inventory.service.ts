@@ -159,6 +159,13 @@ export async function updateItem(id: number, data: {
     patch.outOfServiceReason = null;
   }
 
+  // Photo replaced → delete the old stored object so the bucket doesn't
+  // accumulate orphan files (skip absolute URLs, which aren't bucket objects).
+  if (data.image && data.image !== item.image && item.image && !/^https?:\/\//.test(item.image)) {
+    const { removeObject } = await import('./storage.service.js');
+    await removeObject(item.image);
+  }
+
   const updated = await prisma.inventoryItem.update({ where: { id }, data: patch });
   clearDataCache();
   return { ...updated, effectiveStatus: updated.status };

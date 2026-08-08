@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Camera } from 'lucide-react';
 import { storageService } from '../services';
 import { useToast } from './Toast';
 
 const FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1566162200445-98319fdb5515?auto=format&fit=crop&q=80&w=400';
+
+const isAbsoluteUrl = (p) =>
+  typeof p === 'string' && (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:'));
 
 // Must stay in sync with the item types used across the app (preferences,
 // catalog filters, recommendations).
@@ -41,6 +44,23 @@ export default function ItemForm({
   const [saleEndsAt, setSaleEndsAt] = useState(
     initial.saleEndsAt ? new Date(initial.saleEndsAt).toISOString().slice(0, 10) : ''
   );
+
+  // When editing an item that already has a photo, show it as the preview so
+  // staff can see the current picture before replacing it. Storage paths are
+  // resolved to a signed URL (same resolution the rest of the app uses).
+  useEffect(() => {
+    if (!showPhoto || !initial.image) return;
+    let active = true;
+    if (isAbsoluteUrl(initial.image)) {
+      setPreviewUrl(initial.image);
+    } else {
+      storageService
+        .getDownloadUrl(initial.image)
+        .then((res) => { if (active && res?.url) setPreviewUrl(res.url); })
+        .catch(() => {});
+    }
+    return () => { active = false; };
+  }, [showPhoto, initial.image]);
 
   // Downscale large photos client-side so the base64 payload stays small and
   // the upload clears the storage bucket size limit.
@@ -113,7 +133,9 @@ export default function ItemForm({
     if (showCategory) values.category = category;
     if (showPhoto) {
       const img = imagePath && imagePath.startsWith('blob:') ? null : imagePath;
-      values.image = img || FALLBACK_IMAGE;
+      // New upload wins; otherwise keep the item's current photo (or fall
+      // back to the placeholder only when the item had no photo at all).
+      values.image = img || initial.image || FALLBACK_IMAGE;
     }
     if (showSale) {
       values.onSale = onSale;

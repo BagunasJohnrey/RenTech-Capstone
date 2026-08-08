@@ -93,7 +93,6 @@ export default function RentechApp() {
   // Strip a trailing detail id (numeric item id OR a transaction UUID) so the
   // underlying tab resolves for detail URLs like /staff/logs/<uuid>.
   const basePath = location.pathname.replace(/\/(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\d+)$/, '');
-  const goTab = (tabId) => navigate(tabPath(viewRole, tabId));
   // '/' is the app entry: customers get their Home, staff/admin get their
   // dashboard (otherwise they'd hit the Unauthorized page right after login).
   const activeTab = (location.pathname === '/' && viewRole)
@@ -102,6 +101,15 @@ export default function RentechApp() {
   // Paths that belong to another role (for the Unauthorized page).
   const roleOwnsPath = pathRequiresRole(location.pathname);
   const [showOAuthDetails, setShowOAuthDetails] = useState(false);
+
+  // Incremented on every nav click (even the same tab) so AppLayout knows to
+  // jump the content scroller to the top — the window doesn't scroll in this
+  // app shell, only the inner content div does.
+  const [navTick, setNavTick] = useState(0);
+  const goTab = (tabId) => {
+    setNavTick((t) => t + 1);
+    navigate(tabPath(viewRole, tabId));
+  };
 
   const handleOAuthDetails = async (details) => {
     await completeOAuth(details);
@@ -804,6 +812,7 @@ export default function RentechApp() {
               return manual.includes(editingItem.status) ? manual : [...manual, editingItem.status];
             })()}
             submitLabel="Save Changes"
+            showPhoto
             showSale={role === 'Admin'}
             onSubmit={(values) => handleUpdateItem(values)}
             onClose={() => setEditingItem(null)}
@@ -1009,6 +1018,8 @@ export default function RentechApp() {
         goTab('Notifications');
       }}
       taskBadge={taskBadge}
+      scrollKey={`${location.pathname}#${navTick}`}
+      animateKey={`${activeTab}#${navTick}`}
       onFabClick={() => {
         if (viewRole === 'Admin') goTab('AI Insights');
         else if (viewRole === 'Staff') setShowStaffRental(true);

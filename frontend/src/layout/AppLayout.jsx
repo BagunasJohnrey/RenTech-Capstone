@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Search } from 'lucide-react';
 import Sidebar from './Sidebar';
 import MobileBottomNav from './MobileBottomNav';
@@ -64,9 +65,37 @@ export default function AppLayout({
   onViewAllNotifications,
   taskBadge,
   onFabClick,
+  scrollKey,
+  animateKey,
   children,
   overlays,
 }) {
+  // Page content scrolls in THIS div (the window itself is fixed-height and
+  // doesn't scroll), so scrolling must target it — window.scrollTo() never
+  // works for the app shell.
+  const contentRef = useRef(null);
+
+  // Every tab change (and every re-click of the same tab, via scrollKey)
+  // glides the content back to the top.
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [activeTab, scrollKey]);
+
+  // Replays the page-entrance animation on tab switches / nav clicks only.
+  // NOT on pathname-only changes (e.g. opening an item-detail route over the
+  // catalog) — replaying the fade there makes the page visibly flicker.
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    el.classList.remove('page-enter');
+    // Force a reflow so removing the class actually resets the animation,
+    // then re-apply it to replay fadeSlideUp on the same mounted element.
+    void el.offsetWidth;
+    el.classList.add('page-enter');
+  }, [animateKey]);
+
   return (
     <>
       <style>{customStyles}</style>
@@ -162,7 +191,10 @@ export default function AppLayout({
             </div>
           </header>
 
-          <div className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+          <div
+            ref={contentRef}
+            className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar page-enter"
+          >
             {children}
           </div>
         </main>

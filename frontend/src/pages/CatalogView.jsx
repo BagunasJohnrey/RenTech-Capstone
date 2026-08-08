@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, Trash2 } from 'lucide-react';
+import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, Trash2, ArrowUpDown, Package } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import { SkeletonGrid } from '../components/Skeleton';
 import { itemPill } from '../utils/statusColors';
@@ -45,6 +45,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [onSaleOnly, setOnSaleOnly] = useState(false);
+  const [sortBy, setSortBy] = useState('default');
 
   const allCategories = useMemo(() => {
     const set = new Set(inventory.map(item => item.category));
@@ -85,11 +86,12 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
     [inventory]
   );
 
-  const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
+const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
     + (selectedCategories.length > 0 ? 1 : 0)
     + (activeSizeFilter !== 'All' ? 1 : 0)
     + (minPrice !== '' || maxPrice !== '' ? 1 : 0)
-    + (onSaleOnly ? 1 : 0);
+    + (onSaleOnly ? 1 : 0)
+    + (sortBy !== 'default' ? 1 : 0);
 
   const filteredInventory = useMemo(() => {
     const filtered = inventory.filter(item => {
@@ -119,29 +121,40 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
       if (onSaleOnly && !getSaleInfo(item).active) return false;
       return true;
     });
-    if (!isStaff) {
+    if (!isStaff && sortBy === 'default') {
       // Default sort for customers/guests: items not currently rented (free or
       // reserved with booked dates) first, then currently rented, then the rest.
       const rank = (st) => st === 'Available' ? 0 : st === 'Reserved' ? 1 : st === 'Rented' ? 2 : 3;
       filtered.sort((a, b) => rank(a.status) - rank(b.status));
+    } else if (sortBy === 'priceAsc') {
+      filtered.sort((a, b) => a.price - b.price);
+    } else if (sortBy === 'priceDesc') {
+      filtered.sort((a, b) => b.price - a.price);
+    } else if (sortBy === 'name') {
+      filtered.sort((a, b) => a.name.localeCompare(b.name));
     }
     return filtered;
-  }, [inventory, searchQuery, activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, isStaff]);
+  }, [inventory, searchQuery, activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, isStaff, sortBy]);
 
-  const clearFilters = () => {
+const clearFilters = () => {
     setActiveStatusFilter('All');
     setSelectedCategories([]);
     setActiveSizeFilter('All');
     setMinPrice('');
     setMaxPrice('');
     setOnSaleOnly(false);
+    setSortBy('default');
   };
 
-  const toggleCategory = (cat) => {
+const toggleCategory = (cat) => {
     setSelectedCategories(prev =>
       prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
     );
   };
+
+  // Changes whenever a filter/search/toggle changes — keys the item grid so
+  // it replays a quick fade on the way in instead of hard-swapping.
+  const gridKey = JSON.stringify([activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, searchQuery, sortBy]);
 
   const handleItemAction = (item) => {
     if (guest) {
@@ -158,15 +171,20 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
   const sizeOptions = allSizes.map(s => ({ value: s, label: s }));
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Inventory Health KPIs — Admin only */}
       {role === 'Admin' && (
         <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-gray-900">Inventory Health</h3>
+            <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+              <Package size={14} className="text-gray-400" />
+              Inventory Health
+            </h3>
             <span className="text-[11px] font-semibold text-gray-500 tabular-nums">{inventory.length} items total</span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3">
+
+          {/* Status counts — 2-up on phones, 3-up on tablets, 5-up on desktop */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {[
               { label: 'Available', status: 'Available' },
               { label: 'Rented', status: 'Rented' },
@@ -175,7 +193,6 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
               { label: 'Out of Service', status: 'OutOfService' },
             ].map(({ label, status }) => {
               const pill = itemPill(status);
-              const Icon = pill.icon;
               const count = inventory.filter(i => i.status === status).length;
               const pct = inventory.length > 0 ? Math.round((count / inventory.length) * 100) : 0;
               const active = activeStatusFilter === status;
@@ -184,55 +201,56 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
                   key={status}
                   onClick={() => setActiveStatusFilter(active ? 'All' : status)}
                   title={`Filter by ${label}`}
-                  className={`group rounded-xl border p-3 text-left transition-all min-w-0 bg-white ${pill.border} ${
-                    active ? 'ring-2 ring-gray-900/70 shadow-sm' : 'hover:shadow-sm hover:-translate-y-0.5'
+                  className={`bg-white rounded-2xl p-4 border text-left transition-all btn-press ${
+                    active
+                      ? 'ring-2 ring-gray-900/70 border-gray-200 shadow-sm'
+                      : 'border-gray-100/80 shadow-sm hover:shadow-md hover:border-gray-200'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 mb-1.5 min-w-0">
-                    <span className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${pill.bg} ${pill.text}`}>
-                      <Icon size={12} strokeWidth={2.5} />
-                    </span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 truncate">{label}</span>
+                  <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider truncate">{label}</p>
+                  <p className={`text-2xl lg:text-3xl font-extrabold mt-1 tabular-nums ${count > 0 ? pill.text : 'text-gray-900'}`}>{count}</p>
+                  <div className="mt-2.5 h-1 rounded-full bg-gray-100 overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-500 ${pill.dot}`} style={{ width: `${pct}%` }} />
                   </div>
-                  <p className={`text-xl sm:text-2xl font-bold tabular-nums ${pill.text}`}>{count}</p>
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className="flex-1 h-1 rounded-full bg-gray-100 overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${pill.dot}`} style={{ width: `${pct}%` }} />
-                    </div>
-                    <span className="text-[9px] font-semibold text-gray-400 tabular-nums shrink-0">{pct}%</span>
-                  </div>
+                  <p className="text-[10px] font-semibold text-gray-400 mt-1 tabular-nums">{pct}% of items</p>
                 </button>
               );
             })}
           </div>
-          <div className="mt-2.5 pt-2.5 border-t border-gray-100 grid grid-cols-2 gap-2.5 sm:gap-3">
+
+          {/* On Sale + Archived toggles */}
+          <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-3">
             <button
               onClick={() => setOnSaleOnly(!onSaleOnly)}
               title="Filter: On Sale"
-              className={`flex items-center justify-between rounded-xl border px-3 py-2 transition-all ${
+              className={`flex items-center justify-between rounded-xl border px-3 py-2.5 transition-all btn-press ${
                 onSaleOnly
                   ? 'ring-2 ring-[#bf4a53]/60 bg-[#bf4a53]/5 border-[#bf4a53]/40'
                   : 'bg-white border-gray-200 hover:border-[#bf4a53]/40 hover:bg-[#bf4a53]/5'
               }`}
             >
               <span className="flex items-center gap-2 min-w-0">
-                <BadgePercent size={14} className="text-[#bf4a53] shrink-0" />
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 truncate">On Sale</span>
+                <span className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${onSaleOnly ? 'bg-[#bf4a53] text-white' : 'bg-[#bf4a53]/10 text-[#bf4a53]'}`}>
+                  <BadgePercent size={13} strokeWidth={2.5} />
+                </span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-600 truncate">On Sale</span>
               </span>
               <span className="text-sm font-bold text-[#bf4a53] tabular-nums">{onSaleCount}</span>
             </button>
             <button
               onClick={() => setActiveStatusFilter(activeStatusFilter === 'Deleted' ? 'All' : 'Deleted')}
               title="Filter: Archived"
-              className={`flex items-center justify-between rounded-xl border px-3 py-2 transition-all ${
+              className={`flex items-center justify-between rounded-2xl border px-3 py-2.5 transition-all btn-press ${
                 activeStatusFilter === 'Deleted'
                   ? 'ring-2 ring-gray-900/70 bg-gray-100 border-gray-300'
                   : 'bg-white border-gray-200 hover:bg-gray-50'
               }`}
             >
               <span className="flex items-center gap-2 min-w-0">
-                <Trash2 size={14} className="text-gray-400 shrink-0" />
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 truncate">Archived</span>
+                <span className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${activeStatusFilter === 'Deleted' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                  <Trash2 size={13} strokeWidth={2.5} />
+                </span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-600 truncate">Archived</span>
               </span>
               <span className="text-sm font-bold text-gray-500 tabular-nums">{deletedCount}</span>
             </button>
@@ -240,9 +258,9 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
         </div>
       )}
 
-      {/* Search + Filter toggle row */}
+{/* Search + Filter toggle row */}
       <div className="flex items-center gap-2.5">
-        <div className="relative flex-1">
+        <div className="relative flex-1 min-w-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input
             type="text"
@@ -382,7 +400,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
             </button>
           </div>
 
-        {/* Category + Size + Price row */}
+{/* Category + Size + Price + Sort row */}
           <div className="px-4 py-3 space-y-3">
             {/* Category pills (multi-select) */}
             <div>
@@ -406,6 +424,23 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              {/* Sort */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Sort</span>
+                <div className="relative">
+                  <ArrowUpDown size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                    className="appearance-none bg-gray-50 border border-gray-200/60 rounded-lg py-1.5 pl-7 pr-7 text-xs font-medium text-gray-700 focus:outline-none focus:border-gray-400 transition-colors cursor-pointer">
+                    {[
+                      { value: 'default', label: isStaff ? 'Default' : 'Featured' },
+                      { value: 'priceAsc', label: 'Price: Low–High' },
+                      { value: 'priceDesc', label: 'Price: High–Low' },
+                      { value: 'name', label: 'Name A–Z' },
+                    ].map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                  <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                </div>
+              </div>
               {/* Size (staff only) */}
               {isStaff && sizeOptions.length > 1 && (
                 <div className="flex items-center gap-2">
@@ -463,10 +498,18 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
                   </button>
                 </span>
               ))}
-              {activeSizeFilter !== 'All' && (
+{activeSizeFilter !== 'All' && (
                 <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
                   {activeSizeFilter}
                   <button onClick={() => setActiveSizeFilter('All')} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                    <X size={11} />
+                  </button>
+                </span>
+              )}
+              {sortBy !== 'default' && (
+                <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
+                  {sortBy === 'priceAsc' ? 'Price: Low–High' : sortBy === 'priceDesc' ? 'Price: High–Low' : 'Name A–Z'}
+                  <button onClick={() => setSortBy('default')} className="text-gray-400 hover:text-gray-600 ml-0.5">
                     <X size={11} />
                   </button>
                 </span>
@@ -496,9 +539,8 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
         </div>
       )}
 
-      {/* Availability check modal - overlay */}
-      {/* Items */}
-      <div>
+{/* Items */}
+      <div key={gridKey} className="animate-in fade-in duration-300">
       {loading && inventory.length === 0 ? (
           <SkeletonGrid count={8} columns="grid-cols-2 xl:grid-cols-4" gap="gap-4" />
         ) : filteredInventory.length === 0 ? (

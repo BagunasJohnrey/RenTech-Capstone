@@ -178,6 +178,10 @@ export default function AIInsightsView({ analyticsData, role }) {
   // the remaining sections fill in as their own requests resolve — no full-page
   // skeleton waiting on all 4 endpoints.
   const [loaded, setLoaded] = useState(!!cached);
+  // Once the page has painted real content, never drop back to the full-page
+  // skeleton — range/period switches would otherwise flash skeleton→content
+  // on every cache miss. The sections just stay put until the new data lands.
+  const [everRendered, setEverRendered] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState(() => readAiSuggestCache());
   const [suggestLoading, setSuggestLoading] = useState(false);
   const { error: toastError } = useToast();
@@ -208,11 +212,10 @@ export default function AIInsightsView({ analyticsData, role }) {
       setInventoryAnalytics(hit.analytics);
       setAnalyticsSummary(hit.analytics?.summary);
       setLoaded(true);
-    } else {
-      setLoaded(false);
+      setEverRendered(true);
     }
     let settled = false;
-    const settle = () => { if (!settled) { settled = true; if (active) setLoaded(true); } };
+    const settle = () => { if (!settled) { settled = true; if (active) { setLoaded(true); setEverRendered(true); } } };
     const fail = (err) => {
       if (!active) return;
       toastError(err?.message || 'Failed to load dashboard data');
@@ -306,7 +309,9 @@ export default function AIInsightsView({ analyticsData, role }) {
     }
   };
 
-  if (!loaded) {
+  // Full-page skeleton only on the very first paint. After that the page stays
+  // mounted and refreshes in place — no skeleton flash on range switches.
+  if (!loaded && !everRendered) {
     return <AIInsightsSkeleton />;
   }
 
@@ -455,7 +460,7 @@ export default function AIInsightsView({ analyticsData, role }) {
   // -- Render --
   return (
     <>
-      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl mx-auto">
+      <div className="space-y-8 max-w-5xl mx-auto">
 
         {/* Header */}
         <div className="space-y-3">
@@ -533,6 +538,7 @@ export default function AIInsightsView({ analyticsData, role }) {
         </div>
 
         {/* KPI Cards — 2-up on phones, 3-up on tablets/iPads, 6-up on desktop */}
+        <div key={cacheKey} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
           <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
             <div className="p-2 bg-emerald-50 rounded-xl inline-block text-emerald-500 mb-2">
@@ -871,6 +877,8 @@ export default function AIInsightsView({ analyticsData, role }) {
               </ul>
             )}
           </div>
+        </div>
+
         </div>
 
         {/* AI Report button */}
