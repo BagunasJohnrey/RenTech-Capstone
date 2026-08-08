@@ -41,6 +41,20 @@ export function isAuthed() {
   }
 }
 
+// Is a session cookie present at all? The access token cookie (rt_access) is
+// httpOnly — JS can never see it in document.cookie. The reliable hint is the
+// non-httpOnly rt_expires_at companion: the backend sets it on every login,
+// OAuth completion, and refresh, so its presence means real session cookies
+// were recently minted. Used at boot to avoid firing /auth/me (and its 401)
+// when we're almost certainly a guest.
+export function hasSessionCookie() {
+  try {
+    return document.cookie.split('; ').some((c) => c.startsWith('rt_expires_at='));
+  } catch {
+    return false;
+  }
+}
+
 export function clearImageCache() {
   try {
     sessionStorage.removeItem(IMG_CACHE_KEY);

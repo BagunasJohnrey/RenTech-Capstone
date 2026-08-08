@@ -83,19 +83,6 @@ export default function AppLayout({
     }
   }, [activeTab, scrollKey]);
 
-  // Replays the page-entrance animation on tab switches / nav clicks only.
-  // NOT on pathname-only changes (e.g. opening an item-detail route over the
-  // catalog) — replaying the fade there makes the page visibly flicker.
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    el.classList.remove('page-enter');
-    // Force a reflow so removing the class actually resets the animation,
-    // then re-apply it to replay fadeSlideUp on the same mounted element.
-    void el.offsetWidth;
-    el.classList.add('page-enter');
-  }, [animateKey]);
-
   return (
     <>
       <style>{customStyles}</style>
@@ -193,9 +180,14 @@ export default function AppLayout({
 
           <div
             ref={contentRef}
-            className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar page-enter"
+            className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar"
           >
-            {children}
+            {/* Keyed wrapper: the fade plays as the NEW page mounts, so the
+                swap doesn't dip the already-painted content back to opacity 0
+                (that flicker showed the previous page mid-transition). */}
+            <div key={animateKey ?? activeTab} className="page-enter min-h-full">
+              {children}
+            </div>
           </div>
         </main>
 

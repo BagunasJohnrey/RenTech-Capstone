@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api } from '../utils/api';
-import { setAuthed, clearImageCache } from '../utils/authSession';
+import { setAuthed, clearImageCache, isAuthed, hasSessionCookie } from '../utils/authSession';
 
 const AuthContext = createContext(null);
 
@@ -12,6 +12,16 @@ export function AuthProvider({ children }) {
     // Cookies are sent automatically (credentials: 'include' in api.js).
     // If the session is expired and the refresh cookie is valid, the 401
     // retry in api.js refreshes first and then retries /auth/me.
+    //
+    // Guests (no authed flag AND no session cookie) skip the call entirely —
+    // otherwise every anonymous page load fires a doomed /auth/me and logs a
+    // 401 in the console.
+    if (!isAuthed() && !hasSessionCookie()) {
+      setProfile(null);
+      setAuthed(false);
+      setLoading(false);
+      return;
+    }
     try {
       const prof = await api.get('/auth/me');
       setProfile(prof);

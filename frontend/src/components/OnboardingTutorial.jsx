@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { ShoppingBag, ChevronRight, ChevronLeft, Search, Calendar, User, X, CheckCircle2, CreditCard as PayIcon, FileText } from 'lucide-react';
+import { ShoppingBag, ChevronRight, ChevronLeft, Search, Calendar, User, X, CheckCircle2, CreditCard as PayIcon, FileText, LayoutDashboard, Sparkles, Package } from 'lucide-react';
 
 const customerSteps = [
   {
@@ -47,6 +47,29 @@ const staffSteps = [
   },
 ];
 
+const adminSteps = [
+  {
+    icon: LayoutDashboard, title: 'Your Dashboard',
+    desc: 'Start with the Dashboard — today\'s revenue, due returns, inventory health, and overdue follow-ups at a glance.',
+    detail: 'Tap any KPI card to jump straight to the related tab.',
+  },
+  {
+    icon: Package, title: 'Manage Inventory',
+    desc: 'Track every garment — Available, Rented, Reserved, In Cleaning, or Out of Service.',
+    detail: 'Add items, attach photos, mark items On Sale, and batch-clean returns from the Cleaning Queue.',
+  },
+  {
+    icon: CheckCircle2, title: 'Bookings & Returns',
+    desc: 'Process new rentals, scan QR codes, and handle returns — damaged pieces go Out of Service automatically.',
+    detail: 'No-shows and overdue rentals are flagged automatically so you can follow up.',
+  },
+  {
+    icon: Sparkles, title: 'AI Insights & Settings',
+    desc: 'AI Insights builds business reports and suggestions from real transaction data.',
+    detail: 'In Settings: business rules, SMS templates, staff accounts, and secure MFA (two-factor) sign-in.',
+  },
+];
+
 const stepColors = [
   'bg-blue-50 text-blue-600',
   'bg-emerald-50 text-emerald-600',
@@ -56,11 +79,21 @@ const stepColors = [
 
 const stepNumbers = ['01', '02', '03', '04'];
 
+// One storage key per role so staff/admin/customer tutorials are independent.
+const storageKeyFor = (role) => {
+  const r = (role || '').toLowerCase();
+  return r === 'customer' ? 'onboardingDone_Customer' : r === 'admin' ? 'onboardingDone_Admin' : 'onboardingDone_Staff';
+};
+
+// Accent color per step index (tint matching the icon chip).
+const accentFor = (idx) =>
+  idx === 0 ? 'bg-blue-500' : idx === 1 ? 'bg-emerald-500' : idx === 2 ? 'bg-orange-500' : 'bg-purple-500';
+
 export default function OnboardingTutorial({ role, onComplete }) {
   const [step, setStep] = useState(0);
-  const isCustomer = role?.toLowerCase() === 'customer';
-  const steps = isCustomer ? customerSteps : staffSteps;
-  const storageKey = isCustomer ? 'onboardingDone_Customer' : 'onboardingDone';
+  const roleKey = (role || '').toLowerCase();
+  const steps = roleKey === 'customer' ? customerSteps : roleKey === 'admin' ? adminSteps : staffSteps;
+  const storageKey = storageKeyFor(role);
   const card = steps[step];
   const Icon = card.icon;
 
@@ -81,27 +114,31 @@ export default function OnboardingTutorial({ role, onComplete }) {
   const totalSteps = steps.length;
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 sm:p-6">
-      <div className="absolute inset-0 bg-gray-900/60" onClick={finish} />
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 sm:p-6">
+      <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm" onClick={finish} />
 
       <div
         key={step}
-        className="relative w-full sm:max-w-md animate-in fade-in zoom-in-95 duration-300"
+        className="relative w-full max-w-md animate-in fade-in zoom-in-95 duration-300"
         onClick={e => e.stopPropagation()}
       >
-        {/* Step number badge */}
-        <div className="flex justify-center mb-2 sm:mb-0">
-          <div className="bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-3 py-1 rounded-full">
-            Step {stepNumbers[step]} of {totalSteps}
-          </div>
-        </div>
-
         {/* Card */}
-        <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-gray-100/80 overflow-hidden">
+        <div className="bg-white rounded-3xl shadow-2xl border border-gray-100/80 overflow-hidden max-h-[88vh] flex flex-col">
           {/* Colored accent bar */}
-          <div className={`h-1.5 ${step === 0 ? 'bg-blue-500' : step === 1 ? 'bg-emerald-500' : step === 2 ? 'bg-orange-500' : 'bg-purple-500'}`} />
+          <div className={`h-1.5 ${accentFor(step)}`} />
 
-          <div className="p-6 sm:p-7">
+          {/* Step number badge + close */}
+          <div className="flex items-center justify-between px-6 pt-4">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#bf4a53]" />
+              Step {stepNumbers[step]} of {totalSteps}
+            </span>
+            <button onClick={finish} aria-label="Close tutorial" className="p-1 -mr-1 text-gray-300 hover:text-gray-500 transition-colors shrink-0">
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="p-6 pt-4 sm:p-7 sm:pt-4 overflow-y-auto min-h-0">
             <div className="flex items-start gap-4">
               <div className={`p-3 rounded-2xl shrink-0 ${stepColors[step]}`}>
                 <Icon size={24} />
@@ -110,9 +147,6 @@ export default function OnboardingTutorial({ role, onComplete }) {
                 <h3 className="font-bold text-lg text-gray-900">{card.title}</h3>
                 <p className="text-sm text-gray-500 mt-1 leading-relaxed">{card.desc}</p>
               </div>
-              <button onClick={finish} className="p-1 text-gray-300 hover:text-gray-500 transition-colors shrink-0">
-                <X size={16} />
-              </button>
             </div>
 
             {/* Extra detail box */}

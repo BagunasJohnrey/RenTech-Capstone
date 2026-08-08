@@ -11,6 +11,25 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
 * { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ---------------------------------------------------------------------------
+   Skeleton shimmer — the .rt-shimmer blocks sweep a soft light band while
+   content loads (used by the default loading screen + page skeletons)
+   --------------------------------------------------------------------------- */
+.rt-shimmer {
+  position: relative;
+  overflow: hidden;
+  background-color: #eceef0;
+}
+.rt-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: rt-shimmer-sweep 1.5s infinite;
+}
+@keyframes rt-shimmer-sweep { 100% { transform: translateX(100%); } }
+
+/* ---------------------------------------------------------------------------
    QR scanner — animated scan line inside the viewfinder frame
    --------------------------------------------------------------------------- */
 @keyframes scanline {

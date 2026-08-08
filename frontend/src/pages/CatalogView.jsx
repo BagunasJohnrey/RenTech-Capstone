@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, Trash2, ArrowUpDown, Package } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
-import { SkeletonGrid } from '../components/Skeleton';
+import { FeaturedSkeleton } from '../components/Skeleton';
 import { itemPill } from '../utils/statusColors';
 
 const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
@@ -541,8 +541,8 @@ const toggleCategory = (cat) => {
 
 {/* Items */}
       <div key={gridKey} className="animate-in fade-in duration-300">
-      {loading && inventory.length === 0 ? (
-          <SkeletonGrid count={8} columns="grid-cols-2 xl:grid-cols-4" gap="gap-4" />
+{loading && inventory.length === 0 ? (
+          <FeaturedSkeleton count={8} />
         ) : filteredInventory.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
             <Search size={32} className="text-gray-300" />

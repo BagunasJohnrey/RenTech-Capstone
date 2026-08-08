@@ -206,6 +206,13 @@ export default function RentechApp() {
     if (guestView) loadInventory().catch(() => {});
   }, [guestView, loadInventory]);
 
+  // Entering/exiting the guest collection swaps the whole page (landing ⇄
+  // catalog) without a route change, so the window keeps its old scroll
+  // position — reset it so the new view starts at the top.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [guestView]);
+
   // Availability calendar
   const [calendarItem, setCalendarItem] = useState(null);
 
@@ -270,7 +277,9 @@ export default function RentechApp() {
       if (pathRef.current === '/' && role && role !== 'Customer' && !loggingOutRef.current) {
         navigate(HOME_PATH[role], { replace: true });
       }
-      const onboardingKey = profile.role === 'Customer' ? 'onboardingDone_Customer' : 'onboardingDone';
+      const onboardingKey = profile.role === 'Customer' ? 'onboardingDone_Customer'
+        : profile.role === 'Admin' ? 'onboardingDone_Admin'
+        : 'onboardingDone_Staff';
       if (!localStorage.getItem(onboardingKey)) {
         setShowOnboarding(true);
       }
@@ -1020,6 +1029,7 @@ export default function RentechApp() {
       taskBadge={taskBadge}
       scrollKey={`${location.pathname}#${navTick}`}
       animateKey={`${activeTab}#${navTick}`}
+      overlays={overlays}
       onFabClick={() => {
         if (viewRole === 'Admin') goTab('AI Insights');
         else if (viewRole === 'Staff') setShowStaffRental(true);
@@ -1029,7 +1039,6 @@ export default function RentechApp() {
       <Suspense fallback={<PageSkeleton tab={activeTab} />}>
         {page}
       </Suspense>
-      {overlays}
     </AppLayout>
   );
 }

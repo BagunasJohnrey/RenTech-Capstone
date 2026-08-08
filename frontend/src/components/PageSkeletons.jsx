@@ -2,10 +2,29 @@
 // chunk-load flash matches the real page the user is navigating to (instead of
 // a generic grid). All are content-only (the real AppLayout header/sidebar are
 // already rendered around them).
-import { Skeleton, SkeletonGrid, SkeletonList } from './Skeleton';
+import { Skeleton, SkeletonGrid, SkeletonList, Shimmer, FeaturedSkeleton } from './Skeleton';
 
 export function CatalogSkeleton() {
-  return <SkeletonGrid count={8} columns="grid-cols-2 xl:grid-cols-4" />;
+  return (
+    <div className="space-y-6 md:space-y-8">
+      {/* Page header */}
+      <div className="space-y-2.5">
+        <Shimmer className="h-3 w-28 rounded-full" />
+        <Shimmer className="h-7 md:h-9 w-64 md:w-80 rounded-xl" />
+        <Shimmer className="h-4 w-full max-w-xl rounded-full" />
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Shimmer className="h-10 w-full max-w-xs rounded-full" />
+        <Shimmer className="h-8 w-24 rounded-full" />
+        <Shimmer className="h-8 w-24 rounded-full" />
+      </div>
+
+      {/* Featured-pieces grid */}
+      <FeaturedSkeleton count={8} />
+    </div>
+  );
 }
 
 export function HistorySkeleton() {
