@@ -2,9 +2,10 @@ import { useState } from 'react';
 import {
   HelpCircle, ChevronDown, ChevronUp, CheckCircle2, Wrench, Calendar,
   CalendarCheck, AlertTriangle, XCircle, Info, Sparkles,
-  TrendingUp, PackageCheck, DoorOpen, ClipboardList, Play,
+  TrendingUp, PackageCheck, DoorOpen, ClipboardList, Play, ShieldCheck,
 } from 'lucide-react';
 import { itemPill, txPill } from '../utils/statusColors';
+import { TERMS_SECTIONS, TermsBadge } from '../components/TermsContent';
 
 const staffFaqs = [
   { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental", or open Catalog, find an Available item, and tap "Book for Customer" on its card. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
@@ -81,6 +82,7 @@ const insightsTerms = [
 
 export default function HelpGuide({ role, onStartTutorial }) {
   const [openFaq, setOpenFaq] = useState(null);
+  const [openTerm, setOpenTerm] = useState(null);
   const isCustomer = role?.toLowerCase() === 'customer';
   const isAdmin = role?.toLowerCase() === 'admin';
   const faqs = isCustomer ? customerFaqs : staffFaqs;
@@ -254,6 +256,63 @@ export default function HelpGuide({ role, onStartTutorial }) {
               )}
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Terms & Conditions + Privacy Policy — collapsible dropdowns */}
+      <div>
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
+          <ShieldCheck size={18} className="text-emerald-600 shrink-0" /> Terms and Conditions &amp; Privacy Policy
+        </h3>
+        <p className="text-xs sm:text-sm text-gray-500 mb-4 leading-relaxed">
+          Our full terms — covering the rental business policies, website usage, and your rights under the Philippine Data Privacy Act of 2012 (RA 10173). Tap each section to expand it.
+        </p>
+        <div className="bg-white rounded-2xl sm:rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
+          <div className="p-4 sm:p-5 border-b border-gray-100/60 bg-gray-50/40">
+            <TermsBadge
+              label="Effective date: August 2026"
+              sub="By creating an account or using RenTech, you agree to the terms below."
+            />
+          </div>
+          <div className="divide-y divide-gray-100/50">
+            {TERMS_SECTIONS.map((section, i) => {
+              const isOpen = openTerm === i;
+              return (
+                <div key={section.id}>
+                  <button
+                    onClick={() => setOpenTerm(isOpen ? null : i)}
+                    className="w-full flex items-start sm:items-center justify-between gap-2 sm:gap-3 p-3.5 sm:p-4 text-left hover:bg-gray-50/50 transition-colors"
+                  >
+                    <span className="flex-1 pr-1 font-semibold text-[13px] sm:text-sm text-gray-900 leading-snug">{section.title}</span>
+                    <span className={`mt-0.5 sm:mt-0 shrink-0 rounded-lg border p-1 transition-colors ${isOpen ? 'bg-[#bf4a53]/10 border-[#bf4a53]/20 text-[#bf4a53]' : 'border-gray-200 text-gray-400'}`}>
+                      {isOpen ? <ChevronUp size={14} className="sm:hidden" /> : <ChevronDown size={14} className="sm:hidden" />}
+                      {isOpen ? <ChevronUp size={16} className="hidden sm:block" /> : <ChevronDown size={16} className="hidden sm:block" />}
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="px-3.5 sm:px-4 pb-3.5 sm:pb-4">
+                      {section.paragraphs?.map((p, j) => (
+                        <p key={j} className="text-[13px] sm:text-sm text-gray-600 leading-relaxed mb-1.5">{p}</p>
+                      ))}
+                      {section.bullets && (
+                        <ul className="space-y-1.5 mb-1.5 mt-1.5">
+                          {section.bullets.map((b, j) => (
+                            <li key={j} className="text-[13px] sm:text-sm text-gray-600 leading-relaxed flex gap-1.5 sm:gap-2">
+                              <span className="w-1 h-1 rounded-full bg-[#bf4a53] inline-block mt-1.5 shrink-0" />
+                              <span>{b}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {section.closingParagraphs?.map((p, j) => (
+                        <p key={j} className="text-[13px] sm:text-sm text-gray-600 leading-relaxed mb-1.5">{p}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
