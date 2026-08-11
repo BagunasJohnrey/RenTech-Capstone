@@ -106,12 +106,21 @@ export async function deleteTemplate(req: AuthenticatedRequest, res: Response, n
 // delay or mask the others. Never throws; each provider reports its own status.
 export async function getIntegrationsStatus(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const [gemini, semaphore, paymongo] = await Promise.all([
+    const [ai, semaphore, paymongo] = await Promise.all([
       geminiService.checkAiHealth(),
       semaphoreService.checkSemaphoreHealth(),
       paymongoService.checkPaymongoHealth(),
     ]);
-    res.json({ gemini, semaphore, paymongo });
+    // The AI health probe covers all three model providers (gemini → groq →
+    // openrouter); expose each under its own key so the UI can show one row
+    // per provider.
+    res.json({
+      gemini: ai,
+      groq: ai.providers?.groq,
+      openrouter: ai.providers?.openrouter,
+      semaphore,
+      paymongo,
+    });
   } catch (err) {
     next(err);
   }

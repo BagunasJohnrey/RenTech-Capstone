@@ -24,9 +24,10 @@ process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
 
 // Unit tests must never hit live AI providers: backend/.env contains real
-// Gemini/OpenRouter keys, and dotenv only fills vars that aren't already set —
-// blanking them here forces the deterministic in-app fallback paths.
+// Gemini/Groq/OpenRouter keys, and dotenv only fills vars that aren't already
+// set — blanking them here forces the deterministic in-app fallback paths.
 process.env.GEMINI_API_KEY = '';
+process.env.GROQ_API_KEY = '';
 process.env.OPENROUTER_API_KEY = '';
 // Tests verify JWTs locally with this secret — must be set BEFORE jwtVerify.ts loads.
 process.env.SUPABASE_JWT_SECRET = 'test-jwt-secret';

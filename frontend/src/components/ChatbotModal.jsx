@@ -45,6 +45,7 @@ function chipIcon(label) {
 // Short human-readable name for the model behind an AI reply.
 function shortModelName(provider, model) {
   if (provider === 'gemini') return 'Gemini';
+  if (provider === 'groq') return 'Groq';
   if (provider === 'openrouter' && model) {
     const slug = String(model).split('/').pop()?.replace(':free', '') || 'AI';
     return slug

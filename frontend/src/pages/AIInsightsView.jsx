@@ -343,7 +343,10 @@ export default function AIInsightsView({ analyticsData, role }) {
 
   const underperforming = insightsData?.underperforming || [];
   const topRented = insightsData?.topRented || [];
-  const popularItems = topRented.slice(0, 5);
+  // Never-rented items (0x) are NOT "most rented" — filter them out so the
+  // static insights and Top Rented card fall back gracefully when there are no
+  // rentals yet instead of claiming a 0x item is the store's leader.
+  const popularItems = topRented.filter(i => i.rentals > 0).slice(0, 5);
 
   // -- Status distribution --
   const statusDist = [
@@ -443,8 +446,8 @@ export default function AIInsightsView({ analyticsData, role }) {
     insights.push(`"${popularItems[0].name}" is the most rented item (${popularItems[0].rentals}x).`);
   const highUtil = utilData.find(u => u.rate >= 80);
   if (highUtil) insights.push(`High utilisation in ${highUtil.category} (${highUtil.rate}%).`);
-  if (underperforming.length > 0)
-    insights.push(`${underperforming.length} item(s) have never been rented – consider promotions or clearance.`);
+  if (underperforming.length > 0 && popularItems.length > 0)
+    insights.push(`${underperforming.length} item(s) haven't been rented this period – consider promotions or clearance.`);
   const prevSma = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
   if (latestSmaVal > prevSma)
     insights.push(`Next month demand forecast is ${Math.round(latestSmaVal - prevSma)} rental(s) higher than this month.`);
@@ -776,7 +779,7 @@ export default function AIInsightsView({ analyticsData, role }) {
                 })}
               </div>
             )}
-            {underperforming.length > 0 && (
+            {underperforming.length > 0 && popularItems.length > 0 && (
               <div className="pt-2 border-t border-gray-100">
                 <p className="text-xs font-semibold text-orange-500 mb-2">{underperforming.length} item(s) never rented</p>
                 <div className="flex flex-wrap gap-1.5">

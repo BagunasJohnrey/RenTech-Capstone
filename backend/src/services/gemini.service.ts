@@ -243,6 +243,93 @@ async function callOpenRouter(system: string, historyTurns: { role: string; text
   throw (lastErr instanceof Error ? lastErr : new Error('OpenRouter unavailable'));
 }
 
+// Middle tier: Groq (second fallback — tried after Gemini, before OpenRouter).
+// Hosts fast free-tier instruct models (llama/gemma). Static well-known list
+// first, then any models discovered from the API (cached 15 min) so retired
+// model IDs never brick the fallback.
+const GROQ_STATIC_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'gemma2-9b-it',
+];
+
+let groqModelCache: { models: string[]; at: number } | null = null;
+
+async function getGroqModels(): Promise<string[]> {
+  if (groqModelCache && Date.now() - groqModelCache.at < 15 * 60 * 1000) {
+    return groqModelCache.models;
+  }
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/models', {
+      signal: AbortSignal.timeout(10000),
+      headers: { Authorization: `Bearer ${env.GROQ_API_KEY}` },
+    });
+    if (response.ok) {
+      const data = await response.json() as { data?: { id: string }[] };
+      const discovered = (data?.data ?? []).map(m => m.id);
+      const ordered = [...GROQ_STATIC_MODELS, ...discovered.filter(m => !GROQ_STATIC_MODELS.includes(m))].slice(0, 12);
+      if (ordered.length) {
+        groqModelCache = { models: ordered, at: Date.now() };
+        return ordered;
+      }
+    }
+  } catch {
+    // catalog fetch failed — fall through to the static list
+  }
+  return GROQ_STATIC_MODELS;
+}
+
+// Groq speaks the same OpenAI-compatible chat.completions shape as OpenRouter.
+async function callGroq(system: string, historyTurns: { role: string; text: string }[], latest: string) {
+  const messages = [
+    { role: 'system', content: system },
+    ...historyTurns.map(h => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.text })),
+    { role: 'user', content: latest },
+  ];
+  const models = await getGroqModels();
+  let lastErr: unknown = null;
+  // Same deadline-bounded loop as OpenRouter so unhealthy models can't hang
+  // the request for minutes.
+  const started = Date.now();
+  const DEADLINE_MS = 28000;
+  for (const model of models) {
+    if (Date.now() - started > DEADLINE_MS) {
+      break;
+    }
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        signal: AbortSignal.timeout(20000),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({ model, messages, max_tokens: 512, temperature: 0.6 }),
+      });
+      if (!response.ok) {
+        // A 401/403 means the key itself is bad — every model would fail, so abort.
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(`Groq API key rejected (${response.status})`);
+        }
+        // 429/503/529 = provider busy/quota exhausted — remember so the caller
+        // can show the "high traffic, try again" fallback when all models fail.
+        lastErr = response.status === 429 || response.status === 503 || response.status === 529
+          ? markRateLimited(new Error(`Groq ${model} returned ${response.status}`))
+          : new Error(`Groq ${model} returned ${response.status}`);
+        continue;
+      }
+      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      const text = data?.choices?.[0]?.message?.content?.trim();
+      if (text) return { text, model };
+      lastErr = new Error(`Groq ${model} empty response`);
+    } catch (err) {
+      if ((err as Error)?.message?.includes('API key rejected')) throw err;
+      lastErr = err;
+    }
+  }
+  throw (lastErr instanceof Error ? lastErr : new Error('Groq unavailable'));
+}
+
 // Fetch a business-report draft from Gemini (plain text). Shared by the first
 // attempt and the correction retry in generateReport. Low temperature keeps
 // the analyst restating the supplied figures instead of free-styling new
@@ -282,7 +369,7 @@ export async function chatWithAi(message: string, history?: { role: string; text
     return { reply: guard, source: 'guardrail' };
   }
 
-  const aiAvailable = !!env.GEMINI_API_KEY || !!env.OPENROUTER_API_KEY;
+  const aiAvailable = !!env.GEMINI_API_KEY || !!env.GROQ_API_KEY || !!env.OPENROUTER_API_KEY;
 
   const faqAnswer = findFaqAnswerWithAi(message, aiAvailable);
   if (faqAnswer) {
@@ -302,18 +389,31 @@ export async function chatWithAi(message: string, history?: { role: string; text
     : '';
   const groundedSystem = `${AI_SYSTEM_PROMPT}${inventoryContext}`;
 
-  if (!env.GEMINI_API_KEY && !env.OPENROUTER_API_KEY) {
+  if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return {
       reply: 'I\'m your AI stylist for Mylene\'s Boutique! Ask me about our gowns, suits, barongs, Filipiniana, and costumes — or about booking, sizing, pricing, and store info.',
       source: 'fallback',
     };
   }
 
-  // Try Gemini first, then free OpenRouter models, so customers always get AI.
+  // Try Gemini first, then Groq, then free OpenRouter models, so customers
+  // always get AI when at least one provider is up.
   if (env.GEMINI_API_KEY) {
     try {
       const reply = await callGemini(groundedSystem, historyTurns, message);
       return { reply, source: 'ai', provider: 'gemini', model: 'gemini-2.5-flash' };
+    } catch (err) {
+      if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
+        return isRateLimited(err)
+          ? { reply: RATE_LIMITED_REPLY, source: 'error', retryable: true }
+          : { reply: 'I\'m having trouble connecting to my knowledge base. Please try again later or contact the boutique directly.', source: 'error' };
+      }
+    }
+  }
+  if (env.GROQ_API_KEY) {
+    try {
+      const { text, model } = await callGroq(groundedSystem, historyTurns, message);
+      return { reply: text, source: 'ai', provider: 'groq', model };
     } catch (err) {
       if (!env.OPENROUTER_API_KEY) {
         return isRateLimited(err)
@@ -339,8 +439,8 @@ export async function chatWithAi(message: string, history?: { role: string; text
 // call to confirm the API key is valid and the model is reachable — used by the
 // admin "AI Status" check. Never throws; returns a structured status.
 export async function checkAiHealth() {
-  if (!env.GEMINI_API_KEY && !env.OPENROUTER_API_KEY) {
-    return { configured: false, reachable: false, detail: 'No AI key configured (GEMINI_API_KEY and OPENROUTER_API_KEY are both unset)' };
+  if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
+    return { configured: false, reachable: false, detail: 'No AI key configured (GEMINI_API_KEY, GROQ_API_KEY and OPENROUTER_API_KEY are all unset)' };
   }
 
   // Probe Gemini.
@@ -372,6 +472,32 @@ export async function checkAiHealth() {
     }
   }
 
+  // Probe Groq — the second fallback tier. The models endpoint doubles as a
+  // key check (401 = invalid/revoked key), then a tiny chat ping on the fastest
+  // model confirms a real round trip.
+  const groq = { configured: !!env.GROQ_API_KEY, reachable: false, latencyMs: null as number | null, detail: 'Not set' };
+  if (env.GROQ_API_KEY) {
+    try {
+      const auth = await fetch('https://api.groq.com/openai/v1/models', {
+        signal: AbortSignal.timeout(10000),
+        headers: { Authorization: `Bearer ${env.GROQ_API_KEY}` },
+      });
+      if (auth.status === 401) {
+        groq.detail = 'Invalid API key (401)';
+      } else if (!auth.ok) {
+        groq.detail = `Auth endpoint error (${auth.status})`;
+      } else {
+        const started = Date.now();
+        const { text } = await callGroq('You are a helpful assistant.', [], 'ping');
+        groq.latencyMs = Date.now() - started;
+        if (text) { groq.reachable = true; groq.detail = 'OK'; }
+        else groq.detail = 'Empty response from Groq';
+      }
+    } catch (err) {
+      groq.detail = (err as Error)?.message || 'Connection failed';
+    }
+  }
+
   // Probe OpenRouter (free models) — the fallback that keeps the stylist online.
   // First verify the key itself (401 = invalid/revoked key, not a model problem).
   const openrouter = { configured: !!env.OPENROUTER_API_KEY, reachable: false, detail: 'Not set' };
@@ -395,17 +521,18 @@ export async function checkAiHealth() {
     }
   }
 
-  const anyUp = gemini.reachable || openrouter.reachable;
+  const anyUp = gemini.reachable || groq.reachable || openrouter.reachable;
   const parts = [
     `Gemini: ${gemini.configured ? (gemini.reachable ? 'online' : gemini.detail) : 'not set'}`,
+    `Groq: ${groq.configured ? (groq.reachable ? 'online' : groq.detail) : 'not set'}`,
     `OpenRouter: ${openrouter.configured ? (openrouter.reachable ? 'online' : openrouter.detail) : 'not set'}`,
   ];
   return {
-    configured: gemini.configured || openrouter.configured,
+    configured: gemini.configured || groq.configured || openrouter.configured,
     reachable: anyUp,
     latencyMs: gemini.latencyMs,
     detail: parts.join(' · '),
-    providers: { gemini, openrouter },
+    providers: { gemini, groq, openrouter },
   };
 }
 
@@ -418,9 +545,9 @@ export async function generateReport(data: {
   };
   forecast?: Record<string, unknown>;
 }) {
-  if (!env.GEMINI_API_KEY && !env.OPENROUTER_API_KEY) {
+  if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return {
-      report: 'AI report generation is not configured. Please set up a Gemini or OpenRouter API key to enable this feature.',
+      report: 'AI report generation is not configured. Please set up a Gemini, Groq, or OpenRouter API key to enable this feature.',
       source: 'fallback',
     };
   }
@@ -504,11 +631,30 @@ CORRECTION REQUIRED: The previous draft was rejected because it contained a ₱ 
     return validateReportAmounts(await call(correction), data);
   };
 
-  // Try Gemini first, then OpenRouter, so a report is produced even when one
-  // provider is down. Free OpenRouter models keep this working offline.
+  // Try Gemini first, then Groq, then OpenRouter, so a report is produced even
+  // when one or two providers are down. Free Groq/OpenRouter models keep this
+  // working offline.
   if (env.GEMINI_API_KEY) {
     try {
       return await runValidatedReport(callGeminiReport);
+    } catch (err) {
+      if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
+        return isRateLimited(err)
+          ? { report: RATE_LIMITED_REPLY, source: 'error', retryable: true }
+          : {
+            report: 'Unable to generate AI report at this time. Please try again later.',
+            source: 'error',
+          };
+      }
+    }
+  }
+
+  if (env.GROQ_API_KEY) {
+    try {
+      return await runValidatedReport(async (p) => {
+        const { text } = await callGroq(p, [], 'Generate the report now.');
+        return text;
+      });
     } catch (err) {
       if (!env.OPENROUTER_API_KEY) {
         return isRateLimited(err)

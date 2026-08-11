@@ -301,8 +301,16 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     .map(item => ({ id: item.id, name: item.name, category: item.category, rentals: rentalCounts.get(item.id) || 0 }))
     .sort((a, b) => b.rentals - a.rentals);
 
-  const topRented = itemRentalCounts.slice(0, 5);
-  const underperforming = itemRentalCounts.filter(i => i.rentals === 0).slice(0, 10);
+  // "Most rented" only means something when an item was actually rented — with
+  // no transactions in the window, every count is 0 and a "leader" is a lie.
+  const hasRentalActivity = itemRentalCounts.some(i => i.rentals > 0);
+  const topRented = itemRentalCounts.filter(i => i.rentals > 0).slice(0, 5);
+  // "Underperforming → promote" only makes sense when SOME items are being
+  // rented; with zero activity the whole catalog isn't underperforming, there's
+  // simply no data yet.
+  const underperforming = hasRentalActivity
+    ? itemRentalCounts.filter(i => i.rentals === 0).slice(0, 10)
+    : [];
 
   const { months } = await getDataMonths();
   const filteredMonths = filter?.start

@@ -36,6 +36,10 @@ export const env = {
 
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
 
+  // Groq fallback (second tier: Gemini → Groq → OpenRouter). Low-latency
+  // free-tier models keep the stylist + reports online when Gemini is down.
+  GROQ_API_KEY: process.env.GROQ_API_KEY || '',
+
   // OpenRouter fallback so the AI stylist still answers when Gemini is down /
   // unconfigured. Key is optional; only free-capable models are tried.
   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',

@@ -114,7 +114,8 @@ describe('GET /api/dashboard/insights', () => {
     expect(res.body).toHaveProperty('revenueByMonth');
     expect(res.body.totalItems).toBe(3);
     expect(res.body.totalRented).toBe(2);
-    expect(res.body.topRented).toHaveLength(3);
+    expect(res.body.topRented).toHaveLength(2);
+    expect(res.body.topRented[0]).toMatchObject({ name: 'Gown A', rentals: 2 });
     expect(res.body.underperforming).toHaveLength(1);
     expect(res.body.underperforming[0].name).toBe('Barong C');
   });
