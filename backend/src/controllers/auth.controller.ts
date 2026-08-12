@@ -262,19 +262,54 @@ export async function oauthCancel(req: Request, res: Response, next: NextFunctio
 
 export const verifyAdminSchema = z.object({
   body: z.object({
-    email: z.string().email(),
-    password: z.string().min(1),
+    pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits'),
   }),
 });
 
+// Discount authorization: a staff member presents the admin's 4-digit PIN to
+// approve a discount. The PIN is verified against every admin's scrypt-hashed
+// value in Supabase user_metadata; no password/email round-trip, and the raw
+// PIN never reaches the database.
 export async function verifyAdmin(req: Request, res: Response, next: NextFunction) {
   try {
-    const { email, password } = req.body;
-    const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
-    if (error || !data.user) throw new AppError(401, 'Invalid credentials');
-    const profile = await prisma.profile.findUnique({ where: { userId: data.user.id } });
-    if (!profile || profile.role !== 'Admin') throw new AppError(403, 'Not an admin account');
-    res.json({ verified: true, admin: { name: profile.name, email: profile.email } });
+    const { pin } = req.body;
+    const admin = await authService.verifyDiscountPin(pin);
+    if (!admin) throw new AppError(401, 'Invalid PIN');
+    res.json({ verified: true, admin });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export const setAdminPinSchema = z.object({
+  body: z.object({
+    pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits'),
+    password: z.string().min(1, 'Password is required').optional(),
+    oldPin: z.string().regex(/^\d{4}$/, 'Current PIN must be 4 digits').optional(),
+  }),
+});
+
+// Admin-only (MFA-gated): whether a discount PIN is already configured, so the
+// settings UI can show "Add PIN" vs "Reset PIN".
+export async function adminPinStatus(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const configured = await authService.getAdminPinConfigured(req.user.userId);
+    res.json({ configured });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin-only (MFA-gated): set or change the 4-digit discount authorization PIN.
+// First-time setup takes no credentials; resetting an existing PIN requires the
+// current PIN + the admin's own Supabase password.
+export async function setAdminPin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { pin, password, oldPin } = req.body;
+    await authService.setAdminPin(req.user.userId, pin, password, oldPin);
+    res.json({ message: 'Discount PIN saved' });
   } catch (err) {
     next(err);
   }

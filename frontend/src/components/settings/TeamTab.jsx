@@ -1,7 +1,9 @@
-import { useState } from 'react';
-import { Users, Plus, Trash2, AlertCircle, Key, ShieldCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Users, Plus, Trash2, AlertCircle, Key, ShieldCheck, Lock, CheckCircle2 } from 'lucide-react';
 import { api } from '../../utils/api';
 import SettingsCard from './SettingsCard';
+import PinInput from './PinInput';
 
 // Admin Team & Security tab: staff account management + the admin's own TOTP
 // two-factor authentication (setup QR, enable, backup codes, disable).
@@ -20,6 +22,57 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
   const [mfaBackupCodes, setMfaBackupCodes] = useState([]);
   const [mfaError, setMfaError] = useState('');
   const [mfaLoading, setMfaLoading] = useState(false);
+
+  // Admin discount PIN (staff present it when applying a discount)
+  const [pinConfigured, setPinConfigured] = useState(null);
+  const [pin, setPin] = useState('');
+  const [oldPin, setOldPin] = useState('');
+  const [pinPassword, setPinPassword] = useState('');
+  const [pinSaved, setPinSaved] = useState(false);
+  const [pinError, setPinError] = useState('');
+  const [pinLoading, setPinLoading] = useState(false);
+  const [showPinReset, setShowPinReset] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api.get('/auth/admin-pin')
+      .then((res) => { if (active) setPinConfigured(Boolean(res?.configured)); })
+      .catch(() => { if (active) setPinConfigured(false); });
+    return () => { active = false; };
+  }, []);
+
+  const handleSavePin = async (isReset) => {
+    setPinError('');
+    setPinSaved(false);
+    if (!/^\d{4}$/.test(pin)) {
+      setPinError('Enter exactly 4 digits for the new PIN');
+      return;
+    }
+    if (isReset) {
+      if (!/^\d{4}$/.test(oldPin)) {
+        setPinError('Enter your current PIN');
+        return;
+      }
+      if (!pinPassword) {
+        setPinError('Enter your admin password to confirm the reset');
+        return;
+      }
+    }
+    setPinLoading(true);
+    try {
+      await api.put('/auth/admin-pin', isReset ? { pin, oldPin, password: pinPassword } : { pin });
+      setPin('');
+      setOldPin('');
+      setPinPassword('');
+      setPinConfigured(true);
+      setPinSaved(true);
+      setShowPinReset(false);
+    } catch (err) {
+      setPinError(err?.message || 'Failed to save PIN');
+    } finally {
+      setPinLoading(false);
+    }
+  };
 
   const handleMfaSetup = async () => {
     setMfaError('');
@@ -270,6 +323,112 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
           </div>
         )}
       </SettingsCard>
+
+      {/* Discount Authorization PIN */}
+      <SettingsCard
+        icon={Lock}
+        iconClass="bg-red-50 text-[#bf4a53]"
+        title="Discount Authorization PIN"
+        desc="Set a 4-digit PIN that staff enter to approve discounts on rentals"
+      >
+        <p className="text-sm text-gray-500">
+          When staff apply a discount in the new-rental flow, they'll be asked for this PIN
+          instead of admin email and password. Keep it to 4 digits.
+        </p>
+        {pinError && (
+          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
+            <AlertCircle size={16} /> {pinError}
+          </div>
+        )}
+        {pinSaved && (
+          <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-100 rounded-2xl text-sm text-emerald-700 font-medium">
+            <CheckCircle2 size={16} /> Discount PIN saved
+          </div>
+        )}
+        {pinConfigured === null ? (
+          <p className="text-sm text-gray-400">Checking…</p>
+        ) : pinConfigured ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 p-3 bg-emerald-50 rounded-2xl">
+              <ShieldCheck size={16} className="text-emerald-500" />
+              <span className="text-sm font-medium text-emerald-800">PIN is set — staff can already approve discounts.</span>
+            </div>
+            <button
+              onClick={() => { setPinError(''); setPinSaved(false); setPin(''); setOldPin(''); setPinPassword(''); setShowPinReset(true); }}
+              className="px-4 py-2 bg-gray-900 text-white font-semibold rounded-xl hover:bg-gray-800 transition-colors text-sm"
+            >
+              Reset PIN
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">New PIN</label>
+              <PinInput
+                value={pin}
+                onChange={setPin}
+                onEnter={() => handleSavePin(false)}
+              />
+            </div>
+            <button
+              onClick={() => handleSavePin(false)}
+              disabled={pinLoading || pin.length !== 4}
+              className="px-4 py-2 bg-gray-900 text-white font-semibold rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 text-sm"
+            >
+              {pinLoading ? 'Saving...' : 'Add PIN'}
+            </button>
+          </div>
+        )}
+      </SettingsCard>
+
+      {/* Reset PIN modal — portaled to document.body so it sits above every
+          component (the settings page wrapper animates transforms, which would
+          otherwise trap a fixed-position child in a stacking context). */}
+      {showPinReset && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-gray-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowPinReset(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-reset-pin" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
+            <h4 id="dialog-title-reset-pin" className="font-bold text-gray-900">Reset Discount PIN</h4>
+            <p className="text-xs text-gray-500">Enter your current PIN, choose a new 4-digit PIN, and confirm with your admin password.</p>
+            {pinError && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
+                <AlertCircle size={16} /> {pinError}
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Current PIN</label>
+              <PinInput value={oldPin} onChange={setOldPin} autoFocus />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">New PIN</label>
+              <PinInput value={pin} onChange={setPin} onEnter={() => handleSavePin(true)} />
+            </div>
+            <input
+              type="password"
+              value={pinPassword}
+              onChange={(e) => setPinPassword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSavePin(true); }}
+              placeholder="Admin password"
+              className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
+            />
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => { setShowPinReset(false); setPinError(''); setPinSaved(false); setPin(''); setOldPin(''); setPinPassword(''); }}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleSavePin(true)}
+                disabled={pinLoading || pin.length !== 4 || oldPin.length !== 4 || !pinPassword}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {pinLoading ? 'Resetting...' : 'Reset PIN'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 }

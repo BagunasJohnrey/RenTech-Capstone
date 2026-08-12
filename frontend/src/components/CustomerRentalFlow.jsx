@@ -481,7 +481,7 @@ export default function CustomerRentalFlow({
         <div className="flex items-center justify-center py-4 px-6 bg-gray-50/50">
           {['Details', 'Payment', 'Receipt'].map((label, idx) => (
             <div key={label} className="flex-1 flex flex-col items-center relative">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
+              <div className={`relative z-10 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
                 step >= idx + 1 ? 'bg-[#bf4a53] border-[#bf4a53] text-white' : 'bg-white border-gray-200 text-gray-400'}`}>
                 {idx + 1}
               </div>
@@ -654,9 +654,9 @@ export default function CustomerRentalFlow({
 
           {/* Promo Code — shown only on the Payment step, never on the receipt */}
           {step === 2 && (
-          <div className="bg-gray-50 rounded-2xl p-4">
-            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block">Have a promo code?</label>
-            <div className="flex gap-2">
+          <div className="bg-gray-50 rounded-2xl p-4 flex flex-col items-center">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block text-center">Have a promo code?</label>
+            <div className="flex gap-2 w-full max-w-xs justify-center">
               <Field showLabel={false} type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
                 placeholder="Enter code" maxLength={20} aria-label="Promo code"
                 className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]" />
@@ -666,7 +666,7 @@ export default function CustomerRentalFlow({
               </button>
             </div>
             {promoApplied && (
-              <div className="mt-2 p-2.5 bg-emerald-50 rounded-xl flex items-center justify-between">
+              <div className="mt-2 p-2.5 bg-emerald-50 rounded-xl flex items-center justify-between w-full max-w-xs">
                 <div>
                   <span className="text-xs font-bold text-emerald-700">{promoApplied.code}</span>
                   <span className="text-xs text-emerald-600 ml-2">-{promoApplied.discountPct}% off</span>
@@ -677,9 +677,9 @@ export default function CustomerRentalFlow({
                 </button>
               </div>
             )}
-            {promoError && <p className="text-xs text-red-500 font-medium mt-1">{promoError}</p>}
+            {promoError && <p className="text-xs text-red-500 font-medium mt-1 text-center">{promoError}</p>}
             {promoApplied && (
-              <div className="mt-2 flex justify-between text-sm">
+              <div className="mt-2 flex justify-between text-sm w-full max-w-xs">
                 <span className="text-gray-500">Discount</span>
                 <span className="font-bold text-emerald-600">-₱{promoApplied.discountAmount.toLocaleString()}</span>
               </div>

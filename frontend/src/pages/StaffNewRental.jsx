@@ -133,8 +133,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const [discountPct, setDiscountPct] = useState(0);
   const [discountAuthorized, setDiscountAuthorized] = useState(null);
   const [showAdminAuth, setShowAdminAuth] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
+  const [adminPin, setAdminPin] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
 
@@ -321,6 +320,20 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     else onClose();
   };
 
+  // Admin authorization via the admin's 4-digit discount PIN
+  const handleAuthorize = async () => {
+    if (adminPin.length !== 4) { setAuthError('Enter the 4-digit PIN'); return; }
+    setAuthLoading(true); setAuthError('');
+    try {
+      const res = await api.post('/auth/verify-admin', { pin: adminPin });
+      setDiscountAuthorized(res.admin);
+      setShowAdminAuth(false);
+      setAdminPin('');
+    } catch (err) {
+      setAuthError(err?.body?.error || err?.message || 'Authorization failed');
+    } finally { setAuthLoading(false); }
+  };
+
   const handleNext = async () => {
     if (step === 1) {
       if (!selectedItem) {
@@ -392,7 +405,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         <div className="flex items-center justify-center py-4 px-6 bg-gray-50/50">
           {progressSteps.map((label, idx) => (
             <div key={label} className="flex-1 flex flex-col items-center relative">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border-2 ${
+              <div className={`relative z-10 w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border-2 ${
                 step >= idx + 1 ? 'bg-[#bf4a53] border-[#bf4a53] text-white' : 'bg-white border-gray-200 text-gray-400'
               }`}>
                 {idx + 1}
@@ -794,30 +807,19 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
           <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
           <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-admin-auth" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
             <h4 id="dialog-title-admin-auth" className="font-bold text-gray-900">Admin Authorization</h4>
-            <p className="text-xs text-gray-500">Enter admin credentials to apply a discount.</p>
+            <p className="text-xs text-gray-500">Enter the admin's 4-digit PIN to apply a discount.</p>
             {authError && <p className="text-xs text-red-500 font-medium bg-red-50 p-3 rounded-xl">{authError}</p>}
-            <input type="email" placeholder="Admin Email" value={adminEmail}
-              onChange={e => setAdminEmail(e.target.value)}
-              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
-            <input type="password" placeholder="Password" value={adminPassword}
-              onChange={e => setAdminPassword(e.target.value)}
-              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
+            <input type="password" inputMode="numeric" placeholder="••••" maxLength={4}
+              value={adminPin}
+              onChange={e => setAdminPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              onKeyDown={e => { if (e.key === 'Enter') handleAuthorize(); }}
+              className="w-full p-3 bg-gray-50 rounded-xl border text-center text-2xl font-bold tracking-[0.5em] text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15" />
             <div className="flex gap-3 pt-2">
-              <button onClick={() => { setShowAdminAuth(false); setAuthError(''); setAdminEmail(''); setAdminPassword(''); }}
+              <button onClick={() => { setShowAdminAuth(false); setAuthError(''); setAdminPin(''); }}
                 className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={async () => {
-                setAuthLoading(true); setAuthError('');
-                try {
-                  const res = await api.post('/auth/verify-admin', { email: adminEmail, password: adminPassword });
-                  setDiscountAuthorized(res.admin);
-                  setShowAdminAuth(false);
-                  setAdminEmail(''); setAdminPassword('');
-                } catch (err) {
-                  setAuthError(err?.body?.error || err?.message || 'Authorization failed');
-                } finally { setAuthLoading(false); }
-              }} disabled={authLoading}
+              <button onClick={handleAuthorize} disabled={authLoading || adminPin.length !== 4}
                 className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                 {authLoading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
                 {authLoading ? 'Verifying...' : 'Authorize'}

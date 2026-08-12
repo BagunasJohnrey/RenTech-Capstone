@@ -493,3 +493,86 @@ export async function exchangeOauthCode(
   // data = { access_token, refresh_token, expires_in, token_type, user }
   return data;
 }
+
+// ---- Discount authorization PIN (admin-set, staff-presented) ----
+// The 4-digit PIN is scrypt-hashed with a per-user salt and stored in the
+// admin's Supabase `user_metadata` (no schema change needed). Only a hash ever
+// leaves the server. The verify endpoint is rate-limited per-IP (see
+// auth.routes.ts) because a 4-digit space is trivially brute-forceable.
+export function hashAdminPin(pin: string): { salt: string; hash: string } {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(pin, salt, 64).toString('hex');
+  return { salt, hash };
+}
+
+function verifyAdminPin(pin: string, salt: string, hash: string): boolean {
+  try {
+    const candidate = crypto.scryptSync(pin, salt, 64);
+    const stored = Buffer.from(hash, 'hex');
+    return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
+  } catch {
+    return false;
+  }
+}
+
+// Whether this admin already has a discount PIN configured.
+export async function getAdminPinConfigured(userId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
+  const meta = data?.user?.user_metadata as { adminPin?: { salt?: string; hash?: string } } | undefined;
+  return Boolean(meta?.adminPin?.salt && meta.adminPin.hash);
+}
+
+// Setting/resetting the PIN requires the admin's own Supabase password when a
+// PIN already exists (the PIN is only 4 digits, so changing it must be
+// protected by the full credential, not just the session), plus the current
+// PIN itself — the admin must know both to mint a new one. First-time setup
+// takes neither — the endpoint is already Admin-only + MFA-gated.
+export async function setAdminPin(userId: string, pin: string, password?: string, oldPin?: string) {
+  const configured = await getAdminPinConfigured(userId);
+
+  if (configured) {
+    if (!oldPin) throw new AppError(400, 'Current PIN is required to reset');
+    const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
+    const meta = data?.user?.user_metadata as { adminPin?: { salt?: string; hash?: string } } | undefined;
+    if (!meta?.adminPin?.salt || !meta.adminPin.hash || !verifyAdminPin(oldPin, meta.adminPin.salt, meta.adminPin.hash)) {
+      throw new AppError(401, 'Current PIN is incorrect');
+    }
+
+    if (!password) {
+      throw new AppError(400, 'Password is required to reset the PIN');
+    }
+    const profile = await prisma.profile.findUnique({
+      where: { userId },
+      select: { email: true },
+    });
+    if (!profile?.email) throw new AppError(401, 'Invalid password');
+
+    const { data: authData, error } = await supabaseAdmin.auth.signInWithPassword({ email: profile.email, password });
+    if (error || !authData.user || authData.user.id !== userId) {
+      throw new AppError(401, 'Invalid password');
+    }
+  }
+
+  const { salt, hash } = hashAdminPin(pin);
+  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    user_metadata: { adminPin: { salt, hash } },
+  });
+  if (updateError) throw new AppError(500, 'Failed to save discount PIN');
+}
+
+// Finds the admin whose stored PIN hash matches, so any Admin can be the
+// discount approver. Returns the admin's display info or null on mismatch.
+export async function verifyDiscountPin(pin: string): Promise<{ name: string; email: string } | null> {
+  const admins = await prisma.profile.findMany({
+    where: { role: 'Admin' },
+    select: { userId: true, name: true, email: true },
+  });
+  for (const admin of admins) {
+    const { data } = await supabaseAdmin.auth.admin.getUserById(admin.userId);
+    const meta = data?.user?.user_metadata as { adminPin?: { salt?: string; hash?: string } } | undefined;
+    if (meta?.adminPin?.salt && meta.adminPin.hash && verifyAdminPin(pin, meta.adminPin.salt, meta.adminPin.hash)) {
+      return { name: admin.name, email: admin.email };
+    }
+  }
+  return null;
+}

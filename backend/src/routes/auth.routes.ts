@@ -57,8 +57,13 @@ router.post('/login/mfa', createRateLimiter(10, 60_000), validate(authController
 router.get('/me', authMiddleware, authController.getMe);
 router.put('/me', authMiddleware, validate(authController.updateProfileSchema), authController.updateMe);
 
-// Admin-only routes with MFA enforcement
-router.post('/verify-admin', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, validate(authController.verifyAdminSchema), authController.verifyAdmin);
+// Admin-only routes with MFA enforcement. verify-admin additionally allows
+// Staff callers (the discount flow runs inside the staff rental modal) — the
+// presented 4-digit admin PIN is the authorization factor, and the route is
+// rate-limited per-IP because a 4-digit space is brute-forceable.
+router.post('/verify-admin', authMiddleware, requireRole(Role.Admin, Role.Staff), requireMfaAdmin, createRateLimiter(5, 600_000), validate(authController.verifyAdminSchema), authController.verifyAdmin);
+router.put('/admin-pin', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, createRateLimiter(5, 60_000), validate(authController.setAdminPinSchema), authController.setAdminPin);
+router.get('/admin-pin', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.adminPinStatus);
 router.get('/staff', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.listStaff);
 router.post('/staff', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, validate(authController.createStaffSchema), authController.createStaff);
 router.delete('/staff/:id', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.removeStaff);
