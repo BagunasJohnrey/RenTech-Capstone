@@ -49,4 +49,13 @@ export const env = {
   // confirmation email and the account can't log in until verified. Set
   // AUTH_EMAIL_CONFIRM=true to auto-confirm (frictionless demo).
   AUTH_EMAIL_CONFIRM: process.env.AUTH_EMAIL_CONFIRM === 'true',
+
+  // Server-side image compression (sharp): every uploaded image is
+  // auto-rotated via its EXIF orientation tag, EXIF-stripped, downscaled to
+  // at most IMAGE_MAX_DIM px on its longest edge, and re-encoded as JPEG at
+  // IMAGE_JPEG_QUALITY before it reaches the storage bucket. Mirrors the
+  // client-side canvas downscale (utils/file.js) so direct API uploads
+  // (curl/Postman) can't land full-size images in the bucket.
+  IMAGE_MAX_DIM: parseInt(process.env.IMAGE_MAX_DIM || '1280', 10),
+  IMAGE_JPEG_QUALITY: parseInt(process.env.IMAGE_JPEG_QUALITY || '82', 10),
 };

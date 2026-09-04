@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { compressImage, coerceExtension } from '../utils/imageCompress.js';
 
 const BUCKET_NAME = 'rentech-images';
 const ALLOWED_MIME = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
@@ -68,6 +69,21 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
     throw new AppError(400, 'Only jpeg/png/webp images are allowed');
   }
   if (!Number.isInteger(buffer.length) || buffer.length === 0 || buffer.length > FILE_SIZE_LIMIT) {
+    throw new AppError(400, 'Image file is empty or exceeds the 20MB limit');
+  }
+
+  // Server-side compression (defense in depth): the client downsizes via
+  // canvas before upload, but a direct API call, a canvas failure, or a
+  // future client would otherwise land a full-size image in the bucket.
+  // Everything is auto-rotated, EXIF-stripped, bounded to IMAGE_MAX_DIM, and
+  // normalized to JPEG; already-compliant client JPEGs skip the re-encode.
+  const compressed = await compressImage(buffer, contentType);
+  buffer = compressed.buffer;
+  contentType = compressed.contentType;
+  fileName = coerceExtension(fileName, compressed.ext);
+
+  // Safety net — compression always shrinks, but never trust it blindly.
+  if (buffer.length === 0 || buffer.length > FILE_SIZE_LIMIT) {
     throw new AppError(400, 'Image file is empty or exceeds the 20MB limit');
   }
 
