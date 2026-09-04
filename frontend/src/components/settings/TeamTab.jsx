@@ -9,9 +9,12 @@ import PinInput from './PinInput';
 // two-factor authentication (setup QR, enable, backup codes, disable).
 export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile }) {
   const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [newStaffName, setNewStaffName] = useState('');
   const [staffError, setStaffError] = useState('');
+  const [staffAdding, setStaffAdding] = useState(false);
+  // One-time password reveal: shown once right after creation, then gone.
+  const [createdOtp, setCreatedOtp] = useState(null);
+  const [otpCopied, setOtpCopied] = useState(false);
 
   // Phase 5: MFA management (Admin only)
   const [mfaStep, setMfaStep] = useState(profile?.mfaEnabled ? 'enabled' : 'idle');
@@ -141,18 +144,34 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
   const handleAddStaff = async (e) => {
     e.preventDefault();
     setStaffError('');
-    if (!newUsername || !newPassword) return;
-    if (newPassword.length < 12) {
-      setStaffError('Password must be at least 12 characters with upper, lower, digit, and symbol');
-      return;
-    }
+    if (!newUsername) return;
+    setStaffAdding(true);
     try {
-      await onAddStaff({ email: newUsername, password: newPassword, name: newStaffName || newUsername });
+      // The backend generates a one-time password; show it once for the admin
+      // to share with the staff member out of band. First login forces a change.
+      const created = await onAddStaff({ email: newUsername, name: newStaffName || newUsername });
       setNewUsername('');
-      setNewPassword('');
       setNewStaffName('');
+      setCreatedOtp({
+        name: created?.name || newStaffName || newUsername,
+        email: created?.email || newUsername,
+        password: created?.oneTimePassword,
+      });
+    } catch (err) {
+      setStaffError(err?.message || 'Failed to add staff. Check the email format and try again.');
+    } finally {
+      setStaffAdding(false);
+    }
+  };
+
+  const copyOtp = async () => {
+    if (!createdOtp?.password) return;
+    try {
+      await navigator.clipboard.writeText(createdOtp.password);
+      setOtpCopied(true);
+      setTimeout(() => setOtpCopied(false), 2000);
     } catch {
-      setStaffError('Failed to add staff. Check the email format or try a different password.');
+      // clipboard unavailable — leave the code visible for manual copy
     }
   };
 
@@ -173,14 +192,51 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
               <AlertCircle size={16} /> {staffError}
             </div>
           )}
-          <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3">
+          <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
             <input type="text" placeholder="Name" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} className={inputClass} />
-            <input type="text" placeholder="Username" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className={inputClass} required />
-            <input type="password" placeholder="Password (12+ chars)" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className={inputClass} required minLength={12} />
-            <button type="submit" className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-red-500/20">
-              <Plus size={16} /> Add
+            <input type="text" placeholder="Username (email)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className={inputClass} required />
+            <button type="submit" disabled={staffAdding} className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-red-500/20 disabled:opacity-50">
+              <Plus size={16} /> {staffAdding ? 'Adding...' : 'Add'}
             </button>
           </form>
+          <p className="text-xs text-gray-500 mt-2">
+            A one-time password is generated automatically — share it with the staff member privately.
+            They'll be asked to choose their own password the first time they sign in.
+          </p>
+
+          {createdOtp && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+              <div className="flex items-start gap-2">
+                <Key size={16} className="text-amber-600 mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-amber-900">
+                    Staff account created for {createdOtp.name}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Share this one-time password with them now — it won't be shown again. Their first
+                    sign-in will ask them to set a new password.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <code className="flex-1 min-w-[180px] bg-white border border-amber-200 rounded-xl px-4 py-2.5 font-mono text-sm font-semibold text-gray-900 break-all">
+                  {createdOtp.password}
+                </code>
+                <button
+                  onClick={copyOtp}
+                  className="px-4 py-2.5 bg-gray-900 text-white text-sm font-bold rounded-xl hover:bg-gray-800 transition-colors"
+                >
+                  {otpCopied ? 'Copied!' : 'Copy'}
+                </button>
+                <button
+                  onClick={() => { setCreatedOtp(null); setOtpCopied(false); }}
+                  className="px-4 py-2.5 border border-gray-200 bg-white text-gray-600 text-sm font-bold rounded-xl hover:bg-gray-50 transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
 
           {staffList.length === 0 ? (
             <p className="text-sm text-gray-500 py-4">No staff accounts yet.</p>

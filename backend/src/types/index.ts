@@ -31,6 +31,8 @@ export interface AuthUser {
   phone?: string;
   /** Whether the admin has MFA enabled; present for all roles (undefined = not enabled). */
   mfaEnabled?: boolean;
+  /** First-login staff: the admin-issued one-time password must be replaced before the account is usable. */
+  mustChangePassword?: boolean;
 }
 
 export interface AuthenticatedRequest extends Request {

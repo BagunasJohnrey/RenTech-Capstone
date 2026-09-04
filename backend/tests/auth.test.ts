@@ -462,15 +462,20 @@ describe('Admin: Staff Management', () => {
   const adminAuth = { Authorization: 'Bearer admin-token' };
 
   describe('POST /api/auth/staff', () => {
-    it('should create staff account when admin', async () => {
+    it('should create staff account with a one-time password when admin', async () => {
       const res = await request(app)
         .post('/api/auth/staff')
         .set(adminAuth)
         .set('Origin', 'http://localhost:5173')
-        .send({ email: 'staff@test.com', password: 'Staffpass123!', name: 'Staff User' });
+        .send({ email: 'staff@test.com', name: 'Staff User' });
 
       expect(res.status).toBe(201);
       expect(res.body).toHaveProperty('role', 'Staff');
+      // OTP flow: backend mints a policy-compliant one-time password and
+      // returns it exactly once; the profile is flagged for first-login change.
+      expect(typeof res.body.oneTimePassword).toBe('string');
+      expect(res.body.oneTimePassword.length).toBeGreaterThanOrEqual(12);
+      expect(res.body.mustChangePassword).toBe(true);
     });
 
     it('should reject without admin role', async () => {
@@ -478,7 +483,7 @@ describe('Admin: Staff Management', () => {
         .post('/api/auth/staff')
         .set('Authorization', 'Bearer customer-token')
         .set('Origin', 'http://localhost:5173')
-        .send({ email: 'staff@test.com', password: 'Staffpass123!', name: 'Staff User' });
+        .send({ email: 'staff@test.com', name: 'Staff User' });
 
       expect(res.status).toBe(403);
     });
@@ -487,7 +492,7 @@ describe('Admin: Staff Management', () => {
       const res = await request(app)
         .post('/api/auth/staff')
         .set('Origin', 'http://localhost:5173')
-        .send({ email: 'staff@test.com', password: 'Staffpass123!', name: 'Staff User' });
+        .send({ email: 'staff@test.com', name: 'Staff User' });
 
       expect(res.status).toBe(401);
     });
@@ -924,5 +929,170 @@ describe('rt_mfa_trusted (trust-this-device) cookie helpers', () => {
     const trusted = buildMfaTrustedValue('admin@example.com');
     const marker = buildMfaVerifiedValue('admin@example.com');
     expect(trusted).not.toBe(marker);
+  });
+});
+
+// Staff first-login flow: admin-created accounts get a one-time password and
+// a mustChangePassword flag. Login surfaces the flag; every non-auth endpoint
+// is locked until the password is replaced via /auth/change-password.
+describe('Staff one-time password + forced first-login change', () => {
+  const staffAuth = { Authorization: 'Bearer staff-token' };
+
+  it('login returns mustChangePassword for a flagged staff account', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    // signInWithPassword resolves the STAFF auth user; the follow-up profile
+    // lookup by userId then hits the flagged staff profile below.
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockImplementationOnce((async ({ email }: any) => ({
+      data: {
+        user: { id: 'auth-staff-id-456', email },
+        session: { access_token: 'staff-access-token', refresh_token: 'staff-refresh-token', token_type: 'bearer', expires_in: 3600 },
+      },
+      error: null,
+    })) as never);
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      const target = args.where.email || args.where.userId;
+      if (target === 'staff@example.com' || target === 'auth-staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'staff@example.com', password: 'Onetimepass123!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.mustChangePassword).toBe(true);
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+
+  it('locks non-auth endpoints for a mustChangePassword session (403)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    // The auth middleware resolves the staff profile (token: auth-staff-id-456)
+    // with mustChangePassword — any endpoint other than /me or
+    // /change-password must 403.
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    // /auth/me stays reachable (the gate screen needs it)
+    const meRes = await request(app).get('/api/auth/me').set(staffAuth);
+    expect(meRes.status).toBe(200);
+
+    // Everything else is locked…
+    const txRes = await request(app).get('/api/transactions').set(staffAuth);
+    expect(txRes.status).toBe(403);
+    expect(txRes.body.error).toContain('change your password');
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+
+  it('POST /auth/change-password verifies current password and clears the flag', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalFindUnique = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalFindUnique ? originalFindUnique(args) : Promise.resolve(null)) as any;
+    });
+
+    // Correct one-time password → 200, Supabase credential updated, flag cleared.
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Onetimepass123!', newPassword: 'Newstaffpass456!' });
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-staff-id-456',
+      { password: 'Newstaffpass456!' },
+    );
+    expect(prisma.profile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { mustChangePassword: false } }),
+    );
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalFindUnique!);
+  });
+
+  it('POST /auth/change-password rejects the wrong current password', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    // signInWithPassword fails for the wrong current password.
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null },
+      error: { message: 'Invalid login credentials' },
+    } as never);
+
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Wrongpass123!', newPassword: 'Newstaffpass456!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('incorrect');
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+
+  it('POST /auth/change-password is a no-op for accounts not flagged', async () => {
+    // staff-token resolves the default (unflagged) staff profile in setup.ts.
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Onetimepass123!', newPassword: 'Newstaffpass456!' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('No password change is required');
   });
 });

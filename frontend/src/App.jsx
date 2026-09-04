@@ -19,6 +19,7 @@ import ForgotPasswordView from './pages/ForgotPasswordView';
 import VerifyEmailView from './pages/VerifyEmailView';
 import OAuthErrorView from './pages/OAuthErrorView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
+import ForcedPasswordChange from './components/ForcedPasswordChange';
 import InventoryPage from './pages/InventoryPage';
 import TasksPage from './pages/TasksPage';
 import HelpGuide from './pages/HelpGuide';
@@ -79,7 +80,7 @@ const navItems = {
 };
 
 export default function RentechApp() {
-  const { isLoggedIn, role, profile, loading, logout, updateProfile, completeOAuth, cancelOAuth } = useAuth();
+  const { isLoggedIn, role, profile, loading, logout, updateProfile, completeOAuth, cancelOAuth, completeForcedPasswordChange } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -467,9 +468,10 @@ export default function RentechApp() {
     return created;
   };
 
-  const handleAddStaff = (newStaff) => {
-    addStaff(newStaff);
-    toastSuccess('Staff account added');
+  const handleAddStaff = async (newStaff) => {
+    const created = await addStaff(newStaff);
+    toastSuccess('Staff account created — share the one-time password');
+    return created;
   };
   const handleRemoveStaff = (staff) => {
     setStaffToRemove(staff);
@@ -564,6 +566,23 @@ export default function RentechApp() {
           <PageSkeleton tab={activeTab} />
         </div>
       </div>
+    );
+  }
+
+  // First-login staff gate: a freshly created staff account (one-time
+  // password) locks the whole app to the change-password screen. Must come
+  // before every other authed branch so a mustChangePassword session can't
+  // reach the dashboard (the backend also 403s non-auth endpoints).
+  if (isLoggedIn && profile?.mustChangePassword) {
+    return (
+      <ForcedPasswordChange
+        email={profile.email}
+        onComplete={async (args) => {
+          await completeForcedPasswordChange(args);
+          toastSuccess('Password set — welcome!');
+        }}
+        onLogout={logout}
+      />
     );
   }
 

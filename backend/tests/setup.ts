@@ -219,6 +219,7 @@ vi.mock('../src/config/database.js', () => {
       name: 'Staff User',
       phone: null,
       address: null,
+      mustChangePassword: false,
       createdAt: now,
       updatedAt: now,
     },

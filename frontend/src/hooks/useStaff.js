@@ -15,12 +15,16 @@ export function useStaff() {
   }, []);
 
   const addStaff = useCallback(async (newStaff) => {
+    // The backend mints a one-time password for the new staff account and
+    // returns it once — no password is ever typed by the admin.
     const created = await api.post('/auth/staff', {
       email: newStaff.email,
-      password: newStaff.password,
       name: newStaff.name || newStaff.username,
     });
-    setStaffAccounts((prev) => [created, ...prev]);
+    setStaffAccounts((prev) => {
+      const { oneTimePassword: _otp, ...profile } = created;
+      return [profile, ...prev];
+    });
     return created;
   }, []);
 

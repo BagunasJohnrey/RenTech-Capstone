@@ -154,6 +154,11 @@ export async function loginUser(email: string, password: string, trustedDevice =
     };
   }
 
+  // Staff first-login flow: the admin created this account with a one-time
+  // password; the staff member must choose their own password before the
+  // account can be used. The flag rides along on the login response so the
+  // frontend can route to the change-password screen (session is still
+  // minted — the change-password endpoint is the only thing they can reach).
   return {
     session: {
       access_token: data.session.access_token,
@@ -163,6 +168,7 @@ export async function loginUser(email: string, password: string, trustedDevice =
     },
     user: profile,
     requiresMfa: false,
+    mustChangePassword: profile.mustChangePassword === true,
   };
 }
 
@@ -284,9 +290,65 @@ export async function updateProfile(userId: string, data: {
   return profile;
 }
 
+// First-login staff flow: replace the admin-issued one-time password with the
+// staff member's own password. Requires the old password (the one-time
+// password) to be re-presented — a second factor proof that the person at the
+// keyboard is the intended recipient, not someone riding a stolen session.
+// After updating the Supabase credential, the flag is cleared so the account
+// becomes fully usable.
+export async function changeOwnPassword(userId: string, oldPassword: string, newPassword: string) {
+  const profile = await prisma.profile.findUnique({ where: { id: userId } });
+  if (!profile) throw new AppError(401, 'Not authenticated');
+
+  // Verify the current (one-time) password before allowing the change.
+  const { error: verifyError } = await supabaseAdmin.auth.signInWithPassword({
+    email: profile.email,
+    password: oldPassword,
+  });
+  if (verifyError) {
+    throw new AppError(401, 'Current password is incorrect');
+  }
+
+  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+    profile.userId,
+    { password: newPassword },
+  );
+  if (updateError) {
+    throw new AppError(400, 'Unable to change password. Please try again.');
+  }
+
+  await prisma.profile.update({
+    where: { id: userId },
+    data: { mustChangePassword: false },
+  });
+
+  return { success: true };
+}
+
+// One-time password minted for admin-created staff accounts. Long enough to
+// satisfy the app's password policy (12+ chars, upper/lower/digit/symbol) so
+// Supabase accepts it at createUser time; the staff member must change it on
+// first login (Profile.mustChangePassword) before the account is usable.
+function generateOneTimePassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%&*?';
+  const all = upper + lower + digits + symbols;
+  const pick = (set: string) => set[crypto.randomInt(set.length)];
+  // Guarantee at least one char from each required class, then fill to 16.
+  const chars = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+  for (let i = chars.length; i < 16; i++) chars.push(pick(all));
+  // Fisher-Yates shuffle so the guaranteed classes aren't predictably first.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
 export async function createStaffAccount(adminId: string, data: {
   email: string;
-  password: string;
   name: string;
   phone?: string;
 }) {
@@ -295,12 +357,14 @@ export async function createStaffAccount(adminId: string, data: {
     throw new AppError(403, 'Only admins can create staff accounts');
   }
 
+  const tempPassword = generateOneTimePassword();
+
   // Staff are created by an admin, so they're trusted by default — always
   // auto-confirm (admin.createUser wouldn't send a verification email anyway,
   // so an unconfirmed staff account would be locked out with no way in).
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
     email: data.email,
-    password: data.password,
+    password: tempPassword,
     email_confirm: true,
   });
 
@@ -317,10 +381,14 @@ export async function createStaffAccount(adminId: string, data: {
       role: 'Staff',
       name: data.name,
       phone: data.phone ?? null,
+      mustChangePassword: true,
     },
   });
 
-  return profile;
+  // The one-time password is returned exactly once — never stored in the
+  // database or logged. The admin shares it with the staff member out of band
+  // (in person / SMS), and the first login forces a change.
+  return { profile, oneTimePassword: tempPassword };
 }
 
 export async function listStaffAccounts() {

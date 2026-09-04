@@ -30,8 +30,8 @@ export const authService = {
 
   listStaff: () => api.get('/auth/staff'),
 
-  createStaff: ({ email, password, name, phone }) =>
-    api.post('/auth/staff', { email, password, name, phone }),
+  createStaff: ({ email, name, phone }) =>
+    api.post('/auth/staff', { email, name, phone }),
 
   deleteStaff: (id) => api.delete(`/auth/staff/${id}`),
 };

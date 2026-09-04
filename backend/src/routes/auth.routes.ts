@@ -56,6 +56,10 @@ router.post('/login/mfa', createRateLimiter(10, 60_000), validate(authController
 
 router.get('/me', authMiddleware, authController.getMe);
 router.put('/me', authMiddleware, validate(authController.updateProfileSchema), authController.updateMe);
+// First-login staff: replace the admin-issued one-time password. Only usable
+// while Profile.mustChangePassword is set; rate-limited against guessing the
+// one-time password from a hijacked session.
+router.post('/change-password', authMiddleware, createRateLimiter(10, 60_000), validate(authController.changePasswordSchema), authController.changePassword);
 
 // Admin-only routes with MFA enforcement. verify-admin additionally allows
 // Staff callers (the discount flow runs inside the staff rental modal) — the

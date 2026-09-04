@@ -49,10 +49,12 @@ export const updateProfileSchema = z.object({
   }),
 });
 
+// Staff accounts no longer take a password from the admin — the backend mints
+// a one-time password (returned once in the response for out-of-band sharing)
+// and the staff member must change it on first login.
 export const createStaffSchema = z.object({
   body: z.object({
     email: z.string().email(),
-    password: passwordSchema,
     name: z.string().min(1),
     phone: z.string().optional(),
   }),
@@ -224,8 +226,39 @@ export async function updateMe(req: AuthenticatedRequest, res: Response, next: N
 export async function createStaff(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
-    const profile = await authService.createStaffAccount(req.user.id, req.body);
-    res.status(201).json(profile);
+    const { profile, oneTimePassword } = await authService.createStaffAccount(req.user.id, req.body);
+    // The one-time password is shown to the admin exactly once. It is never
+    // persisted server-side beyond the Supabase credential itself and never
+    // logged; first login forces the staff member to replace it.
+    res.status(201).json({ ...profile, oneTimePassword });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// First-login staff password change. Requires the current (one-time) password
+// in addition to the session — a stolen session can't lock the real staff
+// member out by changing the password first.
+export const changePasswordSchema = z.object({
+  body: z.object({
+    currentPassword: z.string().min(1),
+    newPassword: passwordSchema,
+  }),
+});
+
+export async function changePassword(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { currentPassword, newPassword } = req.body;
+    const profile = await prisma.profile.findUnique({ where: { id: req.user.id } });
+    if (!profile?.mustChangePassword) {
+      // Only the forced first-login flow uses this endpoint; regular password
+      // changes go through Supabase's reset-password flow instead.
+      throw new AppError(400, 'No password change is required for this account');
+    }
+    await authService.changeOwnPassword(req.user.id, currentPassword, newPassword);
+    invalidateProfileCache(req.user.userId);
+    res.json({ message: 'Password updated successfully' });
   } catch (err) {
     next(err);
   }

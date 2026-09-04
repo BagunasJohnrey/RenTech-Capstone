@@ -21,6 +21,7 @@ export interface CachedAuthProfile {
   name: string;
   phone?: string;
   mfaEnabled: boolean;
+  mustChangePassword: boolean;
 }
 
 interface Entry {

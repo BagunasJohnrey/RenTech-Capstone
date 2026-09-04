@@ -65,6 +65,14 @@ export function AuthProvider({ children }) {
     if (result.requiresMfa) {
       return { requiresMfa: true, email: result.user.email };
     }
+    // Staff first login: the account was created with a one-time password —
+    // cookies are already set, but the app locks to the change-password
+    // screen until the staff member sets their own password.
+    if (result.mustChangePassword) {
+      setProfile(result.user);
+      setAuthed(true);
+      return { mustChangePassword: true, user: result.user };
+    }
     // Normal login — cookies are set by the backend (Set-Cookie headers).
     setProfile(result.user);
     setAuthed(true);
@@ -131,6 +139,16 @@ export function AuthProvider({ children }) {
     return updated;
   }, []);
 
+  // First-login staff flow: swap the admin-issued one-time password for the
+  // staff member's own password, then re-fetch the profile (mustChangePassword
+  // is cleared server-side; /auth/me becomes fully usable again).
+  const completeForcedPasswordChange = useCallback(async ({ currentPassword, newPassword }) => {
+    await api.post('/auth/change-password', { currentPassword, newPassword });
+    const prof = await api.get('/auth/me');
+    setProfile(prof);
+    return prof;
+  }, []);
+
   const value = {
     profile,
     loading,
@@ -144,6 +162,7 @@ export function AuthProvider({ children }) {
      completeOAuth,
      cancelOAuth,
      verifyMfa,
+     completeForcedPasswordChange,
   };
 
   return (

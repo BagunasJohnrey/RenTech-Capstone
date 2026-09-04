@@ -20,6 +20,12 @@ function resolveToken(req: AuthenticatedRequest): string | undefined {
   return undefined;
 }
 
+// Endpoints a mustChangePassword user may still reach. req.path here is the
+// route path relative to the router mount, e.g. "/me" or "/change-password".
+function isPasswordChangePath(path: string): boolean {
+  return path === '/me' || path === '/change-password';
+}
+
 // Build req.user from a verified token (either locally-verified JWT, or the
 // Supabase getUser fallback) — extracting sub, email, aal, plus the Prisma
 // profile row. Returns null if anything is missing (auth failure).
@@ -41,6 +47,7 @@ async function loadUserContext(
           name: cached.name,
           phone: cached.phone,
           mfaEnabled: cached.mfaEnabled,
+          mustChangePassword: cached.mustChangePassword,
         },
         aal: aal ?? 1,
       };
@@ -61,6 +68,7 @@ async function loadUserContext(
     name: profile.name,
     phone: profile.phone ?? undefined,
     mfaEnabled: profile.mfaEnabled,
+    mustChangePassword: profile.mustChangePassword,
   };
   setCachedProfile({
     id: profile.id,
@@ -70,6 +78,7 @@ async function loadUserContext(
     name: profile.name,
     phone: profile.phone ?? undefined,
     mfaEnabled: profile.mfaEnabled,
+    mustChangePassword: profile.mustChangePassword,
   });
   return { user, aal: aal ?? 1 };
 }
@@ -104,6 +113,14 @@ export async function authMiddleware(
     }
 
     if (!ctx) throw new AppError(401, 'Profile not found');
+
+    // First-login staff lockout: while mustChangePassword is set, the account
+    // may only call /auth/me and /auth/change-password. Everything else 403s
+    // so a one-time password that leaked can't be used to read data.
+    const p = ctx.user as AuthUser & { mustChangePassword?: boolean };
+    if (p.mustChangePassword && !isPasswordChangePath(req.path)) {
+      throw new AppError(403, 'You must change your password before using this account');
+    }
 
     req.user = ctx.user;
     (req as any).aal = ctx.aal; // attach AAL for downstream guards (requireMfaAdmin)

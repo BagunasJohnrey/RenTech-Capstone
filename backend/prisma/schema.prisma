@@ -45,6 +45,7 @@ model Profile {
    mfaEnabled  Boolean  @default(false) @map("mfa_enabled")
    totpSecret  String?  @map("totp_secret")
    backupCodes Json?    @map("backup_codes")
+   mustChangePassword Boolean @default(false) @map("must_change_password")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
