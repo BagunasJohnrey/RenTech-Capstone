@@ -9,6 +9,10 @@ import { demoRequest } from './demoInterceptor';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
+// Full-page navigations (OAuth redirects) don't go through `request`, so expose
+// the same resolved base for window.location.href calls.
+export const API_ORIGIN = API_BASE.replace(/\/api\/?$/, '');
+
 const FETCH_TIMEOUT_MS = 20000; // abort requests the server never answers
 
 // A short, human-readable abort reason so timeouts surface as "the request took

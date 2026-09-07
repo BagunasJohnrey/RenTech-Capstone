@@ -11,7 +11,7 @@ import { useInventory } from './hooks/useInventory';
 import { useTransactions, normalizeTx } from './hooks/useTransactions';
 import { useStaff } from './hooks/useStaff';
 import { useCustomerProfile } from './hooks/useCustomerProfile';
-import { api } from './utils/api';
+import { api, API_ORIGIN } from './utils/api';
 import { useToast } from './components/Toast';
 
 import LoginPage from './pages/LoginPage';
@@ -146,7 +146,7 @@ export default function RentechApp() {
     if (oauthError) {
       navigate('/', { replace: true });
     } else if (code) {
-      window.location.href = `/api/auth/oauth/callback?code=${encodeURIComponent(code)}`;
+      window.location.href = `${API_ORIGIN}/api/auth/oauth/callback?code=${encodeURIComponent(code)}`;
     } else {
       navigate('/', { replace: true });
     }

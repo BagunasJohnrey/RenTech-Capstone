@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail, X, ScrollText } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
-import { api } from '../utils/api';
+import { api, API_ORIGIN } from '../utils/api';
 import TermsContent from './TermsContent';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
@@ -269,7 +269,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
       // Phase 3: redirect to the backend's server-side OAuth endpoint.
       // The backend handles the entire Google handshake and sets httpOnly
       // cookies — no tokens pass through the browser.
-      window.location.href = '/api/auth/oauth/redirect?provider=google';
+      window.location.href = `${API_ORIGIN}/api/auth/oauth/redirect?provider=google`;
     } catch (err) {
       setError(err.message || 'Google sign-in failed');
       setGoogleLoading(false);

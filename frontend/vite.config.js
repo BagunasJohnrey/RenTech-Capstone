@@ -13,9 +13,9 @@ function cspPlugin() {
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "connect-src 'self' https://*.supabase.co https://*.paymongo.com https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com",
+    "frame-src https://www.google.com",
     "object-src 'none'",
     "base-uri 'self'",
-    "frame-ancestors 'none'",
     "form-action 'self'",
   ].join('; ')
   return {
