@@ -197,6 +197,7 @@ export interface BookingDetails {
   downpayment: number;
   balance: number;
   bookingCode?: string;
+  qrCodeDataUri?: string;
 }
 
 function peso(n: number): string {
@@ -212,6 +213,9 @@ export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
     bodyHtml:
       para(`\u201C${d.itemName}\u201D is reserved for you. Please pick it up on ${d.pickupDate} and return it by ${d.dueDate}.`) +
       (d.bookingCode ? codeChip(d.bookingCode) : '') +
+      (d.qrCodeDataUri
+        ? `<div style="text-align:center;margin:18px 0 4px;"><img src="${d.qrCodeDataUri}" alt="Booking QR Code" width="160" height="160" style="border-radius:12px;display:block;margin:0 auto;" /></div><p style="text-align:center;font-size:11px;color:${MUTED};margin:6px 0 18px;font-family:${FONT};">Scan to open this booking</p>`
+        : '') +
       detailsTable([
         ['Item', d.itemName],
         ['Pickup', d.pickupDate],

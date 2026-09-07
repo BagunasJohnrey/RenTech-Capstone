@@ -319,6 +319,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           downpayment,
           balance: fee - downpayment,
           bookingCode: `RT-${String(transaction.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+          qrCodeDataUri,
         });
       }
     } catch { /* email is non-critical */ }
