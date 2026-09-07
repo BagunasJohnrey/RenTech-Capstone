@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import Sidebar from './Sidebar';
 import MobileBottomNav from './MobileBottomNav';
 import NotificationsDropdown from '../components/NotificationsDropdown';
+import { isDemoMode, getDemoRole, setDemoRole, DEMO_ROLES } from '../utils/demoMode';
 
 // Layout-level CSS (animations, scrollbars). Kept here so the composition
 // root (App.jsx) stays free of styling concerns.
@@ -86,6 +87,27 @@ export default function AppLayout({
   return (
     <>
       <style>{customStyles}</style>
+      {/* Demo-mode banner: makes it obvious the app runs on mock data (no
+          backend / Supabase) and lets you hop between the three roles. */}
+      {isDemoMode() && (
+        <div className="w-full bg-amber-400 text-amber-950 text-[11px] sm:text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-2 flex-wrap z-[60] relative">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-950 animate-pulse" />
+            DEMO MODE — mock data, no backend
+          </span>
+          <span className="flex items-center gap-1">
+            {DEMO_ROLES.map((r) => (
+              <button
+                key={r}
+                onClick={() => setDemoRole(r)}
+                className={`px-2 py-0.5 rounded-full transition-colors ${getDemoRole() === r ? 'bg-amber-950 text-amber-300' : 'hover:bg-amber-300/60'}`}
+              >
+                {r}
+              </button>
+            ))}
+          </span>
+        </div>
+      )}
       <div className="w-full h-screen bg-[#fcfcfd] flex flex-col md:flex-row overflow-hidden relative text-gray-800">
 
         <Sidebar

@@ -1,4 +1,6 @@
 import { isAuthed } from './authSession';
+import { isDemoMode } from './demoMode';
+import { demoRequest } from './demoInterceptor';
 
 // Phase 1: auth is cookie-backed (httpOnly). All fetch calls include
 // credentials so the browser sends the rt_access / rt_refresh cookies.
@@ -59,6 +61,12 @@ async function refreshOnce() {
 }
 
 async function request(method, path, body = undefined, _retried = false, opts = {}) {
+  // Demo mode: answer from the in-memory mock — the request never leaves
+  // the browser (no backend / Supabase needed for frontend-only viewing).
+  if (isDemoMode()) {
+    return demoRequest(method, path, body);
+  }
+
   const headers = { 'Content-Type': 'application/json' };
 
   const timeoutMs = opts.timeout || FETCH_TIMEOUT_MS;

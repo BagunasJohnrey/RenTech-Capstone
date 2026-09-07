@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api } from '../utils/api';
 import { setAuthed, clearImageCache, isAuthed, hasSessionCookie } from '../utils/authSession';
+import { isDemoMode } from '../utils/demoMode';
 
 const AuthContext = createContext(null);
 
@@ -9,6 +10,21 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async () => {
+    // Demo mode: skip the cookie/flag guest-guard — the interceptor answers
+    // /auth/me with the demo profile for the active role.
+    if (isDemoMode()) {
+      try {
+        const prof = await api.get('/auth/me');
+        setProfile(prof);
+        setAuthed(true);
+      } catch {
+        setProfile(null);
+        setAuthed(false);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     // Cookies are sent automatically (credentials: 'include' in api.js).
     // If the session is expired and the refresh cookie is valid, the 401
     // retry in api.js refreshes first and then retries /auth/me.
