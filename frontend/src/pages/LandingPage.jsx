@@ -92,8 +92,10 @@ const faqs = [
   { q: "What happens if I return the item late or damaged?", a: "Our automated system calculates late penalties and damage fees based on predefined business rules. You will be notified via SMS regarding your return deadlines to help you avoid these fees." }
 ];
 
-// Fetch up to 4 available pieces from the public catalog for the gallery.
-// Falls back to the static `galleryItems` if the request fails or returns empty.
+// Fetch up to 4 available pieces from the PUBLIC catalog for the gallery
+// (/api/catalog needs no auth, so logged-out guests get real boutique items
+// with signed-URL photos via ItemImage). Falls back to the static
+// `galleryItems` if the request fails or returns empty.
 function useFeaturedItems(fallback) {
   const [items, setItems] = useState(null); // null = still loading
   const [failed, setFailed] = useState(false);
@@ -101,7 +103,7 @@ function useFeaturedItems(fallback) {
   useEffect(() => {
     let active = true;
     const API_BASE = import.meta.env.VITE_API_URL || '/api';
-    fetch(`${API_BASE}/inventory`)
+    fetch(`${API_BASE}/catalog`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -110,7 +112,7 @@ function useFeaturedItems(fallback) {
         if (!active) return;
         const list = Array.isArray(data) ? data : [];
         const available = list
-          .filter((i) => i.status === 'Available')
+          .filter((i) => (i.effectiveStatus || i.status) === 'Available')
           .slice(0, 4)
           .map((i) => ({ id: i.id, title: i.name, category: i.category || 'Piece', _item: i }));
         setItems(available.length > 0 ? available : null);
@@ -167,7 +169,7 @@ const GalleryCard = ({ item, onBrowse }) => {
       ) : (
         <img src={item.img} alt={item.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
       )}
-      <div className="absolute inset-0 bg-gradient-to-t from-gray-950/85 via-gray-950/20 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-t from-gray-950/85 via-gray-950/20 to-transparent transition-opacity duration-300 md:opacity-70 md:group-hover:opacity-100" />
       {/* Category chip */}
       <span className="absolute top-3 left-3 md:top-4 md:left-4 inline-flex items-center px-3 py-1 rounded-full bg-white/85 backdrop-blur-md text-gray-900 text-[10px] md:text-xs font-bold tracking-widest uppercase shadow-sm">
         {item.category}
@@ -178,10 +180,13 @@ const GalleryCard = ({ item, onBrowse }) => {
           On Sale
         </span>
       )}
-      {/* Bottom copy */}
-      <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col gap-1">
+      {/* Bottom copy — pinned flush to the card bottom; the rent pill is
+          collapsed (takes no space) on desktop and expands on hover,
+          pushing the title/price up. Touch devices have no hover, so the
+          pill stays visible there. */}
+      <div className="absolute inset-x-0 bottom-0 p-4 md:p-6 flex flex-col justify-end">
         <h3 className={`text-white text-sm md:text-lg font-bold leading-snug ${isReal ? 'line-clamp-2' : ''}`}>{item.title}</h3>
-        <p className="text-white/70 text-[11px] md:text-sm font-medium">
+        <p className="mt-0.5 text-white/70 text-[11px] md:text-sm font-medium">
           {isReal ? (
             hasSale ? (
               <>
@@ -195,9 +200,13 @@ const GalleryCard = ({ item, onBrowse }) => {
             item.price
           )}
         </p>
-        <span className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-full bg-[#bf4a53] text-white text-[10px] md:text-xs font-bold px-3 py-1.5 md:opacity-0 md:translate-y-1 md:group-hover:opacity-100 md:group-hover:translate-y-0 transition-all duration-300">
-          {isReal ? 'Rent this piece' : 'Browse this piece'} <ArrowRight size={12} strokeWidth={2.5} />
-        </span>
+        <div className="grid transition-all duration-300 ease-out grid-rows-[1fr] opacity-100 md:grid-rows-[0fr] md:opacity-0 md:group-hover:grid-rows-[1fr] md:group-hover:opacity-100 md:group-focus-within:grid-rows-[1fr] md:group-focus-within:opacity-100">
+          <div className="overflow-hidden">
+            <span className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full bg-[#bf4a53] text-white text-[10px] md:text-xs font-bold px-3 py-1.5 md:-translate-y-1 md:group-hover:translate-y-0 transition-transform duration-300">
+              {isReal ? 'Rent this piece' : 'Browse this piece'} <ArrowRight size={12} strokeWidth={2.5} />
+            </span>
+          </div>
+        </div>
       </div>
     </motion.button>
   );
