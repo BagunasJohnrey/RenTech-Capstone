@@ -18,6 +18,13 @@ export default function ForcedPasswordChange({ email, onComplete, onLogout }) {
   const allMet = PASSWORD_REQUIREMENTS.every((r) => r.test(next || ''));
   const passwordsMatch = next && next === confirm;
 
+  // A failed submit's error must never linger beside fresh input — clear it
+  // as soon as the user edits any field (submit failures re-set it).
+  const handleChange = (setter) => (e) => {
+    if (error) setError('');
+    setter(e.target.value);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -75,7 +82,7 @@ export default function ForcedPasswordChange({ email, onComplete, onLogout }) {
               required
               type={show ? 'text' : 'password'}
               value={current}
-              onChange={(e) => setCurrent(e.target.value)}
+              onChange={handleChange(setCurrent)}
               className={inputClass + ' pr-10'}
               placeholder="Provided by your admin"
               autoComplete="current-password"
@@ -92,7 +99,7 @@ export default function ForcedPasswordChange({ email, onComplete, onLogout }) {
               required
               type={show ? 'text' : 'password'}
               value={next}
-              onChange={(e) => setNext(e.target.value)}
+              onChange={handleChange(setNext)}
               className={inputClass}
               placeholder="••••••••••••"
               autoComplete="new-password"
@@ -102,7 +109,7 @@ export default function ForcedPasswordChange({ email, onComplete, onLogout }) {
               required
               type={show ? 'text' : 'password'}
               value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
+              onChange={handleChange(setConfirm)}
               className={inputClass}
               placeholder="••••••••••••"
               autoComplete="new-password"

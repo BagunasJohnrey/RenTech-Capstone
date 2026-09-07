@@ -401,11 +401,22 @@ export async function removeStaff(req: AuthenticatedRequest, res: Response, next
 // Phase 2: password reset — always returns 200 (no account enumeration).
 // Email delivery is handled entirely by Supabase's own email service
 // (Authentication → Emails). No third-party SMTP.
+// NOTE: supabase-js returns delivery failures in `{ error }` rather than
+// throwing — an unchecked error here used to report success while no email
+// was ever queued (e.g. Supabase's hourly email rate limit). Always inspect
+// the result so the client gets an honest answer.
 export async function forgotPassword(req: Request, res: Response, next: NextFunction) {
   try {
     const { email } = req.body;
     const redirectTo = `${env.FRONTEND_URL.replace(/\/$/, '')}/reset-password`;
-    await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo });
+    const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) {
+      const rateLimited = error.status === 429 || /rate.?limit/i.test(error.message ?? '');
+      if (rateLimited) {
+        throw new AppError(429, 'Email service is busy. Please wait a few minutes and request a new link.');
+      }
+      throw new AppError(500, 'Could not send the reset email. Please try again later.');
+    }
     res.json({ message: 'If that email is registered, a reset link has been sent.' });
   } catch (err) {
     next(err);

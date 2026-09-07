@@ -158,11 +158,22 @@ export function AuthProvider({ children }) {
   // First-login staff flow: swap the admin-issued one-time password for the
   // staff member's own password, then re-fetch the profile (mustChangePassword
   // is cleared server-side; /auth/me becomes fully usable again).
+  // Durability: once the POST succeeds the change is committed — a flaky
+  // profile refetch must not masquerade as a failed change (which strands the
+  // user on the gate with a session error for a change that already landed).
+  // On refetch failure, go home and reboot from '/' (a plain reload would
+  // keep a deep-link path, which renders the signed-out 404 when the session
+  // is also unusable — exactly the dead end we're avoiding).
   const completeForcedPasswordChange = useCallback(async ({ currentPassword, newPassword }) => {
     await api.post('/auth/change-password', { currentPassword, newPassword });
-    const prof = await api.get('/auth/me');
-    setProfile(prof);
-    return prof;
+    try {
+      const prof = await api.get('/auth/me');
+      setProfile(prof);
+      return prof;
+    } catch {
+      window.location.href = '/';
+      return null;
+    }
   }, []);
 
   const value = {

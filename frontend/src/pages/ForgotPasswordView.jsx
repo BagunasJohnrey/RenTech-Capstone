@@ -42,8 +42,14 @@ export default function ForgotPasswordView() {
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
   // Invalid/expired link state — offers a resend instead of a dead end.
+  // The address typed on the login forgot-step is remembered per-tab, so a
+  // resend is one click; otherwise (e.g. link opened on another device) the
+  // user types it here.
   const [linkDead, setLinkDead] = useState(!credential);
-  const [resendEmail, setResendEmail] = useState('');
+  const [resendEmail, setResendEmail] = useState(() => {
+    try { return sessionStorage.getItem('rentech_reset_email') || ''; } catch { return ''; }
+  });
+  const [editEmail, setEditEmail] = useState(false);
   const [resendSent, setResendSent] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
 
@@ -65,6 +71,7 @@ export default function ForgotPasswordView() {
     setLoading(true);
     try {
       await api.post('/auth/reset-password', { ...credential, password });
+      try { sessionStorage.removeItem('rentech_reset_email'); } catch { /* private mode */ }
       toastSuccess('Password reset successfully');
       navigate('/');
     } catch (err) {
@@ -114,17 +121,24 @@ export default function ForgotPasswordView() {
           <form onSubmit={handleResendSubmit} className="space-y-4 bg-white rounded-2xl border border-gray-100 p-6 sm:p-8 shadow-sm">
             {!resendSent ? (
               <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Account Email</label>
-                  <input
-                    type="email"
-                    value={resendEmail}
-                    onChange={(e) => setResendEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
-                    required
-                  />
-                </div>
+                {resendEmail && !editEmail ? (
+                  <p className="text-sm text-gray-600 text-center">
+                    Send a fresh link to<br />
+                    <span className="font-semibold text-gray-900">{resendEmail}</span>?
+                  </p>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Account Email</label>
+                    <input
+                      type="email"
+                      value={resendEmail}
+                      onChange={(e) => setResendEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
+                      required
+                    />
+                  </div>
+                )}
                 <button
                   type="submit"
                   disabled={resendLoading || !resendEmail}
@@ -132,6 +146,15 @@ export default function ForgotPasswordView() {
                 >
                   {resendLoading ? 'Sending...' : 'Send a New Reset Link'}
                 </button>
+                {resendEmail && !editEmail && (
+                  <button
+                    type="button"
+                    onClick={() => setEditEmail(true)}
+                    className="text-xs text-center text-gray-400 hover:text-gray-600 font-medium w-full"
+                  >
+                    Use a different address
+                  </button>
+                )}
               </>
             ) : (
               <p className="text-sm text-gray-600 text-center">

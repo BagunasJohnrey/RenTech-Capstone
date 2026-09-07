@@ -357,6 +357,20 @@ describe('POST /api/auth/forgot-password', () => {
     expect(res.body.message).toContain('reset link');
     expect(supabaseAdmin.auth.resetPasswordForEmail).toHaveBeenCalled();
   });
+
+  it('should return 429 (not false success) when the email rate limit is hit', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.resetPasswordForEmail).mockResolvedValueOnce({
+      data: {}, error: { message: 'email rate limit exceeded', status: 429 },
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/forgot-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'any@example.com' });
+
+    expect(res.status).toBe(429);
+    expect(res.body.error).toContain('busy');
+  });
 });
 
 describe('POST /api/auth/reset-password', () => {
@@ -531,6 +545,55 @@ describe('POST /api/auth/login with unconfirmed email', () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toContain('verify your email');
     expect(res.headers['set-cookie']).toBeUndefined();
+  });
+});
+
+// Session verification hardening (middleware/auth.ts getUserWithRetry):
+// definitive rejections 401 without retry; transient failures retried once,
+// then 503 instead of a misleading 'invalid token'.
+describe('GET /api/auth/me session verification', () => {
+  it('returns 401 session-expired (no retry) when Supabase rejects the token', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: null }, error: { message: 'invalid JWT', status: 401 },
+    } as never);
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Origin', 'http://localhost:5173')
+      .set('Authorization', 'Bearer dead-token');
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('session has expired');
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries once and succeeds after a transient verification failure', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: null }, error: { message: 'fetch failed' },
+    } as never);
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Origin', 'http://localhost:5173')
+      .set('Authorization', 'Bearer flaky-token');
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns 503 when verification stays unreachable after the retry', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.getUser)
+      .mockResolvedValueOnce({ data: { user: null }, error: { message: 'fetch failed' } } as never)
+      .mockResolvedValueOnce({ data: { user: null }, error: { message: 'fetch failed', status: 500 } } as never);
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Origin', 'http://localhost:5173')
+      .set('Authorization', 'Bearer flaky-token');
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain('authentication server');
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledTimes(2);
   });
 });
 

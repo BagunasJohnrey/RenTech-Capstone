@@ -174,6 +174,9 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setForgotLoading(true);
     try {
       await api.post('/auth/forgot-password', { email: forgotEmail });
+      // Remember the address for this tab so the reset page can offer a
+      // one-click resend (expired/invalid link) without asking again.
+      try { sessionStorage.setItem('rentech_reset_email', forgotEmail); } catch { /* private mode */ }
       setForgotSent(true);
     } catch (err) {
       setError(err?.message || 'Failed to send reset link');
@@ -326,12 +329,12 @@ export default function Login({ onLogin, onVerifyMfa }) {
 <div className="lg:hidden flex items-center justify-center mb-8">
                  <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
                </div>
-               {!forgotMode && (
-                 <>
-                   <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
-                   <p className="text-gray-500 text-sm mt-1 mb-7">Sign in to your RenTech account to continue.</p>
-                 </>
-               )}
+                {!forgotMode && (
+                  <>
+                    <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
+                    <p className="text-gray-500 text-sm mt-1 mb-7">Sign in to your RenTech account to continue.</p>
+                  </>
+                )}
 
                {/* Phase 5: MFA challenge screen */}
                {mfaChallenge && (
