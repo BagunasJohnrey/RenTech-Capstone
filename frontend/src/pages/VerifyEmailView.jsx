@@ -4,34 +4,39 @@ import { CheckCircle, Mail, XCircle } from 'lucide-react';
 import { api } from '../utils/api';
 
 // Email-verification landing page. The confirmation link from Supabase points
-// here with a token_hash (query string or URL hash, depending on flow) — mirror
-// ForgotPasswordView and read both. Consuming the token confirms the account;
-// the backend mints session cookies so the user is logged in immediately.
+// here with either a token_hash (custom template) or a ?code= (default
+// template — Supabase's /verify consumed the token and redirected with a
+// code). Either lives in the query string or the URL hash depending on flow —
+// mirror ForgotPasswordView and read both. Consuming the credential confirms
+// the account; the backend mints session cookies so the user is logged in.
 export default function VerifyEmailView() {
   const navigate = useNavigate();
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
   const tokenHash = searchParams.get('token_hash') || hashParams.get('token_hash');
+  const code = searchParams.get('code') || hashParams.get('code');
+  const credential = tokenHash ? { token_hash: tokenHash } : code ? { code } : null;
   const [state, setState] = useState('verifying'); // verifying | success | error
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    if (!tokenHash) {
+    if (!credential) {
       setState('error');
       setMessage('This verification link is invalid or expired. Please sign up again.');
       return;
     }
     (async () => {
       try {
-        await api.post('/auth/verify-email', { token_hash: tokenHash });
+        await api.post('/auth/verify-email', credential);
         setState('success');
       } catch (err) {
         setState('error');
         setMessage(err?.message || 'This verification link is invalid or expired. Please ask for a new one.');
       }
     })();
-  }, [tokenHash]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenHash, code]);
 
   return (
     <div className="min-h-screen bg-[#fafbfc] flex items-center justify-center p-4">

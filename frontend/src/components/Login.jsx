@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail, X, ScrollText } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
@@ -147,6 +148,16 @@ export default function Login({ onLogin, onVerifyMfa }) {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
+
+  // Deep-link from the reset page's "Back to sign in" (/?forgot=1) — land
+  // straight in the forgot-password step instead of the login form.
+  const location = useLocation();
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('forgot') === '1') {
+      setForgotMode(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const enterForgotMode = () => {
     setError('');

@@ -391,6 +391,60 @@ describe('POST /api/auth/reset-password', () => {
 
     expect(res.status).toBe(401);
   });
+
+  it('should reset password with a ?code= credential (default email template)', async () => {
+    const { supabaseSignUp } = await import('../src/config/supabase.js');
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: 'pkce-code-123', password: 'newPassword123!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset');
+    expect(supabaseSignUp.auth.exchangeCodeForSession).toHaveBeenCalledWith('pkce-code-123');
+    // Exchanged session mints cookies (auto-login after reset).
+    expect(res.headers['set-cookie']).toBeDefined();
+    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_access='))).toBe(true);
+  });
+
+  it('should reset password with an #access_token credential (implicit flow)', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ access_token: 'recovery-access-token', password: 'newPassword123!' });
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledWith('recovery-access-token');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'newPassword123!' }
+    );
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  it('should return 400 when no credential is supplied', async () => {
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ password: 'newPassword123!' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('should return an expiry-specific message for expired tokens', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.verifyOtp).mockResolvedValueOnce({
+      data: { user: null, session: null }, error: { message: 'Token has expired or is invalid' },
+    });
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token_hash: 'stale-hash', password: 'newPassword123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('expired');
+  });
 });
 
 describe('POST /api/auth/verify-email', () => {
@@ -436,6 +490,28 @@ describe('POST /api/auth/verify-email', () => {
       .send({ token_hash: 'expired-hash' });
 
     expect(res.status).toBe(401);
+  });
+
+  it('should confirm the email with a ?code= credential (default template)', async () => {
+    const { supabaseSignUp } = await import('../src/config/supabase.js');
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: 'signup-code-123' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('verified');
+    expect(supabaseSignUp.auth.exchangeCodeForSession).toHaveBeenCalledWith('signup-code-123');
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  it('should return 400 when no credential is supplied', async () => {
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({});
+
+    expect(res.status).toBe(400);
   });
 });
 

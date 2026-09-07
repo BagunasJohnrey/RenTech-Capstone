@@ -5,7 +5,7 @@ import * as authService from '../services/auth.service.js';
 import * as mfaService from '../services/mfa.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { supabaseAdmin } from '../config/supabase.js';
+import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { env } from '../config/env.js';
 import { setSessionCookies, clearSessionCookies, getRefreshTokenFromCookie, RtSession, setPkceCookie, getPkceCookie, clearPkceCookie, setOauthPendingCookie, clearOauthPendingCookie, getAccessTokenFromCookie, OAUTH_PKCE_COOKIE, OAUTH_PENDING_COOKIE, setMfaPendingCookie, getMfaPendingCookie, clearMfaPendingCookie, setMfaVerifiedCookie, isMfaVerifiedCookie, isMfaTrustedCookie, setMfaTrustedCookie } from '../middleware/cookies.js';
@@ -60,7 +60,14 @@ export const createStaffSchema = z.object({
   }),
 });
 
-// Phase 2: password reset schemas
+// Phase 2: password reset schemas.
+// Supabase delivers the recovery credential in one of three shapes,
+// depending on the email template / project flow settings:
+//   - token_hash: custom template linking straight to the app
+//   - code:       default template — /verify consumed the token and redirected
+//                 with a PKCE-style ?code=
+//   - access_token: legacy implicit flow — /verify redirected with
+//                 #access_token= in the URL hash
 export const forgotPasswordSchema = z.object({
   body: z.object({
     email: z.string().email(),
@@ -69,14 +76,33 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
   body: z.object({
-    token_hash: z.string().min(1),
+    token_hash: z.string().min(1).optional(),
+    code: z.string().min(1).optional(),
+    access_token: z.string().min(1).optional(),
     password: passwordSchema,
+  }).superRefine((b, ctx) => {
+    if (!b.token_hash && !b.code && !b.access_token) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'One of token_hash, code, or access_token is required',
+        path: ['token_hash'],
+      });
+    }
   }),
 });
 
 export const verifyEmailSchema = z.object({
   body: z.object({
-    token_hash: z.string().min(1),
+    token_hash: z.string().min(1).optional(),
+    code: z.string().min(1).optional(),
+  }).superRefine((b, ctx) => {
+    if (!b.token_hash && !b.code) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'One of token_hash or code is required',
+        path: ['token_hash'],
+      });
+    }
   }),
 });
 
@@ -386,67 +412,128 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
   }
 }
 
-// Phase 2: consume the recovery token + new password. In Supabase v2, verifyOtp
-// returns a session (access_token + refresh_token) when valid. We verify the OTP,
-// set the new password, then set session cookies so the browser is logged in.
+// Phase 2: consume the recovery credential + new password. Accepts whichever
+// shape Supabase's email link delivered (see schema comment): a raw token_hash
+// (verifyOtp), a ?code= (exchange it for the recovery session), or an
+// #access_token= (validate it, set the password, then sign in fresh).
+// Invalid/expired credentials 401 with a resend-friendly message so the UI
+// can offer "request a new link" instead of a dead end.
+function resetLinkError(upstream?: string): AppError {
+  const expired = !!upstream && /expir/i.test(upstream);
+  return new AppError(
+    401,
+    expired
+      ? 'This reset link has expired. Please request a new one.'
+      : 'This reset link is invalid or has already been used. Please request a new one.'
+  );
+}
+
 export async function resetPassword(req: Request, res: Response, next: NextFunction) {
   try {
-    const { token_hash, password } = req.body;
-    const { data, error } = await supabaseAdmin.auth.verifyOtp({
-      token_hash,
-      type: 'recovery',
-    });
-    if (error || !data?.user) throw new AppError(401, 'Invalid or expired reset token');
-    await supabaseAdmin.auth.admin.updateUserById(data.user.id, { password });
+    const { token_hash, code, access_token, password } = req.body;
+    let userId: string;
+    let userEmail: string | undefined;
+    let session: { access_token: string | null; refresh_token: string | null } | null = null;
+    let sessionTokenForRevoke: string | undefined;
+
+    if (token_hash) {
+      const { data, error } = await supabaseAdmin.auth.verifyOtp({
+        token_hash,
+        type: 'recovery',
+      });
+      if (error || !data?.user) throw resetLinkError(error?.message);
+      userId = data.user.id;
+      userEmail = data.user.email ?? undefined;
+      if (data.session) {
+        session = authService.toRtSession(data.session);
+        sessionTokenForRevoke = data.session.access_token ?? undefined;
+      }
+    } else if (code) {
+      const { data, error } = await supabaseSignUp.auth.exchangeCodeForSession(code);
+      if (error || !data?.user) throw resetLinkError(error?.message);
+      userId = data.user.id;
+      userEmail = data.user.email ?? undefined;
+      if (data.session) {
+        session = authService.toRtSession(data.session);
+        sessionTokenForRevoke = data.session.access_token ?? undefined;
+      }
+    } else {
+      const { data: { user }, error } = await supabaseAdmin.auth.getUser(access_token);
+      if (error || !user) throw resetLinkError(error?.message);
+      userId = user.id;
+      userEmail = user.email ?? undefined;
+    }
+
+    await supabaseAdmin.auth.admin.updateUserById(userId, { password });
     // W2.8: A password reset invalidates all existing sessions so old tokens
     // (which were issued before the password changed) can't be used to ride in.
-    // revokeAllUserSessions signs out all sessions for this user; the fresh
-    // session returned by verifyOtp then establishes a clean new session.
-    if (data.session?.access_token) {
-      try {
-        await authService.revokeAllUserSessions(data.user.id, data.session.access_token);
-      } catch { /* best-effort */ }
+    // revokeAllUserSessions signs out all sessions for this user; a fresh
+    // session below then establishes a clean new session.
+    try {
+      await authService.revokeAllUserSessions(userId, sessionTokenForRevoke ?? access_token);
+    } catch { /* best-effort */ }
+
+    if (!session) {
+      // Implicit-flow path has no session yet — sign in with the just-set
+      // password for a clean full session (access + refresh tokens).
+      if (!userEmail) throw resetLinkError();
+      const { data: signIn, error: signInError } = await supabaseSignUp.auth.signInWithPassword({
+        email: userEmail,
+        password,
+      });
+      if (signInError || !signIn?.session) throw resetLinkError(signInError?.message);
+      session = authService.toRtSession(signIn.session);
     }
-    if (data.session) {
-      const rtSession = authService.toRtSession(data.session);
-      setSessionCookies(res, rtSession);
-    }
+    setSessionCookies(res, session);
     res.json({ message: 'Password reset successfully' });
   } catch (err) {
     next(err);
   }
 }
 
-// Email verification: consume the signup confirmation token. The user was
-// created (unconfirmed) by signupCustomer via the public signUp endpoint;
-// verifyOtp({ type: 'signup' }) confirms the email and returns a session,
-// which we mint into httpOnly cookies so the user is logged in immediately.
+// Email verification: consume the signup confirmation credential. The user was
+// created (unconfirmed) by signupCustomer via the public signUp endpoint.
+// Accepts a raw token_hash (verifyOtp type 'signup') or a ?code= from the
+// default template's /verify redirect (exchanged for the confirm session).
+// Either way the backend mints session cookies so the user is logged in.
 export async function verifyEmail(req: Request, res: Response, next: NextFunction) {
   try {
-    const { token_hash } = req.body;
-    const { data, error } = await supabaseAdmin.auth.verifyOtp({
-      token_hash,
-      type: 'signup',
-    });
-    if (error || !data?.user) throw new AppError(401, 'This verification link is invalid or has expired.');
+    const { token_hash, code } = req.body;
+    let user: { id: string; email?: string | null } | null = null;
+    let session: { access_token: string | null; refresh_token: string | null } | null = null;
+    if (token_hash) {
+      const { data, error } = await supabaseAdmin.auth.verifyOtp({
+        token_hash,
+        type: 'signup',
+      });
+      if (error || !data?.user) throw new AppError(401, 'This verification link is invalid or has expired.');
+      user = data.user;
+      if (data.session) session = authService.toRtSession(data.session);
+    } else {
+      const { data, error } = await supabaseSignUp.auth.exchangeCodeForSession(code);
+      if (error || !data?.user) throw new AppError(401, 'This verification link is invalid or has expired.');
+      user = data.user;
+      if (data.session) session = authService.toRtSession(data.session);
+    }
+    if (!user) throw new AppError(401, 'This verification link is invalid or has expired.');
 
     // The profile was created at signup; find it by auth userId. If it's
     // missing (e.g. signup was interrupted), create a minimal one so the
     // verified user can use the app.
-    let profile = await prisma.profile.findUnique({ where: { userId: data.user.id } });
+    let profile = await prisma.profile.findUnique({ where: { userId: user.id } });
     if (!profile) {
       profile = await prisma.profile.create({
         data: {
-          userId: data.user.id,
-          email: data.user.email ?? '',
+          userId: user.id,
+          email: user.email ?? '',
           role: 'Customer',
-          name: data.user.email?.split('@')[0] ?? 'Customer',
+          name: user.email?.split('@')[0] ?? 'Customer',
         },
       });
     }
 
-    if (data.session) {
-      setSessionCookies(res, authService.toRtSession(data.session));
+    if (session) {
+      setSessionCookies(res, session);
     }
     res.json({ message: 'Email verified successfully', user: profile });
   } catch (err) {

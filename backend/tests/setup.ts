@@ -107,6 +107,19 @@ vi.mock('@supabase/supabase-js', () => {
         data: { user: { id: 'auth-user-id-123', email: 'test@example.com' }, session: null },
         error: null,
       }),
+      // PKCE-style email links (?code= after the /verify redirect)
+      exchangeCodeForSession: vi.fn().mockResolvedValue({
+        data: {
+          user: { id: 'auth-user-id-123', email: 'test@example.com' },
+          session: {
+            access_token: 'exchanged-access-token',
+            refresh_token: 'exchanged-refresh-token',
+            token_type: 'bearer',
+            expires_in: 3600,
+          },
+        },
+        error: null,
+      }),
       signOut: vi.fn().mockResolvedValue({ error: null }),
     },
   };
