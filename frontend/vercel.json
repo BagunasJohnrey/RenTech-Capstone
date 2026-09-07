@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://rentech-capstone.onrender.com/api/$1" },
     { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ]
 }
