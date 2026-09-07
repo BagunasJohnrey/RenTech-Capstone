@@ -8,6 +8,7 @@ import { api } from '../utils/api';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { txPill } from '../utils/statusColors';
 import { promoService } from '../services/promo';
+import { sortByCategory } from '../utils/categorySort';
 
 export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook }) {
   const todayStats = useTodayTasks(role);
@@ -65,7 +66,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const preferred = available.filter((i) =>
       prefs.some((p) => (i.category || '').toLowerCase().includes(p.toLowerCase()))
     );
-    const recommended = (prefs.length > 0 && preferred.length > 0 ? preferred : available).slice(0, 4);
+    const recommended = sortByCategory(prefs.length > 0 && preferred.length > 0 ? preferred : available).slice(0, 4);
     const myRentals = (transactions || [])
       .filter((tx) => tx.status === 'Active' || tx.status === 'Overdue' || tx.status === 'Reserved')
       .slice(0, 3);
@@ -75,9 +76,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const itemName = (tx) => (typeof tx.item === 'string' ? tx.item : tx.item?.name) || 'Item';
 
     // New arrivals — newest available items this customer may not have seen.
-    const newArrivals = [...available]
+    const newArrivals = sortByCategory([...available]
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-      .slice(0, 4);
+    ).slice(0, 4);
 
     // Upcoming rentals (Reserved/Active with a future pickup) so the customer
     // sees at a glance what to pick up and when.
@@ -254,6 +255,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </div>
           </div>
         )}
+
+        {/* End of results */}
+        <p className="text-center text-xs text-gray-400 pt-4 pb-2">You've reached the end of your feed</p>
       </div>
     );
   }

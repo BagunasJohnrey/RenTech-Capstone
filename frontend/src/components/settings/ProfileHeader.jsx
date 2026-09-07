@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { User } from 'lucide-react';
+import { User, Pencil, Save, X, Phone, MapPin, Heart } from 'lucide-react';
 import { ITEM_TYPES } from './constants';
 
-// Top profile card: avatar, name/role, and (for customers) the editable
-// contact + interest-preference block.
 export default function ProfileHeader({ role, profile, customerInfo, onUpdateCustomer }) {
   const [editCustomer, setEditCustomer] = useState(false);
   const [localCustomer, setLocalCustomer] = useState(customerInfo || { name: '', contact: '', address: '', preferences: [], styleNotes: '' });
@@ -16,32 +14,72 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
     setTimeout(() => setSaveMessage(''), 2000);
   };
 
-  const inputClass = 'w-full p-2.5 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]';
+  const inputClass = 'w-full p-3 bg-white rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/10 transition-all';
+
+  const displayName = role === 'Customer' ? (customerInfo?.name || 'Customer') : (profile?.name || role);
 
   return (
-    <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 flex flex-col md:flex-row gap-5 md:gap-8 items-start">
-      <div className="w-16 h-16 md:w-24 md:h-24 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 border-4 border-white shadow-lg flex items-center justify-center shrink-0 text-gray-400">
-        <User size={28} className="md:size-10" />
+    <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+      {/* Banner */}
+      <div className="h-28 md:h-36 bg-gradient-to-r from-[#bf4a53] to-[#e07080] overflow-hidden relative">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-4 right-8 w-32 h-32 border border-white/30 rounded-full" />
+          <div className="absolute -bottom-6 left-12 w-24 h-24 border border-white/20 rounded-full" />
+          <div className="absolute top-8 left-1/3 w-16 h-16 border border-white/20 rounded-full" />
+        </div>
       </div>
-      <div className="flex-1 space-y-3 w-full">
-        <div>
-          <h3 className="text-xl font-bold text-gray-900">
-            {role === 'Customer' ? (customerInfo?.name || 'Customer') : (profile?.name || role)}
-          </h3>
-          <span className="text-[11px] font-bold uppercase tracking-wider text-white bg-gradient-to-r from-[#b33842] to-[#bf4a53] px-2.5 py-1 rounded-lg mt-1.5 inline-block shadow-sm shadow-red-500/20">
-            {role} Role
+
+      {/* Content */}
+      <div className="px-5 md:px-8 pb-6 -mt-10 md:-mt-12 relative">
+        {/* Avatar */}
+        <div className="mb-4">
+          <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-white border-4 border-white shadow-md flex items-center justify-center">
+            <User size={32} className="text-[#bf4a53] md:w-10 md:h-10" />
+          </div>
+        </div>
+
+        {/* Name + role */}
+        <div className="mb-5">
+          <h3 className="text-xl md:text-2xl font-bold text-gray-900">{displayName}</h3>
+          <span className="inline-block mt-1.5 text-[11px] font-bold uppercase tracking-wider text-[#bf4a53] bg-red-50 px-2.5 py-1 rounded-lg">
+            {role}
           </span>
         </div>
 
         {role === 'Customer' ? (
           editCustomer ? (
-            <div className="space-y-3">
-              <input type="text" value={localCustomer.name} onChange={(e) => setLocalCustomer({ ...localCustomer, name: e.target.value })} className={inputClass} placeholder="Full Name" />
-              <input type="text" value={localCustomer.contact} onChange={(e) => setLocalCustomer({ ...localCustomer, contact: e.target.value })} className={inputClass} placeholder="Contact Number" />
-              <input type="text" value={localCustomer.address} onChange={(e) => setLocalCustomer({ ...localCustomer, address: e.target.value })} className={inputClass} placeholder="Address" />
+            /* ---- EDIT MODE ---- */
+            <div className="space-y-4">
+              {/* Edit header */}
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                <div className="w-10 h-10 rounded-full bg-[#bf4a53]/10 flex items-center justify-center shrink-0">
+                  <Pencil size={16} className="text-[#bf4a53]" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-900">Editing Profile</p>
+                  <p className="text-[11px] text-gray-400">Update your details below</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Full Name</label>
+                  <input type="text" value={localCustomer.name} onChange={(e) => setLocalCustomer({ ...localCustomer, name: e.target.value })} className={inputClass} placeholder="Full Name" />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Contact Number</label>
+                  <input type="text" value={localCustomer.contact} onChange={(e) => setLocalCustomer({ ...localCustomer, contact: e.target.value })} className={inputClass} placeholder="Contact Number" />
+                </div>
+              </div>
+
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Interested In</label>
-                <div className="flex flex-wrap gap-2 mt-1.5">
+                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Address</label>
+                <input type="text" value={localCustomer.address} onChange={(e) => setLocalCustomer({ ...localCustomer, address: e.target.value })} className={inputClass} placeholder="Address" />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2 block">Interested In</label>
+                <div className="flex flex-wrap gap-2">
                   {ITEM_TYPES.map((type) => {
                     const active = (localCustomer.preferences || []).includes(type);
                     return (
@@ -59,7 +97,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                             };
                           })
                         }
-                        className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${active ? 'bg-[#bf4a53] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                        className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${active ? 'bg-[#bf4a53] text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
                       >
                         {type}
                       </button>
@@ -67,47 +105,97 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                   })}
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={handleSaveCustomer} className="px-4 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
-                <button onClick={() => { setEditCustomer(false); setLocalCustomer(customerInfo); }} className="px-4 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button onClick={() => { setEditCustomer(false); setLocalCustomer(customerInfo); }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 border border-gray-200 rounded-full text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors">
+                  <X size={15} /> Cancel
+                </button>
+                <button onClick={handleSaveCustomer}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20">
+                  <Save size={15} /> Save
+                </button>
               </div>
-              {saveMessage && <p className="text-xs text-emerald-600 font-bold mt-1">{saveMessage}</p>}
+              {saveMessage && <p className="text-sm text-emerald-600 font-bold text-right">{saveMessage}</p>}
             </div>
           ) : (
-            <div className="space-y-2">
-              <p className="text-[10px] font-bold text-gray-400 uppercase">Name</p>
-              <p className="text-sm font-medium text-gray-900">{customerInfo.name}</p>
-              <p className="text-[10px] font-bold text-gray-400 uppercase mt-3">Contact</p>
-              <p className="text-sm font-medium text-gray-900">{customerInfo.contact}</p>
-              <p className="text-[10px] font-bold text-gray-400 uppercase mt-3">Address</p>
-              <p className="text-sm font-medium text-gray-900">{customerInfo.address}</p>
+            /* ---- VIEW MODE ---- */
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                  <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                    <User size={15} className="text-gray-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Name</p>
+                    <p className="text-sm font-semibold text-gray-900 truncate">{customerInfo.name}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                  <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                    <Phone size={15} className="text-gray-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contact</p>
+                    <p className="text-sm font-semibold text-gray-900 truncate">{customerInfo.contact}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                  <MapPin size={15} className="text-gray-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Address</p>
+                  <p className="text-sm font-semibold text-gray-900 truncate">{customerInfo.address}</p>
+                </div>
+              </div>
+
               {customerInfo.preferences?.length > 0 && (
-                <>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase mt-3">Interested In</p>
-                  <div className="flex flex-wrap gap-1.5 mt-1">
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Heart size={13} className="text-[#bf4a53]" />
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Interested In</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
                     {customerInfo.preferences.map((p) => (
-                      <span key={p} className="px-2.5 py-1 bg-red-50 text-[#bf4a53] rounded-full text-[11px] font-bold">{p}</span>
+                      <span key={p} className="px-3 py-1 bg-red-50 text-[#bf4a53] rounded-full text-xs font-bold">{p}</span>
                     ))}
                   </div>
-                </>
+                </div>
               )}
-              <button
-                onClick={() => { setLocalCustomer({ ...customerInfo, preferences: customerInfo?.preferences || [] }); setEditCustomer(true); }}
-                className="mt-3 text-xs font-bold text-[#bf4a53] hover:underline"
-              >
-                Edit Profile
-              </button>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  onClick={() => { setLocalCustomer({ ...customerInfo, preferences: customerInfo?.preferences || [] }); setEditCustomer(true); }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20"
+                >
+                  <Pencil size={15} /> Edit Profile
+                </button>
+              </div>
             </div>
           )
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-100/80">
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase">Email Address</label>
-              <p className="text-sm font-medium text-gray-900">{profile?.email || '—'}</p>
+          /* ---- STAFF / ADMIN ---- */
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+              <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                <User size={15} className="text-gray-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email</p>
+                <p className="text-sm font-semibold text-gray-900 truncate">{profile?.email || '—'}</p>
+              </div>
             </div>
-            <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase">Phone</label>
-              <p className="text-sm font-medium text-gray-900">{profile?.phone || '—'}</p>
+            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+              <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                <Phone size={15} className="text-gray-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Phone</p>
+                <p className="text-sm font-semibold text-gray-900 truncate">{profile?.phone || '—'}</p>
+              </div>
             </div>
           </div>
         )}

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import ItemImage from '../components/ItemImage';
 import { getSaleInfo } from '../components/ItemCard';
+import { sortByCategory } from '../utils/categorySort';
 
 // --- Custom Styles (unchanged) ---
 const customStyles = `
@@ -111,11 +112,14 @@ function useFeaturedItems(fallback) {
       .then((data) => {
         if (!active) return;
         const list = Array.isArray(data) ? data : [];
-        const available = list
-          .filter((i) => (i.effectiveStatus || i.status) === 'Available')
-          .slice(0, 4)
+        const available = list.filter((i) => (i.effectiveStatus || i.status) === 'Available');
+        // Pick exactly 1 from each featured category (lowest ID = first added)
+        const FEATURED_CATS = ['Gown', 'Suit', 'Filipiniana', 'Barong'];
+        const picked = FEATURED_CATS
+          .map((cat) => available.find((i) => i.category === cat))
+          .filter(Boolean)
           .map((i) => ({ id: i.id, title: i.name, category: i.category || 'Piece', _item: i }));
-        setItems(available.length > 0 ? available : null);
+        setItems(picked.length > 0 ? picked : null);
       })
       .catch(() => {
         if (!active) return;
@@ -362,7 +366,9 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
             ))}
           </div>
 
-          <motion.div variants={fadeInUp} className="mt-10 md:mt-14 flex justify-center">
+          <p className="text-center text-xs text-gray-400 mt-8">You've reached the end of featured pieces</p>
+
+          <motion.div variants={fadeInUp} className="mt-12 md:mt-16 flex justify-center">
             <motion.button
               whileHover={{ scale: 1.03, y: -2 }}
               whileTap={buttonPress}

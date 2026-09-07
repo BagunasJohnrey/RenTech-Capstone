@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
-import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, Trash2, ArrowUpDown, Package } from 'lucide-react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { Search, X, SlidersHorizontal, ChevronDown, Check, BadgePercent, Trash2, ArrowUpDown, Package, Tag } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import { FeaturedSkeleton } from '../components/Skeleton';
 import { itemPill } from '../utils/statusColors';
+import { categoryPriority, sortByCategory } from '../utils/categorySort';
 
 const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
 const STAFF_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService'];
@@ -36,6 +37,8 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
   const isStaff = role !== 'Customer';
   const STATUSES = role === 'Admin' ? ADMIN_STATUSES : isStaff ? STAFF_STATUSES : CUSTOMER_STATUSES;
   const [searchQuery, setSearchQuery] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchRef = useRef(null);
 
   const [showFilters, setShowFilters] = useState(false);
 
@@ -49,7 +52,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
   const allCategories = useMemo(() => {
     const set = new Set(inventory.map(item => item.category));
-    return Array.from(set).sort();
+    return Array.from(set).sort((a, b) => categoryPriority({ category: a }) - categoryPriority({ category: b }));
   }, [inventory]);
 
   const allSizes = useMemo(() => {
@@ -124,8 +127,9 @@ const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
     if (!isStaff && sortBy === 'default') {
       // Default sort for customers/guests: items not currently rented (free or
       // reserved with booked dates) first, then currently rented, then the rest.
+      // Within each group, Filipino heritage items (Filipiniana, Barong) come first.
       const rank = (st) => st === 'Available' ? 0 : st === 'Reserved' ? 1 : st === 'Rented' ? 2 : 3;
-      filtered.sort((a, b) => rank(a.status) - rank(b.status));
+      filtered.sort((a, b) => rank(a.status) - rank(b.status) || categoryPriority(a) - categoryPriority(b));
     } else if (sortBy === 'priceAsc') {
       filtered.sort((a, b) => a.price - b.price);
     } else if (sortBy === 'priceDesc') {
@@ -155,6 +159,65 @@ const toggleCategory = (cat) => {
   // Changes whenever a filter/search/toggle changes — keys the item grid so
   // it replays a quick fade on the way in instead of hard-swapping.
   const gridKey = JSON.stringify([activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, searchQuery, sortBy]);
+
+  // Search suggestions
+  const suggestions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q.length < 1) return [];
+    const seen = new Set();
+    const results = [];
+    // Category matches
+    const cats = [...new Set(inventory.map(i => i.category))].filter(c => c.toLowerCase().includes(q));
+    for (const c of cats.slice(0, 3)) {
+      const key = `cat:${c}`;
+      if (!seen.has(key)) { seen.add(key); results.push({ type: 'category', label: c, value: c }); }
+    }
+    // Item name matches
+    const matchingItems = inventory.filter(i => i.name.toLowerCase().includes(q));
+    for (const i of sortByCategory(matchingItems).slice(0, 5)) {
+      const key = `item:${i.id}`;
+      if (!seen.has(key)) { seen.add(key); results.push({ type: 'item', label: i.name, value: i.name, category: i.category }); }
+    }
+    return results;
+  }, [searchQuery, inventory]);
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handleClick = (e) => { if (searchRef.current && !searchRef.current.contains(e.target)) setShowSuggestions(false); };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // Infinite scroll: show 10 items at a time, persisted across navigations
+  const PAGE_SIZE = 10;
+  const [visibleCount, setVisibleCount] = useState(() => {
+    const saved = sessionStorage.getItem('catalog_visibleCount');
+    return saved ? Number(saved) : PAGE_SIZE;
+  });
+  const sentinelRef = useRef(null);
+
+  // Persist visible count and reset when filters change
+  useEffect(() => {
+    sessionStorage.setItem('catalog_visibleCount', String(visibleCount));
+  }, [visibleCount]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [gridKey]);
+
+  // IntersectionObserver — re-attach whenever the sentinel element or data changes
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || filteredInventory.length === 0) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setVisibleCount((c) => c + PAGE_SIZE); },
+      { rootMargin: '300px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [filteredInventory.length, visibleCount]);
+
+  const displayedInventory = useMemo(
+    () => filteredInventory.slice(0, visibleCount),
+    [filteredInventory, visibleCount]
+  );
 
   const handleItemAction = (item) => {
     if (guest) {
@@ -260,15 +323,80 @@ const toggleCategory = (cat) => {
 
 {/* Search + Filter toggle row */}
       <div className="flex items-center gap-2.5">
-        <div className="relative flex-1 min-w-0">
+        <div className="relative flex-1 min-w-0" ref={searchRef}>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input
             type="text"
             placeholder={isStaff ? 'Search items by name or category...' : 'Search (e.g. Gatsby, Suit)...'}
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3.5 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors"
+            onChange={e => { setSearchQuery(e.target.value); setShowSuggestions(true); }}
+            onFocus={() => { if (searchQuery.trim()) setShowSuggestions(true); }}
+            className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors"
           />
+          {searchQuery && (
+            <button onClick={() => { setSearchQuery(''); setShowSuggestions(false); }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 hover:bg-gray-300 flex items-center justify-center transition-colors">
+              <X size={12} className="text-gray-500" />
+            </button>
+          )}
+          {/* Suggestions dropdown */}
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white rounded-2xl border border-gray-100 shadow-xl shadow-gray-950/10 overflow-hidden">
+              {(() => {
+                const cats = suggestions.filter(s => s.type === 'category');
+                const items = suggestions.filter(s => s.type === 'item');
+                return (
+                  <>
+                    {cats.length > 0 && (
+                      <div className="p-2">
+                        <p className="px-2.5 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Categories</p>
+                        {cats.map((s, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setSelectedCategories(prev => prev.includes(s.value) ? prev : [...prev, s.value]);
+                              setSearchQuery('');
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-2.5 py-2 hover:bg-[#bf4a53]/5 rounded-xl text-left transition-colors group"
+                          >
+                            <span className="shrink-0 w-8 h-8 rounded-xl bg-gradient-to-br from-[#bf4a53]/10 to-orange-100 flex items-center justify-center group-hover:from-[#bf4a53] group-hover:to-orange-400 transition-all">
+                              <Tag size={14} className="text-[#bf4a53] group-hover:text-white transition-colors" />
+                            </span>
+                            <span className="text-sm font-semibold text-gray-800">{s.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {cats.length > 0 && items.length > 0 && <div className="mx-3 border-t border-gray-100" />}
+                    {items.length > 0 && (
+                      <div className="p-2">
+                        <p className="px-2.5 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Items</p>
+                        {items.map((s, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setSearchQuery(s.value);
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-2.5 py-2 hover:bg-gray-50 rounded-xl text-left transition-colors group"
+                          >
+                            <span className="shrink-0 w-8 h-8 rounded-xl bg-gray-100 flex items-center justify-center group-hover:bg-gray-900 transition-colors">
+                              <Search size={14} className="text-gray-400 group-hover:text-white transition-colors" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-gray-800 truncate">{s.label}</p>
+                              <p className="text-[11px] text-gray-400">{s.category}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </div>
         <button onClick={() => setShowFilters(!showFilters)}
           className={`relative flex items-center justify-center w-9 h-9 rounded-lg border transition-colors shrink-0 ${
@@ -283,9 +411,6 @@ const toggleCategory = (cat) => {
             </span>
           )}
         </button>
-        <div className="text-xs text-gray-500 whitespace-nowrap tabular-nums">
-          <span className="font-semibold text-gray-900">{filteredInventory.length}</span><span className="text-gray-400">/{inventory.length}</span>
-        </div>
       </div>
 
       {/* Status rail — staff/admin only (persistent, live counts, one-tap filter) */}
@@ -309,14 +434,30 @@ const toggleCategory = (cat) => {
         </div>
       )}
 
-      {/* Status rail — customers/guests (All + Available + Reserved + Advance, live counts) */}
+      {/* Category + Status rail — customers/guests combined */}
       {!isStaff && (
         <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
-          {CUSTOMER_STATUSES.map(s => {
+          {['All', ...allCategories].map(cat => {
+            const active = cat === 'All' ? selectedCategories.length === 0 : selectedCategories.includes(cat);
+            return (
+              <button key={cat} type="button"
+                onClick={() => {
+                  if (cat === 'All') { setSelectedCategories([]); return; }
+                  setSelectedCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]);
+                }}
+                aria-pressed={active}
+                className={`shrink-0 px-4 py-2 rounded-full text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
+                  active
+                    ? 'bg-[#bf4a53] text-white shadow-sm'
+                    : 'bg-white text-gray-500 hover:text-gray-800 border border-gray-200 hover:border-gray-400'
+                }`}>
+                {cat}
+              </button>
+            );
+          })}
+          <div className="w-px h-5 bg-gray-200 shrink-0 mx-0.5" />
+          {CUSTOMER_STATUSES.filter(s => s !== 'All').map(s => {
             const active = activeStatusFilter === s;
-            const count = s === 'All'
-              ? inventory.filter(i => i.status !== 'Deleted').length
-              : s === 'Available' ? availableCount : s === 'Reserved' ? reservedCount : bookedCount;
             const title = s === 'Available'
               ? 'No bookings — free to rent now'
               : s === 'Reserved'
@@ -326,34 +467,10 @@ const toggleCategory = (cat) => {
                   : undefined;
             return (
               <button key={s} type="button" title={title} onClick={() => setActiveStatusFilter(active ? 'All' : s)} aria-pressed={active}
-                className={`shrink-0 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                className={`shrink-0 px-4 py-2 rounded-full text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
                   active ? 'bg-gray-900 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-gray-300 hover:text-gray-800'
                 }`}>
                 {s}
-                <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center tabular-nums ${active ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Category rail — shown for guests/customers under the search bar */}
-      {(!isStaff || guest) && allCategories.length > 0 && (
-        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
-          {['All', ...allCategories].map(cat => {
-            const active = cat === 'All' ? selectedCategories.length === 0 : selectedCategories.includes(cat);
-            return (
-              <button key={cat} type="button"
-                onClick={() => setSelectedCategories(cat === 'All' ? [] : [cat])}
-                aria-pressed={active}
-                className={`shrink-0 px-4 py-2 rounded-full text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
-                  active
-                    ? 'bg-gray-950 text-white shadow-sm'
-                    : 'bg-white text-gray-500 hover:text-gray-800 border border-gray-200 hover:border-gray-400'
-                }`}>
-                {cat}
               </button>
             );
           })}
@@ -363,117 +480,52 @@ const toggleCategory = (cat) => {
       {/* Modern filter toolbar */}
       {showFilters && (
         <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
-          {/* Status pills — hidden for staff (dedicated rail above) */}
-          {!isStaff && (
-          <div className="px-4 py-3 border-b border-gray-50">
-            <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
-              {STATUSES.map(s => {
-                const active = activeStatusFilter === s;
-                const count = s !== 'All'
-                  ? (s === 'Available' ? availableCount : s === 'Reserved' ? reservedCount : s === 'Advance' ? bookedCount : inventory.filter(i => i.status === s).length)
-                  : '';
-                return (
-                  <button key={s} onClick={() => setActiveStatusFilter(active ? 'All' : s)}
-                    className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
-                      active
-                        ? 'bg-gray-900 text-white shadow-sm'
-                        : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
-                    }`}>
-                    {s === 'All' ? 'All' : s}{count ? ` ${count}` : ''}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          )}
-
-          {/* On Sale toggle */}
-          <div className="px-4 py-2 border-b border-gray-50">
+          <div className="px-4 py-3 grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-3">
+            {/* On Sale toggle */}
             <button onClick={() => setOnSaleOnly(v => !v)}
-              className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+              className={`col-span-2 sm:col-span-1 shrink-0 inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full text-sm font-bold transition-all whitespace-nowrap ${
                 onSaleOnly
                   ? 'bg-red-50 text-red-700 border border-red-200 shadow-sm'
                   : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
               }`}>
-              <BadgePercent size={13} />
+              <BadgePercent size={15} />
               On Sale
             </button>
-          </div>
 
-{/* Category + Size + Price + Sort row */}
-          <div className="px-4 py-3 space-y-3">
-            {/* Category pills (multi-select) */}
-            <div>
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1.5">Category</span>
-              <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
-                {allCategories.map(cat => {
-                  const active = selectedCategories.includes(cat);
-                  return (
-                    <button key={cat} onClick={() => toggleCategory(cat)}
-                      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
-                        active
-                          ? 'bg-[#bf4a53] text-white shadow-sm'
-                          : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
-                      }`}>
-                      {active && <Check size={10} className="inline mr-1 -mt-0.5" />}
-                      {cat}
-                    </button>
-                  );
-                })}
+            {/* Sort */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Sort</span>
+              <div className="relative w-full sm:w-auto">
+                <ArrowUpDown size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                  className="w-full appearance-none bg-gray-50 border border-gray-200/60 rounded-lg py-2 pl-8 pr-8 text-sm font-medium text-gray-700 focus:outline-none focus:border-gray-400 transition-colors cursor-pointer">
+                  {[
+                    { value: 'default', label: isStaff ? 'Default' : 'Featured' },
+                    { value: 'priceAsc', label: 'Price: Low–High' },
+                    { value: 'priceDesc', label: 'Price: High–Low' },
+                    { value: 'name', label: 'Name A–Z' },
+                  ].map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <ChevronDown size={13} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Sort */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Sort</span>
-                <div className="relative">
-                  <ArrowUpDown size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-                    className="appearance-none bg-gray-50 border border-gray-200/60 rounded-lg py-1.5 pl-7 pr-7 text-xs font-medium text-gray-700 focus:outline-none focus:border-gray-400 transition-colors cursor-pointer">
-                    {[
-                      { value: 'default', label: isStaff ? 'Default' : 'Featured' },
-                      { value: 'priceAsc', label: 'Price: Low–High' },
-                      { value: 'priceDesc', label: 'Price: High–Low' },
-                      { value: 'name', label: 'Name A–Z' },
-                    ].map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                  <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" />
+            {/* Price */}
+            <div className="col-span-2 sm:col-span-1 flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Price</span>
+              <div className="flex items-center gap-1.5 flex-1">
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
+                  <input type="number" placeholder="Min" value={minPrice}
+                    onChange={e => setMinPrice(e.target.value)}
+                    className="w-full pl-7 pr-2 py-2 bg-gray-50 border border-gray-200/60 rounded-lg text-sm font-medium focus:outline-none focus:border-gray-400 transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                 </div>
-              </div>
-              {/* Size (staff only) */}
-              {isStaff && sizeOptions.length > 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Size</span>
-                  <div className="relative">
-                    <select value={activeSizeFilter} onChange={e => setActiveSizeFilter(e.target.value)}
-                      className="appearance-none bg-gray-50 border border-gray-200/60 rounded-lg py-1.5 pl-2.5 pr-7 text-xs font-medium text-gray-700 focus:outline-none focus:border-gray-400 transition-colors cursor-pointer min-w-[90px]">
-                      {sizeOptions.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-400" />
-                  </div>
-                </div>
-              )}
-
-              {/* Price */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Price</span>
-                <div className="flex items-center gap-1">
-                  <div className="relative">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">₱</span>
-                    <input type="number" placeholder="Min" value={minPrice}
-                      onChange={e => setMinPrice(e.target.value)}
-                      className="w-[68px] pl-5 pr-2 py-1.5 bg-gray-50 border border-gray-200/60 rounded-lg text-xs font-medium focus:outline-none focus:border-gray-400 transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                  </div>
-                  <span className="text-gray-300 text-[10px]">–</span>
-                  <div className="relative">
-                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">₱</span>
-                    <input type="number" placeholder="Max" value={maxPrice}
-                      onChange={e => setMaxPrice(e.target.value)}
-                      className="w-[68px] pl-5 pr-2 py-1.5 bg-gray-50 border border-gray-200/60 rounded-lg text-xs font-medium focus:outline-none focus:border-gray-400 transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
-                  </div>
+                <span className="text-gray-300 text-xs shrink-0">–</span>
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400">₱</span>
+                  <input type="number" placeholder="Max" value={maxPrice}
+                    onChange={e => setMaxPrice(e.target.value)}
+                    className="w-full pl-7 pr-2 py-2 bg-gray-50 border border-gray-200/60 rounded-lg text-sm font-medium focus:outline-none focus:border-gray-400 transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                 </div>
               </div>
             </div>
@@ -550,8 +602,9 @@ const toggleCategory = (cat) => {
             <button onClick={clearFilters} className="text-xs font-bold text-[#bf4a53] hover:underline">Clear filters</button>
           </div>
         ) : (
+          <>
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-            {filteredInventory.map(item => (
+            {displayedInventory.map(item => (
               <ItemCard key={item.id} item={item} role={role} guest={guest}
                 onBook={() => handleItemAction(item)}
                 onViewDetail={onViewDetail}
@@ -564,6 +617,12 @@ const toggleCategory = (cat) => {
               />
             ))}
           </div>
+          {/* Sentinel for infinite scroll */}
+          <div ref={sentinelRef} className="h-1" />
+          {visibleCount >= filteredInventory.length && filteredInventory.length > 0 && (
+            <p className="text-center text-xs text-gray-400 pt-4 pb-2">You've reached the end of results</p>
+          )}
+          </>
         )}
       </div>
     </div>
