@@ -110,6 +110,9 @@ export async function getDownloadUrl(path: string) {
     .createSignedUrl(path, 3600);
 
   if (error) {
+    // Log the real Supabase error so ops can distinguish "file missing" from
+    // "auth failure" / "bucket not found" / network issues.
+    console.error(`[storage] createSignedUrl failed for "${path}":`, error.message, error);
     throw new AppError(404, 'File not found');
   }
 

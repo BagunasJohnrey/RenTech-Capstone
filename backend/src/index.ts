@@ -81,10 +81,22 @@ app.use(errorHandler);
 
 app.listen(env.PORT, () => {
   console.log(`Server running on port ${env.PORT} [${env.NODE_ENV}]`);
+  console.log(`[storage] Supabase URL: ${env.SUPABASE_URL}`);
 
   // Ensure the private image bucket exists so item-photo uploads can mint
   // signed URLs (otherwise generateUploadUrl throws "Failed to generate upload URL").
-  ensureBucket().catch((err) => console.error('Storage bucket init failed:', err));
+  ensureBucket()
+    .then(async () => {
+      // Quick startup sanity: verify the bucket has files and signed URLs work.
+      const { supabaseAdmin } = await import('./config/supabase.js');
+      const { data: files } = await supabaseAdmin.storage.from('rentech-images').list('', { limit: 3 });
+      console.log(`[storage] bucket check: ${files?.length ?? 0} sample files found`);
+      if (files?.[0]) {
+        const { data, error } = await supabaseAdmin.storage.from('rentech-images').createSignedUrl(files[0].name, 60);
+        console.log(`[storage] signed URL test for "${files[0].name}":`, error ? `FAIL (${error.message})` : 'OK');
+      }
+    })
+    .catch((err) => console.error('Storage bucket init failed:', err));
 
   // Pre-warm the dashboard cache so the first page load (AI Insights, KPIs,
   // revenue charts) is a cache hit instead of paying the cold-connection +
