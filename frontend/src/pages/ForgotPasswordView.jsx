@@ -5,8 +5,9 @@ import { api } from '../utils/api';
 import { PASSWORD_REQUIREMENTS } from '../components/Login';
 import { useToast } from '../components/Toast';
 
-// Reset-password landing page. Supabase delivers the recovery credential in
-// one of three shapes (see backend resetPasswordSchema):
+// Reset-password landing page. Brevo links land here with our own single-use
+// ?token= (preferred). Legacy Supabase links deliver the recovery credential
+// in one of three shapes (see backend resetPasswordSchema):
 //   - token_hash:   custom email template linking straight here (? or #)
 //   - code:         default template — Supabase's /verify consumed the token
 //                   and redirected here with ?code=
@@ -18,6 +19,9 @@ import { useToast } from '../components/Toast';
 function readCredential(search, hash) {
   const q = new URLSearchParams(search);
   const h = new URLSearchParams(hash.replace(/^#/, ''));
+  if (q.get('token') || h.get('token')) {
+    return { token: q.get('token') || h.get('token') };
+  }
   if (q.get('token_hash') || h.get('token_hash')) {
     return { token_hash: q.get('token_hash') || h.get('token_hash') };
   }

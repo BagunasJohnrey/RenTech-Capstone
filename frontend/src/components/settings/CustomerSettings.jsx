@@ -118,6 +118,7 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
         </h3>
         <div className="space-y-3 max-w-lg">
           {[
+            { key: 'email', label: 'Emails', desc: 'Booking, pickup, return and reminder emails.' },
             { key: 'reminder', label: 'Due Date Reminders', desc: 'SMS the day before your rental is due.' },
             { key: 'lateReturn', label: 'Late Return Alerts', desc: 'SMS if a rental becomes overdue.' },
           ].map(({ key, label, desc }) => (

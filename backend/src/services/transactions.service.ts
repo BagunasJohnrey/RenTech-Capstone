@@ -8,6 +8,7 @@ import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
+import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail } from './brevo.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { getBusinessRules, getFeatureFlags } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
@@ -301,6 +302,26 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
         })
       ).catch(() => {});
     }
+
+    // Order-confirmation email (Brevo, best-effort — never blocks the booking).
+    // Skipped for walk-in synthetic addresses (isSendableEmail) and for
+    // customers who opted out of email (notifyPrefs.email === false).
+    try {
+      const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+      const wantsEmail = !prefs || prefs.email !== false;
+      if (customerProfile?.email && wantsEmail) {
+        await sendBookingConfirmationEmail(customerProfile.email, {
+          customerName: customerProfile.name,
+          itemName: transaction.item.name,
+          pickupDate: start.toLocaleDateString('en-PH'),
+          dueDate: end.toLocaleDateString('en-PH'),
+          rentalFee: fee,
+          downpayment,
+          balance: fee - downpayment,
+          bookingCode: `RT-${String(transaction.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+        });
+      }
+    } catch { /* email is non-critical */ }
   } catch { /* SMS is non-critical */ }
 
   // New booking changes revenue/rental counts — drop the dashboard cache so
@@ -454,6 +475,20 @@ export async function processReturn(
     } catch { /* notification is non-critical */ }
   }
 
+  // Order-return email (Brevo receipt + thank-you, best-effort).
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail) {
+      await sendReturnEmail(customerProfile.email, customerProfile.name, tx.item.name, {
+        latePenalty: fees.latePenalty,
+        damageFee: fees.damageFee,
+        damageReason: isDamaged ? (damageReason ?? null) : null,
+      });
+    }
+  } catch { /* email is non-critical */ }
+
   clearDataCache();
 
   return { ...updated, fees };
@@ -565,6 +600,16 @@ export async function cancelTransaction(transactionId: string, performedById: st
     oldValue: { status: tx.status },
   });
 
+  // Booking-cancelled email (Brevo, best-effort).
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail) {
+      await sendCancellationEmail(customerProfile.email, customerProfile.name, tx.item.name);
+    }
+  } catch { /* email is non-critical */ }
+
   clearDataCache();
 
   return { message: 'Transaction cancelled' };
@@ -638,6 +683,21 @@ export async function releaseRental(
     newValue: { status: 'Active', released: true },
     oldValue: { status: tx.status },
   });
+
+  // Order-pickup email (Brevo, best-effort — the item is in the customer's hands).
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail) {
+      await sendPickupEmail(
+        customerProfile.email,
+        customerProfile.name,
+        tx.item.name,
+        updated.dueDate.toLocaleDateString('en-PH'),
+      );
+    }
+  } catch { /* email is non-critical */ }
 
   clearDataCache();
 

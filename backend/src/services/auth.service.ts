@@ -2,8 +2,24 @@ import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { env } from '../config/env.js';
+import * as brevoService from './brevo.service.js';
 import type { Role } from '@prisma/client';
 import * as crypto from 'crypto';
+
+// Brevo email-token lifetimes: verification links last 24h, reset links 1h.
+export const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+export const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+// Our own tokens are 64-char hex (crypto.randomBytes(32)). Anything else on
+// the verify/reset endpoints is a legacy Supabase credential (token_hash /
+// code / access_token) and takes the Supabase fallback path in the controller.
+export function isBrevoTokenFormat(token: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(String(token || '').trim());
+}
+
+function frontendUrl(): string {
+  return env.FRONTEND_URL.replace(/\/$/, '');
+}
 
 export async function signupCustomer(data: {
   email: string;
@@ -14,17 +30,14 @@ export async function signupCustomer(data: {
   preferences?: string[];
 }) {
   if (!env.AUTH_EMAIL_CONFIRM) {
-    // Email verification path: create the user via the PUBLIC signup endpoint
-    // (anon key). Only this endpoint makes Supabase send the confirmation
-    // email (service-role admin.createUser never does). The user is created
-    // unconfirmed and CANNOT log in until they click the emailed link, which
-    // lands on /verify-email and completes the account via POST /auth/verify-email.
-    const { data: authData, error } = await supabaseSignUp.auth.signUp({
+    // Email verification path (Brevo): create the user UNCONFIRMED via the
+    // service role (admin.createUser never sends email — delivery is ours),
+    // store a single-use token, and send the branded link via Brevo. The
+    // user cannot log in until they click it (/verify-email?token=...).
+    const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
       email: data.email,
       password: data.password,
-      options: {
-        emailRedirectTo: `${env.FRONTEND_URL.replace(/\/$/, '')}/verify-email`,
-      },
+      email_confirm: false,
     });
 
     if (error || !authData.user) {
@@ -47,6 +60,28 @@ export async function signupCustomer(data: {
           : null,
       },
     });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    await prisma.emailToken.create({
+      data: {
+        userId: profile.id,
+        token,
+        type: 'verification',
+        expiresAt: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+      },
+    });
+
+    // Best-effort delivery: if Brevo fails the account still exists and the
+    // user can request a fresh link via POST /auth/resend-verification.
+    try {
+      await brevoService.sendVerificationEmail(
+        data.email,
+        data.name,
+        `${frontendUrl()}/verify-email?token=${token}`,
+      );
+    } catch (err) {
+      console.error('[auth] verification email failed:', (err as Error)?.message);
+    }
 
     // No session — the user must verify their email first. The controller
     // skips setSessionCookies when session is null, so the frontend shows
@@ -385,6 +420,14 @@ export async function createStaffAccount(adminId: string, data: {
     },
   });
 
+  // Best-effort welcome email carrying the one-time password (the admin still
+  // sees it once in the response for out-of-band sharing). Never blocks.
+  try {
+    await brevoService.sendStaffWelcomeEmail(data.email, data.name, tempPassword);
+  } catch {
+    // best-effort
+  }
+
   // The one-time password is returned exactly once — never stored in the
   // database or logged. The admin shares it with the staff member out of band
   // (in person / SMS), and the first login forces a change.
@@ -486,6 +529,177 @@ export function toRtSession(session: {
     token_type: session.token_type ?? 'bearer',
     expires_in: session.expires_in ?? null,
   };
+}
+
+// ---- Brevo email-token flows (verification + password reset) ----
+
+function brevoTokenError(used: boolean, expired: boolean): AppError {
+  if (used) {
+    return new AppError(401, 'This link has already been used. Please request a new one.');
+  }
+  return new AppError(
+    401,
+    expired
+      ? 'This link has expired. Please request a new one.'
+      : 'This link is invalid or has already been used. Please request a new one.',
+  );
+}
+
+// Resend the signup verification email. Always resolves with the generic
+// message (no account enumeration): unknown emails, walk-ins, and already-
+// confirmed accounts are indistinguishable from a fresh send.
+export async function requestVerificationEmail(email: string) {
+  const profile = await prisma.profile.findUnique({ where: { email } });
+  if (profile && brevoService.isSendableEmail(profile.email)) {
+    try {
+      const { data } = await supabaseAdmin.auth.admin.getUserById(profile.userId);
+      const confirmed = Boolean(
+        (data?.user as { email_confirmed_at?: string | null } | undefined)?.email_confirmed_at,
+      );
+      if (!confirmed) {
+        // Invalidate older unused verification links so only the newest works.
+        await prisma.emailToken.deleteMany({
+          where: { userId: profile.id, type: 'verification', usedAt: null },
+        });
+        const token = crypto.randomBytes(32).toString('hex');
+        await prisma.emailToken.create({
+          data: {
+            userId: profile.id,
+            token,
+            type: 'verification',
+            expiresAt: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+          },
+        });
+        await brevoService.sendVerificationEmail(
+          profile.email,
+          profile.name,
+          `${frontendUrl()}/verify-email?token=${token}`,
+        );
+      }
+    } catch (err) {
+      console.error('[auth] resend verification failed:', (err as Error)?.message);
+    }
+  }
+  return { message: 'If that email is registered, a verification link has been sent.' };
+}
+
+// Consume a Brevo verification token: confirm the Supabase user, then
+// best-effort mint a session (magiclink) so the user lands logged in. Falls
+// back to session:null (manual login) when the magiclink exchange fails.
+export async function verifyEmailToken(token: string) {
+  const row = await prisma.emailToken.findUnique({ where: { token } });
+  if (!row || row.type !== 'verification') {
+    throw brevoTokenError(false, false);
+  }
+  if (row.usedAt) throw brevoTokenError(true, false);
+  if (row.expiresAt.getTime() < Date.now()) throw brevoTokenError(false, true);
+
+  const profile = await prisma.profile.findUnique({ where: { id: row.userId } });
+  if (!profile) throw brevoTokenError(false, false);
+
+  await prisma.emailToken.update({ where: { id: row.id }, data: { usedAt: new Date() } });
+
+  const { error: confirmError } = await supabaseAdmin.auth.admin.updateUserById(
+    profile.userId,
+    { email_confirm: true },
+  );
+  if (confirmError) {
+    console.error('[auth] email confirm failed:', confirmError.message);
+    throw new AppError(500, 'Could not verify your email. Please try again later.');
+  }
+
+  let session: { access_token: string | null; refresh_token: string | null } | null = null;
+  try {
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email: profile.email,
+    });
+    const hashed = (linkData as { properties?: { hashed_token?: string } } | null)?.properties?.hashed_token;
+    if (!linkError && hashed) {
+      const { data: otpData, error: otpError } = await supabaseAdmin.auth.verifyOtp({
+        token_hash: hashed,
+        type: 'magiclink',
+      });
+      if (!otpError && otpData?.session) session = toRtSession(otpData.session);
+    }
+  } catch {
+    // best-effort: the account IS verified; the user can always sign in manually.
+  }
+
+  const fresh = await prisma.profile.findUnique({ where: { id: profile.id } });
+  return { profile: fresh ?? profile, session };
+}
+
+// Request a password-reset email (Brevo). Always resolves with the generic
+// message — unknown emails and undeliverable sends are indistinguishable, so
+// the endpoint can never be used to enumerate accounts. (The route itself is
+// rate-limited per-IP, which bounds retry abuse.)
+export async function requestPasswordReset(email: string) {
+  const profile = await prisma.profile.findUnique({ where: { email } });
+  if (profile && brevoService.isSendableEmail(profile.email)) {
+    try {
+      await prisma.emailToken.deleteMany({
+        where: { userId: profile.id, type: 'password_reset', usedAt: null },
+      });
+      const token = crypto.randomBytes(32).toString('hex');
+      await prisma.emailToken.create({
+        data: {
+          userId: profile.id,
+          token,
+          type: 'password_reset',
+          expiresAt: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS),
+        },
+      });
+      await brevoService.sendPasswordResetEmail(
+        profile.email,
+        profile.name,
+        `${frontendUrl()}/reset-password?token=${token}`,
+      );
+    } catch (err) {
+      console.error('[auth] password-reset email failed:', (err as Error)?.message);
+    }
+  }
+  return { message: 'If that email is registered, a reset link has been sent.' };
+}
+
+// Consume a Brevo reset token: set the new password, then sign in fresh so
+// the user lands logged in with clean cookies.
+export async function resetPasswordWithToken(token: string, newPassword: string) {
+  const row = await prisma.emailToken.findUnique({ where: { token } });
+  if (!row || row.type !== 'password_reset') {
+    throw brevoTokenError(false, false);
+  }
+  if (row.usedAt) throw brevoTokenError(true, false);
+  if (row.expiresAt.getTime() < Date.now()) throw brevoTokenError(false, true);
+
+  const profile = await prisma.profile.findUnique({ where: { id: row.userId } });
+  if (!profile) throw brevoTokenError(false, false);
+
+  await prisma.emailToken.update({ where: { id: row.id }, data: { usedAt: new Date() } });
+
+  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+    profile.userId,
+    { password: newPassword },
+  );
+  if (updateError) {
+    console.error('[auth] password update failed:', updateError.message);
+    throw new AppError(500, 'Could not reset your password. Please request a new link.');
+  }
+
+  // Fresh sign-in with the just-set password (clean access + refresh pair).
+  // If it fails the password WAS changed — return session:null and let the
+  // user sign in manually instead of reporting a misleading link error.
+  let session: { access_token: string | null; refresh_token: string | null } | null = null;
+  try {
+    const { data: signIn, error: signInError } = await supabaseSignUp.auth.signInWithPassword({
+      email: profile.email,
+      password: newPassword,
+    });
+    if (!signInError && signIn?.session) session = toRtSession(signIn.session);
+  } catch {
+    // best-effort
+  }
+  return { session };
 }
 
 // Phase 3: Server-side OAuth redirect URL.

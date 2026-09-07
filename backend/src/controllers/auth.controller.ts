@@ -60,9 +60,10 @@ export const createStaffSchema = z.object({
   }),
 });
 
-// Phase 2: password reset schemas.
-// Supabase delivers the recovery credential in one of three shapes,
-// depending on the email template / project flow settings:
+// Phase 2: password reset schemas (Brevo + legacy Supabase shapes).
+// Brevo links carry our own single-use `token` (64-char hex) and land on
+// /reset-password?token=... — the preferred path. The legacy Supabase shapes
+// below are kept so older emailed links still work:
 //   - token_hash: custom template linking straight to the app
 //   - code:       default template — /verify consumed the token and redirected
 //                 with a PKCE-style ?code=
@@ -74,18 +75,25 @@ export const forgotPasswordSchema = z.object({
   }),
 });
 
+export const resendVerificationSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
+
 export const resetPasswordSchema = z.object({
   body: z.object({
+    token: z.string().min(1).optional(),
     token_hash: z.string().min(1).optional(),
     code: z.string().min(1).optional(),
     access_token: z.string().min(1).optional(),
     password: passwordSchema,
   }).superRefine((b, ctx) => {
-    if (!b.token_hash && !b.code && !b.access_token) {
+    if (!b.token && !b.token_hash && !b.code && !b.access_token) {
       ctx.addIssue({
         code: 'custom',
-        message: 'One of token_hash, code, or access_token is required',
-        path: ['token_hash'],
+        message: 'One of token, token_hash, code, or access_token is required',
+        path: ['token'],
       });
     }
   }),
@@ -93,14 +101,15 @@ export const resetPasswordSchema = z.object({
 
 export const verifyEmailSchema = z.object({
   body: z.object({
+    token: z.string().min(1).optional(),
     token_hash: z.string().min(1).optional(),
     code: z.string().min(1).optional(),
   }).superRefine((b, ctx) => {
-    if (!b.token_hash && !b.code) {
+    if (!b.token && !b.token_hash && !b.code) {
       ctx.addIssue({
         code: 'custom',
-        message: 'One of token_hash or code is required',
-        path: ['token_hash'],
+        message: 'One of token, token_hash or code is required',
+        path: ['token'],
       });
     }
   }),
@@ -399,25 +408,26 @@ export async function removeStaff(req: AuthenticatedRequest, res: Response, next
 }
 
 // Phase 2: password reset — always returns 200 (no account enumeration).
-// Email delivery is handled entirely by Supabase's own email service
-// (Authentication → Emails). No third-party SMTP.
-// NOTE: supabase-js returns delivery failures in `{ error }` rather than
-// throwing — an unchecked error here used to report success while no email
-// was ever queued (e.g. Supabase's hourly email rate limit). Always inspect
-// the result so the client gets an honest answer.
+// Delivery is via Brevo (branded template, single-use token in EmailToken).
+// Unknown emails resolve to the same generic message, so the endpoint can
+// never be used to probe which addresses are registered.
 export async function forgotPassword(req: Request, res: Response, next: NextFunction) {
   try {
     const { email } = req.body;
-    const redirectTo = `${env.FRONTEND_URL.replace(/\/$/, '')}/reset-password`;
-    const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo });
-    if (error) {
-      const rateLimited = error.status === 429 || /rate.?limit/i.test(error.message ?? '');
-      if (rateLimited) {
-        throw new AppError(429, 'Email service is busy. Please wait a few minutes and request a new link.');
-      }
-      throw new AppError(500, 'Could not send the reset email. Please try again later.');
-    }
-    res.json({ message: 'If that email is registered, a reset link has been sent.' });
+    const result = await authService.requestPasswordReset(email);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Resend the signup verification email — always 200 (no enumeration), same
+// shape as forgot-password. Rate-limited per IP (see auth.routes.ts).
+export async function resendVerification(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email } = req.body;
+    const result = await authService.requestVerificationEmail(email);
+    res.json(result);
   } catch (err) {
     next(err);
   }
@@ -441,7 +451,26 @@ function resetLinkError(upstream?: string): AppError {
 
 export async function resetPassword(req: Request, res: Response, next: NextFunction) {
   try {
-    const { token_hash, code, access_token, password } = req.body;
+    const { token, token_hash, code, access_token, password } = req.body;
+    // Brevo path (preferred): our own single-use token — also accept it when
+    // an older client posts it as token_hash.
+    const brevoToken = token ?? (token_hash && authService.isBrevoTokenFormat(token_hash) ? token_hash : null);
+    if (brevoToken) {
+      try {
+        const result = await authService.resetPasswordWithToken(brevoToken, password);
+        if (result.session) {
+          setSessionCookies(res, result.session);
+        }
+        res.json({ message: 'Password reset successfully' });
+        return;
+      } catch (err) {
+        // A legacy Supabase token_hash can coincidentally also be 64-hex: when
+        // the credential arrived via token_hash and our table doesn't know it,
+        // fall through to the Supabase path below instead of 401ing a valid
+        // legacy link. Credentials via `token` are Brevo-only — rethrow.
+        if (token || !(err instanceof AppError) || err.statusCode !== 401) throw err;
+      }
+    }
     let userId: string;
     let userEmail: string | undefined;
     let session: { access_token: string | null; refresh_token: string | null } | null = null;
@@ -502,14 +531,28 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
   }
 }
 
-// Email verification: consume the signup confirmation credential. The user was
-// created (unconfirmed) by signupCustomer via the public signUp endpoint.
-// Accepts a raw token_hash (verifyOtp type 'signup') or a ?code= from the
-// default template's /verify redirect (exchanged for the confirm session).
-// Either way the backend mints session cookies so the user is logged in.
+// Email verification: Brevo path (preferred) consumes our single-use token
+// from /verify-email?token=... — confirms the Supabase user and best-effort
+// mints session cookies. Legacy Supabase credentials (token_hash / ?code=)
+// fall through to the verifyOtp / exchangeCodeForSession path below.
 export async function verifyEmail(req: Request, res: Response, next: NextFunction) {
   try {
-    const { token_hash, code } = req.body;
+    const { token, token_hash, code } = req.body;
+    const brevoToken = token ?? (token_hash && authService.isBrevoTokenFormat(token_hash) ? token_hash : null);
+    if (brevoToken) {
+      try {
+        const { profile, session } = await authService.verifyEmailToken(brevoToken);
+        if (session) {
+          setSessionCookies(res, session);
+        }
+        res.json({ message: 'Email verified successfully', user: profile });
+        return;
+      } catch (err) {
+        // Same legacy-hash coincidence as resetPassword: fall through to the
+        // Supabase path when the credential arrived via token_hash.
+        if (token || !(err instanceof AppError) || err.statusCode !== 401) throw err;
+      }
+    }
     let user: { id: string; email?: string | null } | null = null;
     let session: { access_token: string | null; refresh_token: string | null } | null = null;
     if (token_hash) {

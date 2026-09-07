@@ -133,13 +133,14 @@ export default function NotificationsTab({ profile }) {
         icon={Bell}
         iconClass="bg-red-50 text-[#bf4a53]"
         title="Notification Preferences"
-        desc="Which automated SMS the boutique sends out"
+        desc="Which automated SMS and emails the boutique sends out"
       >
         <div className="space-y-3 max-w-2xl">
           {[
             { key: 'booking', label: 'Booking Confirmation', desc: 'SMS when a new rental is created.' },
             { key: 'reminder', label: 'Due Reminder', desc: 'Remind customer 1 day before due date.' },
             { key: 'lateReturn', label: 'Late Return Alert', desc: 'Notify when a rental becomes overdue.' },
+            { key: 'email', label: 'Brevo Emails', desc: 'Send emails alongside SMS (verification, booking, pickup, return, reminders).' },
           ].map(({ key, label, desc }) => (
             <SettingRow key={key} label={label} desc={desc}>
               <Toggle on={notifPrefs[key]} onClick={() => toggleNotif(key)} />

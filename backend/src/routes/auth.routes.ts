@@ -35,6 +35,8 @@ router.post('/forgot-password', createRateLimiter(5, 60_000), validate(authContr
 router.post('/reset-password', createRateLimiter(10, 60_000), validate(authController.resetPasswordSchema), authController.resetPassword);
 // Email verification: consume the signup confirmation token (from the email link).
 router.post('/verify-email', createRateLimiter(10, 60_000), validate(authController.verifyEmailSchema), authController.verifyEmail);
+// Resend the verification email — always 200 (no enumeration).
+router.post('/resend-verification', createRateLimiter(5, 60_000), validate(authController.resendVerificationSchema), authController.resendVerification);
 
 // OAuth (Google) handshake — Phase 3 server-side redirect.
 // POST /oauth (legacy, token-in-body) kept for backward-compat but unused

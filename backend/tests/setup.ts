@@ -22,6 +22,10 @@ process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
 process.env.FRONTEND_URL = 'http://localhost:5173';
 process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
+// Brevo: blank key forces the simulated (no-network) send path in tests.
+process.env.BREVO_API_KEY = '';
+process.env.BREVO_SENDER_EMAIL = 'noreply@test.local';
+process.env.BREVO_SENDER_NAME = 'RenTech Test';
 
 // Unit tests must never hit live AI providers: backend/.env contains real
 // Gemini/Groq/OpenRouter keys, and dotenv only fills vars that aren't already
@@ -66,6 +70,15 @@ vi.mock('@supabase/supabase-js', () => {
         signOut: vi.fn().mockResolvedValue({ error: null }),
         updateUserById: vi.fn().mockResolvedValue({
           data: { user: { id: 'auth-user-id-123', email: 'test@example.com' } },
+          error: null,
+        }),
+        // Brevo flows: confirmation status check + magiclink session minting.
+        getUserById: vi.fn().mockResolvedValue({
+          data: { user: { id: 'auth-user-id-123', email: 'test@example.com', email_confirmed_at: null } },
+          error: null,
+        }),
+        generateLink: vi.fn().mockResolvedValue({
+          data: { properties: { hashed_token: 'mock-hashed-token' } },
           error: null,
         }),
       },
@@ -338,6 +351,13 @@ vi.mock('../src/config/database.js', () => {
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       delete: vi.fn().mockResolvedValue({ id: 'tmpl-deleted' }),
+    },
+    emailToken: {
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'etok-new', usedAt: null, ...args.data })),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     $transaction: (fn: any) => Promise.resolve(fn(mockPrisma)),
     $disconnect: vi.fn(),

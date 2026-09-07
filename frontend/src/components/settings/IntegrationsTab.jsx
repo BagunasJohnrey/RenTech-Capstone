@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShieldCheck, MessageSquare, CreditCard, RefreshCw, Sparkles } from 'lucide-react';
+import { ShieldCheck, MessageSquare, CreditCard, RefreshCw, Sparkles, Mail } from 'lucide-react';
 import { settingsService } from '../../services/settings';
 import SettingsCard from './SettingsCard';
 
@@ -8,6 +8,7 @@ const INTEGRATIONS = [
   { key: 'groq', name: 'Groq AI', desc: 'Low-latency AI fallback (tier 2) for stylist & reports.', icon: Sparkles, iconClass: 'bg-violet-50 text-violet-600' },
   { key: 'openrouter', name: 'OpenRouter AI', desc: 'Free-model AI fallback (tier 3) for stylist & reports.', icon: Sparkles, iconClass: 'bg-fuchsia-50 text-fuchsia-600' },
   { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Automated return reminders & booking confirmations.', icon: MessageSquare, iconClass: 'bg-blue-50 text-blue-600' },
+  { key: 'brevo', name: 'Brevo Email', desc: 'Verification, password reset & booking/pickup/return emails.', icon: Mail, iconClass: 'bg-rose-50 text-[#bf4a53]' },
   { key: 'paymongo', name: 'PayMongo Payments', desc: 'Secure GCash & Credit Card downpayments.', icon: CreditCard, iconClass: 'bg-emerald-50 text-emerald-600' },
 ];
 
@@ -37,7 +38,7 @@ export default function IntegrationsTab() {
       icon={ShieldCheck}
       iconClass="bg-emerald-50 text-emerald-600"
       title="System Integrations"
-      desc="Live connectivity status for AI, SMS and payments"
+      desc="Live connectivity status for AI, SMS, email and payments"
       action={
         <button
           onClick={loadIntegrations}

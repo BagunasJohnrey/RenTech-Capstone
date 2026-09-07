@@ -344,10 +344,9 @@ describe('CSRF Guard', () => {
   });
 });
 
-// Phase 2: password reset
+// Phase 2: password reset (Brevo delivery — always 200, no enumeration)
 describe('POST /api/auth/forgot-password', () => {
   it('should return 200 with generic message (no enumeration)', async () => {
-    const { supabaseAdmin } = await import('../src/config/supabase.js');
     const res = await request(app)
       .post('/api/auth/forgot-password')
       .set('Origin', 'http://localhost:5173')
@@ -355,25 +354,128 @@ describe('POST /api/auth/forgot-password', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.message).toContain('reset link');
-    expect(supabaseAdmin.auth.resetPasswordForEmail).toHaveBeenCalled();
   });
 
-  it('should return 429 (not false success) when the email rate limit is hit', async () => {
-    const { supabaseAdmin } = await import('../src/config/supabase.js');
-    vi.mocked(supabaseAdmin.auth.resetPasswordForEmail).mockResolvedValueOnce({
-      data: {}, error: { message: 'email rate limit exceeded', status: 429 },
-    } as never);
+  it('should create a single-use reset token for a registered email', async () => {
+    const { prisma } = await import('../src/config/database.js');
     const res = await request(app)
       .post('/api/auth/forgot-password')
       .set('Origin', 'http://localhost:5173')
+      .send({ email: 'test@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset link');
+    expect(prisma.emailToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'password_reset' }) }),
+    );
+  });
+
+  it('should not create a token for an unknown email (no enumeration)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/auth/forgot-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'nobody-here@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset link');
+    expect(prisma.emailToken.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/auth/resend-verification', () => {
+  it('should return 200 with generic message (no enumeration)', async () => {
+    const res = await request(app)
+      .post('/api/auth/resend-verification')
+      .set('Origin', 'http://localhost:5173')
       .send({ email: 'any@example.com' });
 
-    expect(res.status).toBe(429);
-    expect(res.body.error).toContain('busy');
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('verification link');
+  });
+
+  it('should create a fresh verification token for an unconfirmed email', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/auth/resend-verification')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'test@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(prisma.emailToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'verification' }) }),
+    );
+  });
+
+  it('should reject an invalid email shape', async () => {
+    const res = await request(app)
+      .post('/api/auth/resend-verification')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'not-an-email' });
+
+    expect(res.status).toBe(400);
   });
 });
 
 describe('POST /api/auth/reset-password', () => {
+  const BREVO_TOKEN = 'a'.repeat(64);
+
+  it('should reset password with a Brevo token and mint session cookies', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-1', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'newPassword123!' },
+    );
+    expect(prisma.emailToken.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'etok-1' } }),
+    );
+    // Fresh sign-in mints cookies (auto-login after reset).
+    expect(res.headers['set-cookie']).toBeDefined();
+    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_access='))).toBe(true);
+  });
+
+  it('should reject a Brevo token that was already used', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-used', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: new Date(),
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('already been used');
+  });
+
+  it('should reject an expired Brevo token', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-old', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() - 1000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('expired');
+  });
+
   it('should reset password with valid token', async () => {
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     const res = await request(app)
@@ -462,6 +564,42 @@ describe('POST /api/auth/reset-password', () => {
 });
 
 describe('POST /api/auth/verify-email', () => {
+  const BREVO_TOKEN = 'b'.repeat(64);
+
+  it('should confirm the email with a Brevo token', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-v1', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'verification', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('verified');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { email_confirm: true },
+    );
+    expect(prisma.emailToken.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'etok-v1' } }),
+    );
+  });
+
+  it('should reject an unknown Brevo token', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce(null);
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: 'c'.repeat(64) });
+
+    expect(res.status).toBe(401);
+  });
+
   it('should confirm the email and log the user in with a valid token', async () => {
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     vi.mocked(supabaseAdmin.auth.verifyOtp).mockResolvedValueOnce({

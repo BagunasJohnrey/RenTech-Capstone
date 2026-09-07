@@ -34,6 +34,13 @@ export const env = {
 
   SEMAPHORE_API_KEY: process.env.SEMAPHORE_API_KEY || '',
 
+  // Brevo (formerly Sendinblue) transactional email — verification, password
+  // reset, booking/pickup/return/cancellation + reminder emails. Empty in dev
+  // (sends are simulated) — must be set in any deployment that emails users.
+  BREVO_API_KEY: process.env.BREVO_API_KEY || '',
+  BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || '',
+  BREVO_SENDER_NAME: process.env.BREVO_SENDER_NAME || 'RenTech',
+
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
 
   // Groq fallback (second tier: Gemini → Groq → OpenRouter). Low-latency

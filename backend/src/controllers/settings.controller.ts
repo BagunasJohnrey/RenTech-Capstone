@@ -4,6 +4,7 @@ import * as settingsService from '../services/settings.service.js';
 import * as geminiService from '../services/gemini.service.js';
 import * as semaphoreService from '../services/semaphore.service.js';
 import * as paymongoService from '../services/paymongo.service.js';
+import * as brevoService from '../services/brevo.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
 export const updateRulesSchema = z.object({
@@ -101,15 +102,17 @@ export async function deleteTemplate(req: AuthenticatedRequest, res: Response, n
   }
 }
 
-// Admin "System Integrations" status — live-probes Gemini, Semaphore, and
-// PayMongo in parallel (each with its own timeout) so one down service can't
-// delay or mask the others. Never throws; each provider reports its own status.
+// Admin "System Integrations" status — live-probes Gemini, Semaphore,
+// PayMongo, and Brevo in parallel (each with its own timeout) so one down
+// service can't delay or mask the others. Never throws; each provider reports
+// its own status.
 export async function getIntegrationsStatus(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const [ai, semaphore, paymongo] = await Promise.all([
+    const [ai, semaphore, paymongo, brevo] = await Promise.all([
       geminiService.checkAiHealth(),
       semaphoreService.checkSemaphoreHealth(),
       paymongoService.checkPaymongoHealth(),
+      brevoService.checkBrevoHealth(),
     ]);
     // The AI health probe covers all three model providers (gemini → groq →
     // openrouter); expose each under its own key so the UI can show one row
@@ -120,6 +123,7 @@ export async function getIntegrationsStatus(_req: AuthenticatedRequest, res: Res
       openrouter: ai.providers?.openrouter,
       semaphore,
       paymongo,
+      brevo,
     });
   } catch (err) {
     next(err);
