@@ -12,7 +12,7 @@ function cspPlugin() {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://*.supabase.co https://*.paymongo.com wss://localhost:* https://www.google.com",
+    "connect-src 'self' https://*.supabase.co https://*.paymongo.com https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com",
     "object-src 'none'",
     "base-uri 'self'",
     "frame-ancestors 'none'",
