@@ -5,7 +5,11 @@ import { AppError } from '../middleware/errorHandler.js';
 import { encryptField, decryptField } from '../utils/crypto.js';
 
 const TOTP_DIGITS = 6;
-const TOTP_WINDOW = 1; // accept current + 1 past step (30s)
+// Cloud hosts (Render free-tier) often lack NTP, so the server clock can
+// drift from the user's phone. A wider window (±3 steps = ±90 seconds each
+// direction) makes TOTP resilient to ~3 minutes of skew without meaningfully
+// weakening security (the 6-digit space is still 1M combinations per step).
+const TOTP_WINDOW = 3;
 
 /**
  * Generate a base32-encoded TOTP secret (shared between server and authenticator app).
@@ -104,6 +108,7 @@ function base32Decode(str: string): Buffer {
     if (bits >= 8) {
       bits -= 8;
       byteArr.push((value >> bits) & 0xff);
+      value &= (1 << bits) - 1;
     }
   }
   return Buffer.from(byteArr);

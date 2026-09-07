@@ -18,8 +18,8 @@ router.get('/rules', requireRole(Role.Admin, Role.Staff), settingsController.get
 // fees) — a staff member tampering with these would alter every invoice.
 router.put('/rules', requireRole(Role.Admin), requireMfaAdmin, validate(settingsController.updateRulesSchema), settingsController.updateRules);
 
-// Public feature flags — non-sensitive UI toggles readable by any role (and
-// by logged-out customers mid-booking). Currently just qr_booking_codes.
+// Non-sensitive feature flags (UI toggles) readable by any authenticated role.
+// Currently just qr_booking_codes.
 router.get('/flags', settingsController.getFeatureFlags);
 
 router.get('/sms-templates', requireRole(Role.Admin, Role.Staff), settingsController.listTemplates);

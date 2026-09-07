@@ -631,7 +631,7 @@ export async function mfaEnable(req: AuthenticatedRequest, res: Response, next: 
     const decryptedSecret = decryptField(profile.totpSecret);
     if (!decryptedSecret) throw new AppError(400, 'MFA secret is corrupted — call /mfa/setup to re-enroll');
     if (!mfaService.verifyTotpToken(decryptedSecret, code)) {
-      throw new AppError(401, 'Invalid TOTP code');
+      throw new AppError(401, 'Invalid TOTP code — make sure your phone\'s clock is set to automatic and try again');
     }
     // Backup codes are generated server-side (crypto.randomBytes) and shown once.
     const backupCodes = mfaService.generateBackupCodes(10);
