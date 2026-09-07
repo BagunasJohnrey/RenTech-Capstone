@@ -18,6 +18,8 @@ import LoginPage from './pages/LoginPage';
 import ForgotPasswordView from './pages/ForgotPasswordView';
 import VerifyEmailView from './pages/VerifyEmailView';
 import OAuthErrorView from './pages/OAuthErrorView';
+import PrivacyPolicyView from './pages/PrivacyPolicyView';
+import TermsOfServiceView from './pages/TermsOfServiceView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
 import ForcedPasswordChange from './components/ForcedPasswordChange';
 import InventoryPage from './pages/InventoryPage';
@@ -600,6 +602,18 @@ export default function RentechApp() {
   }
 
   // Google OAuth sign-up: collect missing details before completing the account.
+
+  // Public privacy policy (/privacy) — must be reachable signed-out (Google
+  // OAuth branding verification + landing footer link directly here).
+  if (location.pathname === '/privacy') {
+    return <PrivacyPolicyView />;
+  }
+
+  // Public terms of service (/terms) — standalone signed-out page reusing the
+  // same TERMS_SECTIONS text as the signup modal and Help Guide.
+  if (location.pathname === '/terms') {
+    return <TermsOfServiceView />;
+  }
 
   // Fallback + role guard: unknown URL -> 404 page; URL owned by another role
   // -> Unauthorized page (no silent redirect). Runs after the auth gates so

@@ -635,17 +635,23 @@ export default function CustomerRentalFlow({
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Required Downpayment</p>
-                <div>
-                  <div className="relative mt-2">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
-                    <Field showLabel={false} type="number" value={downpaymentAmount}
-                      onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
-                      className={`w-full pl-8 p-3 bg-white border rounded-xl text-sm font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.downpayment ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
-                      min={minDownpayment} aria-label="Required downpayment amount"
-                      error={fieldErrors.downpayment || undefined} />
-                  </div>
+                <div className="relative mt-2">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400 pointer-events-none">₱</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={downpaymentAmount}
+                    min={minDownpayment}
+                    aria-label="Required downpayment amount"
+                    onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
+                    className={`w-full pl-9 pr-4 py-3 bg-white border rounded-xl text-sm font-bold text-gray-900 placeholder-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors ${fieldErrors.downpayment ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                  />
                 </div>
-                <p className="text-[10px] text-gray-400 mt-1">
+                {fieldErrors.downpayment && (
+                  <p className="text-[11px] text-red-500 font-medium ml-1">{fieldErrors.downpayment}</p>
+                )}
+                <p className="text-[10px] text-gray-400">
                   Minimum of 50% or ₱{rentalDefaults.min_downpayment.toLocaleString()} (₱{minDownpayment.toLocaleString()}) required to secure booking.
                 </p>
               </div>

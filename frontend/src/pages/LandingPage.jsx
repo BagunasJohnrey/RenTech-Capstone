@@ -467,6 +467,8 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
                 <li><a href="#how-it-works" className="hover:text-[#bf4a53] transition-colors">How it Works</a></li>
                 <li><a href="#location" className="hover:text-[#bf4a53] transition-colors">Location</a></li>
                 <li><a href="#faq" className="hover:text-[#bf4a53] transition-colors">FAQ</a></li>
+                <li><a href="/privacy" className="hover:text-[#bf4a53] transition-colors">Privacy Policy</a></li>
+                <li><a href="/terms" className="hover:text-[#bf4a53] transition-colors">Terms of Service</a></li>
               </ul>
             </div>
 
