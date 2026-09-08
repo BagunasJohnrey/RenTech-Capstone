@@ -413,7 +413,9 @@ const toggleCategory = (cat) => {
         </button>
       </div>
 
-      {/* Status rail — staff/admin only (persistent, live counts, one-tap filter) */}
+      {/* Filter rails — staff/admin only: status + category pills in ONE
+          horizontally scrollable row (persistent, live counts, one-tap).
+          Customers/guests get the combined rail below instead. */}
       {isStaff && (
         <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
           {STATUSES.map(s => {
@@ -431,20 +433,14 @@ const toggleCategory = (cat) => {
               </button>
             );
           })}
-        </div>
-      )}
-
-      {/* Category rail — staff/admin only (mirrors the status rail above;
-          customers/guests get the combined rail below instead) */}
-      {isStaff && (
-        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
+          <div className="w-px h-5 bg-gray-200 shrink-0 mx-0.5" aria-hidden="true" />
           {['All', ...allCategories].map(cat => {
             const active = cat === 'All' ? selectedCategories.length === 0 : selectedCategories.includes(cat);
             const count = cat === 'All'
               ? inventory.filter(i => i.status !== 'Deleted').length
               : inventory.filter(i => i.category === cat && i.status !== 'Deleted').length;
             return (
-              <button key={cat} type="button"
+              <button key={`cat-${cat}`} type="button"
                 onClick={() => {
                   if (cat === 'All') { setSelectedCategories([]); return; }
                   toggleCategory(cat);
@@ -460,9 +456,9 @@ const toggleCategory = (cat) => {
               </button>
             );
           })}
+        <div className="w-1 shrink-0" aria-hidden="true" />
         </div>
       )}
-
       {/* Category + Status rail — customers/guests combined */}
       {!isStaff && (
         <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
@@ -503,6 +499,7 @@ const toggleCategory = (cat) => {
               </button>
             );
           })}
+        <div className="w-1 shrink-0" aria-hidden="true" />
         </div>
       )}
 
