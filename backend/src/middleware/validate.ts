@@ -14,6 +14,10 @@ export function validate(schema: ZodSchema) {
       next();
     } catch (err) {
       if (err instanceof ZodError) {
+        // Log the Zod error details + a snapshot of the incoming body (no
+        // secrets) so production 400s are self-diagnosing.
+        const bodyKeys = req.body && typeof req.body === 'object' ? Object.keys(req.body) : typeof req.body;
+        console.error('[validate] Zod errors:', JSON.stringify(err.errors), '| body keys:', bodyKeys);
         throw new AppError(400, 'Validation error', err.errors);
       }
       throw err;
