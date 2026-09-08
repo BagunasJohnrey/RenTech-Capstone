@@ -47,7 +47,17 @@ export const timeAgo = (iso) => {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-export default function NotificationsDropdown({ role, showNotifications, toggle, onViewAll }) {
+// Tab each notification type opens. Staff actionables go to Tasks;
+// everything record-related goes to History; plain notices go home.
+export const targetTabForNotification = (type, role) => {
+  if (role === 'Staff' && ['new_booking', 'due_today', 'overdue', 'late_return', 'no_show', 'reminder'].includes(type)) {
+    return 'Tasks';
+  }
+  if (!type || type === 'default') return role === 'Customer' ? 'Home' : 'Dashboard';
+  return 'History';
+};
+
+export default function NotificationsDropdown({ role, showNotifications, toggle, onViewAll, onNavigateTab }) {
   useEscapeClose(toggle, showNotifications);
   const rootRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
@@ -130,6 +140,13 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
     } catch {
       setNotifications(prev);
     }
+  };
+
+  // Tapping a notification marks it read and jumps to its page.
+  const handleOpen = (n) => {
+    if (!n.isRead) handleMarkRead(n.id);
+    toggle();
+    if (onNavigateTab) onNavigateTab(targetTabForNotification(n.type, role));
   };
 
   // Optimistic per-item delete, reverted on failure.
@@ -303,9 +320,9 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
                         <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-[#bf4a53]" />
                       )}
                       <button
-                        onClick={() => !n.isRead && handleMarkRead(n.id)}
+                        onClick={() => handleOpen(n)}
                         className="flex-1 min-w-0 flex items-start gap-3 text-left"
-                        aria-label={n.isRead ? n.title : `Mark ${n.title} as read`}
+                        aria-label={`Open ${n.title}`}
                       >
                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${n.cfg.iconBg}`}>
                           <Icon size={16} className={n.cfg.iconColor} />

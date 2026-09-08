@@ -882,7 +882,7 @@ export default function RentechApp() {
               <HelpGuide role={viewRole} onStartTutorial={() => setShowOnboarding(true)} />
             )}
             {activeTab === 'Notifications' && (
-              <NotificationsView />
+              <NotificationsView role={viewRole} onNavigateTab={goTab} />
             )}
     </>
   );

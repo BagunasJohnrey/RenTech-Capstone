@@ -2,12 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { Bell, CheckCheck, Trash2, Inbox } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
-import { mapNotification, timeAgo } from '../components/NotificationsDropdown';
+import { mapNotification, timeAgo, targetTabForNotification } from '../components/NotificationsDropdown';
 import ConfirmModal from '../components/ConfirmModal';
 
 // Full-page view of every notification (the dropdown only shows the latest 50).
 // Same visual language as the dropdown so the two stay consistent.
-export default function NotificationsView() {
+export default function NotificationsView({ role, onNavigateTab }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // 'all' | 'new'
@@ -48,6 +48,12 @@ export default function NotificationsView() {
     } catch {
       setNotifications(prev);
     }
+  };
+
+  // Tapping a notification marks it read and jumps to its page.
+  const handleOpen = (n) => {
+    if (!n.isRead) handleMarkRead(n.id);
+    if (onNavigateTab) onNavigateTab(targetTabForNotification(n.type, role));
   };
 
   // Optimistic per-item delete, reverted on failure.
@@ -197,9 +203,9 @@ export default function NotificationsView() {
                       <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-[#bf4a53]" />
                     )}
                     <button
-                      onClick={() => !n.isRead && handleMarkRead(n.id)}
+                      onClick={() => handleOpen(n)}
                       className="flex-1 min-w-0 flex items-start gap-3 text-left"
-                      aria-label={n.isRead ? n.title : `Mark ${n.title} as read`}
+                      aria-label={`Open ${n.title}`}
                     >
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${n.cfg.iconBg}`}>
                         <Icon size={17} className={n.cfg.iconColor} />

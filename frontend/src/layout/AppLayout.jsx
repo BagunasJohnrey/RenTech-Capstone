@@ -209,6 +209,7 @@ export default function AppLayout({
                 showNotifications={showNotifications}
                 toggle={onToggleNotifications}
                 onViewAll={onViewAllNotifications}
+                onNavigateTab={setActiveTab}
               />
             </div>
           </header>
