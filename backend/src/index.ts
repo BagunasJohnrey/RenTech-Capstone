@@ -89,10 +89,10 @@ app.listen(env.PORT, () => {
     .then(async () => {
       // Quick startup sanity: verify the bucket has files and signed URLs work.
       const { supabaseAdmin } = await import('./config/supabase.js');
-      const { data: files } = await supabaseAdmin.storage.from('rentech-images').list('', { limit: 3 });
-      console.log(`[storage] bucket check: ${files?.length ?? 0} sample files found`);
+      const { data: files } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').list('', { limit: 3 });
+      console.log(`[storage] bucket check (${process.env.STORAGE_BUCKET || 'rentech-images'}): ${files?.length ?? 0} sample files found`);
       if (files?.[0]) {
-        const { data, error } = await supabaseAdmin.storage.from('rentech-images').createSignedUrl(files[0].name, 60);
+        const { data, error } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').createSignedUrl(files[0].name, 60);
         console.log(`[storage] signed URL test for "${files[0].name}":`, error ? `FAIL (${error.message})` : 'OK');
       }
     })
