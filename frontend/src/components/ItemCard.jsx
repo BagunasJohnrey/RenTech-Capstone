@@ -1,4 +1,4 @@
-import { Edit3, Trash2, Calendar, Eye, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
+import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { itemPill } from '../utils/statusColors';
 
@@ -193,18 +193,10 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
         {(() => {
           const disabled = !guest && (item.status === 'OutOfService' || item.status === 'Deleted');
           const sizingCls = 'w-full font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-1.5 whitespace-nowrap';
+          // Guests tap the photo itself to open details (same modal) — no
+          // separate button needed on the card.
           if (guest) {
-            return (
-              <div className="mt-auto pt-3">
-                <button data-tour="book" type="button"
-                  onClick={(e) => { e.stopPropagation(); onViewDetail?.(item); }}
-                  className={`${sizingCls} bg-white border border-[#bf4a53]/60 text-[#bf4a53] hover:bg-[#bf4a53] hover:text-white hover:shadow-lg hover:shadow-[#bf4a53]/25 active:scale-[0.98]`}
-                >
-                  <Eye size={15} />
-                  View Details
-                </button>
-              </div>
-            );
+            return null;
           }
           if (disabled) {
             return (

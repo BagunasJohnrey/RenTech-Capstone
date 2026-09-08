@@ -36,7 +36,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.png', 'apple-touch-icon.png'],
       // Dev-only: skip the service worker (it fights HMR). The production
       // build still emits dist/manifest.webmanifest via the plugin below, and
       // the static public/manifest.webmanifest (duplicating it) clears the
