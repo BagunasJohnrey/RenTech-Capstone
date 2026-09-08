@@ -323,6 +323,51 @@ export default function RentechApp() {
     getById(id).then((full) => setRoutedTx(normalizeTx(full))).catch(() => {});
   }, [isLoggedIn, txDetailId, transactions, getById]);
 
+  // Mobile system back button: keep navigation inside the app instead of
+  // leaving it. A guard history entry is pushed while logged in; each back
+  // press with an open overlay closes the topmost one (re-arming the guard).
+  // Plain tab switches push real URLs already, so with nothing open the
+  // browser navigates normally. Routed detail modals are URL-driven too, so
+  // they need no handling here.
+  const overlayCloserRef = useRef(() => false);
+  useEffect(() => {
+    overlayCloserRef.current = () => {
+      if (deleteConfirm) { setDeleteConfirm(null); return true; }
+      if (staffToRemove) { setStaffToRemove(null); return true; }
+      if (showLogoutModal) { setShowLogoutModal(false); return true; }
+      if (showOnboarding) { setShowOnboarding(false); return true; }
+      if (returnTransaction) { setReturnTransaction(null); return true; }
+      if (editingItem) { setEditingItem(null); return true; }
+      if (showAddItemModal) { setShowAddItemModal(false); return true; }
+      if (outOfServiceItem) { setOutOfServiceItem(null); return true; }
+      if (scannedTx) { setScannedTx(null); setScannedAction(null); return true; }
+      if (customerRental) { setCustomerRental(null); return true; }
+      if (showStaffRental || staffBookingItem) {
+        // StaffNewRental runs its own discard-confirm guard for dirty forms.
+        window.dispatchEvent(new Event('rentech:request-close'));
+        return true;
+      }
+      if (showChatbot) { setShowChatbot(false); return true; }
+      if (calendarItem) { setCalendarItem(null); return true; }
+      if (showGlobalSearch) { setShowGlobalSearch(false); return true; }
+      if (showScanner) { setShowScanner(false); return true; }
+      if (showNotifications) { setShowNotifications(false); return true; }
+      return false;
+    };
+  });
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const arm = () => { try { window.history.pushState({ rentechGuard: true }, ''); } catch { /* ignore */ } };
+    arm();
+    const onPopState = () => {
+      const closer = overlayCloserRef.current;
+      if (closer && closer()) arm();
+      // else: nothing open — let the browser navigate (tabs are URL-driven).
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [isLoggedIn]);
+
   const handleLogout = async () => {
     // Leave the portal URL first — otherwise the signed-out render (which
     // 404s any path other than '/') would show "Page not found" after logout.
