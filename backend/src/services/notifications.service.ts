@@ -42,9 +42,9 @@ export async function notifyStaffMembers(data: {
   }
 }
 
-export async function listNotifications(profileId: string, take = 50) {
+export async function listNotifications(profileId: string, take = 50, type?: string) {
   return prisma.notification.findMany({
-    where: { profileId },
+    where: { profileId, ...(type ? { type } : {}) },
     orderBy: { createdAt: 'desc' },
     take,
   });

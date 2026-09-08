@@ -258,6 +258,11 @@ describe('PUT /api/transactions/:id/cancel', () => {
       .set('Authorization', 'Bearer admin-token');
 
     expect(res.status).toBe(200);
+    expect(prisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ type: 'booking_cancelled', profileId: 'customer-id-111' }),
+      })
+    );
   });
 
   it('should reject when staff', async () => {

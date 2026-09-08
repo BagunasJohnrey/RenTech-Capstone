@@ -592,6 +592,21 @@ export async function cancelTransaction(transactionId: string, performedById: st
     data: { status: ItemStatus.Available, outOfServiceReason: null },
   });
 
+  // Tell the customer in-app (their bell + History tab). Best-effort so a
+  // notification write can never break the cancellation itself; the email
+  // below is best-effort too.
+  try {
+    await createNotification({
+      profileId: tx.customerId,
+      transactionId,
+      type: 'booking_cancelled',
+      title: 'Booking cancelled',
+      message: `Your booking for ${tx.item.name} was cancelled and the item is back in the collection.`,
+    });
+  } catch (err) {
+    console.error('[cancel] customer notification skipped:', (err as Error)?.message);
+  }
+
   await createAuditLog({
     action: 'update',
     entity: 'transaction',
