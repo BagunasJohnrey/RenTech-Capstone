@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Camera, Clock, AlertTriangle, CheckCircle, DollarSign, Undo2, FileText } from 'lucide-react';
+import { X, Camera, Clock, AlertTriangle, CheckCircle, Check, DollarSign, Undo2, FileText } from 'lucide-react';
 
 import { customerLabel, itemLabel } from '../utils/format';
 import { storageService } from '../services';
@@ -17,6 +17,38 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
   const [returnNotes, setReturnNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+// iOS-style radio row: icon tile + title/subtitle + trailing check indicator.
+// Compact single-column list; the group carries role="radiogroup".
+function ReturnOptionRow({ selected, onSelect, icon: Icon, tileCls, title, sub, dotCls, label }) {
+  return (
+    <button type="button" role="radio" aria-checked={selected} aria-label={label || title}
+      onClick={onSelect}
+      className={`w-full flex items-center gap-3 px-4 py-3 min-h-[56px] text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${selected ? 'bg-gray-50' : 'hover:bg-gray-50/60'}`}>
+      <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${tileCls}`}>
+        <Icon size={17} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-bold text-gray-900 leading-tight">{title}</span>
+        {sub && <span className="block text-xs text-gray-500 mt-0.5 leading-snug">{sub}</span>}
+      </span>
+      <span aria-hidden="true" className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${selected ? dotCls : 'border-gray-300'}`}>
+        {selected && <Check size={14} strokeWidth={3.5} className="text-white" />}
+      </span>
+    </button>
+  );
+}
+
+// Arrow-key navigation between radios in a group (radiogroup pattern).
+const handleRadioKeys = (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const radios = Array.from(e.currentTarget.querySelectorAll('[role="radio"]'));
+  const i = radios.indexOf(document.activeElement);
+  if (i === -1) return;
+  e.preventDefault();
+  const next = (e.key === 'ArrowDown' || e.key === 'ArrowRight') ? (i + 1) % radios.length : (i - 1 + radios.length) % radios.length;
+  radios[next].focus();
+};
 
   const basePenalty = isLate ? 500 : 0;
   const damageFee = isDamaged ? 1000 : 0;
@@ -106,76 +138,68 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
           </div>
 
           <div>
-            <p className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-              <Clock size={16} className="text-orange-500" />
-              Is this return late?
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => setIsLate(true)}
-                className={`relative flex items-center justify-center gap-2.5 py-4 rounded-2xl font-bold text-sm transition-all min-h-[52px] border-2 ${
-                  isLate === true
-                    ? 'bg-orange-50 border-orange-400 text-orange-700 shadow-sm'
-                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'
-                }`}>
-                {isLate === true && (
-                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-orange-500 rounded-full flex items-center justify-center">
-                    <CheckCircle size={12} className="text-white" />
-                  </span>
-                )}
-                <AlertTriangle size={18} />
-                Yes, it's late
-              </button>
-              <button onClick={() => setIsLate(false)}
-                className={`relative flex items-center justify-center gap-2.5 py-4 rounded-2xl font-bold text-sm transition-all min-h-[52px] border-2 ${
-                  isLate === false
-                    ? 'bg-emerald-50 border-emerald-400 text-emerald-700 shadow-sm'
-                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'
-                }`}>
-                {isLate === false && (
-                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center">
-                    <CheckCircle size={12} className="text-white" />
-                  </span>
-                )}
-                <CheckCircle size={18} />
-                On time
-              </button>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                <Clock size={14} className="text-orange-500" />
+                Is this return late?
+              </p>
+              <span className={`text-[11px] font-bold ${isLate === null ? 'text-gray-400' : isLate ? 'text-orange-600' : 'text-emerald-600'}`}>
+                {isLate === null ? 'Required' : isLate ? 'Late · ₱500' : 'On time'}
+              </span>
+            </div>
+            <div role="radiogroup" aria-label="Is this return late?" onKeyDown={handleRadioKeys}
+              className="bg-white border border-gray-200 rounded-2xl overflow-hidden divide-y divide-gray-100">
+              <ReturnOptionRow
+                selected={isLate === true}
+                onSelect={() => setIsLate(true)}
+                icon={AlertTriangle}
+                tileCls="bg-orange-50 text-orange-500"
+                title="Yes, it's late"
+                sub="Late penalty of ₱500 applies"
+                dotCls="bg-orange-500 border-orange-500"
+              />
+              <ReturnOptionRow
+                selected={isLate === false}
+                onSelect={() => setIsLate(false)}
+                icon={CheckCircle}
+                tileCls="bg-emerald-50 text-emerald-600"
+                title="On time"
+                sub="No penalty"
+                dotCls="bg-emerald-500 border-emerald-500"
+              />
             </div>
           </div>
 
           <div>
-            <p className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-              <AlertTriangle size={16} className="text-red-500" />
-              Item condition
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => setIsDamaged(true)}
-                className={`relative flex items-center justify-center gap-2.5 py-4 rounded-2xl font-bold text-sm transition-all min-h-[52px] border-2 ${
-                  isDamaged === true
-                    ? 'bg-red-50 border-red-400 text-red-700 shadow-sm'
-                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'
-                }`}>
-                {isDamaged === true && (
-                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center">
-                    <CheckCircle size={12} className="text-white" />
-                  </span>
-                )}
-                <AlertTriangle size={18} />
-                Item damaged — take out of rotation
-              </button>
-              <button onClick={() => setIsDamaged(false)}
-                className={`relative flex items-center justify-center gap-2.5 py-4 rounded-2xl font-bold text-sm transition-all min-h-[52px] border-2 ${
-                  isDamaged === false
-                    ? 'bg-emerald-50 border-emerald-400 text-emerald-700 shadow-sm'
-                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'
-                }`}>
-                {isDamaged === false && (
-                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center">
-                    <CheckCircle size={12} className="text-white" />
-                  </span>
-                )}
-                <CheckCircle size={18} />
-                Good condition
-              </button>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                <AlertTriangle size={14} className="text-red-500" />
+                Item condition
+              </p>
+              <span className={`text-[11px] font-bold ${isDamaged === null ? 'text-gray-400' : isDamaged ? 'text-red-600' : 'text-emerald-600'}`}>
+                {isDamaged === null ? 'Required' : isDamaged ? 'Damaged · ₱1,000' : 'Good'}
+              </span>
+            </div>
+            <div role="radiogroup" aria-label="Item condition" onKeyDown={handleRadioKeys}
+              className="bg-white border border-gray-200 rounded-2xl overflow-hidden divide-y divide-gray-100">
+              <ReturnOptionRow
+                selected={isDamaged === true}
+                onSelect={() => setIsDamaged(true)}
+                icon={AlertTriangle}
+                tileCls="bg-red-50 text-red-500"
+                title="Damaged — out of rotation"
+                sub="Damage fee of ₱1,000 · reason required"
+                dotCls="bg-red-500 border-red-500"
+              />
+              <ReturnOptionRow
+                selected={isDamaged === false}
+                onSelect={() => setIsDamaged(false)}
+                icon={CheckCircle}
+                tileCls="bg-emerald-50 text-emerald-600"
+                title="Good condition"
+                sub="Goes to the cleaning queue"
+                dotCls="bg-emerald-500 border-emerald-500"
+              />
             </div>
           </div>
 
