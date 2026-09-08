@@ -1,15 +1,16 @@
 import { useState, useEffect, cloneElement } from 'react';
 import {
-  BarChart3, TrendingUp, DollarSign,
+  BarChart3, TrendingUp, DollarSign, ChevronLeft, ChevronRight,
   AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles
 } from 'lucide-react';
 import {
   ComposedChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, ReferenceLine,
+  Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceDot,
   PieChart, Pie, Sector
 } from 'recharts';
 import AIReportModal from '../components/AIReportModal';
 import { api } from '../utils/api';
+import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
 import { useToast } from '../components/Toast';
 import { AIInsightsSkeleton } from '../components/PageSkeletons';
 import { Skeleton } from '../components/Skeleton';
@@ -51,6 +52,18 @@ const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCc
 const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Philippine event/seasonality annotations for the monthly forecast chart
+// (display only for now — the SMA math itself is unweighted).
+const SEASON_MARKERS = {
+  0: 'New Year', 1: "Valentine's", 2: 'Graduation', 5: 'Wedding season',
+  9: 'Halloween', 11: 'Christmas · Wedding season',
+};
+const CONFIDENCE_STYLES = {
+  low: 'bg-amber-50 text-amber-700',
+  medium: 'bg-blue-50 text-blue-700',
+  high: 'bg-emerald-50 text-emerald-700',
+};
 
 // Pickers clamp to now* so users can look BACK at any past month/year but not
 // into the future. (* milliseconds-since-epoch comparison.)
@@ -184,6 +197,19 @@ export default function AIInsightsView({ analyticsData, role }) {
   const [everRendered, setEverRendered] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState(() => readAiSuggestCache());
   const [suggestLoading, setSuggestLoading] = useState(false);
+  // Forecast granularity: monthly comes with the bundle; weekly is fetched
+  // on demand from /dashboard/forecast?granularity=weekly (admin-only).
+  const [granularity, setGranularity] = useState('monthly');
+  const [weeklyForecast, setWeeklyForecast] = useState(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const loadWeeklyForecast = () => {
+    if (weeklyForecast || weeklyLoading) return;
+    setWeeklyLoading(true);
+    api.get('/dashboard/forecast?granularity=weekly&period=3')
+      .then((r) => setWeeklyForecast(r ?? null))
+      .catch(() => {})
+      .finally(() => setWeeklyLoading(false));
+  };
   const { error: toastError } = useToast();
 
   useEffect(() => {
@@ -315,10 +341,12 @@ export default function AIInsightsView({ analyticsData, role }) {
     return <AIInsightsSkeleton />;
   }
 
-  // -- Raw data --
-  const fLabels = forecast?.labels || [];
-  const fCounts = forecast?.counts || [];
-  const fSma = forecast?.sma || [];
+  // -- Raw data (forecast follows the Monthly/Weekly toggle; revenue +
+  // smart-action rules stay on the monthly series) --
+  const activeForecast = granularity === 'weekly' ? (weeklyForecast || forecast) : forecast;
+  const fLabels = activeForecast?.labels || [];
+  const fCounts = activeForecast?.counts || [];
+  const fSma = activeForecast?.sma || [];
 
 
   const isMonthlyView = timeRange === 'Monthly';
@@ -357,41 +385,57 @@ export default function AIInsightsView({ analyticsData, role }) {
   ].filter(d => d.value > 0);
   const totalTx = statusDist.reduce((s, d) => s + d.value, 0);
 
-  // -- SMA data --
+  // -- SMA data (follows the card toggle) --
   const smaVals = fSma.filter(v => v !== null && v !== undefined);
   const latestSmaVal = smaVals.length > 0 ? smaVals[smaVals.length - 1] : 0;
   const prevSmaVal = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
   const smaTrend = latestSmaVal > prevSmaVal ? 'up' : latestSmaVal < prevSmaVal ? 'down' : 'stable';
+  const showingWeekly = granularity === 'weekly';
+  const smaName = showingWeekly ? 'SMA (3wk)' : 'SMA (3mo)';
 
-  const avgPriceKnown = fCounts.length > 0 && fCounts[fCounts.length - 1] > 0;
+  // -- Revenue projection math stays monthly no matter the toggle: weekly
+  // rental counts must never divide a full month's revenue.
+  const mCounts = forecast?.counts || [];
+  const mSmaVals = (forecast?.sma || []).filter(v => v !== null && v !== undefined);
+  const mLatestSma = mSmaVals.length > 0 ? mSmaVals[mSmaVals.length - 1] : 0;
+  const mPrevSma = mSmaVals.length >= 2 ? mSmaVals[mSmaVals.length - 2] : 0;
+  const avgPriceKnown = mCounts.length > 0 && mCounts[mCounts.length - 1] > 0;
   const avgPrice = avgPriceKnown
-    ? (revByMonth[revByMonth.length - 1]?.revenue || 0) / fCounts[fCounts.length - 1]
+    ? (revByMonth[revByMonth.length - 1]?.revenue || 0) / mCounts[mCounts.length - 1]
     : 1500;
-  const forecastRev = latestSmaVal * avgPrice;
+  const forecastRev = mLatestSma * avgPrice;
   // With < 2 real months of revenue, a peso projection is a guess (avg price falls
   // back to a hard-coded 1500), so show the SMA direction rather than an inflated bar.
-  const forecastRevValue = avgPriceKnown ? forecastRev : latestSmaVal;
+  const forecastRevValue = avgPriceKnown ? forecastRev : mLatestSma;
 
-  const nextLabel = fLabels.length > 0
-    ? (() => {
-        const p = fLabels[fLabels.length - 1].split(' ');
-        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const idx = months.indexOf(p[0]);
-        if (idx === -1) return 'Next';
-        const nextIdx = (idx + 1) % 12;
-        return `${months[nextIdx]} ${nextIdx === 0 ? +p[1] + 1 : p[1]}`;
-      })()
-    : 'Next';
+  // Next-period label: prefer the server projection label (works for both
+  // monthly "Mar 2026" and weekly "Mar 9" labels); fall back to month math.
+  const nextLabelFrom = (labels) => {
+    const proj = (granularity === 'weekly' ? weeklyForecast : forecast)?.projections || [];
+    if (proj.length > 0 && proj[0]?.label) return proj[0].label;
+    if (!labels.length) return 'Next';
+    const p = labels[labels.length - 1].split(' ');
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const idx = months.indexOf(p[0]);
+    if (idx === -1 || p.length < 2) return 'Next';
+    const nextIdx = (idx + 1) % 12;
+    return `${months[nextIdx]} ${nextIdx === 0 ? +p[1] + 1 : p[1]}`;
+  };
+  const nextLabel = nextLabelFrom(fLabels);
+  // Revenue chart's projection bar always talks months — pin it to the
+  // monthly series even while the forecast card shows weeks.
+  const monthlyNextLabel = nextLabelFrom(forecast?.labels || []);
 
-  // -- Chart data --
+  // -- Chart data (weekly labels shown in full — shortMonth would
+  // collapse every week of a month onto one tick) --
   const forecastData = fLabels.map((l, i) => ({
-    label: shortMonth(l),
+    label: showingWeekly ? l : shortMonth(l),
     full: l,
     count: fCounts[i] || 0,
     sma: fSma[i] ?? null,
   }));
   forecastData.push({
-    label: shortMonth(nextLabel),
+    label: showingWeekly ? nextLabel : shortMonth(nextLabel),
     full: nextLabel,
     count: null,
     sma: latestSmaVal,
@@ -400,6 +444,22 @@ export default function AIInsightsView({ analyticsData, role }) {
   const validSmaCount = forecastData.filter(d => d.sma !== null && !d.forecast).length;
   const hasSma = validSmaCount >= 2;
   const countChart = fLabels.map(l => ({ label: shortMonth(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
+
+  // Season markers on observed monthly points only (never on projections,
+  // never on weekly view).
+  const seasonDots = !showingWeekly
+    ? forecastData.filter((d) => !d.forecast && d.count !== null && SEASON_MARKERS[SHORT_MONTHS.indexOf(d.full.split(' ')[0])])
+    : [];
+
+  // -- Multi-period outlook (server SMA projections) + deterministic rules --
+  // The outlook table follows the card's Monthly/Weekly toggle; the smart
+  // rules always use the monthly per-category series.
+  const projections = activeForecast?.projections || [];
+  const forecastCats = forecast?.byCategory || [];
+  const analyticsItems = inventoryAnalytics?.items || [];
+  const restockRules = reorderSuggestions(forecastCats, catBreakdown);
+  const clearanceRules = clearanceSuggestions(analyticsItems);
+  const cleaningRules = cleaningPriority(analyticsItems, forecastCats);
 
   // Keep every bucket (even ₱0) so the trend reads as a continuous timeline
   // and each bar sits under its correct label. Key on the full label ("Mar 2026")
@@ -416,6 +476,17 @@ export default function AIInsightsView({ analyticsData, role }) {
     revChartEmptyLabel = isCurrentMonth(appliedYear, appliedMonth)
       ? 'No revenue this month yet.'
       : `No revenue in ${monthName} ${appliedYear}.`;
+    if (viewingCurrentMonth) {
+      // Only elapsed weeks are real — weeks that haven't started yet would
+      // render as misleading zero bars ahead of the current week (and push
+      // the Next Wk projection to the far end), so trim them.
+      const weekIdx = Math.min(4, Math.floor((new Date().getDate() - 1) / 7));
+      revChart = revChart.slice(0, weekIdx + 1);
+    } else if (appliedMonth) {
+      // A 28-day February has no days 29–31, so Wk 5 can never exist there.
+      const daysInMonth = new Date(appliedYear, appliedMonth, 0).getDate();
+      if (daysInMonth < 29) revChart = revChart.slice(0, 4);
+    }
   } else {
     revChart = (revByMonth || [])
       .map(d => ({ label: d.label || shortMonth(d.label), full: d.label, rev: d.revenue }));
@@ -437,7 +508,7 @@ export default function AIInsightsView({ analyticsData, role }) {
         revChart = [...revChart, { label: 'Next Wk', full: 'Projected · next week', rev: projectedNextWeek, forecast: true }];
     }
   } else if (forecastRevValue > 0 && revChart.length > 0) {
-    revChart = [...revChart, { label: nextLabel, full: nextLabel, rev: forecastRevValue, forecast: true }];
+    revChart = [...revChart, { label: monthlyNextLabel, full: monthlyNextLabel, rev: forecastRevValue, forecast: true }];
   }
 
   // -- Insights --
@@ -448,9 +519,9 @@ export default function AIInsightsView({ analyticsData, role }) {
   if (highUtil) insights.push(`High utilisation in ${highUtil.category} (${highUtil.rate}%).`);
   if (underperforming.length > 0 && popularItems.length > 0)
     insights.push(`${underperforming.length} item(s) haven't been rented this period – consider promotions or clearance.`);
-  const prevSma = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
-  if (latestSmaVal > prevSma)
-    insights.push(`Next month demand forecast is ${Math.round(latestSmaVal - prevSma)} rental(s) higher than this month.`);
+  const prevSma = mPrevSma;
+  if (mLatestSma > prevSma)
+    insights.push(`Next month demand forecast is ${Math.round(mLatestSma - prevSma)} rental(s) higher than this month.`);
   if (kpis?.overdueReturns > 0)
     insights.push(`${kpis.overdueReturns} overdue rental(s) need immediate attention.`);
   if (revChange > 0)
@@ -460,9 +531,22 @@ export default function AIInsightsView({ analyticsData, role }) {
 
 
 
+  // Month stepper for the revenue card (Monthly view): walk back through
+  // past months or jump back to the current one. Clamped to now and 2000.
+  const stepMonth = (dir) => {
+    const d = new Date(appliedYear, appliedMonth - 1 + dir, 1);
+    const now = new Date(now0.getFullYear(), now0.getMonth(), 1);
+    if (d > now || d.getFullYear() < 2000) return;
+    setSelYear(d.getFullYear());
+    setSelMonth(d.getMonth() + 1);
+  };
+  const goCurrentMonth = () => {
+    setSelYear(now0.getFullYear());
+    setSelMonth(now0.getMonth() + 1);
+  };
+
   // -- Render --
-  return (
-    <>
+  return (    <>
       <div className="space-y-8 max-w-5xl mx-auto">
 
         {/* Header */}
@@ -609,9 +693,29 @@ export default function AIInsightsView({ analyticsData, role }) {
         {/* Row 1: Revenue Chart + Status Distribution */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
-            <h3 className="font-bold text-gray-900 text-base md:text-lg px-5 md:px-7 pt-5 md:pt-7 pb-2">
-              {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : 'Monthly Revenue'}
-            </h3>
+            <div className="flex items-center justify-between gap-2 px-5 md:px-7 pt-5 md:pt-7 pb-2">
+              <h3 className="font-bold text-gray-900 text-base md:text-lg">
+                {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : 'Monthly Revenue'}
+              </h3>
+              {isMonthlyView && (
+                <div className="flex items-center gap-0.5 shrink-0">
+                  {!viewingCurrentMonth && (
+                    <button onClick={goCurrentMonth}
+                      className="px-2.5 min-h-[32px] rounded-lg text-[11px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
+                      This month
+                    </button>
+                  )}
+                  <button onClick={() => stepMonth(-1)} aria-label="Previous month" title="Previous month"
+                    className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
+                    <ChevronLeft size={16} />
+                  </button>
+                  <button onClick={() => stepMonth(1)} disabled={viewingCurrentMonth} aria-label="Next month" title="Next month"
+                    className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
             <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">
               {isMonthlyView
                 ? (viewingCurrentMonth ? 'Week-by-week revenue with next week projection' : 'Week-by-week revenue for the selected month')
@@ -688,8 +792,39 @@ export default function AIInsightsView({ analyticsData, role }) {
         {/* Row 2: Demand Forecast + Top Items */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2">
-            <h3 className="font-bold text-gray-900 text-base md:text-lg px-5 md:px-7 pt-5 md:pt-7 pb-2">Demand Forecast</h3>
-            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">3‑month moving average with rental counts</p>
+            <div className="flex items-center justify-between gap-3 px-5 md:px-7 pt-5 md:pt-7 pb-2">
+              <h3 className="font-bold text-gray-900 text-base md:text-lg">Demand Forecast</h3>
+              <div role="tablist" aria-label="Forecast granularity" className="flex gap-1 bg-gray-100 rounded-xl p-1 shrink-0">
+                {['monthly', 'weekly'].map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    role="tab"
+                    aria-selected={granularity === g}
+                    onClick={() => { setGranularity(g); if (g === 'weekly') loadWeeklyForecast(); }}
+                    className={`px-3 min-h-[32px] rounded-lg text-[11px] font-bold capitalize transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
+                      granularity === g ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-1">
+              {weeklyLoading
+                ? 'Loading weekly buckets…'
+                : showingWeekly
+                  ? '3‑week moving average with rental counts'
+                  : '3‑month moving average with rental counts'}
+            </p>
+            {activeForecast?.confidenceNote && (
+              <p className="px-5 md:px-7 pb-4">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${CONFIDENCE_STYLES[activeForecast.confidence] || 'bg-gray-100 text-gray-500'}`}>
+                  {activeForecast.confidenceNote}
+                </span>
+              </p>
+            )}
             {!hasSma ? (
               <div>
                 <ResponsiveContainer width="100%" height={230}>
@@ -701,7 +836,7 @@ export default function AIInsightsView({ analyticsData, role }) {
                     <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#1f2937" />
                   </ComposedChart>
                 </ResponsiveContainer>
-                <p className="text-xs text-gray-400 text-center pb-4 px-7">At least {3 - validSmaCount} more months of data needed for SMA trend.</p>
+                <p className="text-xs text-gray-400 text-center pb-4 px-7">At least {3 - validSmaCount} more {showingWeekly ? 'weeks' : 'months'} of data needed for SMA trend.</p>
               </div>
             ) : (
               <div>
@@ -719,7 +854,7 @@ export default function AIInsightsView({ analyticsData, role }) {
                             <p className="font-bold text-gray-900">{month?.full || label}</p>
                             {payload.map((p, i) => (
                               p.value !== null && <p key={i} className="text-gray-600" style={{ color: p.color }}>
-                                {p.name}: {p.name === 'SMA (3mo)' ? Number(p.value).toFixed(1) : p.value}
+                                {p.name}: {p.name === smaName ? Number(p.value).toFixed(1) : p.value}
                               </p>
                             ))}
                             {month?.forecast && <p className="text-[11px] text-gray-400 italic">Projected</p>}
@@ -728,13 +863,23 @@ export default function AIInsightsView({ analyticsData, role }) {
                       }}
                     />
                     <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={48} fill="#1f2937" fillOpacity={0.35} />
-                    <Line type="monotone" dataKey="sma" name="SMA (3mo)" stroke="#bf4a53" strokeWidth={3}
+                    <Line type="monotone" dataKey="sma" name={smaName} stroke="#bf4a53" strokeWidth={3}
                       dot={{ r: 5, fill: '#bf4a53', strokeWidth: 0 }}
                       activeDot={{ r: 8, fill: '#bf4a53', stroke: '#fff', strokeWidth: 2 }}
                       connectNulls={false}
                     />
+                    {seasonDots.map((d) => (
+                      <ReferenceDot key={d.full} x={d.label} y={d.count} r={5} fill="#bf4a53" stroke="#fff" strokeWidth={2} />
+                    ))}
                   </ComposedChart>
                 </ResponsiveContainer>
+
+                {seasonDots.length > 0 && (
+                  <p className="text-[11px] text-gray-400 text-center px-7 -mt-1">
+                    <span className="inline-block w-2 h-2 rounded-full bg-[#bf4a53] mr-1.5" aria-hidden="true" />
+                    {[...new Set(seasonDots.map((d) => SEASON_MARKERS[SHORT_MONTHS.indexOf(d.full.split(' ')[0])]))].join(' · ')}
+                  </p>
+                )}
 
                 {/* SMA Summary */}
                 <div className="grid grid-cols-3 gap-2 md:gap-3 px-5 md:px-7 pb-5 md:pb-6">
@@ -753,6 +898,35 @@ export default function AIInsightsView({ analyticsData, role }) {
                     </p>
                   </div>
                 </div>
+
+                {/* 3-period outlook table (projected rentals + peso estimate) */}
+                {projections.length > 0 && (
+                  <div className="px-5 md:px-7 pb-5 md:pb-6">
+                    <div className="border border-dashed border-[#bf4a53]/30 rounded-2xl overflow-hidden">
+                      <p className="text-[11px] font-bold text-[#bf4a53] uppercase tracking-wide px-4 pt-3">Next 3 periods · projected</p>
+                      <table className="w-full text-sm mt-1">
+                        <thead>
+                          <tr className="text-[11px] text-gray-400">
+                            <th className="text-left font-semibold px-4 py-2">Period</th>
+                            <th className="text-right font-semibold px-4 py-2">Rentals</th>
+                            <th className="text-right font-semibold px-4 py-2">Est. revenue</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {projections.map((p) => (
+                            <tr key={p.label} className="border-t border-gray-100">
+                              <td className="px-4 py-2 font-semibold text-gray-800">{p.label}</td>
+                              <td className="px-4 py-2 text-right tabular-nums text-gray-700">{p.value ?? '—'}</td>
+                              <td className="px-4 py-2 text-right tabular-nums font-bold text-gray-900">
+                                {p.value === null || p.value === undefined ? '—' : avgPriceKnown ? fmt(p.value * avgPrice) : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -792,6 +966,61 @@ export default function AIInsightsView({ analyticsData, role }) {
             )}
           </div>
         </div>
+
+        {/* Row 2b: Smart actions — deterministic rules (no AI): restock what
+            demand outruns, clear what's idle, clean what's wanted next */}
+        {(restockRules.length > 0 || clearanceRules.length > 0 || cleaningRules.length > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
+              <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                <TrendingUp size={17} className="text-emerald-600" /> Restock
+              </h3>
+              {restockRules.length === 0 ? (
+                <p className="text-sm text-gray-400">Stock covers projected demand.</p>
+              ) : (
+                restockRules.slice(0, 4).map((r) => (
+                  <div key={r.category} className="bg-emerald-50/60 rounded-2xl px-4 py-3 text-sm">
+                    <p className="font-bold text-gray-900">{r.category} <span className="text-emerald-600">+{r.shortfall} pc{r.shortfall === 1 ? '' : 's'}</span></p>
+                    <p className="text-xs text-gray-500 mt-0.5">Projected {r.projection}/mo · {r.freeUnits} free · {r.reason}</p>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
+              <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                <AlertTriangle size={17} className="text-orange-500" /> Clearance
+              </h3>
+              {clearanceRules.length === 0 ? (
+                <p className="text-sm text-gray-400">Nothing idle — everything earns.</p>
+              ) : (
+                clearanceRules.slice(0, 4).map((it) => (
+                  <div key={it.id} className="bg-orange-50/60 rounded-2xl px-4 py-3 text-sm">
+                    <p className="font-bold text-gray-900 truncate">{it.name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{it.category} · {it.reason} — put on sale</p>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
+              <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+                <RotateCcw size={17} className="text-[#bf4a53]" /> Clean next
+              </h3>
+              {cleaningRules.length === 0 ? (
+                <p className="text-sm text-gray-400">Cleaning queue is empty.</p>
+              ) : (
+                cleaningRules.slice(0, 4).map((it, i) => (
+                  <div key={it.id} className="flex items-center gap-3 text-sm">
+                    <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+                    <div className="min-w-0">
+                      <p className="font-bold text-gray-900 truncate">{it.name}</p>
+                      <p className="text-xs text-gray-500">{it.category}{it.demand >= 0 ? ` · demand ${it.demand}/mo` : ''}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Row 3: Category Performance */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
