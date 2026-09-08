@@ -106,6 +106,7 @@ export default function CustomerRentalFlow({
   const [selectedSize, setSelectedSize] = useState(() => savedSizes[0] || '');
   const [measurementsExpanded, setMeasurementsExpanded] = useState(false);
   const [measurements, setMeasurements] = useState({});
+  const [showSizeGuide, setShowSizeGuide] = useState(false);
   const saleInfo = selectedItem ? getSaleInfo(selectedItem) : null;
   const effectiveItemPrice = saleInfo?.active ? saleInfo.price : (selectedItem?.price || 0);
   // FIX: the 50% minimum applies to the actual fee being charged (finalFee,
@@ -937,7 +938,13 @@ export default function CustomerRentalFlow({
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Item Details</h4>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Size</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Size</label>
+                    <button type="button" onClick={() => setShowSizeGuide(true)}
+                      className="text-[10px] font-bold text-[#bf4a53] hover:text-red-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50 rounded">
+                      Size Guide
+                    </button>
+                  </div>
                   <select value={selectedSize} onChange={(e) => { setSelectedSize(e.target.value); clearFieldError('size'); }}
                     className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.size ? 'border-red-300 bg-red-50' : ''}`}>
                     <option value="">-- Select Size --</option>
@@ -1183,6 +1190,73 @@ export default function CustomerRentalFlow({
           </div>
         </div>
       </div>
+      )}
+
+      {/* Size Guide */}
+      {showSizeGuide && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={() => setShowSizeGuide(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-size-guide"
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 border-b border-gray-100/80 rounded-t-3xl">
+              <h3 id="dialog-title-size-guide" className="font-bold text-lg text-gray-900">Size Guide</h3>
+              <button onClick={() => setShowSizeGuide(false)} aria-label="Close size guide"
+                className="text-gray-400 hover:bg-gray-100 rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-500 leading-relaxed">
+                All measurements below are the garment's base dimensions. Our boutique
+                offers on-site tailoring — if your body measurements differ from the
+                chart, pick <strong>Custom / Measurements</strong> and we'll adjust
+                the fit before your event.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="px-3 py-2 text-left font-bold text-gray-600 border border-gray-200">Size</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Bust (in)</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Waist (in)</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Hips (in)</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Shoulder (in)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ['XS', '31–32', '23–24', '33–34', '14'],
+                      ['S', '33–34', '25–26', '35–36', '14.5'],
+                      ['M', '35–36', '27–28', '37–38', '15'],
+                      ['L', '37–39', '29–31', '39–41', '15.5–16'],
+                      ['XL', '40–42', '32–34', '42–44', '16.5–17'],
+                      ['XXL', '43–45', '35–37', '45–47', '17.5–18'],
+                    ].map(([size, bust, waist, hips, shoulder]) => (
+                      <tr key={size} className="hover:bg-gray-50/50">
+                        <td className="px-3 py-2 font-bold text-gray-900 border border-gray-200">{size}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{bust}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{waist}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{hips}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{shoulder}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-amber-50 border border-amber-200/70 rounded-2xl p-4 text-xs text-amber-800 leading-relaxed space-y-1.5">
+                <p className="font-bold">How to choose your size:</p>
+                <p><strong>1.</strong> Measure yourself with a soft tape (bust, waist, hips).</p>
+                <p><strong>2.</strong> Match your largest measurement to the chart above.</p>
+                <p><strong>3.</strong> If you fall between sizes, pick <strong>Custom / Measurements</strong> — our tailor will adjust the garment to fit you perfectly.</p>
+                <p><strong>4.</strong> Our gowns can be taken in or let out by about 1 inch in each area.</p>
+              </div>
+              <button onClick={() => setShowSizeGuide(false)}
+                className="w-full py-3 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors text-sm">
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
