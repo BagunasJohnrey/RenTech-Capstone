@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Camera, Package, User, Calendar, Scissors } from 'lucide-react';
+import { X, Camera, Package, User, Calendar, Scissors, Banknote, Smartphone, CreditCard } from 'lucide-react';
 import { api } from '../utils/api';
 import { storageService } from '../services';
 import { customerLabel, itemLabel } from '../utils/format';
@@ -14,6 +14,20 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
   const [needsAlteration, setNeedsAlteration] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState('');
+
+  const [recordPayment, setRecordPayment] = useState(false);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState('cash');
+  const [payError, setPayError] = useState('');
+  const [paySuccess, setPaySuccess] = useState(false);
+
+  const outstandingBalance = Math.max(0, transaction.balance ?? 0);
+
+  useEffect(() => {
+    if (outstandingBalance > 0 && !recordPayment) {
+      setPayAmount(String(outstandingBalance));
+    }
+  }, [outstandingBalance]);
 
   useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
 
@@ -33,8 +47,14 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
 
   const handleRelease = async () => {
     if (!photoFile) { setError('Please capture the pre-rental condition photo'); return; }
+    if (recordPayment) {
+      const amt = Number(payAmount);
+      if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
+      if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
+    }
     setReleasing(true);
     setError('');
+    setPayError('');
     try {
       const base64 = (await downscaleToJpeg(photoFile)) || (await fileToBase64(photoFile));
       const { path } = await storageService.upload(
@@ -47,6 +67,15 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
         notes,
         needsAlteration,
       });
+      if (recordPayment) {
+        const amt = Number(payAmount);
+        if (amt > 0 && amt <= outstandingBalance) {
+          try {
+            await api.post(`/transactions/${transaction.id}/payments`, { amount: amt, method: payMethod });
+            setPaySuccess(true);
+          } catch { /* payment failure is non-critical for release */ }
+        }
+      }
       onReleased(updated);
       onClose();
     } catch (err) {
@@ -168,6 +197,66 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
               </div>
             </label>
           </div>
+
+          {outstandingBalance > 0 && (
+            <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4 space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div className="relative mt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={recordPayment}
+                    onChange={(e) => { setRecordPayment(e.target.checked); setPayError(''); }}
+                    className="sr-only"
+                  />
+                  <div className={`w-10 h-6 rounded-full transition-colors ${recordPayment ? 'bg-[#bf4a53]' : 'bg-gray-300'}`}>
+                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${recordPayment ? 'translate-x-4' : ''}`} />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                    <Banknote size={14} className="text-[#bf4a53]" /> Record payment at pickup
+                  </p>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    Outstanding balance: <span className="font-bold text-[#bf4a53]">₱{outstandingBalance.toLocaleString()}</span>
+                  </p>
+                </div>
+              </label>
+              {recordPayment && (
+                <div className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Amount</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">₱</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max={outstandingBalance}
+                        value={payAmount}
+                        onChange={e => { setPayAmount(e.target.value); setPayError(''); }}
+                        className="w-full pl-8 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Method</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[{ key: 'cash', label: 'Cash', Icon: Banknote }, { key: 'gcash', label: 'GCash', Icon: Smartphone }, { key: 'card', label: 'Card', Icon: CreditCard }].map(m => (
+                        <button
+                          key={m.key}
+                          type="button"
+                          onClick={() => setPayMethod(m.key)}
+                          className={`py-2 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${payMethod === m.key ? 'bg-[#bf4a53] text-white border-[#bf4a53]' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                        >
+                          <m.Icon size={12} /> {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {payError && <p className="text-[11px] text-red-500 font-medium">{payError}</p>}
+                </div>
+              )}
+            </div>
+          )}
 
           {error && (
             <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>

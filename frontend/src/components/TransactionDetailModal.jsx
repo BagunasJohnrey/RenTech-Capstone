@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote } from 'lucide-react';
+import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone } from 'lucide-react';
 import { customerLabel, customerPhone, itemLabel } from '../utils/format';
 import { normalizeTx } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
@@ -79,7 +79,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const status = tx.status;
   const statusColor = statusColors[status] || 'bg-gray-100 text-gray-600 ring-gray-200';
   const txRef = `#${String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}`;
-  const outstandingBalance = Math.max(0, (tx.rentalFee ?? 0) + (tx.latePenalty ?? 0) + (tx.damageFee ?? 0) - (tx.totalPaid ?? 0));
+  const outstandingBalance = Math.max(0, tx.balance ?? 0);
   const canRecordPayment = (role === 'Admin' || role === 'Staff')
     && !['Returned', 'Cancelled'].includes(tx.status)
     && outstandingBalance > 0;
@@ -200,8 +200,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 {tx.payments.map((p) => (
                   <div key={p.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
                     <div className="flex items-center gap-2.5">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold uppercase ${p.method === 'cash' ? 'bg-green-100 text-green-700' : p.method === 'gcash' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                        {p.method === 'cash' ? '💵' : p.method === 'gcash' ? '📱' : '💳'}
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${p.method === 'cash' ? 'bg-green-100 text-green-700' : p.method === 'gcash' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                        {p.method === 'cash' ? <Banknote size={14} /> : p.method === 'gcash' ? <Smartphone size={14} /> : <CreditCard size={14} />}
                       </div>
                       <div>
                         <p className="text-sm font-bold text-gray-900">{fmtCurrency(p.amount)}</p>
