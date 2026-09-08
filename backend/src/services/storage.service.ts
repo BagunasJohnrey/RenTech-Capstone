@@ -87,18 +87,44 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
     throw new AppError(400, 'Image file is empty or exceeds the 20MB limit');
   }
 
-  const { data, error } = await supabaseAdmin.storage
-    .from(BUCKET_NAME)
-    .upload(fileName, buffer, { contentType, upsert: false });
+  // Supabase's storage API occasionally fails a request transiently (network
+  // blip, cold pooler, 5xx) — a single attempt surfaces that as a hard 500 to
+  // the user (e.g. the release-photo upload failing on Render). Retry up to 2
+  // extra times before giving up.
+  //
+  // "The resource already exists" is treated as SUCCESS: object keys are
+  // unique per attempt (Date.now()/uuid paths), so a collision can only mean
+  // this same logical upload previously landed but its follow-up request
+  // (e.g. PUT /transactions/:id/release) failed — the user retried and the
+  // bytes are already in the bucket. Returning the path makes the retry
+  // idempotent instead of stranding the flow with a 500.
+  let data: { path: string } | null = null;
+  let lastError: { message?: string; statusCode?: string | number } | null = null;
+  for (let attempt = 0; attempt < 3 && !data; attempt++) {
+    const result = await supabaseAdmin.storage
+      .from(BUCKET_NAME)
+      .upload(fileName, buffer, { contentType, upsert: false });
+    if (result.error) {
+      lastError = result.error;
+      if (/already exists|duplicate/i.test(result.error.message ?? '')) {
+        data = { path: fileName };
+        break;
+      }
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+    } else {
+      data = result.data;
+    }
+  }
 
-  if (error) {
-    // upsert:false — a key collision now reports cleanly instead of silently
-    // overwriting someone else's file (overwrite allowed only via the
-    // explicit update flow, which we don't expose on purpose).
-    // C6: static message — the Supabase error text may echo internal
-    // bucket/object details; log it server-side only.
-    console.error('[storage] upload failed:', error.message);
-    throw new AppError(500, 'Failed to upload image');
+  if (!data) {
+    // C6: static message — the Supabase error may echo internal bucket/object
+    // details; log the full detail server-side only.
+    console.error('[storage] upload failed:', lastError?.message, {
+      statusCode: lastError?.statusCode,
+      fileName,
+      bytes: buffer.length,
+    });
+    throw new AppError(500, 'Failed to upload image — please try again');
   }
 
   return { path: data.path };

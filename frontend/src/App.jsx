@@ -82,7 +82,7 @@ const navItems = {
 };
 
 export default function RentechApp() {
-  const { isLoggedIn, role, profile, loading, logout, updateProfile, completeOAuth, cancelOAuth, completeForcedPasswordChange } = useAuth();
+  const { isLoggedIn, role, profile, loading, logout, updateProfile, fetchProfile, completeOAuth, cancelOAuth, completeForcedPasswordChange } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -177,7 +177,7 @@ export default function RentechApp() {
     loading: transactionsLoading,
   } = useTransactions();
   // Staff accounts (Admin) — encapsulated in useStaff (SoC).
-  const { staffAccounts, loadStaff, addStaff, removeStaff } = useStaff();
+  const { staffAccounts, staffLoadError, loadStaff, addStaff, removeStaff, updateStaff } = useStaff();
   // Editable customer profile + sync with auth profile — useCustomerProfile (SoC).
   const { customerInfo, syncFromProfile, updateCustomer } = useCustomerProfile(updateProfile);
 
@@ -825,8 +825,11 @@ export default function RentechApp() {
                 staffList={staffAccounts}
                 onAddStaff={handleAddStaff}
                 onRemoveStaff={handleRemoveStaff}
+                onUpdateStaff={updateStaff}
+                staffLoadError={staffLoadError}
                 customerInfo={customerInfo}
                 onUpdateCustomer={updateCustomer}
+                onProfileUpdated={fetchProfile}
                 onRequestLogout={() => setShowLogoutModal(true)}
               />
             )}

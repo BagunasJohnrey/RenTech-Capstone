@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Users, Plus, Trash2, AlertCircle, Key, ShieldCheck, Lock, CheckCircle2 } from 'lucide-react';
+import { Users, Plus, Trash2, AlertCircle, Key, ShieldCheck, Lock, CheckCircle2, Pencil, X } from 'lucide-react';
 import { api } from '../../utils/api';
 import SettingsCard from './SettingsCard';
 import PinInput from './PinInput';
 
 // Admin Team & Security tab: staff account management + the admin's own TOTP
 // two-factor authentication (setup QR, enable, backup codes, disable).
-export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile }) {
+export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemoveStaff, onUpdateStaff, profile }) {
   const [newUsername, setNewUsername] = useState('');
   const [newStaffName, setNewStaffName] = useState('');
   const [staffError, setStaffError] = useState('');
@@ -15,6 +15,12 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
   // One-time password reveal: shown once right after creation, then gone.
   const [createdOtp, setCreatedOtp] = useState(null);
   const [otpCopied, setOtpCopied] = useState(false);
+
+  // Edit staff account (name/phone — email is the login identity, immutable).
+  const [editTarget, setEditTarget] = useState(null);
+  const [editDraft, setEditDraft] = useState({ name: '', phone: '' });
+  const [editError, setEditError] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   // Phase 5: MFA management (Admin only)
   const [mfaStep, setMfaStep] = useState(profile?.mfaEnabled ? 'enabled' : 'idle');
@@ -40,7 +46,20 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
     let active = true;
     api.get('/auth/admin-pin')
       .then((res) => { if (active) setPinConfigured(Boolean(res?.configured)); })
-      .catch(() => { if (active) setPinConfigured(false); });
+      .catch((err) => {
+        if (!active) return;
+        // MFA-gated: a 403 means this session hasn't verified the second
+        // factor (e.g. signed in with Google before the marker fix landed).
+        // Surface WHY instead of a silently dead "Add PIN" button.
+        if (err?.status === 403) {
+          setPinError(
+            err?.body?.code === 'mfa_challenge_required'
+              ? 'This session needs an MFA verification — sign out and sign back in with your email and password (complete the authenticator prompt), then set the PIN.'
+              : err?.body?.error || 'Not available in this session.'
+          );
+        }
+        setPinConfigured(false);
+      });
     return () => { active = false; };
   }, []);
 
@@ -175,6 +194,32 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
     }
   };
 
+  const startEditStaff = (staff) => {
+    setEditTarget(staff);
+    setEditDraft({ name: staff.name || '', phone: staff.phone || '' });
+    setEditError('');
+  };
+
+  const saveEditStaff = async () => {
+    if (!editDraft.name.trim()) {
+      setEditError('Name is required');
+      return;
+    }
+    setEditSaving(true);
+    setEditError('');
+    try {
+      await onUpdateStaff(editTarget.id, {
+        name: editDraft.name.trim(),
+        phone: editDraft.phone.trim() || null,
+      });
+      setEditTarget(null);
+    } catch (err) {
+      setEditError(err?.message || 'Failed to update staff account');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const inputClass = 'bg-gray-50 border border-gray-200/80 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:bg-white focus:border-gray-400';
 
   return (
@@ -238,7 +283,16 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
             </div>
           )}
 
-          {staffList.length === 0 ? (
+          {staffLoadError?.status === 403 ? (
+            <div className="flex items-start gap-2 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-800 font-medium">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span>
+                {staffLoadError?.body?.code === 'mfa_challenge_required'
+                  ? 'This session needs an MFA verification — sign out and sign back in with your email and password (complete the authenticator prompt), then reload this tab.'
+                  : staffLoadError?.body?.error || 'Staff list is unavailable in this session.'}
+              </span>
+            </div>
+          ) : staffList.length === 0 ? (
             <p className="text-sm text-gray-500 py-4">No staff accounts yet.</p>
           ) : (
             <div className="space-y-3">
@@ -257,6 +311,13 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
                     {staff.createdAt && (
                       <span className="text-[10px] text-gray-400 hidden sm:block">Added {new Date(staff.createdAt).toLocaleDateString()}</span>
                     )}
+                    <button
+                      onClick={() => startEditStaff(staff)}
+                      className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-2 rounded-full transition-colors"
+                      title={`Edit ${staff.name || staff.email}`}
+                    >
+                      <Pencil size={16} />
+                    </button>
                     <button
                       onClick={() => onRemoveStaff(staff)}
                       className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-full transition-colors"
@@ -436,6 +497,73 @@ export default function TeamTab({ staffList, onAddStaff, onRemoveStaff, profile 
           </div>
         )}
       </SettingsCard>
+
+      {/* Edit staff modal — portaled to document.body so it sits above every
+          component (the settings page wrapper animates transforms, which would
+          otherwise trap a fixed-position child in a stacking context). */}
+      {editTarget && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-gray-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setEditTarget(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-edit-staff" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 id="dialog-title-edit-staff" className="font-bold text-gray-900">Edit Staff Account</h4>
+                <p className="text-xs text-gray-500 mt-0.5 truncate">{editTarget.email}</p>
+              </div>
+              <button
+                onClick={() => setEditTarget(null)}
+                aria-label="Close edit staff dialog"
+                className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 -mt-1">Update their name or contact number. The email is their login and can't be changed.</p>
+            {editError && (
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
+                <AlertCircle size={16} /> {editError}
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Name</label>
+              <input
+                type="text"
+                value={editDraft.name}
+                onChange={(e) => { setEditDraft({ ...editDraft, name: e.target.value }); if (editError) setEditError(''); }}
+                className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
+                placeholder="Staff name"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Phone</label>
+              <input
+                type="text"
+                value={editDraft.phone}
+                onChange={(e) => { setEditDraft({ ...editDraft, phone: e.target.value }); if (editError) setEditError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveEditStaff(); }}
+                className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
+                placeholder="0917 123 4567"
+              />
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setEditTarget(null)}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveEditStaff}
+                disabled={editSaving || !editDraft.name.trim()}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {editSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Reset PIN modal — portaled to document.body so it sits above every
           component (the settings page wrapper animates transforms, which would

@@ -88,6 +88,11 @@ export const resetPasswordSchema = z.object({
     code: z.string().min(1).optional(),
     access_token: z.string().min(1).optional(),
     password: passwordSchema,
+    // Optional old-password confirmation: when the user still remembers their
+    // current password, it is verified server-side BEFORE the link is
+    // consumed. Blank/absent = the "I forgot it too" case — the single-use
+    // email link is the authorization instead.
+    currentPassword: z.string().optional(),
   }).superRefine((b, ctx) => {
     if (!b.token && !b.token_hash && !b.code && !b.access_token) {
       ctx.addIssue({
@@ -286,12 +291,21 @@ export async function changePassword(req: AuthenticatedRequest, res: Response, n
     if (!req.user) throw new AppError(401, 'Not authenticated');
     const { currentPassword, newPassword } = req.body;
     const profile = await prisma.profile.findUnique({ where: { id: req.user.id } });
-    if (!profile?.mustChangePassword) {
-      // Only the forced first-login flow uses this endpoint; regular password
-      // changes go through Supabase's reset-password flow instead.
-      throw new AppError(400, 'No password change is required for this account');
+    if (!profile) throw new AppError(401, 'Not authenticated');
+    if (profile.mustChangePassword) {
+      // Forced first-login flow: replace the one-time password.
+      await authService.changeOwnPassword(req.user.id, currentPassword, newPassword);
+      invalidateProfileCache(req.user.userId);
+      res.json({ message: 'Password updated successfully' });
+      return;
     }
-    await authService.changeOwnPassword(req.user.id, currentPassword, newPassword);
+    // Voluntary change from Settings: same proof (current password verified
+    // against Supabase) but without the flag, plus all other sessions are
+    // revoked so a changed password signs out every other device.
+    await authService.changeOwnPassword(req.user.id, currentPassword, newPassword, {
+      voluntary: true,
+      accessToken: getAccessTokenFromCookie(req),
+    });
     invalidateProfileCache(req.user.userId);
     res.json({ message: 'Password updated successfully' });
   } catch (err) {
@@ -378,6 +392,29 @@ export async function setAdminPin(req: AuthenticatedRequest, res: Response, next
     const { pin, password, oldPin } = req.body;
     await authService.setAdminPin(req.user.userId, pin, password, oldPin);
     res.json({ message: 'Discount PIN saved' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin edits a staff account's display details (name/phone). Email stays
+// fixed — it is the login identity and moving it would desync the Supabase
+// auth user. The admin's own password re-confirms the change.
+export const updateStaffSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).optional(),
+    phone: z.string().nullable().optional(),
+  }),
+});
+
+export async function updateStaff(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const staffId = req.params.id as string;
+    const profile = await authService.updateStaffAccount(req.user.id, staffId, req.body);
+    // Staff self-edits go through the cached profile path too.
+    clearProfileCache();
+    res.json(profile);
   } catch (err) {
     next(err);
   }
@@ -809,6 +846,18 @@ export async function oauthCallback(req: Request, res: Response, next: NextFunct
       token_type: tokenData.token_type ?? 'bearer',
       expires_in: tokenData.expires_in ?? null,
     });
+    // MFA continuity for admins who sign in with Google: the OAuth flow
+    // itself proves possession of the Google account, but our homegrown
+    // TOTP marker never gets minted because no TOTP challenge ran. Without
+    // the marker, requireMfaAdmin 403s every MFA-gated admin route (staff
+    // list, PIN, integrations) right after a Google login — the "settings
+    // not working" bug. Mint the marker for this access token (equivalent
+    // to a passed TOTP challenge) and trust this browser going forward.
+    const oauthUser = result.user as { mfaEnabled?: boolean; email?: string } | null;
+    if (oauthUser?.mfaEnabled && tokenData.access_token) {
+      setMfaVerifiedCookie(res, tokenData.access_token);
+      if (oauthUser.email) setMfaTrustedCookie(res, oauthUser.email);
+    }
     res.redirect(302, `${env.FRONTEND_URL.replace(/\/$/, '')}/`);
   } catch (err) {
     // User-facing OAuth errors (e.g. 409 "an account with this email already
@@ -843,17 +892,25 @@ export async function oauthDetails(req: Request, res: Response, next: NextFuncti
     }
 
      // Profile is now complete — set session cookies + clear pending flag.
-    // The refresh token from the callback is already in the rt_refresh cookie;
-    // read it so we preserve it (oauthGetOrCreateProfile doesn't return it).
-    const refreshToken = getRefreshTokenFromCookie(req);
-    setSessionCookies(res, {
-      access_token: accessToken,
-      refresh_token: refreshToken ?? null,
-      token_type: 'bearer',
-      expires_in: null,
-    });
-    clearOauthPendingCookie(res);
-    res.json({ user: result.user });
+     // The refresh token from the callback is already in the rt_refresh cookie;
+     // read it so we preserve it (oauthGetOrCreateProfile doesn't return it).
+     const refreshToken = getRefreshTokenFromCookie(req);
+     setSessionCookies(res, {
+       access_token: accessToken,
+       refresh_token: refreshToken ?? null,
+       token_type: 'bearer',
+       expires_in: null,
+     });
+     // Same MFA continuity as the OAuth callback: an MFA-enabled admin
+     // finishing the details form needs the verified marker or every
+     // MFA-gated admin route 403s for the rest of the session.
+     const detailUser = result.user as { mfaEnabled?: boolean; email?: string } | null;
+     if (detailUser?.mfaEnabled) {
+       setMfaVerifiedCookie(res, accessToken);
+       if (detailUser.email) setMfaTrustedCookie(res, detailUser.email);
+     }
+     clearOauthPendingCookie(res);
+     res.json({ user: result.user });
   } catch (err) {
     next(err);
   }

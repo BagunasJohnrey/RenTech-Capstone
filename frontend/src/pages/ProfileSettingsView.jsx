@@ -17,10 +17,13 @@ export default function ProfileSettingsView({
   role,
   profile,
   staffList,
+  staffLoadError,
   onAddStaff,
   onRemoveStaff,
+  onUpdateStaff,
   customerInfo,
   onUpdateCustomer,
+  onProfileUpdated,
   onRequestLogout,
 }) {
   // Active admin settings tab (General / Notifications / Integrations / …).
@@ -34,7 +37,13 @@ export default function ProfileSettingsView({
       </div>
 
       {/* Profile card */}
-      <ProfileHeader role={role} profile={profile} customerInfo={customerInfo} onUpdateCustomer={onUpdateCustomer} />
+      <ProfileHeader
+        role={role}
+        profile={profile}
+        customerInfo={customerInfo}
+        onUpdateCustomer={onUpdateCustomer}
+        onProfileUpdated={onProfileUpdated}
+      />
 
       {/* Customer-only settings */}
       {role === 'Customer' && (
@@ -51,7 +60,14 @@ export default function ProfileSettingsView({
           {adminSection === 'integrations' && <IntegrationsTab />}
           {adminSection === 'promotions' && <PromoCodesManager />}
           {adminSection === 'team' && (
-            <TeamTab staffList={staffList} onAddStaff={onAddStaff} onRemoveStaff={onRemoveStaff} profile={profile} />
+            <TeamTab
+              staffList={staffList}
+              staffLoadError={staffLoadError}
+              onAddStaff={onAddStaff}
+              onRemoveStaff={onRemoveStaff}
+              onUpdateStaff={onUpdateStaff}
+              profile={profile}
+            />
           )}
           {/* Help Guide — its own Settings tab (users get the portal Help page). */}
           {adminSection === 'help' && <HelpGuide role={role} />}

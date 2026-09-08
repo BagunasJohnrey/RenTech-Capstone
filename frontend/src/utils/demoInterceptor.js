@@ -174,6 +174,14 @@ function route(method, path, body) {
     staff = staff.filter((s) => s.id !== P(/^\/auth\/staff\/(.+)$/)[1]);
     return { value: { message: 'Staff removed (demo)' } };
   }
+  if (P(/^\/auth\/staff\/(.+)$/) && method === 'PUT') {
+    const id = P(/^\/auth\/staff\/(.+)$/)[1];
+    const it = staff.find((s) => s.id === id);
+    if (!it) return { status: 404, error: 'Staff account not found' };
+    Object.assign(it, body);
+    if (role === 'Staff') PROFILES.Staff = { ...PROFILES.Staff, ...body };
+    return { value: clone(it) };
+  }
   if (path === '/auth/change-password') return { value: { message: 'Password updated (demo)' } };
   if (path === '/auth/verify-admin') return { value: { verified: true, admin: { name: 'Mylene (Demo Admin)' } } };
   if (path === '/auth/admin-pin' && method === 'GET') return { value: { configured: false } };

@@ -3,7 +3,7 @@ import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { env } from '../config/env.js';
 import * as brevoService from './brevo.service.js';
-import type { Role } from '@prisma/client';
+import { Role, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 
 // Brevo email-token lifetimes: verification links last 24h, reset links 1h.
@@ -225,8 +225,16 @@ export async function oauthGetOrCreateProfile(
   // A profile may already exist (e.g., auto-created by a Supabase trigger or a
   // previous abandoned OAuth). Only treat it as "complete" if it has the
   // required fields; otherwise keep asking for details instead of logging in.
+  // Staff/Admin profiles are exempt from the customer details form — the
+  // customer signup fields (address, preferences) don't apply to them, and
+  // forcing a staff member through it would overwrite their role with
+  // 'Customer'. This is what lets a staff member sign in with Google using
+  // their staff email: Supabase links the Google identity to the same auth
+  // user (email match), and the profile resolves here without the customer
+  // onboarding detour.
   const existing = await prisma.profile.findUnique({ where: { userId: user.id } });
-  const isComplete = !!(existing && existing.name && existing.phone && existing.address);
+  const isStaffLike = !!(existing && (existing.role === 'Staff' || existing.role === 'Admin'));
+  const isComplete = isStaffLike || !!(existing && existing.name && existing.phone && existing.address);
   if (existing && isComplete) {
     return { user: existing, needsDetails: false };
   }
@@ -247,7 +255,9 @@ export async function oauthGetOrCreateProfile(
   const profileData = {
     userId: user.id,
     email,
-    role: 'Customer' as Role,
+    // Preserve the existing role (a Staff member finishing an old incomplete
+    // profile must not be silently demoted to Customer).
+    role: existing?.role ?? ('Customer' as Role),
     name: details!.name!,
     phone: details!.phone,
     address: details!.address,
@@ -331,17 +341,31 @@ export async function updateProfile(userId: string, data: {
 // keyboard is the intended recipient, not someone riding a stolen session.
 // After updating the Supabase credential, the flag is cleared so the account
 // becomes fully usable.
-export async function changeOwnPassword(userId: string, oldPassword: string, newPassword: string) {
+//
+// The same proof powers the voluntary Settings change for any logged-in
+// account (staff/admin/customer): currentPassword is verified against Supabase
+// before anything is written, and other sessions are revoked so a changed
+// password invalidates every device except this one.
+export async function changeOwnPassword(
+  userId: string,
+  oldPassword: string,
+  newPassword: string,
+  opts: { voluntary?: boolean; accessToken?: string } = {}
+) {
   const profile = await prisma.profile.findUnique({ where: { id: userId } });
   if (!profile) throw new AppError(401, 'Not authenticated');
 
-  // Verify the current (one-time) password before allowing the change.
+  // Verify the current password before allowing the change.
   const { error: verifyError } = await supabaseAdmin.auth.signInWithPassword({
     email: profile.email,
     password: oldPassword,
   });
   if (verifyError) {
     throw new AppError(401, 'Current password is incorrect');
+  }
+
+  if (oldPassword === newPassword) {
+    throw new AppError(400, 'Choose a different password from your current one');
   }
 
   const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
@@ -352,10 +376,24 @@ export async function changeOwnPassword(userId: string, oldPassword: string, new
     throw new AppError(400, 'Unable to change password. Please try again.');
   }
 
-  await prisma.profile.update({
-    where: { id: userId },
-    data: { mustChangePassword: false },
-  });
+  const patch: Prisma.ProfileUpdateInput = {};
+  if (profile.mustChangePassword) patch.mustChangePassword = false;
+  if (Object.keys(patch).length > 0) {
+    await prisma.profile.update({ where: { id: userId }, data: patch });
+  }
+
+  // Voluntary change (Settings): the password just rotated, so revoke every
+  // OTHER session — the current one (opts.accessToken) stays alive so the user
+  // isn't logged out mid-save. Supabase's `signOut(jwt, 'others')` invalidates
+  // all refresh tokens for this user except the session the token belongs to.
+  if (opts.voluntary && opts.accessToken) {
+    try {
+      await supabaseAdmin.auth.admin.signOut(opts.accessToken, 'others');
+    } catch {
+      // Best-effort: other sessions expire naturally when their access tokens
+      // lapse (refresh tokens rotate on password change).
+    }
+  }
 
   return { success: true };
 }
@@ -439,6 +477,43 @@ export async function listStaffAccounts() {
     where: { role: 'Staff' },
     select: { id: true, email: true, name: true, phone: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
+  });
+}
+
+// Edit a staff account's display details (name/phone). Two allowed callers:
+//  - an Admin editing any staff account from the Team tab
+//  - the staff member editing their own profile from Settings
+// Email is intentionally NOT editable here — it is the login identity shared
+// with the Supabase auth user, and changing it would desync auth from the
+// profile (and break the Google sign-in email match).
+export async function updateStaffAccount(callerId: string, staffId: string, data: {
+  name?: string;
+  phone?: string | null;
+}) {
+  const caller = await prisma.profile.findUnique({ where: { id: callerId } });
+  if (!caller) throw new AppError(401, 'Not authenticated');
+
+  const staff = await prisma.profile.findUnique({ where: { id: staffId } });
+  if (!staff || staff.role !== 'Staff') {
+    throw new AppError(404, 'Staff account not found');
+  }
+
+  const isSelf = caller.id === staff.id;
+  const isAdmin = caller.role === 'Admin';
+  if (!isSelf && !isAdmin) {
+    throw new AppError(403, 'Only admins can edit staff accounts');
+  }
+
+  const patch: { name?: string; phone?: string | null } = {};
+  if (data.name !== undefined) patch.name = data.name;
+  if (data.phone !== undefined) patch.phone = data.phone?.trim() || null;
+  if (Object.keys(patch).length === 0) {
+    throw new AppError(400, 'Nothing to update');
+  }
+
+  return prisma.profile.update({
+    where: { id: staffId },
+    data: patch,
   });
 }
 

@@ -1,17 +1,57 @@
 import { useState } from 'react';
-import { User, Pencil, Save, X, Phone, MapPin, Heart } from 'lucide-react';
+import { User, Pencil, Save, X, Phone, MapPin, Heart, Mail } from 'lucide-react';
+import { api } from '../../utils/api';
 import { ITEM_TYPES } from './constants';
 
-export default function ProfileHeader({ role, profile, customerInfo, onUpdateCustomer }) {
+export default function ProfileHeader({ role, profile, customerInfo, onUpdateCustomer, onProfileUpdated }) {
   const [editCustomer, setEditCustomer] = useState(false);
   const [localCustomer, setLocalCustomer] = useState(customerInfo || { name: '', contact: '', address: '', preferences: [], styleNotes: '' });
   const [saveMessage, setSaveMessage] = useState('');
+
+  // Staff/Admin self-edit (name/phone). Email is the login identity — read-only.
+  const [editStaff, setEditStaff] = useState(false);
+  const [staffDraft, setStaffDraft] = useState({ name: '', phone: '' });
+  const [staffError, setStaffError] = useState('');
+  const [staffSaving, setStaffSaving] = useState(false);
+  const [staffMsg, setStaffMsg] = useState('');
 
   const handleSaveCustomer = () => {
     onUpdateCustomer(localCustomer);
     setEditCustomer(false);
     setSaveMessage('Profile updated!');
     setTimeout(() => setSaveMessage(''), 2000);
+  };
+
+  const startStaffEdit = () => {
+    setStaffDraft({ name: profile?.name || '', phone: profile?.phone || '' });
+    setStaffError('');
+    setStaffMsg('');
+    setEditStaff(true);
+  };
+
+  const saveStaffProfile = async () => {
+    if (!staffDraft.name.trim()) {
+      setStaffError('Name is required');
+      return;
+    }
+    setStaffSaving(true);
+    setStaffError('');
+    try {
+      // PUT /auth/staff/:id allows the staff member to edit their own
+      // profile (admins can edit anyone's from the Team tab).
+      const updated = await api.put(`/auth/staff/${profile.id}`, {
+        name: staffDraft.name.trim(),
+        phone: staffDraft.phone.trim() || null,
+      });
+      setEditStaff(false);
+      setStaffMsg('Profile updated!');
+      setTimeout(() => setStaffMsg(''), 2500);
+      if (onProfileUpdated) onProfileUpdated(updated);
+    } catch (err) {
+      setStaffError(err?.message || 'Failed to update profile');
+    } finally {
+      setStaffSaving(false);
+    }
   };
 
   const inputClass = 'w-full p-3 bg-white rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/10 transition-all';
@@ -176,18 +216,77 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
               </div>
             </div>
           )
-        ) : (
-          /* ---- STAFF / ADMIN ---- */
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        ) : editStaff ? (
+          /* ---- STAFF/ADMIN EDIT MODE ---- */
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+              <div className="w-10 h-10 rounded-full bg-[#bf4a53]/10 flex items-center justify-center shrink-0">
+                <Pencil size={16} className="text-[#bf4a53]" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-gray-900">Editing Profile</p>
+                <p className="text-[11px] text-gray-400">Your email is your login and can't be changed</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Full Name</label>
+                <input type="text" value={staffDraft.name} onChange={(e) => setStaffDraft({ ...staffDraft, name: e.target.value })} className={inputClass} placeholder="Full Name" />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Phone</label>
+                <input type="text" value={staffDraft.phone} onChange={(e) => setStaffDraft({ ...staffDraft, phone: e.target.value })} className={inputClass} placeholder="Contact Number" />
+              </div>
+            </div>
+
             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
               <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
-                <User size={15} className="text-gray-400" />
+                <Mail size={15} className="text-gray-400" />
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email</p>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email (login — read-only)</p>
                 <p className="text-sm font-semibold text-gray-900 truncate">{profile?.email || '—'}</p>
               </div>
             </div>
+
+            {staffError && <p className="text-red-500 text-xs font-semibold text-right">{staffError}</p>}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button onClick={() => setEditStaff(false)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 border border-gray-200 rounded-full text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors">
+                <X size={15} /> Cancel
+              </button>
+              <button onClick={saveStaffProfile} disabled={staffSaving}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20 disabled:opacity-50">
+                <Save size={15} /> {staffSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ---- STAFF/ADMIN VIEW MODE ---- */
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                  <User size={15} className="text-gray-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Name</p>
+                  <p className="text-sm font-semibold text-gray-900 truncate">{profile?.name || '—'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                  <Mail size={15} className="text-gray-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email</p>
+                  <p className="text-sm font-semibold text-gray-900 truncate">{profile?.email || '—'}</p>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
               <div className="w-9 h-9 rounded-lg bg-white border border-gray-100 flex items-center justify-center shrink-0">
                 <Phone size={15} className="text-gray-400" />
@@ -196,6 +295,18 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Phone</p>
                 <p className="text-sm font-semibold text-gray-900 truncate">{profile?.phone || '—'}</p>
               </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              {staffMsg ? (
+                <p className="text-sm text-emerald-600 font-bold">{staffMsg}</p>
+              ) : <span />}
+              <button
+                onClick={startStaffEdit}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20"
+              >
+                <Pencil size={15} /> Edit Profile
+              </button>
             </div>
           </div>
         )}

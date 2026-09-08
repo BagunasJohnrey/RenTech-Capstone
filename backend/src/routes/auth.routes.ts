@@ -72,6 +72,11 @@ router.put('/admin-pin', authMiddleware, requireRole(Role.Admin), requireMfaAdmi
 router.get('/admin-pin', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.adminPinStatus);
 router.get('/staff', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.listStaff);
 router.post('/staff', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, validate(authController.createStaffSchema), authController.createStaff);
+// Edit a staff account's name/phone. Allowed for: the Admin (Team tab, MFA
+// enforced like every other staff mutation) or the staff member editing their
+// own profile (enforced inside the controller — an admin token is NOT
+// required, so staff self-service never trips the admin MFA gate).
+router.put('/staff/:id', authMiddleware, requireRole(Role.Admin, Role.Staff), requireMfaAdmin, validate(authController.updateStaffSchema), authController.updateStaff);
 router.delete('/staff/:id', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.removeStaff);
 
 export default router;

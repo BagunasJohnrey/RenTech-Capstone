@@ -5,6 +5,8 @@ import cookieParser from 'cookie-parser';
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import { supabaseAdmin } from '../src/config/supabase.js';
+import { prisma } from '../src/config/database.js';
+import * as authService from '../src/services/auth.service.js';
 import { buildMfaVerifiedValue, buildMfaTrustedValue, isMfaTrustedCookie } from '../src/middleware/cookies.js';
 
 // Phase 5: Mock the MFA service before imports so the controller picks it up.
@@ -1369,7 +1371,189 @@ describe('Staff one-time password + forced first-login change', () => {
       .set('Origin', 'http://localhost:5173')
       .send({ currentPassword: 'Onetimepass123!', newPassword: 'Newstaffpass456!' });
 
+    // The voluntary path now succeeds (Settings change-password) — it is no
+    // longer a 400 no-op. The current password is verified against Supabase.
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('Password updated');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-staff-id-456',
+      { password: 'Newstaffpass456!' },
+    );
+  });
+});
+
+// Voluntary password change from Settings: any logged-in account (Staff,
+// Admin, Customer) can rotate its own password. The current password must be
+// re-verified first — a stolen session can't lock the real user out.
+describe('Voluntary change-password (Settings)', () => {
+  it('verifies the current password and updates it for a regular account', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer valid-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'OldPassword123!', newPassword: 'NewPassword456!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('Password updated');
+    // Supabase credential updated for the resolved auth user…
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'NewPassword456!' },
+    );
+    // …and the old password was verified against Supabase FIRST.
+    expect(supabaseAdmin.auth.signInWithPassword).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'test@example.com', password: 'OldPassword123!' }),
+    );
+  });
+
+  it('rejects the wrong current password', async () => {
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null },
+      error: { message: 'Invalid login credentials' },
+    } as never);
+
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer valid-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'WrongPassword123!', newPassword: 'NewPassword456!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('incorrect');
+    // Nothing was written.
+    expect(supabaseAdmin.auth.admin.updateUserById).not.toHaveBeenCalledWith(
+      'auth-user-id-123',
+      expect.anything(),
+    );
+  });
+
+  it('rejects reusing the same password', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer valid-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'SamePassword123!', newPassword: 'SamePassword123!' });
+
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain('No password change is required');
+    expect(res.body.error).toContain('different');
+  });
+
+  it('still honors the forced first-login flag path (clears mustChangePassword)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer staff-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Onetimepass123!', newPassword: 'Newstaffpass456!' });
+
+    expect(res.status).toBe(200);
+    expect(prisma.profile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { mustChangePassword: false } }),
+    );
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+});
+
+// Staff profile editing: admins edit any staff account from the Team tab;
+// staff edit their own from Settings. Email is immutable.
+describe('PUT /api/auth/staff/:id (edit staff profile)', () => {
+  const adminAuth = { Authorization: 'Bearer admin-token' };
+  const staffAuth = { Authorization: 'Bearer staff-token' };
+
+  // Reads the most recent prisma.profile.update call's data payload.
+  const lastProfileUpdateData = () => {
+    const calls = vi.mocked(prisma.profile.update).mock.calls;
+    return (calls[calls.length - 1] as any)?.[0]?.data ?? {};
+  };
+
+  it('admin edits a staff account name and phone', async () => {
+    const res = await request(app)
+      .put('/api/auth/staff/staff-id-456')
+      .set(adminAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ name: 'Renamed Staff', phone: '09179999999' });
+
+    expect(res.status).toBe(200);
+    expect(lastProfileUpdateData()).toMatchObject({
+      name: 'Renamed Staff',
+      phone: '09179999999',
+    });
+  });
+
+  it('staff edits their own profile', async () => {
+    const res = await request(app)
+      .put('/api/auth/staff/staff-id-456')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ phone: '09178888888' });
+
+    expect(res.status).toBe(200);
+    expect(lastProfileUpdateData()).toMatchObject({ phone: '09178888888' });
+  });
+
+  it('staff cannot edit ANOTHER staff account (only self or admin)', async () => {
+    // staff-token resolves staff-id-456; target a different staff profile id.
+    const res = await request(app)
+      .put('/api/auth/staff/some-other-staff-profile')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ name: 'Nope' });
+
+    expect(res.status).toBe(404); // unknown profile id → 404 before the self-check
+  });
+
+  it('customer cannot edit staff accounts', async () => {
+    const res = await request(app)
+      .put('/api/auth/staff/staff-id-456')
+      .set('Authorization', 'Bearer customer-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ name: 'Nope' });
+
+    expect(res.status).toBe(403);
+  });
+});
+
+// Google sign-in for staff: a Staff/Admin profile resolves as complete on
+// OAuth (no customer-details detour, no role demotion) — this is what lets
+// staff sign in with Google using their staff email.
+describe('OAuth staff sign-in (email match)', () => {
+  it('treats an existing Staff profile as complete (no details form, role kept)', async () => {
+    // Simulate Google returning the staff auth user (Supabase linked the
+    // Google identity to the same account by email).
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'auth-staff-id-456', email: 'staff@example.com' } },
+      error: null,
+    } as never);
+
+    const result = await authService.oauthGetOrCreateProfile('staff-token');
+    expect(result.needsDetails).toBe(false);
+    expect(result.user.role).toBe('Staff');
+  });
+
+  it('still sends new customer emails to the details form', async () => {
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'brand-new-oauth-user', email: 'brand.new@example.com' } },
+      error: null,
+    } as never);
+
+    const result = await authService.oauthGetOrCreateProfile('any-token');
+    expect(result.needsDetails).toBe(true);
   });
 });

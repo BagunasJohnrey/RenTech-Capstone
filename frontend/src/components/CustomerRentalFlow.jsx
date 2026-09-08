@@ -310,14 +310,30 @@ export default function CustomerRentalFlow({
         // Create the booking first so we have a real transaction id.
         const created = await onSubmitBooking(buildBookingData());
         // FIX A: create a real PayMongo payment intent, then open the drop-in UI.
+        // Transient failures (server cold start / network blip) get ONE retry
+        // before we give up — rolling back a committed booking over a hiccup
+        // is what made "Confirm Payment" glitch until a refresh fixed it.
         let intent;
         try {
           intent = await createIntent({ transactionId: created.id, amount: Number(downpaymentAmount) });
         } catch (payErr) {
-          setConfirmError(payErr?.message || 'Payment failed. Please try again.');
-          // Roll back the committed booking so we don't leave an orphaned rental.
-          if (onCancelBooking) await onCancelBooking(created);
-          return;
+          const transient = !payErr?.status || payErr?.status >= 500 || payErr?.name === 'TimeoutError';
+          if (transient) {
+            try {
+              await new Promise((r) => setTimeout(r, 1200));
+              intent = await createIntent({ transactionId: created.id, amount: Number(downpaymentAmount) });
+            } catch (retryErr) {
+              setConfirmError(retryErr?.message || payErr?.message || 'Payment failed. Please try again.');
+              if (onCancelBooking) await onCancelBooking(created);
+              return;
+            }
+          } else {
+            // Definitive rejection (403/400/…): retrying can't help.
+            setConfirmError(payErr?.message || 'Payment failed. Please try again.');
+            // Roll back the committed booking so we don't leave an orphaned rental.
+            if (onCancelBooking) await onCancelBooking(created);
+            return;
+          }
         }
         // No real gateway configured yet: simulate a successful payment so the
         // booking can complete end-to-end. When PAYMONGO_SECRET_KEY is set, the
