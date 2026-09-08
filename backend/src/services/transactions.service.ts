@@ -8,7 +8,7 @@ import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
-import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail } from './brevo.service.js';
+import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { getBusinessRules, getFeatureFlags } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
@@ -208,6 +208,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           measurements: data.measurements as Prisma.InputJsonValue | undefined,
           notes: data.notes ?? null,
           conditionPhoto: data.conditionPhoto ?? null,
+          // Auto-flag alteration when the customer provides custom measurements
+          // (body sizes that differ from the garment's base size). Staff can
+          // override later; manual-size bookings skip this entirely.
+          alterationStatus: data.measurements && Object.keys(data.measurements).length > 0 ? 'pending' : null,
         },
         include: {
           customer: { select: { id: true, name: true, email: true } },
@@ -495,19 +499,20 @@ export async function processReturn(
   return { ...updated, fees };
 }
 
-// EDIT booking details (dates + notes only) without cancel+re-book. Reuses the
-// same overlap check as createRental so an edit can't collide with another
-// booking, and runs read+check+update in one Serializable transaction.
+// EDIT booking details (dates + notes + alteration status) without
+// cancel+re-book. Reuses the same overlap check as createRental so an edit
+// can't collide with another booking, and runs read+check+update in one
+// Serializable transaction.
 export async function updateTransaction(
   transactionId: string,
   performedById: string,
-  patch: { rentalDate?: string; dueDate?: string; notes?: string }
+  patch: { rentalDate?: string; dueDate?: string; notes?: string; alterationStatus?: 'pending' | 'ready' | null }
 ) {
   const existing = await prisma.transaction.findUnique({
     where: { id: transactionId },
     select: {
       id: true, itemId: true, status: true, rentalDate: true, dueDate: true, notes: true,
-      customerId: true, item: { select: { id: true, name: true } },
+      alterationStatus: true, customerId: true, item: { select: { id: true, name: true } },
     },
   });
   if (!existing) throw new AppError(404, 'Transaction not found');
@@ -522,6 +527,13 @@ export async function updateTransaction(
   if (nextRental.getTime() > nextDue.getTime()) {
     throw new AppError(400, 'Pickup date must be on or before the due date');
   }
+  if (patch.alterationStatus !== undefined && patch.alterationStatus !== null &&
+      patch.alterationStatus !== 'pending' && patch.alterationStatus !== 'ready') {
+    throw new AppError(400, 'Invalid alteration status');
+  }
+  const datesChanged =
+    nextRental.getTime() !== existing.rentalDate.getTime() ||
+    nextDue.getTime() !== existing.dueDate.getTime();
 
   let updated;
   try {
@@ -543,6 +555,7 @@ export async function updateTransaction(
           rentalDate: nextRental,
           dueDate: nextDue,
           notes: patch.notes !== undefined ? patch.notes : existing.notes,
+          ...(patch.alterationStatus !== undefined ? { alterationStatus: patch.alterationStatus } : {}),
         },
         include: {
           customer: { select: { id: true, name: true, email: true } },
@@ -563,9 +576,40 @@ export async function updateTransaction(
     entity: 'transaction',
     entityId: transactionId,
     performedById,
-    oldValue: { rentalDate: existing.rentalDate, dueDate: existing.dueDate, notes: existing.notes },
-    newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes },
+    oldValue: { rentalDate: existing.rentalDate, dueDate: existing.dueDate, notes: existing.notes, alterationStatus: existing.alterationStatus ?? null },
+    newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes, alterationStatus: (updated as { alterationStatus?: string | null }).alterationStatus ?? null },
   });
+
+  // Staff moved the dates (e.g. alteration running late) — tell the customer
+  // in-app + by email (best-effort, never blocks the edit). Alteration-only
+  // flips stay silent to avoid spamming for tailor progress.
+  if (datesChanged) {
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    try {
+      await createNotification({
+        profileId: existing.customerId,
+        transactionId,
+        type: 'booking_updated',
+        title: 'Booking dates updated',
+        message: `Your rental of "${existing.item.name}" moved to pickup ${fmt(nextRental)}, return by ${fmt(nextDue)}.`,
+      });
+    } catch { /* notification is non-critical */ }
+    try {
+      const customerProfile = await prisma.profile.findUnique({ where: { id: existing.customerId } });
+      const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+      const wantsEmail = !prefs || prefs.email !== false;
+      if (customerProfile?.email && wantsEmail) {
+        if (isSendableEmail(customerProfile.email)) {
+          await sendEmail({
+            to: customerProfile.email,
+            subject: `Booking dates updated: ${existing.item.name} — RenTech`,
+            html: `<p>Hi ${customerProfile.name},</p><p>Your rental of "<strong>${existing.item.name}</strong>" was moved to <strong>pickup ${fmt(nextRental)}</strong>, <strong>return by ${fmt(nextDue)}</strong>.</p><p>RenTech · Balayan, Batangas</p>`,
+            text: `Hi ${customerProfile.name},\n\nYour rental of "${existing.item.name}" was moved to pickup ${fmt(nextRental)}, return by ${fmt(nextDue)}.\n\nRenTech · Balayan, Batangas`,
+          });
+        }
+      }
+    } catch { /* email is non-critical */ }
+  }
 
   clearDataCache();
 
@@ -663,7 +707,8 @@ export async function releaseRental(
   transactionId: string,
   processedById: string,
   releasePhoto?: string,
-  notes?: string
+  notes?: string,
+  needsAlteration?: boolean
 ) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -674,6 +719,14 @@ export async function releaseRental(
   if (tx.status === TransactionStatus.Returned) throw new AppError(400, 'Transaction already returned');
   if (tx.status === TransactionStatus.Cancelled) throw new AppError(400, 'Transaction was cancelled');
 
+  // Staff discovered the garment doesn't fit during release — flag it
+  // immediately so the customer sees the pill and gets notified.
+  const alterationPatch = needsAlteration === true
+    ? { alterationStatus: 'pending' as string | null }
+    : needsAlteration === false
+      ? { alterationStatus: null as string | null }
+      : {};
+
   const updated = await prisma.transaction.update({
     where: { id: transactionId },
     data: {
@@ -683,6 +736,7 @@ export async function releaseRental(
       releasePhoto: releasePhoto ?? null,
       notes: notes ?? undefined,
       processedById,
+      ...alterationPatch,
     },
   });
 
@@ -714,6 +768,20 @@ export async function releaseRental(
       );
     }
   } catch { /* email is non-critical */ }
+
+  // Staff flagged an alteration during release — notify the customer in-app
+  // so they know to come back for fitting before using the garment.
+  if (needsAlteration === true) {
+    try {
+      await createNotification({
+        profileId: tx.customerId,
+        transactionId,
+        type: 'alteration_needed',
+        title: 'Alteration needed',
+        message: `Your "${tx.item.name}" needs fitting before pickup. The boutique will let you know when it's ready.`,
+      });
+    } catch { /* notification is non-critical */ }
+  }
 
   clearDataCache();
 

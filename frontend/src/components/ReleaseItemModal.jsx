@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Camera, Package, User, Calendar } from 'lucide-react';
+import { X, Camera, Package, User, Calendar, Scissors } from 'lucide-react';
 import { api } from '../utils/api';
 import { storageService } from '../services';
 import { customerLabel, itemLabel } from '../utils/format';
@@ -11,6 +11,7 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
   const [photoFile, setPhotoFile] = useState(null);
   const [photoUrl, setPhotoUrl] = useState('');
   const [notes, setNotes] = useState('');
+  const [needsAlteration, setNeedsAlteration] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState('');
 
@@ -44,6 +45,7 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
       const updated = await api.put(`/transactions/${transaction.id}/release`, {
         releasePhoto: path,
         notes,
+        needsAlteration,
       });
       onReleased(updated);
       onClose();
@@ -141,6 +143,30 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
               rows={2}
               className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-blue-400 resize-none"
             />
+          </div>
+
+          <div className="bg-amber-50 border border-amber-200/70 rounded-2xl p-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <div className="relative mt-0.5">
+                <input
+                  type="checkbox"
+                  checked={needsAlteration}
+                  onChange={(e) => setNeedsAlteration(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-6 rounded-full transition-colors ${needsAlteration ? 'bg-amber-500' : 'bg-gray-300'}`}>
+                  <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${needsAlteration ? 'translate-x-4' : ''}`} />
+                </div>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                  <Scissors size={14} className="text-amber-600" /> Needs alteration
+                </p>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  The garment doesn't fit — customer will need to come back for fitting before using it.
+                </p>
+              </div>
+            </label>
           </div>
 
           {error && (

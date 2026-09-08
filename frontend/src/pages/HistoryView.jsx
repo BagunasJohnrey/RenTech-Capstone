@@ -345,6 +345,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                         <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
                           {tx.status || '—'}
                         </span>
+                        {tx.alterationStatus && (
+                          <span className={`ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                            {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4 font-bold text-gray-900 text-right">
                         {formatCurrency(tx.rentalFee ?? tx.amount)}
@@ -505,6 +510,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     {tx.status || '—'}
                   </span>
                 </div>
+                {tx.alterationStatus && (
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                    {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                  </span>
+                )}
 
                 {role !== 'Customer' && (
                   <p className="text-sm text-gray-700 min-w-0">

@@ -109,6 +109,9 @@ model Transaction {
   overdueEscalationSent Boolean     @default(false) @map("overdue_escalation_sent")
   damageReason    String?           @map("damage_reason")
   notes           String?
+  // Garment alteration workflow: null = no alteration needed,
+  // 'pending' = with tailor, 'ready' = fitted, customer may pick up.
+  alterationStatus String?          @map("alteration_status")
   size            String?           @map("size")
   measurements    Json?             @map("measurements")
   paymentIntentId String?           @map("payment_intent_id")
