@@ -16,6 +16,15 @@ function readCache(role) {
   return hit.data;
 }
 
+// Poll cadence for the live surfaces (due/overdue/cleaning change as staff
+// work). The 10-min SWR cache above stays as the instant-paint fallback.
+const POLL_MS = 45_000;
+
+function poll(fn) {
+  fn();
+  return setInterval(fn, POLL_MS);
+}
+
 // Server-authoritative today-digest (due/overdue/cleaning) — see readCache for
 // the SWR behavior. Falls back to null so callers can keep their local
 // derivation when nothing has been fetched yet this session.
@@ -25,13 +34,16 @@ export function useTodayTasks(role) {
   useEffect(() => {
     if (role !== 'Admin' && role !== 'Staff') return;
     let active = true;
-    api.get('/dashboard/today')
-      .then((d) => {
-        cache.set(role, { data: d, at: Date.now() });
-        if (active) setData(d);
-      })
-      .catch(() => {});
-    return () => { active = false; };
+    const fetchDigest = () => {
+      api.get('/dashboard/today')
+        .then((d) => {
+          cache.set(role, { data: d, at: Date.now() });
+          if (active) setData(d);
+        })
+        .catch(() => {});
+    };
+    const id = poll(fetchDigest);
+    return () => { active = false; clearInterval(id); };
   }, [role]);
 
   return data;
@@ -54,13 +66,16 @@ export function useKpis(role) {
   useEffect(() => {
     if (role !== 'Admin') return;
     let active = true;
-    api.get('/dashboard/kpis')
-      .then((d) => {
-        kpisCache.set(role, { data: d, at: Date.now() });
-        if (active) setData(d);
-      })
-      .catch(() => {});
-    return () => { active = false; };
+    const fetchKpis = () => {
+      api.get('/dashboard/kpis')
+        .then((d) => {
+          kpisCache.set(role, { data: d, at: Date.now() });
+          if (active) setData(d);
+        })
+        .catch(() => {});
+    };
+    const id = poll(fetchKpis);
+    return () => { active = false; clearInterval(id); };
   }, [role]);
 
   return data;

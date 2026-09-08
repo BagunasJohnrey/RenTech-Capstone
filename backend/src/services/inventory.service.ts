@@ -102,12 +102,10 @@ export async function getItem(id: number) {
       effectiveStatus = activeTx.status === 'Overdue' ? 'Overdue' : activeTx.status === 'Reserved' ? 'Reserved' : 'Rented';
     } else if (item.status === 'Rented' || item.status === 'Reserved') {
       effectiveStatus = 'Available';
-    } else if (item.status === 'Cleaning') {
-      const recentReturn = await prisma.transaction.findFirst({
-        where: { itemId: item.id, status: 'Returned', updatedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
-      });
-      if (!recentReturn) effectiveStatus = 'Available';
     }
+    // 'Cleaning' is intentionally left as-is (same as listItems): staff
+    // manually flip the item back to Available once cleaning is finished —
+    // no automatic change, so single-item and list views always agree.
   }
 
   const { transactions, ...rest } = item;
