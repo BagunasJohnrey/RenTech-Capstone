@@ -19,6 +19,15 @@ const customStyles = `
   .hide-scrollbar::-webkit-scrollbar { display: none; }
   .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+  /* Receipt printing — only .print-area content reaches the paper; the
+     app shell, modal chrome and .no-print buttons stay out. */
+  @media print {
+    body * { visibility: hidden; }
+    .print-area, .print-area * { visibility: visible; }
+    .print-area { position: absolute; left: 0; top: 0; width: 100%; }
+    .no-print { display: none !important; }
+  }
+
   /* Transition animations */
   .page-enter { animation: fadeSlideUp 0.4s ease-out; }
   .modal-enter { animation: modalIn 0.3s ease-out; }
