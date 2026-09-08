@@ -168,7 +168,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Name</p>
-                    <p className="text-sm font-semibold text-gray-900 truncate">{customerInfo.name}</p>
+                    <p className="text-sm font-semibold text-gray-900 break-words">{customerInfo.name}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
@@ -177,7 +177,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contact</p>
-                    <p className="text-sm font-semibold text-gray-900 truncate">{customerInfo.contact}</p>
+                    <p className="text-sm font-semibold text-gray-900 break-words">{customerInfo.contact}</p>
                   </div>
                 </div>
               </div>
@@ -188,7 +188,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                 </div>
                 <div className="min-w-0">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Address</p>
-                  <p className="text-sm font-semibold text-gray-900 truncate">{customerInfo.address}</p>
+                  <p className="text-sm font-semibold text-gray-900 break-words">{customerInfo.address}</p>
                 </div>
               </div>
 

@@ -140,8 +140,9 @@ export default function AppLayout({
                 alt="Profile"
                 className="w-8 h-8 rounded-full object-cover border border-gray-200"
               />
-              {/* Mobile role / name display */}
-              <span className="text-sm font-bold text-gray-800 truncate max-w-[120px]">
+              {/* Mobile role / name display — full name always visible, wraps to
+                  a second line instead of cropping */}
+              <span className="text-sm font-bold text-gray-800 leading-tight break-words max-w-[45vw]">
                 {viewRole === 'Customer' ? (customerInfo?.name || 'Customer') : viewRole}
               </span>
             </div>

@@ -29,7 +29,7 @@ export default function Sidebar({ role, activeTab, setActiveTab, navItems, onReq
         <img src="/RenTech.png" alt="" className="w-10 h-10 rounded-full object-cover border-2 border-gray-200 shrink-0" />
         {!collapsed && (
           <div className="min-w-0 flex-1">
-            <h1 className="font-bold text-sm tracking-tight text-gray-900 truncate">{displayName}</h1>
+            <h1 className="font-bold text-sm tracking-tight text-gray-900 leading-tight break-words">{displayName}</h1>
             <p className="text-[10px] text-gray-500">{role}</p>
           </div>
         )}
