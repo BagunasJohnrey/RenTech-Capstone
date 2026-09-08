@@ -72,6 +72,66 @@ describe('GET /api/dashboard/forecast', () => {
     expect(findManyArg.where.status.in).toContain('Cancelled');
   });
 
+  it('should include 3 forward projections and per-category splits', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // period=4 → distinct cache key from the test above (no shared-cache flakiness).
+    const monthsAgo = (n: number) => {
+      const d = new Date();
+      d.setMonth(d.getMonth() - n);
+      d.setDate(10);
+      return d;
+    };
+    const rows: { createdAt: Date; itemId: number }[] = [];
+    for (let i = 0; i < 10; i++) rows.push({ createdAt: monthsAgo(3), itemId: 1 });
+    for (let i = 0; i < 15; i++) rows.push({ createdAt: monthsAgo(2), itemId: 1 });
+    for (let i = 0; i < 12; i++) rows.push({ createdAt: monthsAgo(1), itemId: 2 });
+    for (let i = 0; i < 18; i++) rows.push({ createdAt: monthsAgo(0), itemId: 2 });
+    prisma.transaction.findMany.mockResolvedValueOnce(rows);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([
+      { id: 1, category: 'Gown' },
+      { id: 2, category: 'Suit' },
+    ]);
+
+    const res = await request(app)
+      .get('/api/dashboard/forecast?period=4')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    // sma(10,15,12,18 @4) = [null,null,null,13.75] → flat projection of 13.8 (1dp).
+    expect(res.body.projections).toHaveLength(3);
+    expect(res.body.projections[0].value).toBe(13.8);
+    expect(res.body.projections[0]).toHaveProperty('label');
+    const cats = (res.body.byCategory as { category: string }[]).map((c) => c.category);
+    expect(cats).toContain('Gown');
+    expect(cats).toContain('Suit');
+    const gown = (res.body.byCategory as any[]).find((c) => c.category === 'Gown');
+    const suit = (res.body.byCategory as any[]).find((c) => c.category === 'Suit');
+    expect(gown.trend).toBe('flat'); // Gown [10,15,0,0]: latest 0 vs prev 0
+    expect(suit.trend).toBe('up'); // Suit [0,0,12,18]: latest 18 vs prev 12
+  });
+
+  it('should return weekly buckets with granularity=weekly', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const daysAgo = (n: number) => {      const d = new Date();
+      d.setDate(d.getDate() - n);
+      return d;
+    };
+    prisma.transaction.findMany.mockResolvedValueOnce([
+      { createdAt: daysAgo(2), itemId: 1 },
+      { createdAt: daysAgo(9), itemId: 1 },
+    ]);
+
+    const res = await request(app)
+      .get('/api/dashboard/forecast?granularity=weekly')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.granularity).toBe('weekly');
+    expect(res.body.labels).toHaveLength(12);
+    expect(res.body.counts).toHaveLength(12);
+    expect(res.body.projections).toHaveLength(3);
+  });
+
   it('should reject for staff', async () => {
     const res = await request(app)
       .get('/api/dashboard/forecast')

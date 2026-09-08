@@ -57,7 +57,8 @@ export async function getForecast(req: AuthenticatedRequest, res: Response, next
     // unbounded aggregation work.
     const raw = Number(req.query.period);
     const period = Number.isFinite(raw) && raw >= 1 && raw <= 12 ? Math.floor(raw) : 3;
-    const data = await dashboardService.getForecast(period);
+    const granularity = String(req.query.granularity || '').toLowerCase() === 'weekly' ? 'weekly' : 'monthly';
+    const data = await dashboardService.getForecast(period, granularity);
     res.json(data);
   } catch (err) {
     next(err);
