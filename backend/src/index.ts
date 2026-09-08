@@ -184,6 +184,19 @@ app.listen(env.PORT, () => {
     daily.unref?.();
   }, 5 * 60 * 1000);
   retentionStart.unref?.();
+
+  // Keep Render free tier alive: ping the health endpoint every 8 minutes so
+  // the server never sleeps. Only needed in production (dev is always warm).
+  if (env.NODE_ENV === 'production') {
+    const keepAlive = setInterval(async () => {
+      try {
+        const host = process.env.RENDER_INTERNAL_HOSTNAME || '127.0.0.1';
+        const port = env.PORT;
+        await fetch(`http://${host}:${port}/api/health`);
+      } catch { /* self-ping — best effort */ }
+    }, 8 * 60 * 1000);
+    keepAlive.unref?.();
+  }
 });
 
 export default app;

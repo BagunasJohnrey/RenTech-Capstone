@@ -107,7 +107,18 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setError('');
     setLoading(true);
     try {
-      const result = await onLogin(email, password);
+      let result;
+      try {
+        result = await onLogin(email, password);
+      } catch (firstErr) {
+        // Cold-start race: the backend body parser may not be ready on the
+        // very first request after sleep. One retry after 2s fixes it;
+        // transient 503s (Render waking up) also benefit from the retry.
+        const retryable = firstErr?.status === 400 || firstErr?.status === 503;
+        if (!retryable) throw firstErr;
+        await new Promise(r => setTimeout(r, 2000));
+        result = await onLogin(email, password);
+      }
        // W2.7: If MFA is required, the backend already stored the challenge
       // tokens in the rt_mfa_pending httpOnly cookie. We just show the TOTP prompt.
       if (result?.requiresMfa) {
