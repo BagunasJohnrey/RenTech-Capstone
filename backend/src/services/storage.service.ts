@@ -2,7 +2,7 @@ import { supabaseAdmin } from '../config/supabase.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { compressImage, coerceExtension } from '../utils/imageCompress.js';
 
-const BUCKET_NAME = 'rentech-images';
+const BUCKET_NAME = process.env.STORAGE_BUCKET || 'rentech-images';
 const ALLOWED_MIME = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const FILE_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
 
