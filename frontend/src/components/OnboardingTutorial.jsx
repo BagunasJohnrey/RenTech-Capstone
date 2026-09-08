@@ -10,7 +10,7 @@ const customerSteps = [
   {
     icon: Calendar, title: 'Select Dates & Book',
     desc: 'Choose your pickup date and event date. The item must be picked up before your event.',
-    detail: 'Return is due the day after your event. A 50% downpayment secures your booking.',
+    detail: 'Return is due the day after your event. A minimum downpayment secures your booking.',
   },
   {
     icon: User, title: 'Enter Your Details',

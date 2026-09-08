@@ -29,7 +29,7 @@ export const TERMS_SECTIONS = [
     id: 'booking',
     title: '4. Booking, Downpayment & Payment',
     paragraphs: [
-      'A booking is confirmed only when the required downpayment (at least 50% of the rental fee) is received and a confirmation is issued by the platform. The remaining balance is payable at pickup. Payments are processed through PayMongo (GCash and credit card) or in-store. Promotional codes, sale prices, and fees shown at checkout are final at the time of booking. In the event of a pricing error, the boutique reserves the right to correct it before the rental is handed over.',
+      'A booking is confirmed only when the required downpayment (minimum ₱200) is received and a confirmation is issued by the platform. The remaining balance is payable at pickup. Payments are processed through PayMongo (GCash and credit card) or in-store. Promotional codes, sale prices, and fees shown at checkout are final at the time of booking. In the event of a pricing error, the boutique reserves the right to correct it before the rental is handed over.',
     ],
   },
   {

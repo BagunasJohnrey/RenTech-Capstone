@@ -287,3 +287,27 @@ export async function getUpcomingReturns(req: AuthenticatedRequest, res: Respons
     next(err);
   }
 }
+
+export const recordPaymentSchema = z.object({
+  body: z.object({
+    amount: z.number().positive(),
+    method: z.enum(['cash', 'gcash', 'card']),
+    notes: z.string().optional(),
+  }),
+});
+
+export async function recordPayment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const result = await transactionService.recordPayment(
+      String(req.params.id),
+      req.user.id,
+      req.body.amount,
+      req.body.method,
+      req.body.notes,
+    );
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+}

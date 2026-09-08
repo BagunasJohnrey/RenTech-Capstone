@@ -107,14 +107,11 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     throw new AppError(400, `Downpayment must be between ₱0 and ₱${fee.toLocaleString()}`);
   }
   if (data.requireMinimumDownpayment) {
-    // Floor = the higher of the 50% security deposit and the admin-configured
-    // `min_downpayment` business rule (flat ₱), never more than the full fee.
+    // Flat minimum downpayment from admin business rules (default ₱200),
+    // never more than the full fee.
     const rules = await getBusinessRules();
-    const flatMin = parseInt(rules.min_downpayment ?? '0', 10) || 0;
-    const min = Math.min(
-      Math.max(Math.round(fee * 0.5), Number.isFinite(flatMin) && flatMin > 0 ? flatMin : 0),
-      fee,
-    );
+    const flatMin = parseInt(rules.min_downpayment ?? '200', 10) || 200;
+    const min = Math.min(flatMin, fee);
     if (downpayment < min) {
       throw new AppError(400, `Downpayment must be at least ₱${min.toLocaleString()}`);
     }
@@ -807,4 +804,67 @@ export async function getUpcomingReturns() {
   });
 
   return transactions;
+}
+
+export async function recordPayment(
+  transactionId: string,
+  staffId: string,
+  amount: number,
+  method: string,
+  notes?: string,
+) {
+  const tx = await prisma.transaction.findUnique({
+    where: { id: transactionId },
+    include: { payments: true },
+  });
+  if (!tx) throw new AppError(404, 'Transaction not found');
+  if (tx.status === 'Returned' || tx.status === 'Cancelled') {
+    throw new AppError(400, 'Transaction is already closed');
+  }
+
+  const validMethods = ['cash', 'gcash', 'card'];
+  const normalizedMethod = method.toLowerCase().trim();
+  if (!validMethods.includes(normalizedMethod)) {
+    throw new AppError(400, `Invalid payment method. Must be one of: ${validMethods.join(', ')}`);
+  }
+
+  const due = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - tx.totalPaid);
+  if (due <= 0) throw new AppError(400, 'Transaction is already fully paid');
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new AppError(400, 'Payment amount must be greater than 0');
+  }
+  if (amount > due) {
+    throw new AppError(400, `Payment amount exceeds outstanding balance of ₱${due.toLocaleString()}`);
+  }
+
+  const newTotalPaid = tx.totalPaid + amount;
+  const newBalance = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - newTotalPaid);
+
+  const [payment] = await prisma.$transaction([
+    prisma.payment.create({
+      data: {
+        transactionId,
+        amount,
+        method: normalizedMethod,
+        type: newBalance <= 0 ? 'full' : 'partial',
+        status: 'completed',
+      },
+    }),
+    prisma.transaction.update({
+      where: { id: transactionId },
+      data: { totalPaid: newTotalPaid, balance: newBalance },
+    }),
+  ]);
+
+  await createAuditLog({
+    action: 'create',
+    entity: 'payment',
+    entityId: payment.id,
+    performedById: staffId,
+    newValue: { transactionId, amount, method: normalizedMethod },
+  });
+
+  clearDataCache();
+
+  return { payment, totalPaid: newTotalPaid, balance: newBalance };
 }

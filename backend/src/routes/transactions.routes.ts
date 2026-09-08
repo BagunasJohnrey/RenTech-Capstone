@@ -22,6 +22,7 @@ router.get('/:id', transactionController.getTransaction);
 // minimum downpayment + server-side pricing). Allowing them to POST here
 // would bypass those guards, so rental creation is staff/admin only.
 router.post('/', requireRole(Role.Admin, Role.Staff), validate(transactionController.createRentalSchema), transactionController.createRental);
+router.post('/:id/payments', requireRole(Role.Admin, Role.Staff), validate(transactionController.recordPaymentSchema), transactionController.recordPayment);
 router.put('/:id/release', requireRole(Role.Admin, Role.Staff), validate(transactionController.releaseSchema), transactionController.releaseRental);
 router.put('/:id/return', requireRole(Role.Admin, Role.Staff), validate(transactionController.returnSchema), transactionController.processReturn);
 router.put('/:id/cancel', requireRole(Role.Admin, Role.Customer), transactionController.cancelTransaction);

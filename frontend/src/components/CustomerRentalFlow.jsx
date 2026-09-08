@@ -270,10 +270,9 @@ export default function CustomerRentalFlow({
 
   // FIX B: the price actually charged is the promo-discounted fee.
   const finalFee = promoApplied?.finalFee ?? effectiveItemPrice ?? 0;
-  // 50% min of the fee actually charged (after promo) — mirrors the server rule,
-  // plus the admin-configured flat `min_downpayment` floor (same as the backend).
+  // Flat minimum downpayment from admin config — no 50% requirement.
   const minDownpayment = selectedItem
-    ? Math.min(Math.max(Math.round(finalFee * 0.5), rentalDefaults.min_downpayment || 0), finalFee)
+    ? Math.min(rentalDefaults.min_downpayment || 200, finalFee)
     : 0;
 
   // Build the booking payload sent to POST /bookings.
@@ -314,7 +313,7 @@ export default function CustomerRentalFlow({
   const handleNext = async () => {
     if (step === 0) {
       if (!selectedItem) { setFieldErrors({ item: 'Please select an item.' }); return; }
-      setDownpaymentAmount(Math.round(effectiveItemPrice * 0.5));
+      setDownpaymentAmount(rentalDefaults.min_downpayment || 200);
       setFieldErrors({});
       setStep(1);
       return;
@@ -999,7 +998,7 @@ export default function CustomerRentalFlow({
                   <p className="text-[11px] text-red-500 font-medium ml-1">{fieldErrors.downpayment}</p>
                 )}
                 <p className="text-[10px] text-gray-400">
-                  Minimum of 50% or ₱{rentalDefaults.min_downpayment.toLocaleString()} (₱{minDownpayment.toLocaleString()}) required to secure booking.
+                  Minimum of ₱{rentalDefaults.min_downpayment.toLocaleString()} required to secure booking.
                 </p>
               </div>
             </div>

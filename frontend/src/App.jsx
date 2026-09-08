@@ -1031,6 +1031,7 @@ export default function RentechApp() {
             <TransactionDetailModal
               transaction={routedTx}
               fetchFull={getById}
+              role={role}
               onClose={() => navigate(basePath, { replace: true })}
             />
           </Suspense>

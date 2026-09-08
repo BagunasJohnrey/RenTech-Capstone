@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download } from 'lucide-react';
+import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote } from 'lucide-react';
 import { customerLabel, customerPhone, itemLabel } from '../utils/format';
 import { normalizeTx } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
@@ -8,6 +8,7 @@ import ItemImage from './ItemImage';
 import BookingQR from './BookingQR';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
+import { api } from '../utils/api';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -39,13 +40,18 @@ function DetailRow({ label, value, highlight }) {
   );
 }
 
-export default function TransactionDetailModal({ transaction, onClose, fetchFull }) {
+export default function TransactionDetailModal({ transaction, onClose, fetchFull, role }) {
   useEscapeClose(onClose);
   const flags = useFeatureFlags();
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
-  // FIX G: enrich the in-memory list object with the full server record
-  // (payments[], processedBy, full customer/item) when available.
   const [tx, setTx] = useState(transaction);
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState('cash');
+  const [payNotes, setPayNotes] = useState('');
+  const [payError, setPayError] = useState('');
+  const [payLoading, setPayLoading] = useState(false);
+  const [paySuccess, setPaySuccess] = useState(false);
 
   // Fetch enrichment only when the transaction id changes — `transaction` is a
   // new object identity on every parent render, and `normalizeTx()` also
@@ -73,6 +79,33 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const status = tx.status;
   const statusColor = statusColors[status] || 'bg-gray-100 text-gray-600 ring-gray-200';
   const txRef = `#${String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}`;
+  const outstandingBalance = Math.max(0, (tx.rentalFee ?? 0) + (tx.latePenalty ?? 0) + (tx.damageFee ?? 0) - (tx.totalPaid ?? 0));
+  const canRecordPayment = (role === 'Admin' || role === 'Staff')
+    && !['Returned', 'Cancelled'].includes(tx.status)
+    && outstandingBalance > 0;
+
+  const handleRecordPayment = async () => {
+    setPayError('');
+    const amt = Number(payAmount);
+    if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
+    if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
+    setPayLoading(true);
+    try {
+      const res = await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: payMethod, notes: payNotes || undefined });
+      setTx(prev => ({
+        ...prev,
+        totalPaid: res.totalPaid,
+        balance: res.balance,
+        payments: [...(prev.payments || []), res.payment],
+      }));
+      setPaySuccess(true);
+      setTimeout(() => { setShowPayModal(false); setPaySuccess(false); setPayAmount(''); setPayNotes(''); }, 1200);
+    } catch (err) {
+      setPayError(err?.message || 'Failed to record payment');
+    } finally {
+      setPayLoading(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={onClose}>
@@ -156,14 +189,30 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4 divide-y divide-gray-100">
               <DetailRow label="Rental Fee" value={fmtCurrency(tx.rentalFee ?? tx.amount)} />
               <DetailRow label="Downpayment" value={fmtCurrency(tx.downpayment)} />
-              <DetailRow label="Balance" value={fmtCurrency(tx.balance)} highlight />
+              <DetailRow label="Balance" value={fmtCurrency(outstandingBalance)} highlight />
               {tx.latePenalty > 0 && <DetailRow label="Late Penalty" value={fmtCurrency(tx.latePenalty)} />}
               {tx.damageFee > 0 && <DetailRow label="Damage Fee" value={fmtCurrency(tx.damageFee)} />}
               {tx.totalPaid > 0 && <DetailRow label="Total Paid" value={fmtCurrency(tx.totalPaid)} />}
-              {Array.isArray(tx.payments) && tx.payments.length > 0 && (
-                <DetailRow label="Payments" value={`${tx.payments.length} recorded`} />
-              )}
             </div>
+            {Array.isArray(tx.payments) && tx.payments.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Payment History</p>
+                {tx.payments.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold uppercase ${p.method === 'cash' ? 'bg-green-100 text-green-700' : p.method === 'gcash' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                        {p.method === 'cash' ? '💵' : p.method === 'gcash' ? '📱' : '💳'}
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-gray-900">{fmtCurrency(p.amount)}</p>
+                        <p className="text-[10px] text-gray-500 capitalize">{p.method} · {p.type}</p>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-gray-400">{new Date(p.createdAt).toLocaleDateString()}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Booking QR */}
@@ -254,12 +303,100 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
         </div>
 
         {/* Footer */}
-        <div className="p-5 pt-0">
+        <div className="p-5 pt-0 space-y-2">
+          {canRecordPayment && (
+            <button onClick={() => setShowPayModal(true)} className="w-full py-3 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
+              <Banknote size={16} /> Record Payment
+            </button>
+          )}
           <button onClick={onClose} className="w-full py-3 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-sm">
             Close
           </button>
         </div>
       </div>
+
+      {/* Record Payment Modal */}
+      {showPayModal && (
+        <div className="fixed inset-0 z-[310] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm" onClick={() => !payLoading && setShowPayModal(false)}>
+          <div role="dialog" aria-modal="true" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            {paySuccess ? (
+              <div className="text-center py-4">
+                <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <Banknote size={24} className="text-green-600" />
+                </div>
+                <p className="font-bold text-lg text-gray-900">Payment Recorded</p>
+                <p className="text-sm text-gray-500 mt-1">₱{Number(payAmount).toLocaleString()} via {payMethod}</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-lg text-gray-900">Record Payment</h4>
+                  <button onClick={() => setShowPayModal(false)} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full transition-colors" aria-label="Close payment form">
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-3 text-sm">
+                  <p className="text-gray-500">Outstanding balance</p>
+                  <p className="font-bold text-lg text-[#bf4a53]">₱{outstandingBalance.toLocaleString()}</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Amount</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">₱</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max={outstandingBalance}
+                      value={payAmount}
+                      onChange={e => { setPayAmount(e.target.value); setPayError(''); }}
+                      placeholder="0"
+                      className="w-full pl-8 pr-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Payment Method</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[{ key: 'cash', label: 'Cash' }, { key: 'gcash', label: 'GCash' }, { key: 'card', label: 'Card' }].map(m => (
+                      <button
+                        key={m.key}
+                        onClick={() => setPayMethod(m.key)}
+                        className={`py-2.5 rounded-xl text-sm font-bold border transition-colors ${payMethod === m.key ? 'bg-[#bf4a53] text-white border-[#bf4a53]' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Notes (optional)</label>
+                  <input
+                    type="text"
+                    value={payNotes}
+                    onChange={e => setPayNotes(e.target.value)}
+                    placeholder="e.g. change given, reference #"
+                    className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors"
+                  />
+                </div>
+
+                {payError && <p className="text-xs text-red-500 font-medium">{payError}</p>}
+
+                <button
+                  onClick={handleRecordPayment}
+                  disabled={payLoading}
+                  className="w-full py-3 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {payLoading ? 'Recording...' : `Record ₱${Number(payAmount || 0).toLocaleString()}`}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

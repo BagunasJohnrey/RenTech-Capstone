@@ -19,7 +19,7 @@ const staffFaqs = [
 const customerFaqs = [
   { q: 'How do I rent an item?', a: 'Browse the Collection, pick an item that is "Available", tap "Rent Now", and follow the booking wizard. Select your pickup and event dates, choose a size, and complete the downpayment to confirm.' },
   { q: 'Can I choose my own pickup and return dates?', a: 'Yes. You select the pickup date and the event date. The item must be picked up before your event and is due back the day after.' },
-  { q: 'How much do I need to pay upfront?', a: 'A 50% downpayment is required to secure your booking. The remaining balance is payable at pickup. You can pay via GCash or card.' },
+  { q: 'How much do I need to pay upfront?', a: 'A minimum downpayment of ₱200 is required to secure your booking. The remaining balance is payable at pickup. You can pay via GCash or card.' },
   { q: 'What if I need to cancel or reschedule?', a: 'Contact the boutique directly — downpayment refunds follow the store policy.' },
   { q: 'How do I view my bookings?', a: 'Open the Transactions tab in your account for your booking history, payment status, and upcoming rentals.' },
 ];
