@@ -544,6 +544,11 @@ export async function generateReport(data: {
     revenueByCategory?: Record<string, number>;
   };
   forecast?: Record<string, unknown>;
+  rules?: {
+    restock?: { category: string; projection: number; freeUnits: number; shortfall: number; reason: string }[];
+    clearance?: { id: number; name: string; category: string; reason: string }[];
+    cleaning?: { id: number; name: string; category: string }[];
+  };
 }) {
   if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return {
@@ -561,6 +566,19 @@ export async function generateReport(data: {
   const topList = topRented.map(i => `${i.name} (${i.category})`).join(', ');
   const strongestCategory = Object.entries(revenueByCategory)
     .sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0];
+
+  // Deterministic rules, calculated from this same Data (unit/piece counts
+  // only — no peso amounts, so the amount-guard below is unaffected).
+  const ruleLines: string[] = [];
+  for (const r of data.rules?.restock || []) {
+    ruleLines.push(`RESTOCK ${r.category}: projected ${r.projection}/mo vs ${r.freeUnits} free units (shortfall ${r.shortfall}; ${r.reason})`);
+  }
+  for (const c of data.rules?.clearance || []) {
+    ruleLines.push(`CLEARANCE "${c.name}" (${c.category}): ${c.reason} — put on sale`);
+  }
+  if (data.rules?.cleaning?.length) {
+    ruleLines.push(`CLEAN NEXT in this order: ${data.rules.cleaning.map(i => `"${i.name}" (${i.category})`).join(', ')}`);
+  }
 
   const prompt = `You are a business analyst for Mylene's Boutique, a Philippine clothing rental shop (gowns, suits, barongs, Filipiniana, costumes). Write a clear, professional business performance report that SUMMARIZES AND EXPLAINS the real database data provided below. Every figure you state must be one of the numbers supplied below. Your value-add is interpretation and explanation of that real data — never invented numbers.
 
@@ -597,7 +615,8 @@ CONTENT RULES:
 - Do NOT contradict yourself. If a category appears in revenue leaders or most-rented items, do not call it "underperforming".
 - "Underperforming" items are ONLY those listed in the underperforming array.
 - Lead each section with the key takeaway, then support it with the relevant numbers.
-- Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete, actionable action on its own line. These recommendations must be data-driven and directly reference the specific items and categories named below — NOT generic filler. For every name in the "Underperforming items" list, suggest a concrete promo (e.g. "run a [category]-themed promo week for [item]") or clearance/retire action. If a strongest revenue category is given, recommend prioritizing restock/featured placement for the "Top rented items" in that category. Each recommendation must mention an actual item name or category from the data.
+ - Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete, actionable action on its own line. These recommendations must be data-driven and directly reference the specific items and categories named below — NOT generic filler. For every name in the "Underperforming items" list, suggest a concrete promo (e.g. "run a [category]-themed promo week for [item]") or clearance/retire action. If a strongest revenue category is given, recommend prioritizing restock/featured placement for the "Top rented items" in that category. Each recommendation must mention an actual item name or category from the data.
+ - The Pre-computed rules below were calculated deterministically from this same Data — treat each as FACT. Explain WHY each matters and rank it in Recommendations; do NOT contradict them (e.g. never deprioritize a RESTOCK category, never call a CLEARANCE item a demand leader). Every restock/clearance/cleaning rule listed MUST appear in Recommendations.
 
 SECTION GUIDANCE (use the supplied data):
 - Executive Summary: overall health (revenue direction, utilization, urgent risks) in a short paragraph.
@@ -605,7 +624,7 @@ SECTION GUIDANCE (use the supplied data):
 - Revenue Analysis: revenue by category and by month, plus top revenue-generating items.
 - Inventory & Utilization: total/available/in-use items, utilization rate, most-rented items, underperforming items.
 - Operational Health: overdue returns and late rate, damaged items, cancellation rate — each as its own line.
-- Demand Forecast: projected rental-volume trend from the forecast (SMA/period values only).
+ - Demand Forecast: projected rental-volume trend from the forecast (SMA/period values, the projections array, and per-category projections only).
 - Recommendations: the prioritized action list.
 
 Data:
@@ -614,6 +633,7 @@ ${data.insights ? `Insights: ${JSON.stringify(data.insights)}` : ''}
 ${data.forecast ? `Forecast: ${JSON.stringify(data.forecast)}` : ''}
 ${underperforming.length ? `Underperforming items (never rented, promote or clear): ${underperformingList}` : 'Underperforming items: none'}
 ${topRented.length ? `Top rented items (demand leaders — prioritize restock): ${topList}` : ''}
+${ruleLines.length ? `Pre-computed rules (deterministic facts from the same Data): ${ruleLines.join(' | ')}` : 'Pre-computed rules: none — stock covers projected demand and nothing is idle.'}
 ${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''}`;
 
   // Runs a provider call, then the anti-hallucination amount-guard. When the

@@ -3,6 +3,9 @@ import { z } from 'zod';
 import * as geminiService from '../services/gemini.service.js';
 import * as dashboardService from '../services/dashboard.service.js';
 import * as inventoryService from '../services/inventory.service.js';
+import { getInventoryAnalytics } from '../services/inventoryAnalytics.service.js';
+import * as optimization from '../services/optimization.service.js';
+import type { CategoryProjection, AnalyticsItemShape } from '../services/optimization.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
 // L5: the chat history is reflected into the AI prompt, so the shape must be
@@ -41,13 +44,26 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
 
 export async function generateReport(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const [kpis, insights, forecast] = await Promise.all([
+    const [kpis, insights, forecast, analytics] = await Promise.all([
       dashboardService.getKpis(),
       dashboardService.getInsights(),
       dashboardService.getForecast(3),
+      getInventoryAnalytics(),
     ]);
 
-    const result = await geminiService.generateReport({ kpis, insights, forecast });
+    // Deterministic rules (same math as the frontend Smart-actions row) go
+    // into the prompt as pre-computed facts: the model explains and ranks
+    // them instead of freelancing contradictory advice.
+    const forecastCats = (forecast as unknown as { byCategory?: CategoryProjection[] })?.byCategory;
+    const breakdown = (insights as unknown as { categoryBreakdown?: Record<string, { total: number; rented: number }> })?.categoryBreakdown;
+    const analyticsItems = (analytics as unknown as { items?: AnalyticsItemShape[] })?.items;
+    const rules = {
+      restock: optimization.reorderSuggestions(forecastCats, breakdown),
+      clearance: optimization.clearanceSuggestions(analyticsItems),
+      cleaning: optimization.cleaningPriority(analyticsItems, forecastCats).slice(0, 5),
+    };
+
+    const result = await geminiService.generateReport({ kpis, insights, forecast, rules });
     res.json(result);
   } catch (err) {
     next(err);
