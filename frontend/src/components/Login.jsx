@@ -105,6 +105,13 @@ export default function Login({ onLogin, onVerifyMfa }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    // Client-side email format check — catch typos before hitting the server.
+    // Shows a specific hint instead of the generic "Invalid email or password".
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Please enter a valid email address (e.g. you@example.com)');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       let result;
@@ -126,7 +133,9 @@ export default function Login({ onLogin, onVerifyMfa }) {
         return;
       }
     } catch (err) {
-      setError(err.message || 'Invalid email or password');
+      setError(err.status === 400
+        ? 'Check your email format — it should look like you@example.com'
+        : err.message || 'Invalid email or password');
     } finally {
       setLoading(false);
     }
