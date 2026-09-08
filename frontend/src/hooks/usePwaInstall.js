@@ -92,5 +92,5 @@ export function usePwaInstall() {
   // iOS never fires beforeinstallprompt — show the manual-steps variant.
   const show = mobile && !installed && !dismissed && (canInstall || ios);
 
-  return { show, canInstall, isIos: ios, installing, install, dismiss };
+  return { show, canInstall, isIos: ios, installed, installing, install, dismiss };
 }

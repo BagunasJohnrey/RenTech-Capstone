@@ -8,6 +8,7 @@ import NotificationsTab from '../components/settings/NotificationsTab';
 import IntegrationsTab from '../components/settings/IntegrationsTab';
 import TeamTab from '../components/settings/TeamTab';
 import AccountActions from '../components/settings/AccountActions';
+import InstallAppSetting from '../components/settings/InstallAppSetting';
 import HelpGuide from './HelpGuide';
 
 // Settings shell: shared page header + the active section for the signed-in
@@ -73,6 +74,9 @@ export default function ProfileSettingsView({
           {adminSection === 'help' && <HelpGuide role={role} />}
         </>
       )}
+
+      {/* Install App — persistent entry point above Sign Out */}
+      <InstallAppSetting />
 
       {/* Sign Out */}
       <AccountActions onRequestLogout={onRequestLogout} />
