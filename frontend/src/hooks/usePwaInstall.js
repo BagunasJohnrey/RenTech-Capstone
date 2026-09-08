@@ -9,6 +9,9 @@ const SNOOZE_MS = 30 * 24 * 60 * 60 * 1000; // re-show a month after dismiss
 const isIosDevice = () =>
   typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
 
+const isAndroidDevice = () =>
+  typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+
 const isMobileDevice = () => {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
   if (window.matchMedia?.('(pointer: coarse)').matches) return true;
@@ -89,8 +92,9 @@ export function usePwaInstall() {
 
   const mobile = isMobileDevice();
   const ios = isIosDevice();
+  const android = isAndroidDevice();
   // iOS never fires beforeinstallprompt — show the manual-steps variant.
   const show = mobile && !installed && !dismissed && (canInstall || ios);
 
-  return { show, canInstall, isIos: ios, installed, installing, install, dismiss };
+  return { show, canInstall, isIos: ios, isAndroid: android, installed, installing, install, dismiss };
 }
