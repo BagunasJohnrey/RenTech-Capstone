@@ -31,6 +31,11 @@ export const env = {
   PAYMONGO_SECRET_KEY: process.env.PAYMONGO_SECRET_KEY || '',
   PAYMONGO_PUBLIC_KEY: process.env.PAYMONGO_PUBLIC_KEY || '',
   PAYMONGO_WEBHOOK_SECRET: process.env.PAYMONGO_WEBHOOK_SECRET || '',
+  // Pre-integration escape hatch: PAYMONGO_SIMULATE=true lets the booking flow
+  // complete end-to-end (fake succeeded intents, `simulated: true`) even in
+  // production. NO real money moves — set the real key and remove this flag
+  // the moment PayMongo is integrated.
+  PAYMONGO_SIMULATE: process.env.PAYMONGO_SIMULATE === 'true',
 
   SEMAPHORE_API_KEY: process.env.SEMAPHORE_API_KEY || '',
 
