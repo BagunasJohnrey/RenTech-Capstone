@@ -251,6 +251,7 @@ describe('GET /api/catalog/:id validation', () => {
 });
 
 describe('GET /api/bookings query validation', () => {
+
   it('garbage status → 400', async () => {
     const res = await request(app)
       .get('/api/bookings?status=garbage')
@@ -262,6 +263,78 @@ describe('GET /api/bookings query validation', () => {
     const res = await request(app)
       .get('/api/bookings?status=Active')
       .set('Authorization', 'Bearer customer-token');
+
     expect(res.status).not.toBe(400);
+  });
+});
+
+describe('POST /api/customers/contact', () => {
+  it('should send a message without a booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.notification.createMany = vi.fn().mockResolvedValue({ count: 1 });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('message');
+    expect(prisma.notification.createMany).toHaveBeenCalled();
+  });
+
+  it('should send a message about an own booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.notification.createMany = vi.fn().mockResolvedValue({ count: 1 });
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'booking-1', customerId: 'customer-id-111', txNumber: 1001,
+    });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'booking-1', message: 'Please cancel this booking for me, thanks!' });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('should reject messaging about another customer booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'booking-2', customerId: 'other-customer-id', txNumber: 1002,
+    });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'booking-2', message: 'Please cancel this booking for me, thanks!' });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('should reject a too-short message', async () => {
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ message: 'hi' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('should reject unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('should reject for admin (customer-only endpoint)', async () => {
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(403);
   });
 });
