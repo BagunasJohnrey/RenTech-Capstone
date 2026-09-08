@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, ScanLine, Calendar, ChevronRight, Download } from 'lucide-react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
 import { usePayments } from '../hooks/usePayments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -125,7 +125,22 @@ export default function CustomerRentalFlow({
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('all');
+  // Catalog category filter — multi-select (empty = All), same collapsible
+  // dropdown design as the staff rental flow.
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const toggleCategory = (key) => {
+    setSelectedCategories(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+  const [catOpen, setCatOpen] = useState(false);
+  const catFilterRef = useRef(null);
+  useEffect(() => {
+    if (!catOpen) return;
+    const onPointerDown = (e) => { if (catFilterRef.current && !catFilterRef.current.contains(e.target)) setCatOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setCatOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKey); };
+  }, [catOpen]);
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_LOAD);
   const [loadingMore, setLoadingMore] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -164,24 +179,30 @@ export default function CustomerRentalFlow({
     return Object.keys(errs).length === 0;
   };
 
+  // Category options built from the bookable inventory so every category
+  // always appears — no hardcoded list to go stale.
+  const catalogCategories = useMemo(() => {
+    const seen = [];
+    for (const item of inventory) {
+      if (item.status === 'Deleted' || item.status === 'OutOfService') continue;
+      const label = item.category || 'Other';
+      if (!seen.some(c => c.key === label.toLowerCase())) seen.push({ key: label.toLowerCase(), label });
+    }
+    return seen;
+  }, [inventory]);
+
   const filteredCatalog = useMemo(() => {
-    const cats = {
-      all: () => true,
-      gown: (i) => i.category?.toLowerCase() === 'gown',
-      suit: (i) => i.category?.toLowerCase() === 'suit',
-      formal: (i) => i.category?.toLowerCase() === 'formal',
-    };
     return inventory.filter((item) => {
       // Hide items that can never be booked; show everything else (including
       // currently Rented/Reserved) so customers can reserve future-free dates.
-      if (item.status === 'OutOfService') return false;
-      const matchesCat = cats[activeCategory] ? cats[activeCategory](item) : true;
+      if (item.status === 'OutOfService' || item.status === 'Deleted') return false;
+      const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesCat && matchesSearch;
     });
-  }, [inventory, activeCategory, searchQuery]);
+  }, [inventory, selectedCategories, searchQuery]);
 
-  useEffect(() => { setVisibleCount(ITEMS_PER_LOAD); setLoadingMore(false); }, [activeCategory, searchQuery]);
+  useEffect(() => { setVisibleCount(ITEMS_PER_LOAD); setLoadingMore(false); }, [selectedCategories, searchQuery]);
 
   // Live availability check against the backend (same overlap logic as createRental).
   // Lets customers reserve an item that is currently Rented but free for their dates.
@@ -648,14 +669,72 @@ export default function CustomerRentalFlow({
                   className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-full text-xs font-medium focus:outline-none focus:border-[#bf4a53]" />
               </div>
             </div>
-            <div className="flex gap-2 overflow-x-auto mb-4">
-              {['all', 'gown', 'suit', 'formal'].map((cat) => (
-                <button key={cat} onClick={() => setActiveCategory(cat)}
-                  className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border ${
-                    activeCategory === cat ? 'bg-[#bf4a53] text-white border-[#bf4a53]' : 'bg-white border-gray-200 text-gray-600'}`}>
-                  {cat}
-                </button>
-              ))}
+            {/* Category filter — compact collapsible multi-select, same design
+                as the staff rental flow (single row when closed). */}
+            <div ref={catFilterRef} className="relative mb-4">
+              {(() => {
+                const total = inventory.filter(i => i.status !== 'Deleted' && i.status !== 'OutOfService').length;
+                const names = selectedCategories.map(k => catalogCategories.find(c => c.key === k)?.label || k);
+                const summary = names.length === 0 ? 'All' : names.length <= 2 ? names.join(', ') : `${names[0]}, +${names.length - 1}`;
+                return (
+                  <>
+                    <button type="button" aria-expanded={catOpen} aria-controls="cust-cat-panel"
+                      aria-label={`Filter by category, ${names.length === 0 ? 'showing all categories' : `${names.length} selected: ${names.join(', ')}`}. Activate to change.`}
+                      onClick={() => setCatOpen(o => !o)}
+                      className={`w-full min-h-[44px] inline-flex items-center gap-2 rounded-2xl border px-3.5 py-2 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53] focus-visible:ring-offset-2 ${
+                        selectedCategories.length > 0 ? 'border-[#bf4a53] bg-red-50/60' : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                    >
+                      <SlidersHorizontal size={15} aria-hidden="true" className="shrink-0 text-gray-400" />
+                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wide shrink-0">Category</span>
+                      <span className="flex-1 min-w-0 truncate text-sm font-semibold text-gray-900">{summary}</span>
+                      {selectedCategories.length > 0 && (
+                        <span aria-hidden="true" className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-[#bf4a53] text-white text-[11px] font-bold inline-flex items-center justify-center tabular-nums">
+                          {selectedCategories.length}
+                        </span>
+                      )}
+                      <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-gray-400 transition-transform ${catOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {catOpen && (
+                      <div id="cust-cat-panel" role="group" aria-label="Choose categories"
+                        className="absolute z-30 top-full mt-2 left-0 right-0 bg-white border border-gray-100 rounded-2xl shadow-xl p-1.5 max-h-64 overflow-y-auto">
+                        <label className="flex min-h-[44px] items-center gap-3 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-[#bf4a53]/50">
+                          <input type="checkbox" checked={selectedCategories.length === 0} onChange={() => setSelectedCategories([])}
+                            aria-label={`All categories, ${total} items`} className="h-5 w-5 shrink-0 accent-[#bf4a53]" />
+                          <span className="flex-1 text-sm font-semibold text-gray-900">All</span>
+                          <span aria-hidden="true" className="text-[11px] font-bold text-gray-400 tabular-nums">{total}</span>
+                        </label>
+                        {catalogCategories.map(({ key, label }) => {
+                          const count = inventory.filter(i => (i.category || '').toLowerCase() === key && i.status !== 'Deleted' && i.status !== 'OutOfService').length;
+                          const checked = selectedCategories.includes(key);
+                          return (
+                            <label key={key} className="flex min-h-[44px] items-center gap-3 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-[#bf4a53]/50">
+                              <input type="checkbox" checked={checked} onChange={() => toggleCategory(key)}
+                                aria-label={`${label}, ${count} items`} className="h-5 w-5 shrink-0 accent-[#bf4a53]" />
+                              <span className="flex-1 text-sm font-medium text-gray-800">{label}</span>
+                              {checked && <Check size={15} strokeWidth={3} aria-hidden="true" className="shrink-0 text-[#bf4a53]" />}
+                              <span aria-hidden="true" className="text-[11px] font-bold text-gray-400 tabular-nums">{count}</span>
+                            </label>
+                          );
+                        })}
+                        <div className="flex items-center gap-2 p-1.5 pt-2 border-t border-gray-100 mt-1">
+                          <button type="button" onClick={() => setSelectedCategories([])} disabled={selectedCategories.length === 0}
+                            className="flex-1 min-h-[40px] rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]">
+                            Clear
+                          </button>
+                          <button type="button" onClick={() => setCatOpen(false)}
+                            className="flex-1 min-h-[40px] rounded-xl text-xs font-bold bg-gray-900 text-white hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53] focus-visible:ring-offset-2">
+                            Done
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <p aria-live="polite" className="sr-only">
+                      Showing {filteredCatalog.length} of {total} items{names.length > 0 ? ` in ${names.join(', ')}` : ''}
+                    </p>
+                  </>
+                );
+              })()}
             </div>
             {fieldErrors.item && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl px-4 py-2.5 text-center mb-3">
