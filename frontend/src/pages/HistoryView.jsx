@@ -1,6 +1,8 @@
 ﻿import { useState } from 'react';
 import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
+import CancelBookingModal from '../components/CancelBookingModal';
+import { customerService } from '../services/customer';
 import DateRangePicker, { formatDateRangeLabel } from '../components/DateRangePicker';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
@@ -44,6 +46,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [dateTo, setDateTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [detailTx, setDetailTx] = useState(null);
+  const [cancelTx, setCancelTx] = useState(null);
   const [releaseTx, setReleaseTx] = useState(null);
   const [editRental, setEditRental] = useState(null);       // tx staff is editing (booking dates/notes + customer)
   const [smsModalTx, setSmsModalTx] = useState(null);
@@ -73,6 +76,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     setDateTo(to);
     setCurrentPage(1);
   };
+
+  const handleContactAdmin = (payload) => customerService.contactAdmin(payload);
 
   const handleSendSMS = async (tx) => {
     setSendingSms(true);
@@ -405,11 +410,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                           )}
                           {(role === 'Admin' || role === 'Staff') && ['Active', 'Reserved', 'Overdue'].includes(tx.status) && (
                             <button
-                              onClick={() => {
-                                if (window.confirm(`Cancel this booking (${tx.txNumber ?? tx.id})? The item will be freed and marked Available.`)) {
-                                  onCancel(tx.id);
-                                }
-                              }}
+                              onClick={() => setCancelTx(tx)}
                               className="p-1.5 text-red-500 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
                               title="Cancel Booking"
                               aria-label={`Cancel booking ${tx.txNumber ?? tx.id}`}
@@ -420,11 +421,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                           )}
                           {(tx.status === 'Active') && role === 'Customer' && (
                             <button
-                              onClick={() => {
-                                if (window.confirm('Cancel this booking? This cannot be undone.')) {
-                                  onCancel(tx.id);
-                                }
-                              }}
+                              onClick={() => setCancelTx(tx)}
                               className="p-1.5 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors"
                               title="Cancel Booking"
                             >
@@ -584,11 +581,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     )}
                     {(role === 'Admin' || role === 'Staff') && ['Active', 'Reserved', 'Overdue'].includes(tx.status) && (
                       <button
-                        onClick={() => {
-                          if (window.confirm(`Cancel this booking (${tx.txNumber ?? tx.id})? The item will be freed and marked Available.`)) {
-                            onCancel(tx.id);
-                          }
-                        }}
+                        onClick={() => setCancelTx(tx)}
                         className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
                         title="Cancel Booking"
                       >
@@ -597,11 +590,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     )}
                     {(tx.status === 'Active') && role === 'Customer' && (
                       <button
-                        onClick={() => {
-                          if (window.confirm('Cancel this booking? This cannot be undone.')) {
-                            onCancel(tx.id);
-                          }
-                        }}
+                        onClick={() => setCancelTx(tx)}
                         className="p-2 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors"
                         title="Cancel Booking"
                       >
@@ -697,6 +686,17 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             </div>
           </div>
         </div>
+      )}
+
+      {/* Cancel Booking Modal (proper dialog + message-the-boutique) */}
+      {cancelTx && (
+        <CancelBookingModal
+          tx={cancelTx}
+          role={role}
+          onClose={() => setCancelTx(null)}
+          onCancel={onCancel}
+          onSendMessage={handleContactAdmin}
+        />
       )}
 
       {releaseTx && (
