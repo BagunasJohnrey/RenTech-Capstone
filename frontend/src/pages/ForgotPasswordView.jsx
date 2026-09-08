@@ -37,14 +37,23 @@ function readCredential(search, hash) {
 const isLinkError = (err) =>
   err?.status === 401 || /invalid|expir|already been used|required/i.test(err?.message || '');
 
+// A wrong old-password guess is NOT a dead link — the server verifies the old
+// password before consuming the single-use token, so the form stays alive.
+const isWrongPasswordError = (err) =>
+  /current password/i.test(err?.message || '');
+
 export default function ForgotPasswordView() {
   const navigate = useNavigate();
   const location = useLocation();
   const { error: toastError, success: toastSuccess } = useToast();
   const credential = readCredential(location.search, location.hash);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
+  // Inline (non-toast) error kept on the form — used when the old-password
+  // confirmation fails so the user can correct it without losing the link.
+  const [formError, setFormError] = useState('');
   // Invalid/expired link state — offers a resend instead of a dead end.
   // The address typed on the login forgot-step is remembered per-tab, so a
   // resend is one click; otherwise (e.g. link opened on another device) the
@@ -59,6 +68,7 @@ export default function ForgotPasswordView() {
 
   const handleResetSubmit = async (e) => {
     e.preventDefault();
+    setFormError('');
     if (!credential) {
       setLinkDead(true);
       return;
@@ -74,12 +84,22 @@ export default function ForgotPasswordView() {
     }
     setLoading(true);
     try {
-      await api.post('/auth/reset-password', { ...credential, password });
+      // The old password is sent only when the user typed one — the backend
+      // verifies it WITHOUT consuming the link, so a typo is recoverable.
+      await api.post('/auth/reset-password', {
+        ...credential,
+        ...(currentPassword ? { currentPassword } : {}),
+        password,
+      });
       try { sessionStorage.removeItem('rentech_reset_email'); } catch { /* private mode */ }
       toastSuccess('Password reset successfully');
       navigate('/');
     } catch (err) {
-      if (isLinkError(err)) {
+      if (isWrongPasswordError(err)) {
+        // The link is still valid (the server checks the old password before
+        // consuming the token) — stay on the form so they can fix the typo.
+        setFormError(err?.message || 'Current password is incorrect');
+      } else if (isLinkError(err)) {
         setLinkDead(true);
       } else {
         toastError(err?.message || 'Failed to reset password');
@@ -169,6 +189,23 @@ export default function ForgotPasswordView() {
           </form>
         ) : (
           <form onSubmit={handleResetSubmit} className="space-y-4 bg-white rounded-2xl border border-gray-100 p-6 sm:p-8 shadow-sm">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => { setCurrentPassword(e.target.value); if (formError) setFormError(''); }}
+                placeholder="Your current password"
+                autoComplete="current-password"
+                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
+              />
+              <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                Confirm the password you use now — <span className="font-semibold text-gray-500">leave blank if you've forgotten it</span>; your email link already confirms it's you.
+              </p>
+            </div>
+            {formError && (
+              <p className="text-xs text-red-500 font-semibold bg-red-50 border border-red-100 rounded-xl px-4 py-2.5">{formError}</p>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
               <input

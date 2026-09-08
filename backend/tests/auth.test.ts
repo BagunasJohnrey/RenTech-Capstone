@@ -563,6 +563,90 @@ describe('POST /api/auth/reset-password', () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toContain('expired');
   });
+
+  it('should accept a correct current password (Brevo path) and consume the link', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-ok', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!', currentPassword: 'oldPassword123!' });
+
+    expect(res.status).toBe(200);
+    // Old password verified against Supabase before anything was written…
+    expect(supabaseAdmin.auth.signInWithPassword).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'test@example.com', password: 'oldPassword123!' }),
+    );
+    // …then the link was consumed and the new password saved.
+    expect(prisma.emailToken.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'etok-ok' } }),
+    );
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'newPassword123!' },
+    );
+  });
+
+  it('should reject a wrong current password WITHOUT consuming the link', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-typo', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null }, error: { message: 'Invalid login credentials' },
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!', currentPassword: 'wrongOld123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('Current password is incorrect');
+    // A typo must never burn the single-use link or touch the credential.
+    expect(prisma.emailToken.update).not.toHaveBeenCalled();
+    expect(supabaseAdmin.auth.admin.updateUserById).not.toHaveBeenCalledWith(
+      'auth-user-id-123',
+      expect.anything(),
+    );
+  });
+
+  it('should verify the old password on the legacy token_hash path too', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null }, error: { message: 'Invalid login credentials' },
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token_hash: 'valid-hash', password: 'newPassword123!', currentPassword: 'wrongOld123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('Current password is incorrect');
+    expect(supabaseAdmin.auth.admin.updateUserById).not.toHaveBeenCalledWith(
+      'auth-user-id-123',
+      expect.anything(),
+    );
+  });
+
+  it('should mint reset tokens for STAFF emails too (forgot flow is role-agnostic)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/auth/forgot-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'staff@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset link');
+    expect(prisma.emailToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'password_reset' }) }),
+    );
+  });
 });
 
 describe('POST /api/auth/verify-email', () => {

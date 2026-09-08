@@ -60,7 +60,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
             <ItemImage image={item.image} alt="" className="w-full h-full object-cover" placeholderSize={20} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}{item.size ? ` · ${item.size}` : ''}</p>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</p>
             <h3 className="font-bold text-gray-900 truncate">{item.name}</h3>
           </div>
           <button onClick={onClose} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors shrink-0">
@@ -69,10 +69,6 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
         </div>
 
         <div className="overflow-y-auto p-4 space-y-4">
-          {item.description && (
-            <p className="text-sm text-gray-600 leading-relaxed">{item.description}</p>
-          )}
-
           <div className="flex items-end gap-2">
             {sale.active ? (
               <>

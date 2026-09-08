@@ -488,13 +488,13 @@ function resetLinkError(upstream?: string): AppError {
 
 export async function resetPassword(req: Request, res: Response, next: NextFunction) {
   try {
-    const { token, token_hash, code, access_token, password } = req.body;
+    const { token, token_hash, code, access_token, password, currentPassword } = req.body;
     // Brevo path (preferred): our own single-use token — also accept it when
     // an older client posts it as token_hash.
     const brevoToken = token ?? (token_hash && authService.isBrevoTokenFormat(token_hash) ? token_hash : null);
     if (brevoToken) {
       try {
-        const result = await authService.resetPasswordWithToken(brevoToken, password);
+        const result = await authService.resetPasswordWithToken(brevoToken, password, currentPassword || undefined);
         if (result.session) {
           setSessionCookies(res, result.session);
         }
@@ -539,6 +539,19 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
       if (error || !user) throw resetLinkError(error?.message);
       userId = user.id;
       userEmail = user.email ?? undefined;
+    }
+
+    // Legacy paths honor the same optional old-password confirmation: when the
+    // user still remembers it, verify it before writing the new password.
+    if (currentPassword) {
+      if (!userEmail) throw resetLinkError();
+      const { error: verifyError } = await supabaseSignUp.auth.signInWithPassword({
+        email: userEmail,
+        password: currentPassword,
+      });
+      if (verifyError) {
+        throw new AppError(401, 'Current password is incorrect');
+      }
     }
 
     await supabaseAdmin.auth.admin.updateUserById(userId, { password });

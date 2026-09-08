@@ -739,7 +739,20 @@ export async function requestPasswordReset(email: string) {
 
 // Consume a Brevo reset token: set the new password, then sign in fresh so
 // the user lands logged in with clean cookies.
-export async function resetPasswordWithToken(token: string, newPassword: string) {
+//
+// currentPassword is an OPTIONAL old-password confirmation: when the user
+// still remembers their current password they type it on the reset page and
+// it is verified against Supabase BEFORE the single-use link is consumed — a
+// typo never burns the token, the link stays valid for a retry. Blank/absent
+// is the "I forgot it too" case (customer AND staff): the email link itself
+// (inbox possession) is the authorization. Note this check is a confirmation
+// aid, not a security boundary — the link alone authorizes the change; the
+// route's 10/min rate limiter bounds old-password guessing through it.
+export async function resetPasswordWithToken(
+  token: string,
+  newPassword: string,
+  currentPassword?: string,
+) {
   const row = await prisma.emailToken.findUnique({ where: { token } });
   if (!row || row.type !== 'password_reset') {
     throw brevoTokenError(false, false);
@@ -749,6 +762,17 @@ export async function resetPasswordWithToken(token: string, newPassword: string)
 
   const profile = await prisma.profile.findUnique({ where: { id: row.userId } });
   if (!profile) throw brevoTokenError(false, false);
+
+  // Optional old-password gate — verified BEFORE the token is consumed.
+  if (currentPassword) {
+    const { error: verifyError } = await supabaseAdmin.auth.signInWithPassword({
+      email: profile.email,
+      password: currentPassword,
+    });
+    if (verifyError) {
+      throw new AppError(401, 'Current password is incorrect');
+    }
+  }
 
   await prisma.emailToken.update({ where: { id: row.id }, data: { usedAt: new Date() } });
 

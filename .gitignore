@@ -43,3 +43,6 @@ images/*
 # Database backups (never commit database dumps)
 backup/
 *.dump
+
+# Local one-off operational scripts (run manually, never deployed)
+backend/scripts/seed-boutique-photos.ts

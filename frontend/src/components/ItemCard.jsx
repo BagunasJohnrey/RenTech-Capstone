@@ -61,7 +61,6 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
         <div className="min-w-0">
           <div className="flex items-center gap-1">
             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</span>
-            {item.size && <><span className="text-gray-300 text-[9px]">·</span><span className="text-[9px] font-medium text-gray-400">{item.size}</span></>}
           </div>
           <h3 className="font-bold text-gray-900 text-[13px] leading-tight truncate">{item.name}</h3>
           <p className="font-bold text-[13px]">

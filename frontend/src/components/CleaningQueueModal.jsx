@@ -93,7 +93,7 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean }) {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
                     <p className="text-xs text-gray-500 truncate">
-                      {item.category}{item.size ? ` · ${item.size}` : ''}
+                      {item.category}
                     </p>
                   </div>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${checked ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-50 text-orange-600'}`}>
