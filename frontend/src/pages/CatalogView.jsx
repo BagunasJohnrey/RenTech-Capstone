@@ -434,6 +434,35 @@ const toggleCategory = (cat) => {
         </div>
       )}
 
+      {/* Category rail — staff/admin only (mirrors the status rail above;
+          customers/guests get the combined rail below instead) */}
+      {isStaff && (
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">
+          {['All', ...allCategories].map(cat => {
+            const active = cat === 'All' ? selectedCategories.length === 0 : selectedCategories.includes(cat);
+            const count = cat === 'All'
+              ? inventory.filter(i => i.status !== 'Deleted').length
+              : inventory.filter(i => i.category === cat && i.status !== 'Deleted').length;
+            return (
+              <button key={cat} type="button"
+                onClick={() => {
+                  if (cat === 'All') { setSelectedCategories([]); return; }
+                  toggleCategory(cat);
+                }}
+                aria-pressed={active}
+                className={`shrink-0 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                  active ? 'bg-[#bf4a53] text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200 hover:border-gray-300 hover:text-gray-800'
+                }`}>
+                {cat}
+                <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center tabular-nums ${active ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Category + Status rail — customers/guests combined */}
       {!isStaff && (
         <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar -mx-1 px-1 pb-1">

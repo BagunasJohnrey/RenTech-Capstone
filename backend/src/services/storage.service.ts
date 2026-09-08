@@ -131,18 +131,67 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
 }
 
 export async function getDownloadUrl(path: string) {
-  const { data, error } = await supabaseAdmin.storage
-    .from(BUCKET_NAME)
-    .createSignedUrl(path, 3600);
+  let data: { signedUrl: string } | null;
+  let error: unknown;
+  try {
+    ({ data, error } = await supabaseAdmin.storage
+      .from(BUCKET_NAME)
+      .createSignedUrl(path, 3600));
+  } catch (err) {
+    // Transport-level failure (DNS, connection reset, timeout, paused
+    // project): storage-js throws instead of returning { error }.
+    console.error(`[storage] createSignedUrl threw for "${path}":`, (err as Error)?.message ?? err);
+    throw new AppError(503, 'Image service temporarily unavailable — please try again');
+  }
 
   if (error) {
     // Log the real Supabase error so ops can distinguish "file missing" from
     // "auth failure" / "bucket not found" / network issues.
-    console.error(`[storage] createSignedUrl failed for "${path}":`, error.message, error);
+    const errRec = error as { message?: unknown; status?: unknown; statusCode?: unknown };
+    const message = typeof errRec?.message === 'string' ? errRec.message : String(errRec?.message ?? '');
+    console.error(`[storage] createSignedUrl failed for "${path}":`, message, error);
+    const status = storageErrorStatus(errRec);
+    if (status === 503) {
+      throw new AppError(503, 'Image service temporarily unavailable — please try again');
+    }
+    if (status === 500) {
+      throw new AppError(500, 'Image storage is not configured');
+    }
     throw new AppError(404, 'File not found');
   }
 
-  return { url: data.signedUrl };
+  return { url: data!.signedUrl };
+}
+
+// Supabase storage-js funnels BOTH genuine misses ("Object not found") and
+// transport/upstream failures through the same { error } channel — and the
+// old code mapped everything to 404, which twice sent debugging down the
+// wrong path (missing-file vs unreachable-storage look identical from the
+// client). Classify so the status tells ops which one it is:
+//   503 — transient: 5xx / 429 / network errors (retryable, do NOT reseed)
+//   500 — bucket-level misconfiguration (wrong project / bucket deleted)
+//   404 — the object genuinely isn't in this bucket
+// Exported for unit tests.
+export function storageErrorStatus(error: {
+  message?: unknown;
+  status?: unknown;
+  statusCode?: unknown;
+}): 404 | 500 | 503 {
+  const toNum = (v: unknown): number | null => {
+    const n = typeof v === 'string' ? parseInt(v, 10) : typeof v === 'number' ? v : NaN;
+    return Number.isFinite(n) ? n : null;
+  };
+  const status = toNum((error as { status?: unknown })?.status)
+    ?? toNum((error as { statusCode?: unknown })?.statusCode);
+  if (status !== null && (status === 429 || (status >= 500 && status <= 599))) return 503;
+  const msg = typeof error?.message === 'string' ? error.message : String(error?.message ?? '');
+  if (/fetch failed|network|socket|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|timed out|timeout|temporarily unavailable|Bad Gateway|Service Unavailable|Gateway Timeout/i.test(msg)) {
+    return 503;
+  }
+  if (/bucket not found|invalid bucket|bucket.*does not exist/i.test(msg)) {
+    return 500;
+  }
+  return 404;
 }
 
 // Remove a stored object. Best-effort — a missing/bogus path must not fail the

@@ -106,3 +106,28 @@ describe('sharp sanity (tiny PNG fixture decodes)', () => {
     expect(meta.height).toBe(1);
   });
 });
+
+describe('storageErrorStatus (signed-URL error classification)', () => {
+  it('genuine miss -> 404', async () => {
+    const { storageErrorStatus } = await import('../src/services/storage.service.js');
+    // Shape of the real StorageApiError seen in production logs.
+    expect(storageErrorStatus({ message: 'Object not found', status: 400, statusCode: '404' })).toBe(404);
+    expect(storageErrorStatus({ message: 'Object not found' })).toBe(404);
+  });
+
+  it('transport / upstream failures -> 503 (never misreported as missing file)', async () => {
+    const { storageErrorStatus } = await import('../src/services/storage.service.js');
+    expect(storageErrorStatus({ message: 'fetch failed' })).toBe(503);
+    expect(storageErrorStatus({ message: 'connect ENOTFOUND db.supabase.co' })).toBe(503);
+    expect(storageErrorStatus({ message: 'socket hang up', status: 500 })).toBe(503);
+    expect(storageErrorStatus({ message: 'Service Unavailable', status: 503, statusCode: '503' })).toBe(503);
+    expect(storageErrorStatus({ message: 'Too many requests', status: 429, statusCode: '429' })).toBe(503);
+    expect(storageErrorStatus({ message: 'The request timed out', status: 504 })).toBe(503);
+  });
+
+  it('bucket-level misconfiguration -> 500 (not a missing file)', async () => {
+    const { storageErrorStatus } = await import('../src/services/storage.service.js');
+    expect(storageErrorStatus({ message: 'Bucket not found', status: 400 })).toBe(500);
+    expect(storageErrorStatus({ message: 'Invalid bucket name' })).toBe(500);
+  });
+});
