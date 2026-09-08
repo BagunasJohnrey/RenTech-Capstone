@@ -82,6 +82,7 @@ let notifications = [
   { id: 'n1', type: 'new_booking', title: 'New booking', message: 'Juan Dela Cruz booked Debutante Ball Gown.', isRead: false, createdAt: day(-1) + 'T09:00:00Z' },
   { id: 'n2', type: 'overdue', title: 'Overdue return', message: 'Maria Clara Gala Gown is 5 days overdue.', isRead: false, createdAt: day(-1) + 'T10:30:00Z' },
   { id: 'n3', type: 'late_return', title: 'Late return', message: 'Ivory Lace Wedding Gown returned late.', isRead: true, createdAt: day(-2) + 'T14:00:00Z' },
+  { id: 'n4', type: 'customer_message', title: 'Message from Pedro Santos', message: 'Please cancel my booking — our event was moved to next month.', transactionId: '22222222-2222-4222-8222-222222222222', isRead: false, createdAt: day(0) + 'T08:15:00Z' },
 ];
 
 let staff = [
@@ -301,6 +302,15 @@ function route(method, path, body) {
   }
 
   // ---- Customers ----
+  if (path === '/customers/contact' && method === 'POST') {
+    notifications.unshift({
+      id: 'n-demo-' + Date.now(), type: 'customer_message',
+      title: 'Message from Demo Customer', message: body.message ?? '',
+      transactionId: body.transactionId ?? null,
+      isRead: false, createdAt: new Date().toISOString(),
+    });
+    return { value: { message: 'Message sent to the boutique team (demo)', emailed: false } };
+  }
   if (P(/^\/customers\/(.+)$/) && method === 'PUT') {
     const c = Object.values(CUSTOMERS).find((x) => x.id === P(/^\/customers\/(.+)$/)[1]);
     if (c) Object.assign(c, body);

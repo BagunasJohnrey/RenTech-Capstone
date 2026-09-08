@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Bell, ShoppingBag, CalendarClock, Clock, CheckCircle2,
-  AlertTriangle, Smartphone, X, Circle, Trash2, CheckCheck, Inbox,
+  AlertTriangle, Smartphone, MessageCircle, XCircle, X, Circle, Trash2, CheckCheck, Inbox,
 } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
@@ -11,11 +11,13 @@ import ConfirmModal from './ConfirmModal';
 export const TYPE_CONFIG = {
   new_booking: { icon: ShoppingBag, iconBg: 'bg-[#bf4a53]/10', iconColor: 'text-[#bf4a53]', chip: 'New Booking' },
   booking_confirmation: { icon: CheckCircle2, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500', chip: 'Confirmation' },
+  booking_cancelled: { icon: XCircle, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Cancelled' },
   due_today: { icon: CalendarClock, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Due Today' },
   overdue: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Overdue' },
   late_return: { icon: Clock, iconBg: 'bg-orange-50', iconColor: 'text-orange-500', chip: 'Late Return' },
   no_show: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-600', chip: 'No-Show' },
   reminder: { icon: Smartphone, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Reminder' },
+  customer_message: { icon: MessageCircle, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Customer Message' },
   default: { icon: Bell, iconBg: 'bg-gray-100', iconColor: 'text-gray-500', chip: 'Notification' },
 };
 
@@ -28,6 +30,7 @@ export const mapNotification = (n) => {
     title: n.title || cfg.chip,
     text: n.message || n.text || '',
     time: n.createdAt,
+    transactionId: n.transactionId ?? null,
     cfg,
   };
 };
@@ -47,9 +50,15 @@ export const timeAgo = (iso) => {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-// Tab each notification type opens. Staff actionables go to Tasks;
-// everything record-related goes to History; plain notices go home.
+// Tab each notification type opens. Staff actionables go to Tasks; admin
+// customer messages go to the Messages inbox; everything record-related
+// goes to History; plain notices go home.
 export const targetTabForNotification = (type, role) => {
+  if (type === 'customer_message') {
+    if (role === 'Admin') return 'Messages';
+    if (role === 'Staff') return 'Tasks';
+    return 'History';
+  }
   if (role === 'Staff' && ['new_booking', 'due_today', 'overdue', 'late_return', 'no_show', 'reminder'].includes(type)) {
     return 'Tasks';
   }

@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
-  ClipboardList, AlertTriangle
+  ClipboardList, AlertTriangle, MessageCircle
 } from 'lucide-react';
 
 import { useAuth } from './hooks/useAuth';
@@ -48,6 +48,7 @@ const InventoryAnalyticsView = lazy(() => import('./pages/InventoryAnalyticsView
 const ProfileSettingsView = lazy(() => import('./pages/ProfileSettingsView'));
 const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
 const NotificationsView = lazy(() => import('./pages/NotificationsView'));
+const MessagesView = lazy(() => import('./pages/MessagesView'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 // Modal/large components that drag heavy deps (framer-motion, qrcode,
 // html5-qrcode, react-markdown) into the boot bundle — deferred until opened.
@@ -63,6 +64,7 @@ const navItems = {
     { id: 'Catalog', icon: ShoppingBag, label: 'Inventory' },
     { id: 'History', icon: Clock, label: 'Transactions' },
     { id: 'AI Insights', icon: Sparkles, label: 'AI Intelligence', special: true },
+    { id: 'Messages', icon: MessageCircle, label: 'Messages' },
     { id: 'Settings', icon: Settings, label: 'Settings' },
   ],
   Staff: [
@@ -883,6 +885,9 @@ export default function RentechApp() {
             )}
             {activeTab === 'Notifications' && (
               <NotificationsView role={viewRole} onNavigateTab={goTab} />
+            )}
+            {activeTab === 'Messages' && (
+              <MessagesView onOpenBooking={(txId) => navigate(txDetailPath(viewRole, txId))} />
             )}
     </>
   );

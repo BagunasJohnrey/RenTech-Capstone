@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Search } from 'lucide-react';
+import { Search, MessageCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
 import MobileBottomNav from './MobileBottomNav';
 import InstallAppBanner from '../components/InstallAppBanner';
@@ -201,6 +201,21 @@ export default function AppLayout({
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" />
                   </svg>
+                </button>
+              )}
+
+              {/* Messages inbox shortcut — roles with a Messages tab (Admin),
+                  placed beside the notification bell */}
+              {navItems?.some((i) => i.id === 'Messages') && (
+                <button
+                  onClick={() => setActiveTab('Messages')}
+                  aria-label="Open customer messages"
+                  title="Messages"
+                  className={`md:hidden p-2.5 rounded-full relative transition-colors btn-press ${
+                    activeTab === 'Messages' ? 'bg-[#bf4a53]/10 text-[#bf4a53]' : 'bg-gray-50/80 text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <MessageCircle size={18} />
                 </button>
               )}
 
