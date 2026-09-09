@@ -772,12 +772,6 @@ export default function RentechApp() {
 
               <div className="flex items-center gap-2 md:gap-3 shrink-0">
                 <button
-                  onClick={() => setGuestView(false)}
-                  className="text-xs md:text-sm font-semibold text-gray-600 px-3 py-2 hover:text-gray-950 transition-colors"
-                >
-                  ← Home
-                </button>
-                <button
                   onClick={() => { setGuestView(false); setShowLoginPage(true); }}
                   className="bg-[#bf4a53] text-white px-5 py-2.5 md:px-7 md:py-3 rounded-full font-bold text-xs md:text-sm shadow-lg shadow-[#bf4a53]/20 hover:bg-[#a63f47] transition-colors whitespace-nowrap"
                 >
