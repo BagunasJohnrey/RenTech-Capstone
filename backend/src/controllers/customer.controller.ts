@@ -63,7 +63,7 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
       promoCode,
       size,
       measurements,
-      requireMinimumDownpayment: true, // customers must pay the 50% downpayment
+      requireMinimumDownpayment: true, // customers must pay the flat minimum downpayment (default ₱200)
     });
 
     res.status(201).json(tx);

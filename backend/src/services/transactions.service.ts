@@ -53,7 +53,7 @@ interface CreateRentalInput {
   promoCodeId?: string;          // legacy: only honored when it matches a real promo
   size?: string;
   measurements?: unknown;
-  requireMinimumDownpayment?: boolean; // customers must put down >= 50% of the fee
+  requireMinimumDownpayment?: boolean; // customers must put down the flat min_downpayment floor (default ₱200)
 }
 
 export async function createRental(data: CreateRentalInput, processedById?: string) {

@@ -72,7 +72,7 @@ describe('POST /api/bookings', () => {
     prisma.transaction.findFirst.mockResolvedValueOnce(null);
 
     // Security contract: fee is derived server-side (₱5000), customer must put
-    // down >= 50% (₱2500), and pickup can't be in the past.
+    // down the flat minimum (₱200 floor), and pickup can't be in the past.
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
@@ -100,7 +100,7 @@ describe('POST /api/bookings', () => {
     expect(res.status).toBe(403);
   });
 
-  it('should reject a downpayment below the 50% minimum', async () => {
+  it('should reject a downpayment below the flat ₱200 minimum', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
       id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
@@ -110,7 +110,7 @@ describe('POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 100 });
 
     expect(res.status).toBe(400);
   });

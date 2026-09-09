@@ -18,7 +18,7 @@ router.get('/scan/:id', requireRole(Role.Admin, Role.Staff), transactionControll
 router.get('/', transactionController.listTransactions);
 router.get('/:id', transactionController.getTransaction);
 
-// Customers book exclusively through /bookings (which enforces the 50%
+// Customers book exclusively through /bookings (which enforces the flat
 // minimum downpayment + server-side pricing). Allowing them to POST here
 // would bypass those guards, so rental creation is staff/admin only.
 router.post('/', requireRole(Role.Admin, Role.Staff), validate(transactionController.createRentalSchema), transactionController.createRental);

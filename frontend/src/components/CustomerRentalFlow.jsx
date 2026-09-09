@@ -67,7 +67,7 @@ export default function CustomerRentalFlow({
   });
   const eventDateTouched = useRef(false);
   // Suggested rental period + minimum downpayment come from the admin's
-  // business rules (public endpoint) — fall back to the 3-day / 50% defaults.
+  // business rules (public endpoint) — fall back to the 3-day / ₱200 defaults.
   const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, min_downpayment: 200 });
   useEffect(() => {
     let cancelled = false;
@@ -109,12 +109,11 @@ export default function CustomerRentalFlow({
   const [showSizeGuide, setShowSizeGuide] = useState(false);
   const saleInfo = selectedItem ? getSaleInfo(selectedItem) : null;
   const effectiveItemPrice = saleInfo?.active ? saleInfo.price : (selectedItem?.price || 0);
-  // FIX: the 50% minimum applies to the actual fee being charged (finalFee,
+  // The flat minimum applies to the actual fee being charged (finalFee,
   // after any promo). Same as the server's requireMinimumDownpayment rule so
   // promo-discounted bookings can't be blocked by an over-large minimum.
-  const [downpaymentAmount, setDownpaymentAmount] = useState(() =>
-    preselectedItem ? Math.round((preselectedItem.price || 0) * 0.5) : 0
-  );
+  // Prefilled with the flat floor once an item is picked (step 0 resets it).
+  const [downpaymentAmount, setDownpaymentAmount] = useState(0);
   const [confirmedTx, setConfirmedTx] = useState(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);

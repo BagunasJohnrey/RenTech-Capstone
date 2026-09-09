@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as paymongoService from '../services/paymongo.service.js';
 import { prisma } from '../config/database.js';
+import { getBusinessRules } from '../services/settings.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 
@@ -28,12 +29,15 @@ export async function createPaymentIntent(req: AuthenticatedRequest, res: Respon
       throw new AppError(400, 'Transaction is already closed');
     }
 
-    // SECURITY: the payment amount must be within the required downpayment
-    // (>= 50% of the fee) and the still-owed balance. Client-controlled amounts
-    // outside this range are rejected — no more paying ₱1 for a ₱5,000 gown.
+    // SECURITY: the payment amount must be within the flat minimum payment
+    // (admin business rules `min_downpayment`, default ₱200 — same floor as
+    // booking-time downpayment) and the still-owed balance. Client-controlled
+    // amounts outside this range are rejected — no more paying ₱1 for a ₱5,000 gown.
     const due = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - tx.totalPaid);
     if (due <= 0) throw new AppError(400, 'Transaction is already fully paid');
-    const minPayment = Math.min(Math.round(tx.rentalFee * 0.5), due);
+    const rules = await getBusinessRules();
+    const flatMin = parseInt(rules.min_downpayment ?? '200', 10) || 200;
+    const minPayment = Math.min(flatMin, due);
     if (!Number.isFinite(amount) || amount < minPayment || amount > due) {
       throw new AppError(
         400,
