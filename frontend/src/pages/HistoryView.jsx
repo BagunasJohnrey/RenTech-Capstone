@@ -139,11 +139,25 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           <span className="sr-only">Process Return</span>
         </button>
       )}
-      <RowActionsMenu
-        items={menuItemsFor(tx)}
-        buttonClassName={`${pad} text-gray-500 hover:bg-gray-100 rounded-full transition-colors`}
-        iconSize={icon}
-      />
+      {role !== 'Customer' && (
+        <RowActionsMenu
+          items={menuItemsFor(tx)}
+          buttonClassName={`${pad} text-gray-500 hover:bg-gray-100 rounded-full transition-colors`}
+          iconSize={icon}
+        />
+      )}
+      {/* Customer-side: the overflow menu would hold exactly one item (Cancel
+          booking), so render it inline instead of behind a "⋯" tap. */}
+      {role === 'Customer' && tx.status === 'Active' && (
+        <button
+          onClick={() => setCancelTx(tx)}
+          className="inline-flex items-center gap-1 px-3 py-2 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-600 hover:text-white rounded-full transition-colors"
+          title="Cancel booking"
+        >
+          <XCircle size={icon} />
+          Cancel
+        </button>
+      )}
     </>
   );
 
