@@ -43,7 +43,7 @@ export default function AvailabilityCalendar({ item, onClose }) {
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-gray-100/80 bg-gray-50/50">
           <div className="w-10 h-10 rounded-lg bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
-            <ItemImage image={item.image} alt="" className="w-full h-full object-cover" placeholderSize={16} />
+            <ItemImage thumb image={item.image} alt="" className="w-full h-full object-cover" placeholderSize={16} />
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="font-bold text-sm text-gray-900 truncate">{item.name}</h3>

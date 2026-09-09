@@ -23,26 +23,25 @@ async function jpegOf(width: number, height: number, quality = 95): Promise<Buff
 }
 
 describe('compressImage (server-side image normalization)', () => {
-  it('downscales an oversized JPEG to at most IMAGE_MAX_DIM and re-encodes as JPEG', async () => {
+  it('downscales an oversized JPEG to at most IMAGE_MAX_DIM and re-encodes as WebP', async () => {
     const { compressImage } = await import('../src/utils/imageCompress.js');
     const big = await jpegOf(4000, 3000); // 4000x3000 phone photo
     const out = await compressImage(big, 'image/jpeg');
 
-    expect(out.contentType).toBe('image/jpeg');
-    expect(out.ext).toBe('.jpg');
+    expect(out.contentType).toBe('image/webp');
+    expect(out.ext).toBe('.webp');
 
     const meta = await sharp(out.buffer).metadata();
-    expect(meta.format).toBe('jpeg');
+    expect(meta.format).toBe('webp');
     expect(meta.width).toBeLessThanOrEqual(1280);
     expect(meta.height).toBeLessThanOrEqual(1280);
     // Aspect ratio preserved (fit: 'inside').
     expect(Math.abs(meta.width! / meta.height! - 4000 / 3000)).toBeLessThan(0.02);
-    // A 4000x3000 flat-color JPEG at q82 must come out far smaller than the
-    // q95 original.
+    // WebP output must be far smaller than the q95 JPEG original.
     expect(out.buffer.length).toBeLessThan(big.length);
   });
 
-  it('normalizes an oversized PNG to JPEG', async () => {
+  it('normalizes an oversized PNG to WebP', async () => {
     const { compressImage } = await import('../src/utils/imageCompress.js');
     const bigPng = await sharp({
       create: { width: 2000, height: 2000, channels: 3, background: { r: 10, g: 20, b: 30 } },
@@ -52,18 +51,31 @@ describe('compressImage (server-side image normalization)', () => {
 
     const out = await compressImage(bigPng, 'image/png');
     const meta = await sharp(out.buffer).metadata();
-    expect(meta.format).toBe('jpeg');
+    expect(meta.format).toBe('webp');
     expect(meta.width).toBe(1280);
     expect(meta.height).toBe(1280);
   });
 
-  it('passes through an already-compliant JPEG without re-encoding (no generational loss)', async () => {
+  it('transcodes an already-small client JPEG to WebP (one generation, format move)', async () => {
     const { compressImage } = await import('../src/utils/imageCompress.js');
     const small = await jpegOf(800, 600);
     const out = await compressImage(small, 'image/jpeg');
-    // Byte-identical pass-through — the client canvas pass already produced
-    // a compliant derivative, so the server leaves it untouched.
-    expect(out.buffer.equals(small)).toBe(true);
+    const meta = await sharp(out.buffer).metadata();
+    expect(meta.format).toBe('webp');
+    expect(meta.width).toBe(800);
+    expect(meta.height).toBe(600);
+  });
+
+  it('passes through an already-compliant WebP without re-encoding (no generational loss)', async () => {
+    const { compressImage } = await import('../src/utils/imageCompress.js');
+    const smallWebp = await sharp({
+      create: { width: 800, height: 600, channels: 3, background: { r: 200, g: 30, b: 60 } },
+    })
+      .webp({ quality: 80 })
+      .toBuffer();
+    const out = await compressImage(smallWebp, 'image/webp');
+    // Byte-identical pass-through — already a compliant derivative.
+    expect(out.buffer.equals(smallWebp)).toBe(true);
   });
 
   it('rejects corrupt/non-image bytes with a 400', async () => {
@@ -90,11 +102,31 @@ describe('compressImage (server-side image normalization)', () => {
 });
 
 describe('coerceExtension', () => {
-  it('rewrites any extension to .jpg', async () => {
+  it('rewrites any extension to .webp', async () => {
     const { coerceExtension } = await import('../src/utils/imageCompress.js');
-    expect(coerceExtension('photo.PNG', '.jpg')).toBe('photo.jpg');
-    expect(coerceExtension('rental/abc/return-123.webp', '.jpg')).toBe('rental/abc/return-123.jpg');
-    expect(coerceExtension('1734123-gown.jpeg', '.jpg')).toBe('1734123-gown.jpg');
+    expect(coerceExtension('photo.PNG', '.webp')).toBe('photo.webp');
+    expect(coerceExtension('rental/abc/return-123.jpg', '.webp')).toBe('rental/abc/return-123.webp');
+    expect(coerceExtension('1734123-gown.jpeg', '.webp')).toBe('1734123-gown.webp');
+  });
+});
+
+describe('makeThumb + thumbKeyFor (grid thumbnails)', () => {
+  it('produces a bounded WebP derivative of a full-size image', async () => {
+    const { makeThumb } = await import('../src/utils/imageCompress.js');
+    const big = await jpegOf(2000, 1500);
+    const thumb = await makeThumb(big);
+    const meta = await sharp(thumb).metadata();
+    expect(meta.format).toBe('webp');
+    expect(meta.width).toBeLessThanOrEqual(480);
+    expect(meta.height).toBeLessThanOrEqual(480);
+    expect(thumb.length).toBeLessThan(big.length);
+  });
+
+  it('derives the thumb key deterministically (mirrored by frontend utils/images.js)', async () => {
+    const { thumbKeyFor } = await import('../src/utils/imageCompress.js');
+    expect(thumbKeyFor('seed/gown-01-x.jpg')).toBe('thumbs/seed/gown-01-x.webp');
+    expect(thumbKeyFor('seed/suit-20-y.webp')).toBe('thumbs/seed/suit-20-y.webp');
+    expect(thumbKeyFor('rental/abc/return-123.webp')).toBe('thumbs/rental/abc/return-123.webp');
   });
 });
 
@@ -104,6 +136,24 @@ describe('sharp sanity (tiny PNG fixture decodes)', () => {
     expect(meta.format).toBe('png');
     expect(meta.width).toBe(1);
     expect(meta.height).toBe(1);
+  });
+});
+
+describe('bucket routing (public catalog vs private condition shots)', () => {
+  it('routes rental/ condition paths to the private bucket, everything else public', async () => {
+    const { isConditionPath, bucketFor } = await import('../src/services/storage.service.js');
+    expect(isConditionPath('rental/abc/release-1.jpg')).toBe(true);
+    expect(isConditionPath('seed/gown-01-x.jpg')).toBe(false);
+    expect(isConditionPath('1757-photo.jpg')).toBe(false);
+    expect(bucketFor('rental/abc/return-1.jpg')).toBe(process.env.STORAGE_BUCKET || 'rentech-images');
+    expect(bucketFor('seed/gown-01-x.jpg')).toBe(process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog');
+  });
+
+  it('builds a stable public URL for catalog paths (offline, no Supabase call)', async () => {
+    const { getPublicUrl } = await import('../src/services/storage.service.js');
+    const url = getPublicUrl('seed/gown-01-x.jpg');
+    expect(url).toContain('/storage/v1/object/public/');
+    expect(url).toContain('seed/gown-01-x.jpg');
   });
 });
 

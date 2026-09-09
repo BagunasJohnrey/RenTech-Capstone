@@ -89,7 +89,7 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean }) {
                   <span className={`p-1 rounded-md shrink-0 ${checked ? 'text-emerald-600' : 'text-gray-300'}`}>
                     {checked ? <CheckSquare size={18} /> : <Square size={18} />}
                   </span>
-                  <ItemImage image={item.image} alt={item.name} className="w-11 h-11 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={18} />
+                  <ItemImage thumb image={item.image} alt={item.name} className="w-11 h-11 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={18} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
                     <p className="text-xs text-gray-500 truncate">

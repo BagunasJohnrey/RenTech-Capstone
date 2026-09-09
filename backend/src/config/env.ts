@@ -64,10 +64,14 @@ export const env = {
 
   // Server-side image compression (sharp): every uploaded image is
   // auto-rotated via its EXIF orientation tag, EXIF-stripped, downscaled to
-  // at most IMAGE_MAX_DIM px on its longest edge, and re-encoded as JPEG at
-  // IMAGE_JPEG_QUALITY before it reaches the storage bucket. Mirrors the
-  // client-side canvas downscale (utils/file.js) so direct API uploads
-  // (curl/Postman) can't land full-size images in the bucket.
+  // at most IMAGE_MAX_DIM px on its longest edge, and re-encoded as WebP at
+  // IMAGE_WEBP_QUALITY before it reaches the storage bucket. A small
+  // IMAGE_THUMB_DIM px WebP derivative (IMAGE_THUMB_QUALITY) is stored
+  // alongside under `thumbs/` for grid thumbnails. Mirrors the client-side
+  // canvas downscale (utils/file.js) so direct API uploads (curl/Postman)
+  // can't land full-size images in the bucket.
   IMAGE_MAX_DIM: parseInt(process.env.IMAGE_MAX_DIM || '1280', 10),
-  IMAGE_JPEG_QUALITY: parseInt(process.env.IMAGE_JPEG_QUALITY || '82', 10),
+  IMAGE_WEBP_QUALITY: parseInt(process.env.IMAGE_WEBP_QUALITY || '78', 10),
+  IMAGE_THUMB_DIM: parseInt(process.env.IMAGE_THUMB_DIM || '480', 10),
+  IMAGE_THUMB_QUALITY: parseInt(process.env.IMAGE_THUMB_QUALITY || '70', 10),
 };

@@ -23,7 +23,7 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
   return (
     <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
       <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
-        <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+        <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
           <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] sm:text-[10px] font-bold shadow-sm text-[#bf4a53]">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
@@ -170,7 +170,7 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
       className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
       <button type="button" onClick={() => onViewDetail?.(item)} aria-label={`View ${item.name}`}
         className="relative aspect-[4/5] bg-gray-50 overflow-hidden w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60">
-        <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+        <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
           <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] font-bold shadow-sm text-[#bf4a53]">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}

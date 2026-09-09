@@ -1,8 +1,30 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { compressImage, coerceExtension } from '../utils/imageCompress.js';
+import { compressImage, coerceExtension, makeThumb, thumbKeyFor } from '../utils/imageCompress.js';
 
+// Object keys are unique per upload (Date.now()/uuid/seed-stable content),
+// so a long browser/CDN cache lifetime is safe — a replaced photo always
+// lands under a new key (upsert is false everywhere below).
+const CACHE_CONTROL = '2592000'; // 30 days in seconds
+
+// Two-bucket split (Sept 2026 optimization):
+//   - CATALOG_BUCKET (public): item/catalog photos — `seed/`, `catalog/`,
+//     `thumbs/`, and legacy flat upload keys. Served via stable public URLs
+//     (zero signing round-trips, browser + service-worker cacheable).
+//   - BUCKET_NAME (private): `rental/` condition shots (release/return
+//     evidence) — signed-URL-only, never public.
+// Routing is by key prefix so no caller or DB change was needed.
 const BUCKET_NAME = process.env.STORAGE_BUCKET || 'rentech-images';
+const CATALOG_BUCKET = process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog';
+
+// Condition evidence lives here; everything else is catalog content.
+export function isConditionPath(path: string): boolean {
+  return path.startsWith('rental/');
+}
+
+export function bucketFor(path: string): string {
+  return isConditionPath(path) ? BUCKET_NAME : CATALOG_BUCKET;
+}
 const ALLOWED_MIME = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const FILE_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
 
@@ -33,28 +55,41 @@ export function assertSafeUploadPath(fileName: string): void {
 
 export async function ensureBucket() {
   const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-  const exists = buckets?.some((b) => b.name === BUCKET_NAME);
+  const names = new Set((buckets || []).map((b) => b.name));
   try {
-    if (!exists) {
-      const { error } = await supabaseAdmin.storage.createBucket(BUCKET_NAME, {
-        public: false,
-        allowedMimeTypes: ALLOWED_MIME,
-        fileSizeLimit: FILE_SIZE_LIMIT,
-      });
-      if (error) console.warn('[storage] createBucket failed:', error.message);
-    } else {
-      // Re-apply limits in case the bucket predates the current config
-      // (e.g. an older 5MB cap that rejects normal phone photos).
-      const { error } = await supabaseAdmin.storage.updateBucket(BUCKET_NAME, {
-        public: false,
-        allowedMimeTypes: ALLOWED_MIME,
-        fileSizeLimit: FILE_SIZE_LIMIT,
-      });
-      if (error) console.warn('[storage] updateBucket failed:', error.message);
-    }
+    await ensureOneBucket(names.has(BUCKET_NAME), BUCKET_NAME, false);
+    await ensureOneBucket(names.has(CATALOG_BUCKET), CATALOG_BUCKET, true);
   } catch (err) {
     console.warn('[storage] ensureBucket error:', err);
   }
+}
+
+async function ensureOneBucket(exists: boolean, name: string, isPublic: boolean) {
+  if (!exists) {
+    const { error } = await supabaseAdmin.storage.createBucket(name, {
+      public: isPublic,
+      allowedMimeTypes: ALLOWED_MIME,
+      fileSizeLimit: FILE_SIZE_LIMIT,
+    });
+    if (error) console.warn(`[storage] createBucket(${name}) failed:`, error.message);
+  } else {
+    // Re-apply limits in case the bucket predates the current config
+    // (e.g. an older 5MB cap that rejects normal phone photos).
+    const { error } = await supabaseAdmin.storage.updateBucket(name, {
+      public: isPublic,
+      allowedMimeTypes: ALLOWED_MIME,
+      fileSizeLimit: FILE_SIZE_LIMIT,
+    });
+    if (error) console.warn(`[storage] updateBucket(${name}) failed:`, error.message);
+  }
+}
+
+// Stable public URL for catalog objects — pure string concat (exactly what
+// storage-js getPublicUrl builds), no Supabase call, safe to hand to <img>
+// (long cache headers are set at upload; keys are unique per upload).
+export function getPublicUrl(path: string): string {
+  const base = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+  return `${base}/storage/v1/object/public/${CATALOG_BUCKET}/${path}`;
 }
 
 // Server-side upload: the browser sends the file bytes (base64) to our API,
@@ -76,7 +111,7 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
   // canvas before upload, but a direct API call, a canvas failure, or a
   // future client would otherwise land a full-size image in the bucket.
   // Everything is auto-rotated, EXIF-stripped, bounded to IMAGE_MAX_DIM, and
-  // normalized to JPEG; already-compliant client JPEGs skip the re-encode.
+  // normalized to WebP; already-compliant client WebPs skip the re-encode.
   const compressed = await compressImage(buffer, contentType);
   buffer = compressed.buffer;
   contentType = compressed.contentType;
@@ -98,12 +133,13 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
   // (e.g. PUT /transactions/:id/release) failed — the user retried and the
   // bytes are already in the bucket. Returning the path makes the retry
   // idempotent instead of stranding the flow with a 500.
+  const bucket = bucketFor(fileName);
   let data: { path: string } | null = null;
   let lastError: { message?: string; statusCode?: string | number } | null = null;
   for (let attempt = 0; attempt < 3 && !data; attempt++) {
     const result = await supabaseAdmin.storage
-      .from(BUCKET_NAME)
-      .upload(fileName, buffer, { contentType, upsert: false });
+      .from(bucket)
+      .upload(fileName, buffer, { contentType, upsert: false, cacheControl: CACHE_CONTROL });
     if (result.error) {
       lastError = result.error;
       if (/already exists|duplicate/i.test(result.error.message ?? '')) {
@@ -127,10 +163,38 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
     throw new AppError(500, 'Failed to upload image — please try again');
   }
 
-  return { path: data.path };
+  // Grid-thumbnail derivative (`thumbs/<path>.webp`). Best-effort: grids
+  // fall back to the full image when the thumb is absent, so a thumb failure
+  // must never fail the item photo itself — it is logged for ops instead.
+  let thumbPath: string | null = null;
+  try {
+    const thumbBytes = await makeThumb(buffer);
+    const thumbKey = thumbKeyFor(data.path);
+    const { error: thumbError } = await supabaseAdmin.storage
+      .from(bucket)
+      .upload(thumbKey, thumbBytes, { contentType: 'image/webp', upsert: false, cacheControl: CACHE_CONTROL });
+    if (thumbError) {
+      if (/already exists|duplicate/i.test(thumbError.message ?? '')) {
+        thumbPath = thumbKey; // idempotent retry — bytes already landed
+      } else {
+        console.warn('[storage] thumb upload failed:', thumbError.message, { thumbKey });
+      }
+    } else {
+      thumbPath = thumbKey;
+    }
+  } catch (err) {
+    console.warn('[storage] thumb generation failed:', (err as Error)?.message ?? err, { fileName });
+  }
+
+  return { path: data.path, thumbPath };
 }
 
 export async function getDownloadUrl(path: string) {
+  // Catalog objects are public — hand out the stable URL with no Supabase
+  // round-trip. Only `rental/` condition shots go through signing.
+  if (!isConditionPath(path)) {
+    return { url: getPublicUrl(path), public: true as const };
+  }
   let data: { signedUrl: string } | null;
   let error: unknown;
   try {
@@ -199,8 +263,17 @@ export function storageErrorStatus(error: {
 export async function removeObject(path: string) {
   try {
     if (!path || /^https?:\/\//.test(path)) return; // absolute URLs aren't bucket objects
-    const { error } = await supabaseAdmin.storage.from(BUCKET_NAME).remove([path]);
-    if (error) console.warn('[storage] removeObject failed:', error.message);
+    const bucket = bucketFor(path);
+    const { error } = await supabaseAdmin.storage.from(bucket).remove([path]);
+    if (error) {
+      console.warn('[storage] removeObject failed:', error.message);
+      return;
+    }
+    // Best-effort thumb cleanup alongside the full image (catalog only —
+    // condition shots have no thumbs served, but removing a stale one is
+    // harmless, so attempt uniformly).
+    const { error: thumbError } = await supabaseAdmin.storage.from(bucket).remove([thumbKeyFor(path)]);
+    if (thumbError) console.warn('[storage] removeObject thumb failed:', thumbError.message);
   } catch (err) {
     console.warn('[storage] removeObject error:', err);
   }

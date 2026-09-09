@@ -1,42 +1,95 @@
-import { useEffect, useState, memo } from 'react';
+import { useEffect, useRef, useState, memo } from 'react';
 import { ImageIcon } from 'lucide-react';
-import { storageService } from '../services/storage';
-import { imageCache } from '../utils/imageCache';
+import {
+  isAbsoluteUrl,
+  isPrivatePath,
+  thumbUrlFor,
+  resolveDisplayUrl,
+} from '../utils/images';
 
-const isAbsoluteUrl = (p) =>
-  typeof p === 'string' && (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:'));
+// Thumb keys proven dead this session (legacy objects with no generated
+// thumb) — skip straight to the full image instead of 404ing every mount.
+const deadThumbs = new Set();
 
-// Resolve an absolute URL immediately; a private-bucket path goes through the
-// shared signed-URL cache so grids of items don't re-hit the backend (and
-// images don't flicker) on every render/navigation.
-const resolveUrl = (image) =>
-  imageCache.resolve(image, async () => {
-    const res = await storageService.getDownloadUrl(image);
-    return res?.url || null;
-  });
-
-function ItemImage({ image, alt = '', className = '', placeholderSize = 28 }) {
+function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eager = false, thumb = false }) {
+  const ref = useRef(null);
+  const [inView, setInView] = useState(eager);
   const [src, setSrc] = useState(() => (image && isAbsoluteUrl(image) ? image : null));
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  const wantThumb = thumb && !isPrivatePath(image) && !thumbFailed && !deadThumbs.has(image);
+
+  // Don't resolve anything (not even the signing request) until the image
+  // is near the viewport. `eager` bypasses for above-the-fold content.
+  useEffect(() => {
+    if (eager || inView) return;
+    if (typeof IntersectionObserver === 'undefined' || !ref.current) {
+      setInView(true);
+      return;
+    }
+    const el = ref.current;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '400px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [eager, inView]);
 
   useEffect(() => {
     let active = true;
+    setThumbFailed(false);
+    if (!inView) return;
     if (!image || isAbsoluteUrl(image)) {
       setSrc(image || null);
       return;
     }
-    resolveUrl(image).then((url) => { if (active) setSrc(url || null); });
+    // Grid thumbs: the small public webp first; onError below falls back to
+    // the full image for legacy objects without a generated thumb.
+    if (thumb && !isPrivatePath(image) && !deadThumbs.has(image)) {
+      setSrc(thumbUrlFor(image));
+      return;
+    }
+    resolveDisplayUrl(image).then((url) => { if (active) setSrc(url || null); });
     return () => { active = false; };
-  }, [image]);
+    // thumbFailed included: flipping it re-runs to the full-image branch.
+  }, [image, inView, thumb, thumbFailed]);
+
+  const handleError = () => {
+    // Thumb 404 (legacy object) -> remember + fall back to full image once.
+    // Anything else failing -> placeholder.
+    if (wantThumb && src && src.includes('/thumbs/')) {
+      deadThumbs.add(image);
+      setThumbFailed(true);
+    } else {
+      setSrc(null);
+    }
+  };
 
   if (!src) {
     return (
-      <div className={`flex items-center justify-center text-gray-300 ${className}`}>
+      <div ref={ref} className={`flex items-center justify-center text-gray-300 ${className}`}>
         <ImageIcon size={placeholderSize} />
       </div>
     );
   }
 
-  return <img src={src} alt={alt} className={className} />;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading={eager ? 'eager' : 'lazy'}
+      decoding="async"
+      fetchPriority={eager ? 'high' : 'auto'}
+      onError={handleError}
+    />
+  );
 }
 
 export default memo(ItemImage);

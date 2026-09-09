@@ -63,6 +63,20 @@ export default defineConfig({
         globIgnores: ['RenTech.png'], // 6.65MB hero/logo — served on demand, never precached
         // Keep API + Supabase signed URLs out of the SW cache.
         navigateFallbackDenylist: [/^\/api\//],
+        // Public catalog photos have stable URLs + 30-day cache headers, so
+        // CacheFirst across visits is safe. Scoped to /object/public/ only —
+        // signed URLs (/object/sign/) rotate and must never be cached.
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'rentech-public-images',
+              expiration: { maxEntries: 300, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       },
     }),
     cspPlugin(),

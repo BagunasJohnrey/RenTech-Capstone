@@ -638,7 +638,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'
                     }`}
                   >
-                    <ItemImage image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
+                    <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-gray-900 line-clamp-1">{item.name}</p>
                       <p className="text-[10px] text-gray-500">₱{item.price.toLocaleString()}</p>

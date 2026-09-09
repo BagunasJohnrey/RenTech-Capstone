@@ -49,7 +49,7 @@ export default function OutOfServiceModal({ item, onClose, onConfirm }) {
 
         <div className="p-5 space-y-4">
           <div className="flex items-center gap-3 bg-gray-50 rounded-2xl p-3">
-            <ItemImage image={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={20} />
+            <ItemImage thumb image={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={20} />
             <div className="min-w-0">
               <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
               <p className="text-xs text-gray-500 truncate">{item.category} · ₱{item.price.toLocaleString()}/day</p>
