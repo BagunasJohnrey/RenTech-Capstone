@@ -176,6 +176,7 @@ export default function RentechApp() {
     remove: removeTransaction,
     release: releaseTransaction,
     getById,
+    prefetchTx,
     loading: transactionsLoading,
   } = useTransactions();
   // Staff accounts (Admin) — encapsulated in useStaff (SoC).
@@ -236,7 +237,9 @@ export default function RentechApp() {
   // Global search
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
-  const [routedTx, setRoutedTx] = useState(null);
+  // Fetch fallback for a routed transaction id missing from the loaded list
+  // (deep link / fresh reload). The list hit below resolves synchronously.
+  const [fetchedTx, setFetchedTx] = useState(null);
 
   // Staff QR scanner — the staff member first picks RELEASE or RETURN, then
   // the scanned transaction opens straight into the matching modal.
@@ -298,6 +301,11 @@ export default function RentechApp() {
     if (role === 'Admin') {
       loadStaff().catch(() => {});
     }
+    // Preload the transaction detail chunk while idle so the first popup
+    // open never pays the lazy-chunk download on top of mount + data.
+    const preload = () => import('./components/TransactionDetailModal').catch(() => {});
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(preload);
+    else setTimeout(preload, 2000);
   }, [isLoggedIn, role, loadInventory, loadTransactions, loadStaff]);
 
   // Routed detail modals: resolve the URL id into a full record. Rendering is
@@ -317,13 +325,25 @@ export default function RentechApp() {
   // RegExp match object on every render, which would retrigger this effect in
   // an infinite loop (React "Maximum update depth exceeded").
   const txDetailId = txDetailMatch ? String(txDetailMatch[1]) : null;
+  useEffect(() => { setFetchedTx(null); }, [txDetailId]);
   useEffect(() => {
     if (!isLoggedIn || !txDetailId) return;
-    const id = txDetailId;
-    const found = transactions.find((t) => String(t.id) === id);
-    if (found) { setRoutedTx(normalizeTx(found)); return; }
-    getById(id).then((full) => setRoutedTx(normalizeTx(full))).catch(() => {});
+    // List covers it — the memo below resolves it synchronously, no fetch.
+    if (transactions.some((t) => String(t.id) === txDetailId)) return;
+    let cancelled = false;
+    getById(txDetailId)
+      .then((full) => { if (!cancelled) setFetchedTx(normalizeTx(full)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [isLoggedIn, txDetailId, transactions, getById]);
+  // Resolve during render (not in an effect) so the modal mounts with its
+  // record on the same frame as the navigation — previously the effect's
+  // setState cost a full extra render cycle before anything appeared.
+  const routedTx = useMemo(() => {
+    if (!txDetailId) return null;
+    const found = transactions.find((t) => String(t.id) === txDetailId);
+    return found ? normalizeTx(found) : fetchedTx;
+  }, [txDetailId, transactions, fetchedTx]);
 
   // Mobile system back button: keep navigation inside the app instead of
   // leaving it. A guard history entry is pushed while logged in; each back
@@ -860,7 +880,7 @@ export default function RentechApp() {
               />
             )}
             {activeTab === 'History' && (
-              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} />
+              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} />
             )}
             {activeTab === 'AI Insights' && (
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} />
@@ -1033,6 +1053,7 @@ export default function RentechApp() {
               fetchFull={getById}
               role={role}
               onClose={() => navigate(basePath, { replace: true })}
+              onReturn={handleReturnClick}
             />
           </Suspense>
         )}
