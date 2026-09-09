@@ -28,10 +28,22 @@ function fromUrl() {
   }
 }
 
-// Demo mode is ON when: dev/demo build + (env flag or ?demo= URL flag).
-// When on, the effective role = URL flag → stored role → default Admin.
+// Demo mode is ON when: dev/demo build + (env flag, ?demo= URL flag, or a
+// previously stored role). The stored-role check matters: getDemoRole()
+// strips ?demo= from the URL after reading it, so without it plain-dev
+// demo sessions would silently fall back to the real backend on the second
+// request. When on, the effective role = URL flag → stored role → Admin.
+export function storedDemoRole() {
+  try {
+    const s = localStorage.getItem(DEMO_KEY);
+    return s && DEMO_ROLES.includes(s) ? s : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isDemoMode() {
-  if (!(import.meta.env.VITE_DEMO_MODE === 'true' || fromUrl())) return false;
+  if (!(import.meta.env.VITE_DEMO_MODE === 'true' || fromUrl() || storedDemoRole())) return false;
   // Only ever active in a dev-like build — belt and suspenders so a stray
   // env flag can't ship mock data in production.
   return import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true';
@@ -50,10 +62,8 @@ export function getDemoRole() {
     } catch { /* ignore */ }
     return fromLink;
   }
-  try {
-    const stored = localStorage.getItem(DEMO_KEY);
-    if (stored && DEMO_ROLES.includes(stored)) return stored;
-  } catch { /* ignore */ }
+  const stored = storedDemoRole();
+  if (stored) return stored;
   return 'Admin';
 }
 
