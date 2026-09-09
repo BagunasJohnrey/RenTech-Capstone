@@ -137,9 +137,33 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
   let data: { path: string } | null = null;
   let lastError: { message?: string; statusCode?: string | number } | null = null;
   for (let attempt = 0; attempt < 3 && !data; attempt++) {
-    const result = await supabaseAdmin.storage
-      .from(bucket)
-      .upload(fileName, buffer, { contentType, upsert: false, cacheControl: CACHE_CONTROL });
+    let result: { data: { path: string } | null; error: { message?: string; statusCode?: string | number } | null };
+    try {
+      result = await supabaseAdmin.storage
+        .from(bucket)
+        .upload(fileName, buffer, { contentType, upsert: false, cacheControl: CACHE_CONTROL });
+    } catch (err) {
+      // Transport-level THROW (fetch failed, timeout, socket reset — e.g. a
+      // pooler blip): storage-js throws instead of returning { error }, which
+      // used to escape the retry loop as an instant generic 500. Classify and
+      // retry 503-class failures like the returned-error path below.
+      const message = (err as Error)?.message ?? String(err);
+      lastError = { message };
+      if (storageErrorStatus({ message }) === 503 && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        continue;
+      }
+      console.error('[storage] upload threw:', message, { fileName, bytes: buffer.length });
+      throw new AppError(
+        storageErrorStatus({ message }) === 503 ? 503 : 500,
+        storageErrorStatus({ message }) === 503
+          ? 'Image service temporarily unavailable — please try again'
+          : 'Failed to upload image — please try again',
+        // Dev-only detail (errorHandler strips `details` outside development)
+        // so the client Preview shows the underlying storage reason.
+        { supabaseMessage: message, fileName, bytes: buffer.length }
+      );
+    }
     if (result.error) {
       lastError = result.error;
       if (/already exists|duplicate/i.test(result.error.message ?? '')) {
@@ -160,7 +184,10 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
       fileName,
       bytes: buffer.length,
     });
-    throw new AppError(500, 'Failed to upload image — please try again');
+    throw new AppError(500, 'Failed to upload image — please try again',
+      // Dev-only detail (errorHandler strips `details` outside development)
+      // so the client Preview shows the underlying storage reason.
+      { supabaseMessage: lastError?.message, statusCode: lastError?.statusCode, fileName, bytes: buffer.length });
   }
 
   // Grid-thumbnail derivative (`thumbs/<path>.webp`). Best-effort: grids

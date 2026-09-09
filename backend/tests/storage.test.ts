@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import sharp from 'sharp';
 
 // Real-sharp unit tests for the server-side image compression pipeline —
@@ -179,5 +179,50 @@ describe('storageErrorStatus (signed-URL error classification)', () => {
     const { storageErrorStatus } = await import('../src/services/storage.service.js');
     expect(storageErrorStatus({ message: 'Bucket not found', status: 400 })).toBe(500);
     expect(storageErrorStatus({ message: 'Invalid bucket name' })).toBe(500);
+  });
+});
+
+describe('uploadFile (transport-throw retry)', () => {
+  // storage-js THROWS (instead of returning { error }) on transport failures
+  // — DNS, reset, timeout, pooler blips. The retry loop must survive those
+  // like it does returned errors, or one blip becomes an instant generic 500
+  // (seen on the release-photo upload during a Supabase connectivity window).
+  const uploadMock = vi.fn();
+
+  beforeEach(async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    uploadMock.mockReset().mockResolvedValue({ data: { path: 'probe.webp' }, error: null });
+    (supabaseAdmin as any).storage = {
+      from: vi.fn(() => ({ upload: uploadMock })),
+    };
+  });
+
+  it('retries a transport throw and succeeds', async () => {
+    const { uploadFile } = await import('../src/services/storage.service.js');
+    uploadMock
+      .mockRejectedValueOnce(new Error('fetch failed'))
+      .mockResolvedValue({ data: { path: 'probe-t.webp' }, error: null });
+    const buf = await jpegOf(200, 150);
+    const res = await uploadFile('probe-t.jpg', 'image/jpeg', buf);
+    expect(res.path).toBe('probe-t.webp');
+    // 1 throw + 1 full upload + 1 thumb upload.
+    expect(uploadMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('maps repeated transport throws to 503 after exhausting retries', async () => {
+    const { uploadFile } = await import('../src/services/storage.service.js');
+    uploadMock.mockRejectedValue(new Error('fetch failed'));
+    const buf = await jpegOf(200, 150);
+    await expect(uploadFile('probe-t2.jpg', 'image/jpeg', buf)).rejects.toMatchObject({ statusCode: 503 });
+    // Full-upload attempts only — the thumb never runs when the main fails.
+    expect(uploadMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails fast with 500 on a non-transient throw', async () => {
+    const { uploadFile } = await import('../src/services/storage.service.js');
+    uploadMock.mockRejectedValue(new Error('Bucket not found'));
+    const buf = await jpegOf(200, 150);
+    await expect(uploadFile('probe-t3.jpg', 'image/jpeg', buf)).rejects.toMatchObject({ statusCode: 500 });
+    expect(uploadMock).toHaveBeenCalledTimes(1);
   });
 });
