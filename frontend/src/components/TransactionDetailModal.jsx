@@ -128,12 +128,17 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   return (
     <div className="fixed inset-0 z-[300]">
       <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none">
-        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+      <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
+        {/* dvh cap + top gap: plain vh includes the mobile browser chrome, so the
+            sheet used to slide under it and read as full-screen. */}
+        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
 
         {/* Header — brand gradient band */}
         <div className="sticky top-0 z-10 overflow-hidden rounded-t-3xl">
-          <div className="bg-gradient-to-r from-[#bf4a53] to-[#e07080] px-5 sm:px-6 pt-5 pb-4 relative">
+          <div className="bg-gradient-to-r from-[#bf4a53] to-[#e07080] px-5 sm:px-6 pt-2 pb-4 relative">
+            <div className="flex justify-center" aria-hidden="true">
+              <div className="w-10 h-1 rounded-full bg-white/40 mb-2" />
+            </div>
             <div className="absolute inset-0 opacity-10 pointer-events-none">
               <div className="absolute top-3 right-8 w-24 h-24 border border-white/30 rounded-full" />
               <div className="absolute -bottom-8 left-10 w-20 h-20 border border-white/20 rounded-full" />
@@ -394,7 +399,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
         {/* Footer actions — sticky so they stay visible on long records.
             Close removed (header X / backdrop / Esc still dismiss). */}
-        <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 py-4 sm:rounded-b-3xl">
+        <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
           <div className="space-y-2">
             {canProcessReturn && onReturn && (
               <button onClick={() => onReturn(tx)} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-2">
@@ -414,8 +419,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       {showPayModal && (
         <div className="fixed inset-0 z-[310]">
           <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm" onClick={() => !payLoading && setShowPayModal(false)} />
-          <div className="fixed inset-0 flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none">
-            <div role="dialog" aria-modal="true" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[95vh] overflow-y-auto p-5 sm:p-6 space-y-5 animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-12 pb-0 sm:p-4 pointer-events-none">
+            <div role="dialog" aria-modal="true" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[95vh] max-h-[92dvh] overflow-y-auto p-5 sm:p-6 space-y-5 animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
             {paySuccess ? (
               <div className="text-center py-4">
                 <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
