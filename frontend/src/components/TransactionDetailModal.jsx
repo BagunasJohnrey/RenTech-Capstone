@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { X, Receipt, User, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone } from 'lucide-react';
+import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, MapPin } from 'lucide-react';
 import { customerLabel, customerPhone, itemLabel } from '../utils/format';
-import { normalizeTx } from '../hooks/useTransactions';
+import { normalizeTx, invalidateTxCache } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import ItemImage from './ItemImage';
@@ -40,7 +40,7 @@ function DetailRow({ label, value, highlight }) {
   );
 }
 
-export default function TransactionDetailModal({ transaction, onClose, fetchFull, role }) {
+export default function TransactionDetailModal({ transaction, onClose, fetchFull, role, onReturn }) {
   useEscapeClose(onClose);
   const flags = useFeatureFlags();
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
@@ -78,11 +78,26 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
   const status = tx.status;
   const statusColor = statusColors[status] || 'bg-gray-100 text-gray-600 ring-gray-200';
+  const statusText = TX_STATUS_PILLS[status]?.text || 'text-gray-600';
   const txRef = `#${String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}`;
+  // Fall back to the incoming `transaction` prop: `tx` state is replaced by
+  // the fetchFull enrichment (~500ms round-trip), and anything derived only
+  // from `tx` would pop in late + shift the layout. The list record already
+  // carries phone/address, so prefer instant values with the same result.
+  const custProfile = tx.customerProfile || transaction?.customerProfile || tx.customer;
+  const custPhone = customerPhone(custProfile, tx.contact || tx.customerPhone || transaction?.contact || transaction?.customerPhone);
+  const custAddr = tx.customerProfile?.address || transaction?.customerProfile?.address;
+  const custInitial = (customerLabel(tx.customer) || '?').charAt(0).toUpperCase();
+  const rentalTotal = Number(tx.rentalFee ?? tx.amount ?? 0) || 0;
+  const paidSoFar = Number(tx.totalPaid ?? 0) || 0;
+  const paidPct = rentalTotal > 0 ? Math.min(100, Math.round((paidSoFar / rentalTotal) * 100)) : 0;
   const outstandingBalance = Math.max(0, tx.balance ?? 0);
   const canRecordPayment = (role === 'Admin' || role === 'Staff')
     && !['Returned', 'Cancelled'].includes(tx.status)
     && outstandingBalance > 0;
+  const canProcessReturn = (role === 'Admin' || role === 'Staff')
+    && ['Active', 'Overdue'].includes(tx.status);
+
 
   const handleRecordPayment = async () => {
     setPayError('');
@@ -92,6 +107,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     setPayLoading(true);
     try {
       const res = await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: payMethod, notes: payNotes || undefined });
+      // Payments post outside the transactions hook — drop the cached full
+      // record so the next open re-reads instead of serving stale totals.
+      invalidateTxCache(tx.id);
       setTx(prev => ({
         ...prev,
         totalPaid: res.totalPaid,
@@ -108,75 +126,128 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[300]">
+      <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none">
+        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
 
-        {/* Header */}
-        <div className="sticky top-0 bg-white/90 backdrop-blur-md border-b border-gray-100/80 rounded-t-3xl z-10">
-          <div className="flex items-center justify-between p-5 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-gray-100 rounded-xl">
-                <Receipt size={18} className="text-gray-600" />
-              </div>
-              <div>
-                <h3 id="dialog-title-transaction-detail" className="font-bold text-lg text-gray-900">Transaction {txRef}</h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {status === 'Active' ? 'Currently rented' :
-                   status === 'Overdue' ? 'Past due date' :
-                   status === 'Returned' ? 'Completed' :
-                   status === 'Reserved' ? 'Upcoming booking' : status}
-                </p>
-              </div>
+        {/* Header — brand gradient band */}
+        <div className="sticky top-0 z-10 overflow-hidden rounded-t-3xl">
+          <div className="bg-gradient-to-r from-[#bf4a53] to-[#e07080] px-5 sm:px-6 pt-5 pb-4 relative">
+            <div className="absolute inset-0 opacity-10 pointer-events-none">
+              <div className="absolute top-3 right-8 w-24 h-24 border border-white/30 rounded-full" />
+              <div className="absolute -bottom-8 left-10 w-20 h-20 border border-white/20 rounded-full" />
             </div>
-            <button onClick={onClose} aria-label="Close transaction details" className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
-              <X size={18} />
-            </button>
-          </div>
-          <div className="px-5 pb-4">
-            <span className={`inline-block px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide ring-1 ${statusColor}`}>
-              {status}
-            </span>
+            <div className="flex items-start justify-between gap-3 relative">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center shrink-0">
+                  <Receipt size={20} className="text-white" />
+                </div>
+                <div className="min-w-0">
+                  <h3 id="dialog-title-transaction-detail" className="font-bold text-lg text-white leading-tight">Transaction {txRef}</h3>
+                  <p className="text-xs text-white/80 font-medium mt-0.5">
+                    {status === 'Active' ? 'Currently rented' :
+                     status === 'Overdue' ? 'Past due date' :
+                     status === 'Returned' ? 'Completed' :
+                     status === 'Reserved' ? 'Upcoming booking' : status}
+                  </p>
+                </div>
+              </div>
+              <button onClick={onClose} aria-label="Close transaction details" className="p-1.5 text-white/80 hover:bg-white/20 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-2 relative">
+              <span className={`inline-flex items-center px-3 py-1.5 rounded-full bg-white text-xs font-bold tracking-wide shadow-sm ${statusText}`}>
+                {status}
+              </span>
+              <span className="text-[11px] font-mono font-bold text-white/80">{getBookingCode(tx)}</span>
+            </div>
           </div>
         </div>
 
-        <div className="p-5 space-y-6">
+        <div className="p-5 sm:p-6 space-y-6">
 
-          {/* Customer & Item */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-gray-50 rounded-2xl p-4 space-y-1">
-              <div className="flex items-center gap-1.5 text-gray-400">
-                <User size={13} />
-                <span className="text-[10px] font-bold uppercase tracking-wide">Customer</span>
+          {/* Customer & Item — profile-tile cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center text-sm font-extrabold shrink-0">
+                  {custInitial}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Customer</p>
+                  <p className="font-bold text-gray-900 truncate">{customerLabel(tx.customer) || '—'}</p>
+                </div>
               </div>
-              <p className="font-bold text-gray-900">{customerLabel(tx.customer) || '—'}</p>
-              {customerPhone(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone) && (
-                <p className="text-xs text-gray-500">{customerPhone(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone)}</p>
-              )}
-              {tx.customerProfile?.address && (
-                <p className="text-xs text-gray-500">{tx.customerProfile.address}</p>
+              {(custPhone || custAddr) && (
+                <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
+                  {custPhone && (
+                    <p className="flex items-center gap-1.5 text-xs text-gray-500 min-w-0">
+                      <Phone size={12} className="text-gray-400 shrink-0" />
+                      <span className="truncate">{custPhone}</span>
+                    </p>
+                  )}
+                  {custAddr && (
+                    <p className="flex items-center gap-1.5 text-xs text-gray-500 min-w-0">
+                      <MapPin size={12} className="text-gray-400 shrink-0" />
+                      <span className="truncate">{custAddr}</span>
+                    </p>
+                  )}
+                </div>
               )}
             </div>
-            <div className="bg-gray-50 rounded-2xl p-4 space-y-1">
-              <div className="flex items-center gap-1.5 text-gray-400">
-                <Shirt size={13} />
-                <span className="text-[10px] font-bold uppercase tracking-wide">Item</span>
+            <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0">
+                  <Shirt size={16} className="text-gray-500" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Item</p>
+                  <p className="font-bold text-gray-900 truncate">{itemLabel(tx.item) || '—'}</p>
+                </div>
               </div>
-              <p className="font-bold text-gray-900">{itemLabel(tx.item) || '—'}</p>
-              {tx.size && <p className="text-xs text-gray-500">Size: {tx.size}</p>}
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
+                {tx.size && (
+                  <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Ruler size={12} className="text-gray-400 shrink-0" /> Size: {tx.size}
+                  </p>
+                )}
+                {tx.eventDate && (
+                  <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Calendar size={12} className="text-gray-400 shrink-0" /> Event: {fmtDate(tx.eventDate)}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Dates */}
+          {/* Schedule timeline */}
           <div>
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
               <Calendar size={13} />
               <span className="text-[10px] font-bold uppercase tracking-wide">Schedule</span>
             </div>
-            <div className="bg-white border border-gray-100/80 rounded-2xl p-4 divide-y divide-gray-100">
-              <DetailRow label="Pickup Date" value={fmtDate(tx.rentalDate || tx.date)} />
-              <DetailRow label="Event Date" value={fmtDate(tx.eventDate)} />
-              <DetailRow label="Due / Return By" value={fmtDate(tx.dueDate || tx.returnDate)} />
-              <DetailRow label="Actual Return" value={fmtDate(tx.returnDate)} />
+            <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
+              <ol className="relative space-y-4 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200">
+                <li className="relative pl-7">
+                  <span className="absolute left-0 top-1 w-[11px] h-[11px] rounded-full bg-blue-500 ring-4 ring-blue-100" />
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Pickup Date</p>
+                  <p className="text-sm font-bold text-gray-900">{fmtDate(tx.rentalDate || tx.date) || '—'}</p>
+                </li>
+                <li className="relative pl-7">
+                  <span className={`absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-4 ${status === 'Overdue' ? 'bg-red-500 ring-red-100' : status === 'Returned' ? 'bg-emerald-500 ring-emerald-100' : 'bg-amber-400 ring-amber-100'}`} />
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Due / Return By</p>
+                  <p className={`text-sm font-bold ${status === 'Overdue' ? 'text-red-600' : 'text-gray-900'}`}>{fmtDate(tx.dueDate || tx.returnDate) || '—'}</p>
+                </li>
+                {tx.returnDate && ['Returned'].includes(status) && (
+                  <li className="relative pl-7">
+                    <span className="absolute left-0 top-1 w-[11px] h-[11px] rounded-full bg-emerald-500 ring-4 ring-emerald-100" />
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Actual Return</p>
+                    <p className="text-sm font-bold text-gray-900">{fmtDate(tx.returnDate)}</p>
+                  </li>
+                )}
+              </ol>
             </div>
           </div>
 
@@ -186,13 +257,31 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               <CreditCard size={13} />
               <span className="text-[10px] font-bold uppercase tracking-wide">Payment</span>
             </div>
-            <div className="bg-white border border-gray-100/80 rounded-2xl p-4 divide-y divide-gray-100">
-              <DetailRow label="Rental Fee" value={fmtCurrency(tx.rentalFee ?? tx.amount)} />
-              <DetailRow label="Downpayment" value={fmtCurrency(tx.downpayment)} />
-              <DetailRow label="Balance" value={fmtCurrency(outstandingBalance)} highlight />
-              {tx.latePenalty > 0 && <DetailRow label="Late Penalty" value={fmtCurrency(tx.latePenalty)} />}
-              {tx.damageFee > 0 && <DetailRow label="Damage Fee" value={fmtCurrency(tx.damageFee)} />}
-              {tx.totalPaid > 0 && <DetailRow label="Total Paid" value={fmtCurrency(tx.totalPaid)} />}
+            <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
+              {rentalTotal > 0 && (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between text-xs mb-1.5">
+                    <span className="font-bold text-gray-500">
+                      Paid {fmtCurrency(paidSoFar)} <span className="font-medium text-gray-400">of {fmtCurrency(rentalTotal)}</span>
+                    </span>
+                    <span className={`font-extrabold ${paidPct >= 100 ? 'text-emerald-600' : 'text-[#bf4a53]'}`}>{paidPct}%</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${paidPct >= 100 ? 'bg-emerald-500' : 'bg-[#bf4a53]'}`}
+                      style={{ width: `${paidPct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="divide-y divide-gray-100">
+                <DetailRow label="Rental Fee" value={fmtCurrency(tx.rentalFee ?? tx.amount)} />
+                <DetailRow label="Downpayment" value={fmtCurrency(tx.downpayment)} />
+                <DetailRow label="Balance" value={fmtCurrency(outstandingBalance)} highlight />
+                {tx.latePenalty > 0 && <DetailRow label="Late Penalty" value={fmtCurrency(tx.latePenalty)} />}
+                {tx.damageFee > 0 && <DetailRow label="Damage Fee" value={fmtCurrency(tx.damageFee)} />}
+                {tx.totalPaid > 0 && <DetailRow label="Total Paid" value={fmtCurrency(tx.totalPaid)} />}
+              </div>
             </div>
             {Array.isArray(tx.payments) && tx.payments.length > 0 && (
               <div className="mt-3 space-y-2">
@@ -215,8 +304,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             )}
           </div>
 
-          {/* Booking QR */}
-          {flags.qr_codes && tx.id && (
+          {/* Booking QR — gated on loaded flags so a wrong optimistic
+              default can't flash the section on first open. */}
+          {flags.flagsLoaded && flags.qr_codes && tx.id && (
             <div>
               <div className="flex items-center justify-between mb-3">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Booking QR</p>
@@ -302,23 +392,30 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
         </div>
 
-        {/* Footer */}
-        <div className="p-5 pt-0 space-y-2">
-          {canRecordPayment && (
-            <button onClick={() => setShowPayModal(true)} className="w-full py-3 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
-              <Banknote size={16} /> Record Payment
-            </button>
-          )}
-          <button onClick={onClose} className="w-full py-3 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-sm">
-            Close
-          </button>
+        {/* Footer actions — sticky so they stay visible on long records.
+            Close removed (header X / backdrop / Esc still dismiss). */}
+        <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 py-4 sm:rounded-b-3xl">
+          <div className="space-y-2">
+            {canProcessReturn && onReturn && (
+              <button onClick={() => onReturn(tx)} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-2">
+                <Undo2 size={16} /> Process Return
+              </button>
+            )}
+            {canRecordPayment && (
+              <button onClick={() => setShowPayModal(true)} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
+                <Banknote size={16} /> Record Payment
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Record Payment Modal */}
+      {/* Record Payment Modal — same bottom-sheet treatment on mobile */}
       {showPayModal && (
-        <div className="fixed inset-0 z-[310] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm" onClick={() => !payLoading && setShowPayModal(false)}>
-          <div role="dialog" aria-modal="true" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-5 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[310]">
+          <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm" onClick={() => !payLoading && setShowPayModal(false)} />
+          <div className="fixed inset-0 flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none">
+            <div role="dialog" aria-modal="true" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[95vh] overflow-y-auto p-5 sm:p-6 space-y-5 animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
             {paySuccess ? (
               <div className="text-center py-4">
                 <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -388,15 +485,17 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 <button
                   onClick={handleRecordPayment}
                   disabled={payLoading}
-                  className="w-full py-3 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {payLoading ? 'Recording...' : `Record ₱${Number(payAmount || 0).toLocaleString()}`}
                 </button>
               </>
             )}
+            </div>
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
