@@ -83,8 +83,15 @@ export default defineConfig({
   ],
   resolve: { dedupe: ['react', 'react-dom'] },
   build: {
+    sourcemap: false,
     rollupOptions: {
       output: {
+        // Pure hashes — hides component names like DashboardView-xxx.js
+        // from Network tab. Content is still readable (browser must run it),
+        // this only obscures filenames.
+        entryFileNames: 'assets/[hash].js',
+        chunkFileNames: 'assets/[hash].js',
+        assetFileNames: 'assets/[hash].[ext]',
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('react-dom') || id.includes('/react/') || id.includes('scheduler')) return 'react-vendor';
