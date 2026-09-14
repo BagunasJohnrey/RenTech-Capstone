@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, MapPin } from 'lucide-react';
 import { customerLabel, customerPhone, itemLabel } from '../utils/format';
 import { normalizeTx, invalidateTxCache } from '../hooks/useTransactions';
@@ -6,6 +6,7 @@ import { getBookingCode } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import ItemImage from './ItemImage';
 import BookingQR from './BookingQR';
+import { Skeleton } from './Skeleton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 import { api } from '../utils/api';
@@ -41,7 +42,6 @@ function DetailRow({ label, value, highlight }) {
 }
 
 export default function TransactionDetailModal({ transaction, onClose, fetchFull, role, onReturn }) {
-  useEscapeClose(onClose);
   const flags = useFeatureFlags();
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
   const [tx, setTx] = useState(transaction);
@@ -52,6 +52,34 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const [payError, setPayError] = useState('');
   const [payLoading, setPayLoading] = useState(false);
   const [paySuccess, setPaySuccess] = useState(false);
+  // Gate the body on enrichment: everything appears at once when the full
+  // record lands — never staged pop-ins. Header/footer use instant list data.
+  const [enriching, setEnriching] = useState(() => !!(transaction?.id && fetchFull));
+  // Smooth exits: play the slide/fade-out, then unmount. Every dismiss path
+  // goes through these instead of cutting instantly.
+  const [closing, setClosing] = useState(false);
+  const [payClosing, setPayClosing] = useState(false);
+  // Guards late fetch resolutions: a record landing mid-exit would swap the
+  // content under the fade-out = the visible "glitch" on close.
+  const closingRef = useRef(false);
+  const requestClose = useCallback(() => {
+    if (closing) return;
+    closingRef.current = true;
+    setClosing(true);
+    setTimeout(onClose, 150);
+  }, [closing, onClose]);
+  const closePayModal = useCallback(() => {
+    if (payLoading || payClosing) return;
+    setPayClosing(true);
+    setTimeout(() => { setShowPayModal(false); setPayClosing(false); }, 150);
+  }, [payLoading, payClosing]);
+  const openPayModal = () => { setPayClosing(false); setShowPayModal(true); };
+  // Esc dismisses the topmost layer first (pay form before the detail sheet).
+  const handleEscape = useCallback(() => {
+    if (showPayModal) closePayModal();
+    else requestClose();
+  }, [showPayModal, closePayModal, requestClose]);
+  useEscapeClose(handleEscape);
 
   // Fetch enrichment only when the transaction id changes — `transaction` is a
   // new object identity on every parent render, and `normalizeTx()` also
@@ -65,13 +93,15 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   useEffect(() => {
     if (transaction?.id && fetchFull) {
       let cancelled = false;
+      setEnriching(true);
       // normalize the full record so customerProfile is always present —
       // otherwise the address flickers in from the list item then vanishes.
       fetchFull(transaction.id)
-        .then((full) => { if (!cancelled) setTx(normalizeTx(full)); })
-        .catch(() => {});
+        .then((full) => { if (!cancelled && !closingRef.current) { setTx(normalizeTx(full)); setEnriching(false); } })
+        .catch(() => { if (!cancelled) setEnriching(false); });
       return () => { cancelled = true; };
     }
+    setEnriching(false);
   }, [transaction?.id, fetchFull]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!tx) return null;
@@ -86,7 +116,11 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // carries phone/address, so prefer instant values with the same result.
   const custProfile = tx.customerProfile || transaction?.customerProfile || tx.customer;
   const custPhone = customerPhone(custProfile, tx.contact || tx.customerPhone || transaction?.contact || transaction?.customerPhone);
-  const custAddr = tx.customerProfile?.address || transaction?.customerProfile?.address;
+  // Address previously read ONLY from customerProfile, so list records that
+  // carry it on the raw customer object waited for the enrichment round-trip.
+  const rawCustomer = (tx.customer && typeof tx.customer === 'object' ? tx.customer : null)
+    || (transaction?.customer && typeof transaction.customer === 'object' ? transaction.customer : null);
+  const custAddr = tx.customerProfile?.address || rawCustomer?.address || transaction?.customerProfile?.address;
   const custInitial = (customerLabel(tx.customer) || '?').charAt(0).toUpperCase();
   const rentalTotal = Number(tx.rentalFee ?? tx.amount ?? 0) || 0;
   const paidSoFar = Number(tx.totalPaid ?? 0) || 0;
@@ -117,7 +151,10 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
         payments: [...(prev.payments || []), res.payment],
       }));
       setPaySuccess(true);
-      setTimeout(() => { setShowPayModal(false); setPaySuccess(false); setPayAmount(''); setPayNotes(''); }, 1200);
+      setTimeout(() => {
+        setPayClosing(true);
+        setTimeout(() => { setShowPayModal(false); setPayClosing(false); setPaySuccess(false); setPayAmount(''); setPayNotes(''); }, 150);
+      }, 1200);
     } catch (err) {
       setPayError(err?.message || 'Failed to record payment');
     } finally {
@@ -126,15 +163,18 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   };
 
   return (
-    <div className="fixed inset-0 z-[300]">
-      <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose} />
+    <div className={`fixed inset-0 z-[300] transition-opacity duration-150 ${closing ? 'opacity-0' : 'opacity-100'}`}>
+      <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
       <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
         {/* dvh cap + top gap: plain vh includes the mobile browser chrome, so the
             sheet used to slide under it and read as full-screen. */}
-        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+        {/* Flex column: static header + scrolling body + pinned footer, so the
+            actions never scroll away on mobile (sticky-inside-scroller janks
+            on some browsers when the sheet itself is the scroll container). */}
+        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
 
         {/* Header — brand gradient band */}
-        <div className="sticky top-0 z-10 overflow-hidden rounded-t-3xl">
+        <div className="shrink-0 overflow-hidden rounded-t-3xl">
           <div className="bg-gradient-to-r from-[#bf4a53] to-[#e07080] px-5 sm:px-6 pt-2 pb-4 relative">
             <div className="flex justify-center" aria-hidden="true">
               <div className="w-10 h-1 rounded-full bg-white/40 mb-2" />
@@ -158,7 +198,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   </p>
                 </div>
               </div>
-              <button onClick={onClose} aria-label="Close transaction details" className="p-1.5 text-white/80 hover:bg-white/20 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+              <button onClick={requestClose} aria-label="Close transaction details" className="p-1.5 text-white/80 hover:bg-white/20 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
                 <X size={18} />
               </button>
             </div>
@@ -171,8 +211,21 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           </div>
         </div>
 
-        <div className="p-5 sm:p-6 space-y-6">
-
+        <div className="p-5 sm:p-6 space-y-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+          {enriching ? (
+            // Structural placeholder matching the body rhythm — swapped for
+            // the real sections in one paint, no staged pop-ins.
+            <div className="space-y-6" aria-hidden="true">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Skeleton className="h-[104px] rounded-2xl" />
+                <Skeleton className="h-[104px] rounded-2xl" />
+              </div>
+              <Skeleton className="h-[150px] rounded-2xl" />
+              <Skeleton className="h-[190px] rounded-2xl" />
+              <Skeleton className="h-[88px] rounded-2xl" />
+            </div>
+          ) : (
+          <>
           {/* Customer & Item — profile-tile cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
@@ -185,6 +238,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   <p className="font-bold text-gray-900 truncate">{customerLabel(tx.customer) || '—'}</p>
                 </div>
               </div>
+              {/* Contact rows render only once the number/address is actually
+                  received — never placeholders. */}
               {(custPhone || custAddr) && (
                 <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
                   {custPhone && (
@@ -196,7 +251,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   {custAddr && (
                     <p className="flex items-center gap-1.5 text-xs text-gray-500 min-w-0">
                       <MapPin size={12} className="text-gray-400 shrink-0" />
-                      <span className="truncate">{custAddr}</span>
+                      <span className="truncate uppercase">{custAddr}</span>
                     </p>
                   )}
                 </div>
@@ -273,7 +328,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   </div>
                   <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all ${paidPct >= 100 ? 'bg-emerald-500' : 'bg-[#bf4a53]'}`}
+                      className={`h-full rounded-full transition-[width] duration-500 ease-out ${paidPct >= 100 ? 'bg-emerald-500' : 'bg-[#bf4a53]'}`}
                       style={{ width: `${paidPct}%` }}
                     />
                   </div>
@@ -365,7 +420,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               )}
               {(tx.address || tx.customerProfile?.address) && (
                 <p className="text-gray-500 mt-2 pt-2 border-t border-gray-100">
-                  <span className="font-medium text-gray-400">Address:</span> {tx.address || tx.customerProfile?.address}
+                  <span className="font-medium text-gray-400">Address:</span>{' '}
+                  <span className="uppercase">{tx.address || tx.customerProfile?.address}</span>
                 </p>
               )}
             </div>
@@ -395,11 +451,14 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             </div>
           )}
 
+        </>
+          )}
         </div>
 
-        {/* Footer actions — sticky so they stay visible on long records.
-            Close removed (header X / backdrop / Esc still dismiss). */}
-        <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
+        {/* Footer actions — pinned below the scrolling body (flex column, not
+            sticky) so they stay fixed on mobile. Close removed (header X /
+            backdrop / Esc still dismiss). */}
+        <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
           <div className="space-y-2">
             {canProcessReturn && onReturn && (
               <button onClick={() => onReturn(tx)} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-2">
@@ -407,7 +466,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               </button>
             )}
             {canRecordPayment && (
-              <button onClick={() => setShowPayModal(true)} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
+              <button onClick={openPayModal} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
                 <Banknote size={16} /> Record Payment
               </button>
             )}
@@ -417,10 +476,12 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
       {/* Record Payment Modal — same bottom-sheet treatment on mobile */}
       {showPayModal && (
-        <div className="fixed inset-0 z-[310]">
-          <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm" onClick={() => !payLoading && setShowPayModal(false)} />
+        <div className={`fixed inset-0 z-[310] transition-opacity duration-150 ${payClosing ? 'opacity-0' : 'opacity-100'}`}>
+          {/* No blur here — the parent sheet already blurs beneath, and two
+              stacked blurs jank low-end phones. */}
+          <div className={`fixed inset-0 bg-gray-900/50 ${payClosing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-150'}`} onClick={closePayModal} />
           <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-12 pb-0 sm:p-4 pointer-events-none">
-            <div role="dialog" aria-modal="true" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[95vh] max-h-[92dvh] overflow-y-auto p-5 sm:p-6 space-y-5 animate-in slide-in-from-bottom sm:zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+            <div role="dialog" aria-modal="true" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[95vh] max-h-[92dvh] overflow-y-auto p-5 sm:p-6 space-y-5 pointer-events-auto transform-gpu ${payClosing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
             {paySuccess ? (
               <div className="text-center py-4">
                 <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -433,7 +494,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               <>
                 <div className="flex items-center justify-between">
                   <h4 className="font-bold text-lg text-gray-900">Record Payment</h4>
-                  <button onClick={() => setShowPayModal(false)} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full transition-colors" aria-label="Close payment form">
+                  <button onClick={closePayModal} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full transition-colors" aria-label="Close payment form">
                     <X size={16} />
                   </button>
                 </div>

@@ -101,8 +101,8 @@ const handleRadioKeys = (e) => {
 
   return (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-process-return" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
-        <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-process-return" className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom sm:zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-50 rounded-xl">
               <Undo2 size={18} className="text-emerald-600" />
@@ -117,7 +117,7 @@ const handleRadioKeys = (e) => {
           </button>
         </div>
 
-        <div className="p-5 sm:p-6 space-y-5">
+        <div className="p-5 sm:p-6 space-y-5 flex-1 overflow-y-auto min-h-0 overscroll-contain">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-3.5 bg-gray-50 rounded-2xl">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5">Customer</p>
@@ -306,8 +306,12 @@ const handleRadioKeys = (e) => {
           {error && (
             <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
           )}
+        </div>
 
-          <div className="grid grid-cols-2 gap-3 pt-1">
+        {/* Footer actions — pinned below the scrolling body so Cancel/Confirm
+            stay fixed on mobile, with safe-area padding. */}
+        <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-3.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
+          <div className="grid grid-cols-2 gap-3">
             <button onClick={onClose}
               className="py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
               Cancel
