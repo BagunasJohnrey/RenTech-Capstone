@@ -1,5 +1,6 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { createAuditLog } from '../utils/audit.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
@@ -52,6 +53,23 @@ export async function sendManualSms(params: {
       status: smsResult.messageId ? 'sent' : 'queued',
     },
   });
+
+  // Manual sends cost real money and contact customers: audit who sent what to
+  // whom. The message body is excluded (PII); only the masked phone, template
+  // and transaction refs are logged. Non-critical: never blocks the send.
+  try {
+    const digits = String(profile.phone ?? '').replace(/\D/g, '');
+    const maskedPhone = digits.length > 4 ? `***${digits.slice(-4)}` : '***';
+    await createAuditLog({
+      action: 'sms.send', entity: 'sms', entityId: sentSms.id,
+      performedById: params.sentById,
+      newValue: {
+        profileId: params.profileId, phone: maskedPhone,
+        templateId: params.templateId ?? null, transactionId: params.transactionId ?? null,
+        status: sentSms.status,
+      },
+    });
+  } catch { /* audit is non-critical */ }
 
   return sentSms;
 }

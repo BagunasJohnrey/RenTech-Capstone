@@ -144,11 +144,46 @@ export async function updateItem(id: number, data: {
   discountPct?: number;
   salePrice?: number;
   saleEndsAt?: string | null;
-}) {
+}, performedById?: string) {
   const item = await prisma.inventoryItem.findUnique({ where: { id } });
   if (!item) {
     throw new AppError(404, 'Item not found');
   }
+
+  // Price and sale edits are revenue-relevant: audit them with old→new values
+  // under their own action names so they read distinctly from status moves
+  // (bulk status changes are logged separately in bulkSetStatus). Status-only
+  // edits stay silent here. Non-critical: never blocks the update.
+  try {
+    const priceChanged = data.price !== undefined && Number(data.price) !== Number(item.price);
+    if (priceChanged) {
+      await createAuditLog({
+        action: 'inventory.price.update', entity: 'inventory', entityId: String(id),
+        performedById: performedById ?? null,
+        oldValue: { price: item.price },
+        newValue: { price: data.price },
+      });
+    }
+    const saleKeys = ['onSale', 'discountPct', 'salePrice', 'saleEndsAt'] as const;
+    // saleEndsAt arrives as an ISO string but reads back as a Date: normalize
+    // both sides so re-sending an unchanged date doesn't log a phantom diff.
+    const norm = (v: unknown) => v instanceof Date ? v.toISOString() : String(v ?? null);
+    const saleChanged = saleKeys.some((k) => data[k] !== undefined && norm(data[k]) !== norm((item as Record<string, unknown>)[k]));
+    if (saleChanged) {
+      await createAuditLog({
+        action: 'inventory.sale.update', entity: 'inventory', entityId: String(id),
+        performedById: performedById ?? null,
+        oldValue: {
+          onSale: item.onSale, discountPct: item.discountPct,
+          salePrice: item.salePrice, saleEndsAt: item.saleEndsAt,
+        },
+        newValue: {
+          onSale: data.onSale ?? item.onSale, discountPct: data.discountPct ?? item.discountPct,
+          salePrice: data.salePrice ?? item.salePrice, saleEndsAt: data.saleEndsAt ?? item.saleEndsAt,
+        },
+      });
+    }
+  } catch { /* audit is non-critical */ }
 
   // Leaving OutOfService (or any status change off it) clears the recorded
   // reason so a later re-entry starts fresh.

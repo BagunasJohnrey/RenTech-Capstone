@@ -173,7 +173,7 @@ export async function updateItem(req: AuthenticatedRequest, res: Response, next:
       }
     }
 
-    const item = await inventoryService.updateItem(id, req.body);
+    const item = await inventoryService.updateItem(id, req.body, req.user?.id ?? undefined);
     res.json(item);
   } catch (err) {
     next(err);

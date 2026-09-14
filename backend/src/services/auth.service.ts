@@ -1,6 +1,7 @@
 import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { createAuditLog } from '../utils/audit.js';
 import { env } from '../config/env.js';
 import * as brevoService from './brevo.service.js';
 import { Role, Prisma } from '@prisma/client';
@@ -469,6 +470,14 @@ export async function createStaffAccount(adminId: string, data: {
   // The one-time password is returned exactly once — never stored in the
   // database or logged. The admin shares it with the staff member out of band
   // (in person / SMS), and the first login forces a change.
+  // Audit: a new login-capable account exists (email only — never the OTP).
+  try {
+    await createAuditLog({
+      action: 'staff.create', entity: 'staff', entityId: profile.id,
+      performedById: adminId,
+      newValue: { email: profile.email, name: profile.name },
+    });
+  } catch { /* audit is non-critical */ }
   return { profile, oneTimePassword: tempPassword };
 }
 
@@ -511,10 +520,29 @@ export async function updateStaffAccount(callerId: string, staffId: string, data
     throw new AppError(400, 'Nothing to update');
   }
 
-  return prisma.profile.update({
+  const updated = await prisma.profile.update({
     where: { id: staffId },
     data: patch,
   });
+
+  // Audit: which display fields changed and their old→new values. Self-edits
+  // and admin edits share this path; performedById distinguishes them.
+  // Non-critical: never blocks the update.
+  try {
+    const oldValue: Record<string, unknown> = {};
+    const newValue: Record<string, unknown> = {};
+    for (const k of Object.keys(patch) as (keyof typeof patch)[]) {
+      oldValue[k] = (staff as Record<string, unknown>)[k] ?? null;
+      newValue[k] = patch[k] ?? null;
+    }
+    await createAuditLog({
+      action: 'staff.update', entity: 'staff', entityId: staffId,
+      performedById: callerId,
+      oldValue, newValue,
+    });
+  } catch { /* audit is non-critical */ }
+
+  return updated;
 }
 
 export async function removeStaffAccount(adminId: string, staffId: string) {
@@ -540,6 +568,16 @@ export async function removeStaffAccount(adminId: string, staffId: string) {
   await prisma.sentSms.deleteMany({ where: { profileId: staffId } });
   await prisma.sentSms.deleteMany({ where: { sentById: staffId } });
   await prisma.profile.delete({ where: { id: staffId } });
+
+  // Audit after deletion: identity snapshot (no row left to reference).
+  // Non-critical: never throws past this point.
+  try {
+    await createAuditLog({
+      action: 'staff.remove', entity: 'staff', entityId: staffId,
+      performedById: adminId,
+      oldValue: { email: staff.email, name: staff.name },
+    });
+  } catch { /* audit is non-critical */ }
 }
 
 // Exchange a refresh token for a fresh access+refresh token pair via the
