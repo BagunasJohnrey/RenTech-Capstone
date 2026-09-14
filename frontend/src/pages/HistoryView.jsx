@@ -97,9 +97,16 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const menuItemsFor = (tx) => {
     const items = [];
     const tel = telFor(tx);
-    if (tel) items.push({ key: 'call', icon: Phone, label: 'Call customer', href: tel, tone: 'text-emerald-600' });
+    // No duplicates: overdue rows already show Call inline, so it stays out
+    // of the menu there (same rule as Return, which is inline-or-menu only).
+    if (tel && tx.status !== 'Overdue') items.push({ key: 'call', icon: Phone, label: 'Call customer', href: tel, tone: 'text-emerald-600' });
     if (tx.status === 'Overdue' && isStaff) {
       items.push({ key: 'sms', icon: MessageCircle, label: 'Send SMS', onSelect: () => setSmsModalTx(tx) });
+    }
+    // Overdue rows lead with the call action inline, so the return flow
+    // lives here instead of crowding the row (see renderRowActions).
+    if (isStaffRole && onReturn && tx.status === 'Overdue' && tel) {
+      items.push({ key: 'return', icon: Undo2, label: 'Process return', tone: 'text-[#bf4a53]', onSelect: () => onReturn(tx) });
     }
     if (isStaffRole) {
       items.push({ key: 'edit', icon: Pencil, label: 'Edit rental', tone: 'text-amber-600', onSelect: () => setEditRental(tx) });
@@ -140,7 +147,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           <span className="sr-only">Release Item</span>
         </button>
       )}
-      {isStaff && onReturn && (tx.status === 'Overdue' || (tx.status === 'Active' && isReleased(tx))) && (
+      {isStaff && onReturn && ((tx.status === 'Active' && isReleased(tx)) || (tx.status === 'Overdue' && !telFor(tx))) && (
         <button
           onClick={() => onReturn(tx)}
           className={`${pad} text-[#bf4a53] bg-red-50 hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors`}
@@ -149,6 +156,19 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           <Undo2 size={icon} />
           <span className="sr-only">Process Return</span>
         </button>
+      )}
+      {/* Overdue rows chase the customer first: the call action takes the
+          inline slot (when a number exists) and return moves to the menu. */}
+      {isStaff && tx.status === 'Overdue' && telFor(tx) && (
+        <a
+          href={telFor(tx)}
+          className={`${pad} text-emerald-600 bg-emerald-50 hover:bg-emerald-600 hover:text-white rounded-full transition-colors`}
+          title="Call customer"
+          onClick={e => e.stopPropagation()}
+        >
+          <Phone size={icon} />
+          <span className="sr-only">Call customer</span>
+        </a>
       )}
       {role !== 'Customer' && (
         <RowActionsMenu
