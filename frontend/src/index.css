@@ -108,3 +108,11 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
   color: #9ca3af;
   text-align: center;
 }
+
+/* On-screen (non-print) tightening so the long report reads on phones.
+   Print/PDF output keeps the roomy desktop metrics above. */
+@media (max-width: 639px) {
+  .report-document-screen { padding: 24px 20px; }
+  .report-document-screen .report-company { font-size: 20px; }
+  .report-document-screen .report-section { margin-bottom: 18px; }
+}

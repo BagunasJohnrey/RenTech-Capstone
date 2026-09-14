@@ -1,7 +1,7 @@
-import { useState, useEffect, cloneElement } from 'react';
+import { useState, useEffect, useCallback, cloneElement } from 'react';
 import {
   BarChart3, TrendingUp, DollarSign, ChevronLeft, ChevronRight,
-  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles, History, Eye
+  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles, History, Eye, X, Tag
 } from 'lucide-react';
 import {
   ComposedChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid,
@@ -9,9 +9,13 @@ import {
   PieChart, Pie, Sector
 } from 'recharts';
 import AIReportModal from '../components/AIReportModal';
+import ItemImage from '../components/ItemImage';
+import SaleModal from '../components/SaleModal';
+import CleaningQueueModal from '../components/CleaningQueueModal';
 import { api } from '../utils/api';
 import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
 import { useToast } from '../components/Toast';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { AIInsightsSkeleton } from '../components/PageSkeletons';
 import { Skeleton } from '../components/Skeleton';
 import { TX_STATUS_HEX } from '../utils/statusColors';
@@ -156,7 +160,7 @@ function extractRecommendations(report) {
   return numbered;
 }
 
-export default function AIInsightsView({ analyticsData, role }) {
+export default function AIInsightsView({ analyticsData, role, onViewItemTransactions, onNavigateTab, cleaningItems = [], onBulkClean }) {
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -165,12 +169,14 @@ export default function AIInsightsView({ analyticsData, role }) {
   // and from Settings → Data & Backups.
   const [recentReports, setRecentReports] = useState([]);
   const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportsPage, setReportsPage] = useState(0);
+  const REPORTS_PAGE_SIZE = 3;
   const [openingReportId, setOpeningReportId] = useState(null);
   const loadRecentReports = () => {
     if (role !== 'Admin') return;
     setReportsLoading(true);
     api.get('/ai/reports')
-      .then((r) => setRecentReports(Array.isArray(r) ? r.slice(0, 5) : []))
+      .then((r) => { setRecentReports(Array.isArray(r) ? r.slice(0, 5) : []); setReportsPage(0); })
       .catch(() => {})
       .finally(() => setReportsLoading(false));
   };
@@ -225,6 +231,28 @@ export default function AIInsightsView({ analyticsData, role }) {
   const [granularity, setGranularity] = useState('monthly');
   const [weeklyForecast, setWeeklyForecast] = useState(null);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
+  // Full-list modal for the smart-action cards: 'restock' | 'clearance' | 'cleaning' | 'never' | null
+  const [smartModal, setSmartModal] = useState(null);
+  // Inline sale editor target (opened from clearance / never-rented rows).
+  const [saleTarget, setSaleTarget] = useState(null);
+  // Cleaning queue modal (opened from clean-next rows, tapped item preselected).
+  const [cleanQueue, setCleanQueue] = useState(null);
+  const openCleanQueue = (item) => {
+    setSmartModal(null);
+    setCleanQueue({ preselect: item?.id ?? null });
+  };
+  // Queue rows: live inventory when provided, else the analytics snapshot.
+  const cleanQueueItems = cleaningItems.length > 0
+    ? cleaningItems
+    : (inventoryAnalytics?.items || []).filter((i) => i.status === 'Cleaning');
+  // Timed exit like the transaction sheet: play the fade/slide-out, then unmount.
+  const [smartClosing, setSmartClosing] = useState(false);  const openSmartModal = (type) => { setSmartClosing(false); setSmartModal(type); };
+  const closeSmartModal = useCallback(() => {
+    if (smartClosing) return;
+    setSmartClosing(true);
+    setTimeout(() => { setSmartModal(null); setSmartClosing(false); }, 150);
+  }, [smartClosing]);
+  useEscapeClose(closeSmartModal, smartModal !== null);
   const loadWeeklyForecast = () => {
     if (weeklyForecast || weeklyLoading) return;
     setWeeklyLoading(true);
@@ -498,6 +526,8 @@ export default function AIInsightsView({ analyticsData, role }) {
   const projections = activeForecast?.projections || [];
   const forecastCats = forecast?.byCategory || [];
   const analyticsItems = inventoryAnalytics?.items || [];
+  // Insights rows (top/underperforming) carry no image — resolve via analytics.
+  const imgById = new Map(analyticsItems.map(i => [i.id, i.image]));
   const restockRules = reorderSuggestions(forecastCats, catBreakdown);
   const clearanceRules = clearanceSuggestions(analyticsItems);
   const cleaningRules = cleaningPriority(analyticsItems, forecastCats);
@@ -713,7 +743,7 @@ export default function AIInsightsView({ analyticsData, role }) {
 
         {analyticsData && (
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
-            {cloneElement(analyticsData, { period: timeRange, initialData: inventoryAnalytics })}
+            {cloneElement(analyticsData, { period: timeRange, initialData: inventoryAnalytics, onViewItemTransactions })}
           </div>
         )}
 
@@ -885,7 +915,7 @@ export default function AIInsightsView({ analyticsData, role }) {
                               </p>
                             ))}
                             {month?.forecast && <p className="text-[11px] text-gray-400 italic">Projected</p>}
-                          </div>
+                </div>
                         );
                       }}
                     />
@@ -984,10 +1014,10 @@ export default function AIInsightsView({ analyticsData, role }) {
                     <li key={item.id} className="p-3 rounded-2xl bg-gray-50/70 border border-gray-100">
                       <div className="flex items-center gap-2.5">
                         <span className={`w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0 ${rank === 1 ? 'bg-[#bf4a53] text-white' : 'bg-gray-200/80 text-gray-600'}`}>{rank}</span>
-                        <span className="flex-1 min-w-0 text-[13px] font-semibold text-gray-800 leading-snug break-words line-clamp-2">{item.name}</span>
-                        <span className="text-xs font-bold text-gray-900 bg-white border border-gray-200 rounded-full px-2 py-0.5 shrink-0">{item.rentals}x</span>
+                        <span className="flex-1 min-w-0 text-[13px] font-semibold text-gray-800 leading-snug truncate">{item.name}</span>
+                        <span className="text-xs font-bold text-gray-900 bg-white border border-gray-200 rounded-full px-2 py-0.5 shrink-0 tabular-nums">{item.rentals}x</span>
                       </div>
-                      <div className="w-full bg-gray-200/60 rounded-full h-1.5 mt-2 ml-8 w-[calc(100%-2rem)]">
+                      <div className="ml-9 w-[calc(100%-2.25rem)] bg-gray-200/60 rounded-full h-1.5 mt-2 overflow-hidden">
                         <div className="h-1.5 rounded-full bg-[#bf4a53]" style={{ width: `${pct}%` }} />
                       </div>
                     </li>
@@ -996,12 +1026,26 @@ export default function AIInsightsView({ analyticsData, role }) {
               </ul>
             )}
             {underperforming.length > 0 && popularItems.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <p className="text-xs font-bold text-orange-500">{underperforming.length} item(s) never rented</p>
-                <div className="flex flex-wrap gap-1.5 mt-2 overflow-y-auto max-h-24 pr-1 -mr-1">
-                  {underperforming.map(item => (
-                    <span key={item.id} className="px-2.5 py-1 bg-orange-50 text-orange-600 rounded-lg text-[11px] font-medium break-words max-w-full">{item.name}</span>
+              <div className="pt-2 border-t border-gray-100">
+                <button type="button" onClick={() => openSmartModal('never')}
+                  className="group w-full flex items-center gap-1.5 mb-2 text-left rounded-lg">
+                  <p className="text-xs font-semibold text-orange-500 flex-1">{underperforming.length} item(s) never rented</p>
+                  <span className="text-[11px] font-bold text-orange-600 bg-orange-50 rounded-full px-2 py-0.5">{underperforming.length}</span>
+                  <ChevronRight size={13} className="text-gray-300 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
+                </button>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {underperforming.slice(0, 3).map(item => (
+                    <div key={item.id} className="flex items-center gap-2 bg-orange-50 rounded-xl p-1.5 min-w-0">
+                      <ItemImage image={imgById.get(item.id)} alt={item.name} thumb className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                      <p className="text-[11px] font-semibold text-orange-700 leading-tight line-clamp-2 min-w-0">{item.name}</p>
+                    </div>
                   ))}
+                  {underperforming.length > 3 && (
+                    <button type="button" onClick={() => openSmartModal('never')}
+                      className="flex items-center justify-center min-h-[52px] rounded-xl border border-dashed border-orange-300 text-[11px] font-bold text-orange-600 hover:bg-orange-50 active:scale-[0.98] transition-all">
+                      +{underperforming.length - 3} more
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1013,9 +1057,19 @@ export default function AIInsightsView({ analyticsData, role }) {
         {(restockRules.length > 0 || clearanceRules.length > 0 || cleaningRules.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
-              <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
-                <TrendingUp size={17} className="text-emerald-600" /> Restock
-              </h3>
+              <button type="button" onClick={() => restockRules.length > 0 && openSmartModal('restock')}
+                disabled={restockRules.length === 0}
+                className={`w-full flex items-center gap-2 text-left rounded-xl ${restockRules.length > 0 ? 'group cursor-pointer' : 'cursor-default'}`}>
+                <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2 flex-1">
+                  <TrendingUp size={17} className="text-emerald-600" /> Restock
+                </h3>
+                {restockRules.length > 0 && (
+                  <>
+                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 rounded-full px-2.5 py-0.5">{restockRules.length}</span>
+                    <ChevronRight size={15} className="text-gray-300 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all" />
+                  </>
+                )}
+              </button>
               {restockRules.length === 0 ? (
                 <p className="text-sm text-gray-400">Stock covers projected demand.</p>
               ) : (
@@ -1026,38 +1080,83 @@ export default function AIInsightsView({ analyticsData, role }) {
                   </div>
                 ))
               )}
+              {restockRules.length > 4 && (
+                <button type="button" onClick={() => openSmartModal('restock')}
+                  className="w-full py-2 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50 transition-colors">
+                  View all {restockRules.length}
+                </button>
+              )}
             </div>
             <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
-              <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
-                <AlertTriangle size={17} className="text-orange-500" /> Clearance
-              </h3>
+              <button type="button" onClick={() => clearanceRules.length > 0 && openSmartModal('clearance')}
+                disabled={clearanceRules.length === 0}
+                className={`w-full flex items-center gap-2 text-left rounded-xl ${clearanceRules.length > 0 ? 'group cursor-pointer' : 'cursor-default'}`}>
+                <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2 flex-1">
+                  <AlertTriangle size={17} className="text-orange-500" /> Clearance
+                </h3>
+                {clearanceRules.length > 0 && (
+                  <>
+                    <span className="text-[11px] font-bold text-orange-600 bg-orange-50 rounded-full px-2.5 py-0.5">{clearanceRules.length}</span>
+                    <ChevronRight size={15} className="text-gray-300 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
+                  </>
+                )}
+              </button>
               {clearanceRules.length === 0 ? (
                 <p className="text-sm text-gray-400">Nothing idle — everything earns.</p>
               ) : (
                 clearanceRules.slice(0, 4).map((it) => (
-                  <div key={it.id} className="bg-orange-50/60 rounded-2xl px-4 py-3 text-sm">
-                    <p className="font-bold text-gray-900 truncate">{it.name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{it.category} · {it.reason} — put on sale</p>
+                  <div key={it.id} className="flex items-center gap-3 bg-orange-50/60 rounded-2xl p-3 text-sm">
+                    <ItemImage image={it.image} alt={it.name} thumb className="w-10 h-10 rounded-xl object-cover shrink-0" />
+                    <div className="min-w-0">
+                      <p className="font-bold text-gray-900 truncate">{it.name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{it.category} · {it.reason} — put on sale</p>
+                    </div>
                   </div>
                 ))
               )}
+              {clearanceRules.length > 4 && (
+                <button type="button" onClick={() => openSmartModal('clearance')}
+                  className="w-full py-2 rounded-xl text-xs font-bold text-orange-600 hover:bg-orange-50 transition-colors">
+                  View all {clearanceRules.length}
+                </button>
+              )}
             </div>
             <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
-              <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
-                <RotateCcw size={17} className="text-[#bf4a53]" /> Clean next
-              </h3>
+              <button type="button" onClick={() => cleaningRules.length > 0 && openSmartModal('cleaning')}
+                disabled={cleaningRules.length === 0}
+                className={`w-full flex items-center gap-2 text-left rounded-xl ${cleaningRules.length > 0 ? 'group cursor-pointer' : 'cursor-default'}`}>
+                <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2 flex-1">
+                  <RotateCcw size={17} className="text-[#bf4a53]" /> Clean next
+                </h3>
+                {cleaningRules.length > 0 && (
+                  <>
+                    <span className="text-[11px] font-bold text-[#bf4a53] bg-[#bf4a53]/5 rounded-full px-2.5 py-0.5">{cleaningRules.length}</span>
+                    <ChevronRight size={15} className="text-gray-300 group-hover:text-[#bf4a53] group-hover:translate-x-0.5 transition-all" />
+                  </>
+                )}
+              </button>
               {cleaningRules.length === 0 ? (
                 <p className="text-sm text-gray-400">Cleaning queue is empty.</p>
               ) : (
                 cleaningRules.slice(0, 4).map((it, i) => (
-                  <div key={it.id} className="flex items-center gap-3 text-sm">
+                  <button key={it.id} type="button" onClick={() => openCleanQueue(it)}
+                    title="Open in the cleaning queue"
+                    className="w-full flex items-center gap-3 text-sm text-left rounded-xl hover:bg-gray-50 active:scale-[0.99] transition-all">
                     <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
-                    <div className="min-w-0">
+                    <ItemImage image={it.image} alt={it.name} thumb className="w-10 h-10 rounded-xl object-cover shrink-0" />
+                    <div className="min-w-0 flex-1">
                       <p className="font-bold text-gray-900 truncate">{it.name}</p>
                       <p className="text-xs text-gray-500">{it.category}{it.demand >= 0 ? ` · demand ${it.demand}/mo` : ''}</p>
                     </div>
-                  </div>
+                    <ChevronRight size={14} className="text-gray-300 shrink-0" />
+                  </button>
                 ))
+              )}
+              {cleaningRules.length > 4 && (
+                <button type="button" onClick={() => openSmartModal('cleaning')}
+                  className="w-full py-2 rounded-xl text-xs font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 transition-colors">
+                  View all {cleaningRules.length}
+                </button>
               )}
             </div>
           </div>
@@ -1175,22 +1274,22 @@ export default function AIInsightsView({ analyticsData, role }) {
 
         {/* AI Report + last saved reports — one card */}
         <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
-          <div className="relative overflow-hidden bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] p-5 md:p-6">
+          <div className="relative overflow-hidden bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] p-4 sm:p-6">
             <div className="absolute -right-10 -top-14 w-44 h-44 rounded-full bg-white/10" />
             <div className="absolute right-16 -bottom-12 w-28 h-28 rounded-full bg-white/5" />
-            <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-inner shrink-0">
-                <Sparkles size={20} />
+            <div className="relative flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-inner shrink-0">
+                  <Sparkles size={18} />
+                </div>
+                <h3 className="font-bold text-white text-[15px] sm:text-base leading-tight flex-1">AI Business Report</h3>
               </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-white text-base leading-tight">AI Business Report</h3>
-                <p className="text-xs text-white/75 leading-relaxed mt-1">
-                  A full written breakdown of revenue, demand and inventory — ready in about 30 seconds.
-                </p>
-              </div>
+              <p className="text-[11px] sm:text-xs text-white/75 leading-relaxed sm:flex-1 sm:min-w-0">
+                A full written breakdown of revenue, demand and inventory — ready in about 30 seconds.
+              </p>
               <button onClick={() => { setReportLoading(true); api.post('/ai/generate-report', undefined, { timeout: 60000 }).then(r => { setAiReport(r.report || r); setShowReportModal(true); loadRecentReports(); }).catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); }).finally(() => setReportLoading(false)); }}
                 disabled={reportLoading}
-                className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-[#a63f47] text-sm font-bold rounded-full shadow-sm hover:bg-red-50 active:scale-[0.98] transition-all disabled:opacity-60"
+                className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-6 py-2.5 sm:py-3 bg-white text-[#a63f47] text-sm font-bold rounded-2xl sm:rounded-full shadow-sm hover:bg-red-50 active:scale-[0.98] transition-all disabled:opacity-60"
               >
                 {reportLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
                 {reportLoading ? 'Generating…' : 'Generate Report'}
@@ -1208,7 +1307,7 @@ export default function AIInsightsView({ analyticsData, role }) {
                 {reportsLoading && <Loader2 size={13} className="animate-spin text-gray-400" />}
               </div>
               <div className="space-y-3">
-                {recentReports.map((r) => (
+                {recentReports.slice(reportsPage * REPORTS_PAGE_SIZE, reportsPage * REPORTS_PAGE_SIZE + REPORTS_PAGE_SIZE).map((r) => (
                   <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl bg-gray-50/70 border border-gray-100">
                     <div className="min-w-0 flex-1 space-y-1.5">
                       <p className="text-[13px] font-bold text-gray-900 leading-tight">
@@ -1237,12 +1336,119 @@ export default function AIInsightsView({ analyticsData, role }) {
                   </div>
                 ))}
               </div>
+              {recentReports.length > REPORTS_PAGE_SIZE && (
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                  <span className="text-[11px] text-gray-400 font-semibold tabular-nums">
+                    Page {reportsPage + 1} of {Math.ceil(recentReports.length / REPORTS_PAGE_SIZE)}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setReportsPage(p => Math.max(0, p - 1))} disabled={reportsPage === 0}
+                      aria-label="Previous reports page"
+                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
+                      <ChevronLeft size={15} />
+                    </button>
+                    <button onClick={() => setReportsPage(p => Math.min(Math.ceil(recentReports.length / REPORTS_PAGE_SIZE) - 1, p + 1))}
+                      disabled={reportsPage >= Math.ceil(recentReports.length / REPORTS_PAGE_SIZE) - 1}
+                      aria-label="Next reports page"
+                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
+                      <ChevronRight size={15} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
+      {smartModal && (() => {
+        const cfg = {
+          restock: { icon: TrendingUp, iconCls: 'text-emerald-600', title: 'Restock list', sub: 'Projected demand outruns free stock' },
+          clearance: { icon: AlertTriangle, iconCls: 'text-orange-500', title: 'Clearance list', sub: 'Idle pieces — put on sale (top 5)' },
+          cleaning: { icon: RotateCcw, iconCls: 'text-[#bf4a53]', title: 'Cleaning order', sub: 'Clean-first order by coming demand' },
+          never: { icon: AlertTriangle, iconCls: 'text-orange-500', title: 'Never rented', sub: 'Zero rentals this period — consider promotions' },
+        }[smartModal];
+        const Icon = cfg.icon;
+        return (
+          <div className={`fixed inset-0 z-[200] transition-opacity duration-150 ${smartClosing ? 'opacity-0' : 'opacity-100'}`}>
+            <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${smartClosing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={closeSmartModal} />
+            <div className="fixed inset-0 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
+              <div role="dialog" aria-modal="true" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md max-h-[92dvh] sm:max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${smartClosing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
+                <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80">
+                  <div className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center shrink-0">
+                    <Icon size={18} className={cfg.iconCls} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-gray-900 leading-tight">{cfg.title}</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">{cfg.sub}</p>
+                  </div>
+                  <button onClick={closeSmartModal} aria-label="Close list"
+                    className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors shrink-0">
+                    <X size={17} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 pb-8 min-h-[220px] space-y-2.5">
+                  {smartModal === 'restock' && restockRules.map((r) => (
+                    <div key={r.category} className="bg-emerald-50/60 rounded-2xl px-4 py-3 text-sm">
+                      <p className="font-bold text-gray-900">{r.category} <span className="text-emerald-600">+{r.shortfall} pc{r.shortfall === 1 ? '' : 's'}</span></p>
+                      <p className="text-xs text-gray-500 mt-0.5">Projected {r.projection}/mo · {r.freeUnits} free · {r.reason}</p>
+                    </div>
+                  ))}
+                  {smartModal === 'clearance' && clearanceRules.map((it) => (
+                    <button key={it.id} type="button" onClick={() => setSaleTarget({ id: it.id, name: it.name })}
+                      title={`Put ${it.name} on sale`}
+                      className="w-full flex items-center gap-3 bg-orange-50/60 rounded-2xl p-3 text-sm text-left hover:bg-orange-50 hover:ring-1 hover:ring-orange-200 transition-all">
+                      <ItemImage image={it.image} alt={it.name} thumb className="w-11 h-11 rounded-xl object-cover shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-gray-900 truncate">{it.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{it.category} · {it.reason} — put on sale</p>
+                      </div>
+                      <Tag size={14} className="text-orange-400 shrink-0" />
+                    </button>
+                  ))}
+                  {smartModal === 'cleaning' && cleaningRules.map((it, i) => (
+                    <button key={it.id} type="button" onClick={() => openCleanQueue(it)}
+                      title="Open in the cleaning queue"
+                      className="w-full flex items-center gap-3 text-sm bg-gray-50/60 rounded-2xl p-3 text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
+                      <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+                      <ItemImage image={it.image} alt={it.name} thumb className="w-11 h-11 rounded-xl object-cover shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-gray-900 truncate">{it.name}</p>
+                        <p className="text-xs text-gray-500">{it.category}{it.demand >= 0 ? ` · demand ${it.demand}/mo` : ''}</p>
+                      </div>
+                      <ChevronRight size={14} className="text-gray-300 shrink-0" />
+                    </button>
+                  ))}
+                  {smartModal === 'never' && underperforming.map((it) => (
+                    <button key={it.id} type="button" onClick={() => setSaleTarget({ id: it.id, name: it.name })}
+                      title={`Put ${it.name} on sale`}
+                      className="w-full flex items-center gap-3 bg-orange-50/60 rounded-2xl p-3 text-sm text-left hover:bg-orange-50 hover:ring-1 hover:ring-orange-200 transition-all">
+                      <ItemImage image={it.image || imgById.get(it.id)} alt={it.name} thumb className="w-11 h-11 rounded-xl object-cover shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-gray-900 truncate">{it.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{it.category} · never rented — put on sale</p>
+                      </div>
+                      <Tag size={14} className="text-orange-400 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {showReportModal && <AIReportModal geminiReport={aiReport} onClose={() => { setShowReportModal(false); setAiReport(null); }} />}
+      {saleTarget && (
+        <SaleModal itemId={saleTarget.id} onClose={() => setSaleTarget(null)} />
+      )}
+      {cleanQueue && onBulkClean && (
+        <CleaningQueueModal
+          items={cleanQueueItems}
+          initialSelected={cleanQueue.preselect ? [cleanQueue.preselect] : []}
+          onClose={() => setCleanQueue(null)}
+          onBulkClean={onBulkClean}
+        />
+      )}
     </>
   );
 }
