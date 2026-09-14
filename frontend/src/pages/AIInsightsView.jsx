@@ -618,7 +618,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
 
   // -- Render --
   return (    <>
-      <div className="space-y-8 max-w-5xl mx-auto">
+      <div className="space-y-8 max-w-lg mx-auto md:max-w-3xl lg:max-w-[1200px]">
 
         {/* Header — title left, controls top-right on desktop; stacked on mobile */}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
