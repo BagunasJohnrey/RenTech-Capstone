@@ -231,6 +231,7 @@ export default function AppLayout({
 
           <div
             ref={contentRef}
+            id="app-scroll"
             className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar"
           >
             {/* Keyed wrapper: the fade plays as the NEW page mounts, so the
