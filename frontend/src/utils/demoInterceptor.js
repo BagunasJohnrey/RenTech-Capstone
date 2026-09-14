@@ -79,15 +79,33 @@ let transactions = [
 ];
 
 let notifications = [
-  { id: 'n1', type: 'new_booking', title: 'New booking', message: 'Juan Dela Cruz booked Debutante Ball Gown.', isRead: false, createdAt: day(-1) + 'T09:00:00Z' },
-  { id: 'n2', type: 'overdue', title: 'Overdue return', message: 'Maria Clara Gala Gown is 5 days overdue.', isRead: false, createdAt: day(-1) + 'T10:30:00Z' },
-  { id: 'n3', type: 'late_return', title: 'Late return', message: 'Ivory Lace Wedding Gown returned late.', isRead: true, createdAt: day(-2) + 'T14:00:00Z' },
-  { id: 'n4', type: 'customer_message', title: 'Message from Pedro Santos', message: 'Please cancel my booking — our event was moved to next month.', transactionId: '22222222-2222-4222-8222-222222222222', isRead: false, createdAt: day(0) + 'T08:15:00Z' },
+  { id: 'n11', type: 'customer_message', title: 'Message from Maria Santos', message: 'Hi! Can I move my fitting to Friday afternoon instead?', transactionId: '44444444-4444-4444-8444-444444444444', isRead: false, createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString() },
+  { id: 'n4', type: 'customer_message', title: 'Message from Pedro Santos', message: 'Please cancel my booking — our event was moved to next month.', transactionId: '22222222-2222-4222-8222-222222222222', isRead: false, createdAt: new Date(Date.now() - 12 * 60 * 1000).toISOString() },
+  { id: 'n1', type: 'new_booking', title: 'New booking', message: 'Juan Dela Cruz booked Debutante Ball Gown for ' + day(4) + '.', transactionId: '55555555-5555-4555-8555-555555555555', isRead: false, createdAt: new Date(Date.now() - 28 * 60 * 1000).toISOString() },
+  { id: 'n5', type: 'booking_confirmation', title: 'Booking confirmed', message: 'Pedro Reyes confirmed Charcoal Three-Piece Suit rental — downpayment received.', transactionId: '44444444-4444-4444-8444-444444444444', isRead: false, createdAt: new Date(Date.now() - 55 * 60 * 1000).toISOString() },
+  { id: 'n6', type: 'booking_updated', title: 'Booking updated', message: 'Maria Santos moved her pickup to ' + day(1) + ' for Rose Gold Filipiniana.', transactionId: '11111111-1111-4111-8111-111111111111', isRead: false, createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() },
+  { id: 'n10', type: 'reminder', title: 'Pickup reminder', message: 'Debutante Ball Gown pickup is scheduled for tomorrow at 10:00 AM.', transactionId: '44444444-4444-4444-8444-444444444444', isRead: false, createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() },
+  { id: 'n7', type: 'due_today', title: 'Due today', message: 'Midnight Blue Barong Tagalog is due back today before 6:00 PM.', transactionId: '11111111-1111-4111-8111-111111111111', isRead: false, createdAt: day(0) + 'T07:30:00Z' },
+  { id: 'n8', type: 'alteration_needed', title: 'Alteration needed', message: 'Ivory Lace Wedding Gown needs hem adjustment before Saturday release.', transactionId: '33333333-3333-4333-8333-333333333333', isRead: false, createdAt: day(0) + 'T06:45:00Z' },
+  { id: 'n2', type: 'overdue', title: 'Overdue return', message: 'Maria Clara Gala Gown is 5 days overdue — follow up with Pedro Reyes.', transactionId: '22222222-2222-4222-8222-222222222222', isRead: false, createdAt: day(-1) + 'T10:30:00Z' },
+  { id: 'n9', type: 'no_show', title: 'No-show alert', message: 'Juan Dela Cruz missed the Sep 12 pickup window for Spanish-Era Costume Set.', transactionId: '55555555-5555-4555-8555-555555555555', isRead: true, createdAt: day(-1) + 'T09:00:00Z' },
+  { id: 'n12', type: 'booking_cancelled', title: 'Booking cancelled', message: 'Maria Santos cancelled the Barong for Kids reservation.', transactionId: '44444444-4444-4444-8444-444444444444', isRead: true, createdAt: day(-2) + 'T15:20:00Z' },
+  { id: 'n3', type: 'late_return', title: 'Late return', message: 'Ivory Lace Wedding Gown returned late — inspected and sent to cleaning.', transactionId: '33333333-3333-4333-8333-333333333333', isRead: true, createdAt: day(-2) + 'T14:00:00Z' },
 ];
 
 let staff = [
   { id: 'demo-staff-profile', email: 'staff@rentech.demo', name: 'Kai (Demo Staff)', phone: '09181234567', createdAt: day(-30) },
   { id: 's-2', email: 'ana@rentech.demo', name: 'Ana (Demo Staff 2)', phone: null, createdAt: day(-12) },
+];
+
+let demoBackups = [
+  { id: 'backup-demo-2', createdAt: new Date(Date.now() - 86400000).toISOString(), createdBy: 'demo-admin-profile', totalRows: 42, tables: { profiles: 5, inventory_items: 8, transactions: 5 }, storageFiles: 16, storageBytes: 2457600, storageIncomplete: false, sizeBytes: 18432, filename: 'backup-demo-2.json', uploaded: true, source: 'both' },
+  { id: 'backup-demo-1', createdAt: new Date(Date.now() - 3 * 86400000).toISOString(), createdBy: 'demo-admin-profile', totalRows: 38, tables: { profiles: 4, inventory_items: 8, transactions: 4 }, storageFiles: 14, storageBytes: 2100000, storageIncomplete: false, sizeBytes: 16210, filename: 'backup-demo-1.json', uploaded: true, source: 'cloud' },
+];
+
+let demoReports = [
+  { id: 'rpt-demo-2', createdAt: new Date(Date.now() - 86400000).toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: Gowns lead bookings, weekend demand spikes.', length: 320, uploaded: true, origin: 'both' },
+  { id: 'rpt-demo-1', createdAt: new Date(Date.now() - 4 * 86400000).toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: revenue steady, 2 overdue rentals need attention.', length: 298, uploaded: true, origin: 'cloud' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -116,28 +134,173 @@ function todayDigest() {
   };
 }
 
-const analytics = () => ({
-  totalItems: items.length,
-  byStatus: ['Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService'].map((s) => ({
-    status: s, count: items.filter((i) => i.status === s).length,
-  })),
-  byCategory: [...new Set(items.map((i) => i.category))].map((c) => ({
-    category: c, count: items.filter((i) => i.category === c).length,
-    avgPrice: Math.round(items.filter((i) => i.category === c).reduce((a, i) => a + i.price, 0) / items.filter((i) => i.category === c).length),
-  })),
-  monthlyRevenue: [
-    { month: 'Jan', revenue: 18000 }, { month: 'Feb', revenue: 22000 },
-    { month: 'Mar', revenue: 26000 }, { month: 'Apr', revenue: 31200 },
-    { month: 'May', revenue: 34500 }, { month: 'Jun', revenue: 38500 },
-  ],
-});
+const monthLabel = (d) => d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
 
-const insights = () => [
-  { title: 'Gowns are your top category', detail: 'Gowns account for the largest share of bookings this quarter.' },
-  { title: 'Weekend demand spikes', detail: 'Friday–Saturday pickups are 3× weekday volume.' },
-];
+function lastMonths(n) {
+  const out = [];
+  const now = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push({ label: monthLabel(d), year: d.getFullYear(), month: d.getMonth() + 1 });
+  }
+  return out;
+}
 
-const forecast = () => ({ expectedRevenue: 41000, trend: 'up', months: analytics().monthlyRevenue });
+function nextMonthLabelsFrom(year, month, n) {
+  const out = [];
+  let y = year, m = month;
+  for (let i = 0; i < n; i++) {
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+    out.push(monthLabel(new Date(y, m - 1, 1)));
+  }
+  return out;
+}
+
+const round1 = (n) => Math.round(n * 10) / 10;
+
+// Per-item demo performance stats underpinning insights + inventory analytics
+// so the two sections tell a consistent story (same leaders/laggards).
+const DEMO_ITEM_STATS = {
+  1: { totalRentals: 6, revenueGenerated: 21000, totalRentedDays: 18, utilizationPct: 72, daysIdle: 2 },
+  2: { totalRentals: 0, revenueGenerated: 0, totalRentedDays: 0, utilizationPct: 0, daysIdle: null },
+  3: { totalRentals: 4, revenueGenerated: 8800, totalRentedDays: 12, utilizationPct: 58, daysIdle: 5 },
+  4: { totalRentals: 0, revenueGenerated: 0, totalRentedDays: 0, utilizationPct: 0, daysIdle: null },
+  5: { totalRentals: 2, revenueGenerated: 8000, totalRentedDays: 7, utilizationPct: 41, daysIdle: 9 },
+  6: { totalRentals: 3, revenueGenerated: 11400, totalRentedDays: 10, utilizationPct: 55, daysIdle: 4 },
+  7: { totalRentals: 0, revenueGenerated: 0, totalRentedDays: 0, utilizationPct: 0, daysIdle: null },
+  8: { totalRentals: 2, revenueGenerated: 5200, totalRentedDays: 6, utilizationPct: 33, daysIdle: 12 },
+};
+
+const demoInventoryAnalytics = () => {
+  const rows = items.map((it) => {
+    const s = DEMO_ITEM_STATS[it.id] ?? { totalRentals: 0, revenueGenerated: 0, totalRentedDays: 0, utilizationPct: 0, daysIdle: null };
+    return {
+      id: it.id,
+      name: it.name,
+      category: it.category,
+      price: it.price,
+      status: it.status,
+      totalRentals: s.totalRentals,
+      revenueGenerated: s.revenueGenerated,
+      avgRevenuePerRental: s.totalRentals > 0 ? Math.round(s.revenueGenerated / s.totalRentals) : 0,
+      totalRentedDays: s.totalRentedDays,
+      utilizationPct: s.utilizationPct,
+      daysIdle: s.daysIdle,
+      image: it.image,
+    };
+  });
+  const byRevenue = [...rows].sort((a, b) => b.revenueGenerated - a.revenueGenerated);
+  const byUtil = [...rows].sort((a, b) => b.utilizationPct - a.utilizationPct);
+  const byFreq = [...rows].sort((a, b) => b.totalRentals - a.totalRentals);
+  return {
+    items: rows,
+    summary: {
+      totalItems: rows.length,
+      totalRevenue: rows.reduce((s, r) => s + r.revenueGenerated, 0),
+      totalRentals: rows.reduce((s, r) => s + r.totalRentals, 0),
+      avgUtilization: rows.length ? Math.round(rows.reduce((s, r) => s + r.utilizationPct, 0) / rows.length) : 0,
+    },
+    topByRevenue: byRevenue.slice(0, 5),
+    topByUtilization: byUtil.slice(0, 5),
+    topByFrequency: byFreq.slice(0, 5),
+  };
+};
+
+// Shape matches backend getInsightsUncached so AIInsightsView renders fully.
+const insights = () => {
+  const months = lastMonths(6);
+  const revenues = [26400, 31200, 29800, 34500, 35200, 38500];
+  return {
+    categoryBreakdown: {
+      Gown: { total: 3, rented: 3 },
+      Barong: { total: 2, rented: 0 },
+      Filipiniana: { total: 1, rented: 1 },
+      Suit: { total: 1, rented: 0 },
+      Costume: { total: 1, rented: 1 },
+    },
+    topRented: [
+      { id: 1, name: 'Ivory Lace Wedding Gown', category: 'Gown', rentals: 6 },
+      { id: 3, name: 'Rose Gold Filipiniana', category: 'Filipiniana', rentals: 4 },
+      { id: 6, name: 'Debutante Ball Gown', category: 'Gown', rentals: 3 },
+      { id: 5, name: 'Maria Clara Gala Gown', category: 'Gown', rentals: 2 },
+      { id: 8, name: 'Spanish-Era Costume Set', category: 'Costume', rentals: 2 },
+    ],
+    underperforming: [
+      { id: 2, name: 'Midnight Blue Barong Tagalog', category: 'Barong', rentals: 0 },
+      { id: 4, name: 'Charcoal Three-Piece Suit', category: 'Suit', rentals: 0 },
+      { id: 7, name: 'Barong for Kids', category: 'Barong', rentals: 0 },
+    ],
+    revenueByMonth: months.map((m, i) => ({ label: m.label, revenue: revenues[i] ?? 0 })),
+    revenueByWeek: [
+      { label: 'Wk 1', revenue: 8200 },
+      { label: 'Wk 2', revenue: 9100 },
+      { label: 'Wk 3', revenue: 7600 },
+      { label: 'Wk 4', revenue: 8800 },
+      { label: 'Wk 5', revenue: 4800 },
+    ],
+    revenueByCategory: { Gown: 40400, Filipiniana: 8800, Costume: 5200, Barong: 0, Suit: 0 },
+    totalItems: items.length,
+    totalRented: 5,
+  };
+};
+
+// Shape matches backend getForecast (monthly) so SMA chart + outlook render.
+const forecast = () => {
+  const months = lastMonths(6);
+  const labels = months.map((m) => m.label);
+  const counts = [5, 7, 6, 8, 9, 10];
+  const smaVals = counts.map((_, i) => (i < 2 ? null : round1((counts[i - 2] + counts[i - 1] + counts[i]) / 3)));
+  const last = months[months.length - 1];
+  const nextLabels = nextMonthLabelsFrom(last.year, last.month, 3);
+  const lastSma = smaVals[smaVals.length - 1] ?? 0;
+  return {
+    labels,
+    counts,
+    sma: smaVals,
+    period: 3,
+    granularity: 'monthly',
+    projections: nextLabels.map((label) => ({ label, value: round1(lastSma) })),
+    byCategory: [
+      { category: 'Gown', latest: 4, average: 3.1, projection: 3.8, trend: 'up' },
+      { category: 'Filipiniana', latest: 1, average: 0.9, projection: 1, trend: 'flat' },
+      { category: 'Costume', latest: 1, average: 0.7, projection: 0.9, trend: 'up' },
+      { category: 'Barong', latest: 1, average: 0.8, projection: 1, trend: 'flat' },
+      { category: 'Suit', latest: 0, average: 0.3, projection: 0.2, trend: 'down' },
+    ],
+    historyMonths: 6,
+    confidence: 'medium',
+    confidenceNote: 'Based on 6 months of history · medium confidence',
+  };
+};
+
+const weeklyForecast = () => {
+  const labels = [];
+  const now = new Date();
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i * 7);
+    labels.push(d.toLocaleString('en-US', { month: 'short', day: 'numeric' }));
+  }
+  const counts = [2, 1, 3, 2, 4, 3, 2, 3, 4, 2, 3, 4];
+  const smaVals = counts.map((_, i) => (i < 2 ? null : round1((counts[i - 2] + counts[i - 1] + counts[i]) / 3)));
+  const lastSma = smaVals[smaVals.length - 1] ?? 0;
+  const nextLabels = [1, 2, 3].map((i) => {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i * 7);
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric' });
+  });
+  return {
+    labels,
+    counts,
+    sma: smaVals,
+    period: 3,
+    granularity: 'weekly',
+    projections: nextLabels.map((label) => ({ label, value: round1(lastSma) })),
+    byCategory: [],
+    historyMonths: 6,
+    confidence: 'medium',
+    confidenceNote: 'Based on 6 months of history · medium confidence',
+  };
+};
 
 function bundle() {
   return {
@@ -145,7 +308,7 @@ function bundle() {
     today: todayDigest(),
     insights: insights(),
     forecast: forecast(),
-    analytics: analytics(),
+    analytics: demoInventoryAnalytics(),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -189,7 +352,7 @@ function route(method, path, body) {
 
   // ---- Inventory ----
   if (P(/^\/inventory\/blocked-dates\/(\d+)$/)) return { value: [{ start: day(1), end: day(4) }, { start: day(10), end: day(12) }] };
-  if (P(/^\/inventory\/analytics/)) return { value: analytics() };
+  if (P(/^\/inventory\/analytics/)) return { value: demoInventoryAnalytics() };
   if (path === '/inventory/availability') {
     return { value: { available: true, conflicts: [] } };
   }
@@ -353,6 +516,33 @@ function route(method, path, body) {
   if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false } };
   if (path === '/settings/sms-templates') return { value: [] };
   if (path === '/settings/integrations-status') return { value: { gemini: { configured: false }, groq: { configured: false }, openrouter: { configured: false }, paymongo: { configured: false }, semaphore: { configured: false } } };
+  if (path === '/settings/backups' && method === 'GET') return { value: clone(demoBackups) };
+  if (path === '/settings/backups' && method === 'POST') {
+    const meta = { id: 'backup-demo-' + Date.now(), createdAt: new Date().toISOString(), createdBy: 'demo-admin-profile', totalRows: 48, tables: { profiles: 5, inventory_items: items.length, transactions: transactions.length }, storageFiles: items.length * 2, storageBytes: 3200000, storageIncomplete: false, sizeBytes: 20480, filename: 'backup-demo-' + Date.now() + '.json', uploaded: true, source: 'both' };
+    demoBackups.unshift(meta);
+    return { value: clone(meta) };
+  }
+  if (P(/^\/settings\/backups\/(.+)\/download$/)) {
+    const id = P(/^\/settings\/backups\/(.+)\/download$/)[1];
+    const meta = demoBackups.find((b) => b.id === id) ?? demoBackups[0];
+    return { value: { version: 2, id: meta?.id ?? id, createdAt: meta?.createdAt ?? new Date().toISOString(), demo: true, tables: { inventory_items: clone(items), transactions: clone(transactions) }, storage: { files: [], fileCount: 0, totalBytes: 0, incomplete: false } } };
+  }
+  if (path === '/settings/backups/import' && method === 'POST') {
+    const tables = body?.payload?.tables ?? {};
+    const restored = {};
+    for (const [k, v] of Object.entries(tables)) {
+      if (Array.isArray(v)) restored[k] = v.length;
+    }
+    return { value: { restored, skipped: {}, truncatedTables: [], demo: true } };
+  }
+  if (P(/^\/settings\/backups\/(.+)\/upload$/) && method === 'POST') {
+    const id = P(/^\/settings\/backups\/(.+)\/upload$/)[1];
+    const b = demoBackups.find((x) => x.id === id);
+    if (!b) return { status: 404, error: 'Backup not found (demo)' };
+    b.uploaded = true;
+    b.source = 'both';
+    return { value: clone(b) };
+  }
 
   // ---- SMS / promo / payments / AI / storage ----
   if (P(/^\/sms\/history/)) return { value: { messages: [] } };
@@ -371,7 +561,15 @@ function route(method, path, body) {
     };
   }
   if (path === '/ai/generate-report') {
-    return { value: { report: '## Demo Report\n\nAI reports are disabled in demo mode. All figures below come from the mock dashboard.\n\n- Monthly revenue: ₱38,500\n- Active rentals: see Dashboard\n', source: 'demo' } };
+    const created = { id: 'rpt-demo-' + Date.now(), createdAt: new Date().toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: Gowns drive revenue, Barong needs promotion, demand trending up.', length: 420, uploaded: true, origin: 'both' };
+    demoReports.unshift(created);
+    return { value: { report: '## Demo Report\n\nMonthly revenue is ₱38,500 (up from ₱35,200). Gowns drive most bookings; 1 overdue rental needs attention.\n\n## Recommendations\n\n1. Feature the Ivory Lace Wedding Gown on the home page — it is the most rented item (6x).\n2. Run a weekend promotion for the Midnight Blue Barong Tagalog — it has 0 rentals this period.\n3. Send pickup reminders a day early — Friday–Saturday demand runs 3x weekday volume.\n', source: 'demo', reportId: created.id } };
+  }
+  if (path === '/ai/reports' && method === 'GET') return { value: clone(demoReports) };
+  if (P(/^\/ai\/reports\/(.+)$/) && method === 'GET') {
+    const r = demoReports.find((x) => x.id === P(/^\/ai\/reports\/(.+)$/)[1]);
+    if (!r) return { status: 404, error: 'Report not found (demo)' };
+    return { value: { ...clone(r), report: `# Demo report (${r.id})\n\n${r.excerpt}\n\n- Monthly revenue: ₱38,500\n- Active rentals: see Dashboard\n` } };
   }
   if (P(/^\/storage\/upload/)) return { value: { path: 'demo/demo-' + Date.now() + '.jpg' } };
   if (P(/^\/storage\/(.+)$/)) {
@@ -393,6 +591,12 @@ function hash(s) {
 // ─── Public handle ────────────────────────────────────────────────────────
 
 export async function demoRequest(method, path, body) {
+  // /dashboard/forecast?granularity=weekly needs its own bucket shape, but the
+  // router matches on the stripped path — branch here before stripping.
+  if (method.toUpperCase() === 'GET' && path.includes('/dashboard/forecast') && path.includes('granularity=weekly')) {
+    await new Promise((r) => setTimeout(r, 120));
+    return clone(weeklyForecast());
+  }
   const result = route(method.toUpperCase(), path.split('?')[0], body ?? {});
   await new Promise((r) => setTimeout(r, 120)); // small latency so loaders show
   if (result && result.status && result.status >= 400) {
