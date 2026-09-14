@@ -5,5 +5,9 @@ export const aiService = {
   chat: ({ message, history }) =>
     api.post('/ai/chat', { message, history }),
 
-  generateReport: () => api.post('/ai/generate-report'),
+  generateReport: (opts) => api.post('/ai/generate-report', undefined, opts),
+
+  listReports: () => api.get('/ai/reports'),
+
+  getReport: (id) => api.get(`/ai/reports/${id}`),
 };

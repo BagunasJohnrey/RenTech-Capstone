@@ -5,6 +5,7 @@ import * as dashboardService from '../services/dashboard.service.js';
 import * as inventoryService from '../services/inventory.service.js';
 import { getInventoryAnalytics } from '../services/inventoryAnalytics.service.js';
 import * as optimization from '../services/optimization.service.js';
+import * as aiReportService from '../services/aiReport.service.js';
 import type { CategoryProjection, AnalyticsItemShape } from '../services/optimization.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
@@ -64,7 +65,40 @@ export async function generateReport(req: AuthenticatedRequest, res: Response, n
     };
 
     const result = await geminiService.generateReport({ kpis, insights, forecast, rules });
+    // Best-effort history: successful/failed-but-readable reports are saved so
+    // the admin "last saved AI reports" list can reopen them. A save failure
+    // must never fail the generation itself.
+    if (result && typeof (result as { report?: unknown }).report === 'string') {
+      try {
+        const saved = await aiReportService.saveAiReport({
+          report: (result as { report: string }).report,
+          source: (result as { source?: string }).source ?? 'ai',
+          provider: (result as { provider?: string }).provider ?? null,
+          model: (result as { model?: string }).model ?? null,
+          createdBy: req.user?.id ?? null,
+        });
+        return res.json({ ...result, reportId: saved.id });
+      } catch {
+        // fall through — return the report without history
+      }
+    }
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listReports(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await aiReportService.listAiReports());
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getReport(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await aiReportService.getAiReport(String(req.params.id)));
   } catch (err) {
     next(err);
   }
