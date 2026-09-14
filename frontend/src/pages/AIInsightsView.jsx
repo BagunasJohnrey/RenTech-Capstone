@@ -1,7 +1,7 @@
 import { useState, useEffect, cloneElement } from 'react';
 import {
   BarChart3, TrendingUp, DollarSign, ChevronLeft, ChevronRight,
-  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles
+  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles, History, Eye
 } from 'lucide-react';
 import {
   ComposedChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid,
@@ -160,6 +160,29 @@ export default function AIInsightsView({ analyticsData, role }) {
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const { error: toastError } = useToast();
+  // Last saved AI reports (server history, admin-only) — reopenable from here
+  // and from Settings → Data & Backups.
+  const [recentReports, setRecentReports] = useState([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [openingReportId, setOpeningReportId] = useState(null);
+  const loadRecentReports = () => {
+    if (role !== 'Admin') return;
+    setReportsLoading(true);
+    api.get('/ai/reports')
+      .then((r) => setRecentReports(Array.isArray(r) ? r.slice(0, 5) : []))
+      .catch(() => {})
+      .finally(() => setReportsLoading(false));
+  };
+  useEffect(() => { loadRecentReports(); }, [role]);
+  const openSavedReport = (id) => {
+    if (openingReportId) return;
+    setOpeningReportId(id);
+    api.get(`/ai/reports/${id}`)
+      .then((r) => { setAiReport(r?.report || ''); setShowReportModal(true); })
+      .catch(() => toastError('Could not open that report.'))
+      .finally(() => setOpeningReportId(null));
+  };
   const [activePie, setActivePie] = useState(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const now0 = new Date();
@@ -210,7 +233,6 @@ export default function AIInsightsView({ analyticsData, role }) {
       .catch(() => {})
       .finally(() => setWeeklyLoading(false));
   };
-  const { error: toastError } = useToast();
 
   useEffect(() => {
     const range = timeRange;
@@ -291,6 +313,25 @@ export default function AIInsightsView({ analyticsData, role }) {
     } catch (err) {
       alert(err?.message || 'Export failed. Please try again.');
     }
+  };
+
+  // One workbook download (Transactions + Revenue + Inventory sheets) scoped
+  // to the selected Overall / Yearly / Monthly window.
+  const workbookScopeLabel = timeRange === 'Monthly'
+    ? `${SHORT_MONTHS[appliedMonth - 1]} ${appliedYear}`
+    : timeRange === 'Yearly' ? `${appliedYear}` : 'Overall';
+  const handleWorkbookExport = () => {
+    const params = timeRange === 'Overall'
+      ? 'period=overall'
+      : timeRange === 'Yearly'
+        ? `period=yearly&year=${appliedYear}`
+        : `period=monthly&year=${appliedYear}&month=${appliedMonth}`;
+    const filename = timeRange === 'Monthly'
+      ? `rentech-report-${appliedYear}-${String(appliedMonth).padStart(2, '0')}.xlsx`
+      : timeRange === 'Yearly'
+        ? `rentech-report-${appliedYear}.xlsx`
+        : 'rentech-report-overall.xlsx';
+    handleExport(`/export/workbook?${params}`, filename);
   };
 
   // On-demand AI suggestions (promo/restock recommendations) — reuses the
@@ -549,39 +590,36 @@ export default function AIInsightsView({ analyticsData, role }) {
   return (    <>
       <div className="space-y-8 max-w-5xl mx-auto">
 
-        {/* Header */}
-        <div className="space-y-3">
-          <div>
+        {/* Header — title left, controls top-right on desktop; stacked on mobile */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
             <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Business Intelligence</h2>
             <p className="text-sm text-gray-500 mt-1">Real-time analytics powered by your transaction and inventory data.</p>
           </div>
 
-          {/* Controls — mobile/tablet stack the rows, desktop keeps a single
-              right-aligned row exactly as before. Order below md: range pills,
-              optional month/year, exports; md+: same as desktop. */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Controls — single one-line row on all screens: range pills,
+              optional month/year, Excel. Compact on phones, roomier on sm+. */}
+          <div className="flex items-center justify-center lg:justify-end gap-2 sm:gap-3 shrink-0 w-full lg:w-auto">
 
-            {/* Range pills — tags look and behave like segmented control */}
+            {/* Range pills — segmented control */}
             <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
               {TIME_OPTIONS.map(t => (
                 <button key={t} onClick={() => setTimeRange(t)}
-                  className={`px-3 py-1.5 text-[11px] sm:text-xs font-bold rounded-full transition-colors ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  className={`px-2 sm:px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-full transition-colors text-center whitespace-nowrap ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                   {t}
                 </button>
               ))}
             </div>
 
-            {/* Month + Year — own pill so they optically pair with the range
-                pills. Hidden on Overall; on small screens they drop onto the
-                next line instead of squishing. */}
+            {/* Month + Year — compact pill, hidden on Overall */}
             {timeRange !== 'Overall' && (
-              <div className="flex items-center gap-1.5 bg-gray-100 rounded-full px-1.5 py-1 shrink-0 order-last md:order-none">
+              <div className="flex items-center gap-0.5 bg-gray-100 rounded-full px-1.5 py-1 shrink-0">
                 {timeRange === 'Monthly' && (
                   <select
                     aria-label="Month"
                     value={appliedMonth}
                     onChange={e => setSelMonth(Number(e.target.value))}
-                    className="bg-transparent text-xs font-bold text-gray-700 focus:outline-none cursor-pointer pl-1"
+                    className="bg-transparent text-[11px] sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer pl-0.5"
                   >
                     {SHORT_MONTHS.map((name, i) => {
                       const m = i + 1;
@@ -594,7 +632,7 @@ export default function AIInsightsView({ analyticsData, role }) {
                   aria-label="Year"
                   value={appliedYear}
                   onChange={e => setSelYear(Number(e.target.value))}
-                  className="bg-transparent text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
+                  className="bg-transparent text-[11px] sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
                 >
                   {Array.from({ length: now0.getFullYear() - 2000 + 1 }, (_, i) => 2000 + i).map(y => (
                     <option key={y} value={y}>{y}</option>
@@ -603,24 +641,13 @@ export default function AIInsightsView({ analyticsData, role }) {
               </div>
             )}
 
-            {/* Divider + exports collapse into a right-aligned cluster on
-                md+; on small screens the divider is hidden and exports align
-                flush-right on the same row as the pills. */}
-            <div className="ml-auto md:ml-0 flex items-center gap-2">
-              <div className="w-px h-6 bg-gray-200 hidden md:block" />
-              <button onClick={() => handleExport('/export/transactions', 'transactions.xlsx')}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Transactions">
-                <Download size={16} />
-              </button>
-              <button onClick={() => handleExport('/export/revenue', 'revenue.xlsx')}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Revenue">
-                <DollarSign size={16} />
-              </button>
-              <button onClick={() => handleExport('/export/inventory', 'inventory.xlsx')}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Inventory">
-                <BarChart3 size={16} />
-              </button>
-            </div>
+            <div className="hidden sm:block w-px h-6 bg-gray-200 shrink-0" />
+            <button onClick={handleWorkbookExport}
+              className="shrink-0 inline-flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3.5 sm:py-1.5 text-xs font-bold rounded-full bg-gray-900 text-white hover:bg-gray-700 active:scale-[0.98] transition-all"
+              title={`Download Excel workbook (${workbookScopeLabel}) — Transactions, Revenue & Inventory sheets`}>
+              <Download size={13} />
+              <span className="hidden sm:inline">Excel</span>
+            </button>
           </div>
         </div>
 
@@ -931,36 +958,50 @@ export default function AIInsightsView({ analyticsData, role }) {
             )}
           </div>
 
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
-            <h3 className="font-bold text-gray-900 text-lg">Top Rented Items</h3>
+          <div className="bg-white rounded-3xl p-5 md:p-6 border border-gray-100/80 shadow-sm flex flex-col min-h-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center shrink-0">
+                <BarChart3 size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-gray-900 text-base md:text-lg leading-tight">Top Rented Items</h3>
+                <p className="text-[11px] text-gray-400 font-medium mt-0.5">Ranked by rentals this period</p>
+              </div>
+              {popularItems.length > 0 && (
+                <span className="text-[11px] font-bold text-gray-400 bg-gray-100 rounded-full px-2.5 py-0.5 shrink-0">{popularItems.length}</span>
+              )}
+            </div>
             {popularItems.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">No rentals yet.</p>
+              <p className="text-sm text-gray-400 text-center py-6">No rentals yet.</p>
             ) : (
-              <div className="space-y-4">
-                {popularItems.map((item, i) => {
+              <ul className="mt-3 space-y-2.5 overflow-y-auto pr-1 -mr-1 max-h-72 min-h-0">
+                {popularItems.map((item) => {
                   const pct = Math.min((item.rentals / Math.max(...popularItems.map(t => t.rentals), 1)) * 100, 100);
+                  // Tied rental counts share the same rank (competition ranking:
+                  // rank = 1 + number of items strictly ahead).
+                  const rank = popularItems.findIndex((t) => t.rentals === item.rentals) + 1;
                   return (
-                    <div key={item.id}>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-gray-700 truncate flex-1">{i + 1}. {item.name}</span>
-                        <span className="font-bold text-gray-900 ml-2">{item.rentals}x</span>
+                    <li key={item.id} className="p-3 rounded-2xl bg-gray-50/70 border border-gray-100">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0 ${rank === 1 ? 'bg-[#bf4a53] text-white' : 'bg-gray-200/80 text-gray-600'}`}>{rank}</span>
+                        <span className="flex-1 min-w-0 text-[13px] font-semibold text-gray-800 leading-snug break-words line-clamp-2">{item.name}</span>
+                        <span className="text-xs font-bold text-gray-900 bg-white border border-gray-200 rounded-full px-2 py-0.5 shrink-0">{item.rentals}x</span>
                       </div>
-                      <div className="w-full bg-gray-100 rounded-full h-1.5">
+                      <div className="w-full bg-gray-200/60 rounded-full h-1.5 mt-2 ml-8 w-[calc(100%-2rem)]">
                         <div className="h-1.5 rounded-full bg-[#bf4a53]" style={{ width: `${pct}%` }} />
                       </div>
-                    </div>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             )}
             {underperforming.length > 0 && popularItems.length > 0 && (
-              <div className="pt-2 border-t border-gray-100">
-                <p className="text-xs font-semibold text-orange-500 mb-2">{underperforming.length} item(s) never rented</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {underperforming.slice(0, 4).map(item => (
-                    <span key={item.id} className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-[11px] font-medium max-w-full truncate">{item.name}</span>
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <p className="text-xs font-bold text-orange-500">{underperforming.length} item(s) never rented</p>
+                <div className="flex flex-wrap gap-1.5 mt-2 overflow-y-auto max-h-24 pr-1 -mr-1">
+                  {underperforming.map(item => (
+                    <span key={item.id} className="px-2.5 py-1 bg-orange-50 text-orange-600 rounded-lg text-[11px] font-medium break-words max-w-full">{item.name}</span>
                   ))}
-                  {underperforming.length > 4 && <span className="px-2 py-1 bg-gray-50 text-gray-400 rounded-lg text-[11px]">+{underperforming.length - 4}</span>}
                 </div>
               </div>
             )}
@@ -1061,67 +1102,143 @@ export default function AIInsightsView({ analyticsData, role }) {
             )}
           </div>
 
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Lightbulb size={18} className="text-[#bf4a53]" />
-              <h3 className="font-bold text-gray-900 text-lg flex-1">Insights</h3>
-              {role === 'Admin' && (
-                <button onClick={() => handleAiSuggest(Boolean(aiSuggestions))} disabled={suggestLoading}
-                  className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full transition-colors disabled:opacity-50 ${
-                    aiSuggestions
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                      : 'bg-[#bf4a53] text-white shadow-sm hover:bg-red-700'
-                  }`}>
-                  {suggestLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  {suggestLoading ? 'Generating...' : aiSuggestions ? 'Refresh AI' : 'AI Suggestions'}
-                </button>
+          <div className="bg-white rounded-3xl p-5 md:p-6 border border-gray-100/80 shadow-sm flex flex-col min-h-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
+                <Lightbulb size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-gray-900 text-base md:text-lg leading-tight">Insights</h3>
+                <p className="text-[11px] text-gray-400 font-medium mt-0.5">
+                  {aiSuggestions?.length ? 'AI-generated promo & restock suggestions' : 'Rule-based highlights from live data'}
+                </p>
+              </div>
+              {(aiSuggestions?.length || insights.length) > 0 && (
+                <span className="text-[11px] font-bold text-gray-400 bg-gray-100 rounded-full px-2.5 py-0.5 shrink-0">
+                  {aiSuggestions?.length || insights.length}
+                </span>
               )}
             </div>
+            {role === 'Admin' && (
+              <button onClick={() => handleAiSuggest(Boolean(aiSuggestions))} disabled={suggestLoading}
+                className={`mt-3 w-full inline-flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 rounded-xl transition-all active:scale-[0.99] disabled:opacity-50 ${
+                  aiSuggestions
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                    : 'bg-[#bf4a53] text-white shadow-sm hover:bg-red-700'
+                }`}>
+                {suggestLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                {suggestLoading ? 'Generating…' : aiSuggestions ? 'Refresh AI suggestions' : 'Get AI suggestions'}
+              </button>
+            )}
             {suggestLoading ? (
-              <div className="space-y-3 py-2">
+              <div className="space-y-3 py-4">
                 <Skeleton className="h-4 w-full" />
                 <Skeleton className="h-4 w-11/12" />
                 <Skeleton className="h-4 w-full" />
                 <Skeleton className="h-4 w-4/5" />
               </div>
             ) : aiSuggestions?.length ? (
-              <>
-                <p className="text-[11px] text-gray-400 font-medium">AI-generated promo &amp; restock suggestions</p>
-                <ul className="space-y-2">
+              <div className="mt-3 min-h-0">
+                <ul className="space-y-2.5 overflow-y-auto pr-1 -mr-1 max-h-72">
                   {aiSuggestions.map((text, i) => (
-                    <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
-                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                      {text}
+                    <li key={i} className="flex items-start gap-2.5 p-3 rounded-2xl bg-emerald-50/50 border border-emerald-100/70 text-[13px] text-gray-700 leading-relaxed break-words">
+                      <span className="w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                      <span className="flex-1 min-w-0">{text}</span>
                     </li>
                   ))}
                 </ul>
-              </>
+                {aiSuggestions.length > 4 && (
+                  <p className="text-[11px] text-gray-400 text-center pt-2">Scroll for more · {aiSuggestions.length} total</p>
+                )}
+              </div>
             ) : insights.length === 0 ? (
-              <p className="text-sm text-gray-400">Not enough data for insights yet.</p>
+              <p className="text-sm text-gray-400 text-center py-6">Not enough data for insights yet.</p>
             ) : (
-              <ul className="space-y-2">
-                {insights.map((text, i) => (
-                  <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
-                    <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#bf4a53] shrink-0" />
-                    {text}
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-3 min-h-0">
+                <ul className="space-y-2.5 overflow-y-auto pr-1 -mr-1 max-h-72">
+                  {insights.map((text, i) => (
+                    <li key={i} className="flex items-start gap-2.5 p-3 rounded-2xl bg-gray-50/70 border border-gray-100 text-[13px] text-gray-700 leading-relaxed break-words">
+                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#bf4a53] shrink-0" />
+                      <span className="flex-1 min-w-0">{text}</span>
+                    </li>
+                  ))}
+                </ul>
+                {insights.length > 4 && (
+                  <p className="text-[11px] text-gray-400 text-center pt-2">Scroll for more · {insights.length} total</p>
+                )}
+              </div>
             )}
           </div>
         </div>
 
         </div>
 
-        {/* AI Report button */}
-        <div className="flex justify-end">
-          <button onClick={() => { setReportLoading(true); api.post('/ai/generate-report', undefined, { timeout: 60000 }).then(r => { setAiReport(r.report || r); setShowReportModal(true); }).catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); }).finally(() => setReportLoading(false)); }}
-            disabled={reportLoading}
-            className="flex items-center gap-2 px-6 py-3 bg-[#bf4a53] text-white font-semibold rounded-full shadow-md shadow-red-500/20 hover:bg-red-700 transition-colors disabled:opacity-50"
-          >
-            {reportLoading ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
-            {reportLoading ? 'Generating...' : 'Generate AI Report'}
-          </button>
+        {/* AI Report + last saved reports — one card */}
+        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
+          <div className="relative overflow-hidden bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] p-5 md:p-6">
+            <div className="absolute -right-10 -top-14 w-44 h-44 rounded-full bg-white/10" />
+            <div className="absolute right-16 -bottom-12 w-28 h-28 rounded-full bg-white/5" />
+            <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-inner shrink-0">
+                <Sparkles size={20} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-white text-base leading-tight">AI Business Report</h3>
+                <p className="text-xs text-white/75 leading-relaxed mt-1">
+                  A full written breakdown of revenue, demand and inventory — ready in about 30 seconds.
+                </p>
+              </div>
+              <button onClick={() => { setReportLoading(true); api.post('/ai/generate-report', undefined, { timeout: 60000 }).then(r => { setAiReport(r.report || r); setShowReportModal(true); loadRecentReports(); }).catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); }).finally(() => setReportLoading(false)); }}
+                disabled={reportLoading}
+                className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-[#a63f47] text-sm font-bold rounded-full shadow-sm hover:bg-red-50 active:scale-[0.98] transition-all disabled:opacity-60"
+              >
+                {reportLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                {reportLoading ? 'Generating…' : 'Generate Report'}
+              </button>
+            </div>
+          </div>
+          {role === 'Admin' && (recentReports.length > 0 || reportsLoading) && (
+            <div className="p-5 md:p-6 border-t border-gray-100">
+              <div className="flex items-center gap-2 mb-4">
+                <History size={16} className="text-gray-400" />
+                <h3 className="font-bold text-gray-900 text-sm flex-1">Last saved reports</h3>
+                {recentReports.length > 0 && (
+                  <span className="text-[11px] font-bold text-gray-400 bg-gray-100 rounded-full px-2.5 py-0.5">{recentReports.length}</span>
+                )}
+                {reportsLoading && <Loader2 size={13} className="animate-spin text-gray-400" />}
+              </div>
+              <div className="space-y-3">
+                {recentReports.map((r) => (
+                  <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl bg-gray-50/70 border border-gray-100">
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <p className="text-[13px] font-bold text-gray-900 leading-tight">
+                        {new Date(r.createdAt).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {(r.provider || r.model) && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-200/70 text-gray-500">{[r.provider, r.model].filter(Boolean).join(' · ')}</span>
+                        )}
+                        {r.origin === 'cloud'
+                          ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-600">cloud only</span>
+                          : r.uploaded
+                            ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">cloud ✓</span>
+                            : null}
+                      </div>
+                      <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">{r.excerpt || 'Business performance report'}</p>
+                    </div>
+                    <button
+                      onClick={() => openSavedReport(r.id)}
+                      disabled={openingReportId === r.id}
+                      className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50"
+                    >
+                      {openingReportId === r.id ? <Loader2 size={12} className="animate-spin" /> : <Eye size={12} />}
+                      View
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
