@@ -8,6 +8,7 @@ import * as optimization from '../services/optimization.service.js';
 import * as aiReportService from '../services/aiReport.service.js';
 import type { CategoryProjection, AnalyticsItemShape } from '../services/optimization.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
+import { AppError } from '../middleware/errorHandler.js';
 
 // L5: the chat history is reflected into the AI prompt, so the shape must be
 // strictly controlled — only 'user'/'assistant' roles, bounded text length,
@@ -99,6 +100,24 @@ export async function listReports(_req: AuthenticatedRequest, res: Response, nex
 export async function getReport(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     res.json(await aiReportService.getAiReport(String(req.params.id)));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function retryReportUpload(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await aiReportService.uploadExistingReport(String(req.params.id)));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteReport(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const removed = await aiReportService.deleteAiReport(String(req.params.id));
+    if (!removed) throw new AppError(404, 'Report not found');
+    res.json({ message: 'Report deleted' });
   } catch (err) {
     next(err);
   }

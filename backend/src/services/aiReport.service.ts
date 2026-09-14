@@ -238,6 +238,31 @@ function toFull(id: string, parsed: Partial<AiReportFull>): AiReportFull {
   };
 }
 
+// Re-uploads an existing local report to the cloud (retry for rows stuck at
+// "server only", e.g. saved while the backend ran a non-service key).
+// Mirrors uploadExistingBackup: 404 when there is no local copy, 502 when
+// the cloud copy still won't land.
+export async function uploadExistingReport(id: string): Promise<AiReportMeta> {
+  if (!ID_RE.test(id)) throw new AppError(400, 'Invalid report id');
+  let full: AiReportFull;
+  try {
+    const raw = await fs.readFile(path.join(getReportsDir(), `${id}.json`), 'utf8');
+    const parsed = JSON.parse(raw) as Partial<AiReportFull>;
+    if (!parsed.report) throw new Error('empty');
+    full = toFull(id, parsed);
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(404, 'No local copy to upload');
+  }
+  const { report, ...meta } = full;
+  if (meta.uploaded) return { ...meta, origin: 'both' as const };
+  const ok = await uploadReportToCloud(meta, report);
+  if (!ok) throw new AppError(502, 'Cloud upload failed — check the server logs and try again');
+  const finalFull = { ...full, uploaded: true, origin: 'both' as const };
+  await fs.writeFile(path.join(getReportsDir(), `${id}.json`), JSON.stringify(finalFull, null, 2), 'utf8').catch(() => {});
+  return { ...meta, uploaded: true, origin: 'both' as const };
+}
+
 async function pruneReports(dir: string): Promise<void> {
   try {
     const all = await listAiReports(Number.MAX_SAFE_INTEGER);
@@ -333,6 +358,28 @@ async function listCloudReportMetas(): Promise<AiReportMeta[]> {
   } catch {
     return [];
   }
+}
+
+// Deletes a saved report everywhere: local file plus both cloud objects
+// (full + sidecar). Missing pieces are skipped, never fail the delete —
+// returns true when anything was removed, false when nothing existed.
+export async function deleteAiReport(id: string): Promise<boolean> {
+  if (!ID_RE.test(id)) throw new AppError(400, 'Invalid report id');
+  let removed = false;
+  await fs.unlink(path.join(getReportsDir(), `${id}.json`)).then(
+    () => { removed = true; },
+    () => {}
+  );
+  const api = cloudApi();
+  if (api?.remove) {
+    try {
+      const { error } = await api.remove([`${id}.json`, `${id}${META_SUFFIX}`]);
+      if (!error) removed = true;
+    } catch {
+      // local delete already decides the outcome
+    }
+  }
+  return removed;
 }
 
 async function pruneCloudReports(keep: number): Promise<void> {

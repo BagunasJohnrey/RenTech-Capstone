@@ -13,6 +13,8 @@ router.post('/generate-report', authMiddleware, requireRole(Role.Admin), validat
 // Saved-report history for the admin "last saved AI reports" lists
 // (Settings → Data & Backups + Business Intelligence page).
 router.get('/reports', authMiddleware, requireRole(Role.Admin), aiController.listReports);
+router.post('/reports/:id/upload', authMiddleware, requireRole(Role.Admin), aiController.retryReportUpload);
+router.delete('/reports/:id', authMiddleware, requireRole(Role.Admin), aiController.deleteReport);
 router.get('/reports/:id', authMiddleware, requireRole(Role.Admin), aiController.getReport);
 
 export default router;

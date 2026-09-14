@@ -575,6 +575,17 @@ function route(method, path, body) {
     return { value: { report: '## Demo Report\n\nMonthly revenue is ₱38,500 (up from ₱35,200). Gowns drive most bookings; 1 overdue rental needs attention.\n\n## Recommendations\n\n1. Feature the Ivory Lace Wedding Gown on the home page — it is the most rented item (6x).\n2. Run a weekend promotion for the Midnight Blue Barong Tagalog — it has 0 rentals this period.\n3. Send pickup reminders a day early — Friday–Saturday demand runs 3x weekday volume.\n', source: 'demo', reportId: created.id } };
   }
   if (path === '/ai/reports' && method === 'GET') return { value: clone(demoReports) };
+  if (P(/^\/ai\/reports\/(.+)\/upload$/) && method === 'POST') {
+    const r = demoReports.find((x) => x.id === P(/^\/ai\/reports\/(.+)\/upload$/)[1]);
+    if (!r) return { status: 404, error: 'Report not found (demo)' };
+    r.uploaded = true;
+    r.origin = 'both';
+    return { value: clone(r) };
+  }
+  if (P(/^\/ai\/reports\/(.+)$/) && method === 'DELETE') {
+    demoReports = demoReports.filter((x) => x.id !== P(/^\/ai\/reports\/(.+)$/)[1]);
+    return { value: { message: 'Report deleted (demo)' } };
+  }
   if (P(/^\/ai\/reports\/(.+)$/) && method === 'GET') {
     const r = demoReports.find((x) => x.id === P(/^\/ai\/reports\/(.+)$/)[1]);
     if (!r) return { status: 404, error: 'Report not found (demo)' };
