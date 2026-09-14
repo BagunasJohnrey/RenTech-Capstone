@@ -1,73 +1,24 @@
 import { useState, useEffect, useCallback, cloneElement } from 'react';
-import {
-  BarChart3, TrendingUp, DollarSign, ChevronLeft, ChevronRight,
-  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles, History, Eye, X, Tag
-} from 'lucide-react';
-import {
-  ComposedChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceDot,
-  PieChart, Pie, Sector
-} from 'recharts';
 import AIReportModal from '../components/AIReportModal';
-import ItemImage from '../components/ItemImage';
 import SaleModal from '../components/SaleModal';
 import CleaningQueueModal from '../components/CleaningQueueModal';
+import InsightsHeader from '../components/insights/InsightsHeader';
+import KpiCards from '../components/insights/KpiCards';
+import RevenueChart from '../components/insights/RevenueChart';
+import StatusDistribution from '../components/insights/StatusDistribution';
+import DemandForecast from '../components/insights/DemandForecast';
+import TopRented from '../components/insights/TopRented';
+import SmartActions from '../components/insights/SmartActions';
+import CategoryPerformance from '../components/insights/CategoryPerformance';
+import InsightsPanel from '../components/insights/InsightsPanel';
+import ReportSection from '../components/insights/ReportSection';
+import SmartListModal from '../components/insights/SmartListModal';
+import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS } from '../components/insights/shared';
 import { api } from '../utils/api';
 import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
 import { useToast } from '../components/Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { AIInsightsSkeleton } from '../components/PageSkeletons';
-import { Skeleton } from '../components/Skeleton';
-import { TX_STATUS_HEX } from '../utils/statusColors';
-
-const fmt = (n) => `₱${Math.round(Number(n)).toLocaleString()}`;
-const shortMonth = (l) => l?.split(' ')[0] || '';
-
-const CustomTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
-      <p className="font-bold text-gray-900 mb-1">{label}</p>
-      {payload.map((p, i) => (
-        <p key={i} className="text-gray-600" style={{ color: p.color }}>
-          {p.name}: {p.name.includes('Revenue') ? fmt(p.value) : p.value}
-        </p>
-      ))}
-    </div>
-  );
-};
-
-// Revenue-chart tooltip: shows the full "Mar 2026" label and clearly marks the
-// projection bar so it isn't mistaken for actual revenue.
-const RevenueTooltip = ({ active, payload }) => {
-  if (!active || !payload?.length) return null;
-  const p = payload[0].payload;
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
-      <p className="font-bold text-gray-900">{p.full}{p.forecast ? ' (projected)' : ''}</p>
-      <p className="text-gray-600">{p.rev <= 0 && !p.forecast ? 'No revenue' : fmt(p.rev)}</p>
-    </div>
-  );
-};
-
-const STATUS_COLORS = { Active: TX_STATUS_HEX.Active, Overdue: TX_STATUS_HEX.Overdue, Returned: TX_STATUS_HEX.Returned, Cancelled: TX_STATUS_HEX.Cancelled };
-const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCcw, Cancelled: XCircle };
-
-const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];
-
-const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// Philippine event/seasonality annotations for the monthly forecast chart
-// (display only for now — the SMA math itself is unweighted).
-const SEASON_MARKERS = {
-  0: 'New Year', 1: "Valentine's", 2: 'Graduation', 5: 'Wedding season',
-  9: 'Halloween', 11: 'Christmas · Wedding season',
-};
-const CONFIDENCE_STYLES = {
-  low: 'bg-amber-50 text-amber-700',
-  medium: 'bg-blue-50 text-blue-700',
-  high: 'bg-emerald-50 text-emerald-700',
-};
 
 // Pickers clamp to now* so users can look BACK at any past month/year but not
 // into the future. (* milliseconds-since-epoch comparison.)
@@ -120,44 +71,6 @@ function writeAiSuggestCache(data) {
   } catch {
     // storage unavailable — in-memory cache still works for this session
   }
-}
-
-// Pulls the numbered recommendations out of the AI report text. Provider models
-// format loosely (markdown **bold** headers, "Recommendations:", trailing
-// colons), so this accepts a header with optional markdown framing and falls
-// back to any numbered lines — the prompt forces recommendations to be numbered
-// 1..N with no gaps, so numbered lines are almost always the recommendation list.
-function extractRecommendations(report) {
-  if (!report) return [];
-  const lines = String(report)
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  const strip = (l) =>
-    l
-      .replace(/^[#*_>-\s]+/, '')
-      .replace(/\s*[#*_>]+$/, '')
-      .trim()
-      .replace(/^\d{1,2}[.)]\s*\*{0,2}\s*/, '')
-      .trim();
-
-  const isHeader = (l) => /^[\s#*_>]*recommendations\s*:?[\s#*_]*$/i.test(l);
-
-  const isMeta = (l) =>
-    /^([-#\d.]*)?\s*(executive summary|key performance indicators?|revenue analysis|inventory\s*&?\s*utilization|operational health|demand forecast|data:|kpis?:|insights?:|forecast:|underperforming items)/i.test(l);
-
-  const idx = lines.findIndex(isHeader);
-  if (idx !== -1) {
-    const recs = lines.slice(idx + 1).map(strip).filter((l) => l.length > 10 && !isMeta(l));
-    if (recs.length) return recs;
-  }
-
-  const numbered = lines
-    .filter((l) => /^\d{1,2}[.)]\s+\S/.test(l))
-    .map(strip)
-    .filter((l) => l.length > 10);
-  return numbered;
 }
 
 export default function AIInsightsView({ analyticsData, role, onViewItemTransactions, onNavigateTab, cleaningItems = [], onBulkClean }) {
@@ -360,6 +273,16 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         ? `rentech-report-${appliedYear}.xlsx`
         : 'rentech-report-overall.xlsx';
     handleExport(`/export/workbook?${params}`, filename);
+  };
+
+  // Full AI business report for the modal (same endpoint as suggestions,
+  // longer timeout — the old 20s abort is what used to kill it mid-write).
+  const handleGenerateReport = () => {
+    setReportLoading(true);
+    api.post('/ai/generate-report', undefined, { timeout: 60000 })
+      .then(r => { setAiReport(r.report || r); setShowReportModal(true); loadRecentReports(); })
+      .catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); })
+      .finally(() => setReportLoading(false));
   };
 
   // On-demand AI suggestions (promo/restock recommendations) — reuses the
@@ -620,126 +543,21 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   return (    <>
       <div className="space-y-8 max-w-lg mx-auto md:max-w-3xl lg:max-w-[1200px]">
 
-        {/* Header — title left, controls top-right on desktop; stacked on mobile */}
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Business Intelligence</h2>
-            <p className="text-sm text-gray-500 mt-1">Real-time analytics powered by your transaction and inventory data.</p>
-          </div>
-
-          {/* Controls — single one-line row on all screens: range pills,
-              optional month/year, Excel. Compact on phones, roomier on sm+. */}
-          <div className="flex items-center justify-center lg:justify-end gap-2 sm:gap-3 shrink-0 w-full lg:w-auto">
-
-            {/* Range pills — segmented control */}
-            <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
-              {TIME_OPTIONS.map(t => (
-                <button key={t} onClick={() => setTimeRange(t)}
-                  className={`px-2 sm:px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-full transition-colors text-center whitespace-nowrap ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                  {t}
-                </button>
-              ))}
-            </div>
-
-            {/* Month + Year — compact pill, hidden on Overall */}
-            {timeRange !== 'Overall' && (
-              <div className="flex items-center gap-0.5 bg-gray-100 rounded-full px-1.5 py-1 shrink-0">
-                {timeRange === 'Monthly' && (
-                  <select
-                    aria-label="Month"
-                    value={appliedMonth}
-                    onChange={e => setSelMonth(Number(e.target.value))}
-                    className="bg-transparent text-[11px] sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer pl-0.5"
-                  >
-                    {SHORT_MONTHS.map((name, i) => {
-                      const m = i + 1;
-                      const disabledFuture = appliedYear === now0.getFullYear() && m > now0.getMonth() + 1;
-                      return <option key={m} value={m} disabled={disabledFuture}>{name}</option>;
-                    })}
-                  </select>
-                )}
-                <select
-                  aria-label="Year"
-                  value={appliedYear}
-                  onChange={e => setSelYear(Number(e.target.value))}
-                  className="bg-transparent text-[11px] sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
-                >
-                  {Array.from({ length: now0.getFullYear() - 2000 + 1 }, (_, i) => 2000 + i).map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div className="hidden sm:block w-px h-6 bg-gray-200 shrink-0" />
-            <button onClick={handleWorkbookExport}
-              className="shrink-0 inline-flex items-center gap-1 sm:gap-1.5 p-2 sm:px-3.5 sm:py-1.5 text-xs font-bold rounded-full bg-gray-900 text-white hover:bg-gray-700 active:scale-[0.98] transition-all"
-              title={`Download Excel workbook (${workbookScopeLabel}) — Transactions, Revenue & Inventory sheets`}>
-              <Download size={13} />
-              <span className="hidden sm:inline">Excel</span>
-            </button>
-          </div>
-        </div>
+        <InsightsHeader
+          timeRange={timeRange} setTimeRange={setTimeRange}
+          appliedMonth={appliedMonth} appliedYear={appliedYear}
+          setSelMonth={setSelMonth} setSelYear={setSelYear} now0={now0}
+          workbookScopeLabel={workbookScopeLabel} handleWorkbookExport={handleWorkbookExport}
+        />
 
         {/* KPI Cards — 2-up on phones, 3-up on tablets/iPads, 6-up on desktop */}
         <div key={cacheKey} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-          <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-            <div className="p-2 bg-emerald-50 rounded-xl inline-block text-emerald-500 mb-2">
-              <DollarSign size={16} />
-            </div>
-            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Monthly Revenue</p>
-            <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{fmt(thisMonthRev)}</h4>
-            {prevMonthRev > 0 && (
-              <span className={`text-[10px] md:text-xs font-semibold ${revChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                {revChange >= 0 ? '+' : ''}{Math.abs(revChange).toFixed(0)}%
-              </span>
-            )}
-          </div>
-          <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-            <div className="p-2 bg-orange-50 rounded-xl inline-block text-orange-500 mb-2">
-              <BarChart3 size={16} />
-            </div>
-            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Pieces Rented</p>
-            <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{rentedCount}<span className="text-xs md:text-sm font-medium text-gray-400">/{totalItems}</span></h4>
-            <span className="text-[10px] md:text-xs font-semibold text-gray-500">{totalItems > 0 ? Math.round((rentedCount / totalItems) * 100) : 0}%</span>
-          </div>
-          <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-            <div className="p-2 bg-purple-50 rounded-xl inline-block text-purple-500 mb-2">
-              <TrendingUp size={16} />
-            </div>
-            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Forecast</p>
-            <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">
-              {smaVals.length >= 2 ? `${Math.round(latestSmaVal)}` : '—'}
-            </h4>
-            {smaVals.length >= 2 && <span className="text-[10px] md:text-xs font-semibold text-gray-500">{fmt(forecastRev)}</span>}
-          </div>
-          {analyticsSummary && (
-            <>
-              <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-                <div className="p-2 bg-emerald-50 rounded-xl inline-block text-emerald-500 mb-2">
-                  <DollarSign size={16} />
-                </div>
-                <p className="text-[10px] md:text-xs text-gray-500 font-medium">Inventory Revenue</p>
-                <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">₱{analyticsSummary.totalRevenue.toLocaleString()}</h4>
-              </div>
-              <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-                <div className="p-2 bg-orange-50 rounded-xl inline-block text-orange-500 mb-2">
-                  <RotateCcw size={16} />
-                </div>
-                <p className="text-[10px] md:text-xs text-gray-500 font-medium">Total Rentals</p>
-                <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{analyticsSummary.totalRentals}</h4>
-              </div>
-              <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-                <div className="p-2 bg-purple-50 rounded-xl inline-block text-purple-500 mb-2">
-                  <TrendingUp size={16} />
-                </div>
-                <p className="text-[10px] md:text-xs text-gray-500 font-medium">Avg Utilization</p>
-                <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{analyticsSummary.avgUtilization}%</h4>
-              </div>
-            </>
-          )}
-        </div>
+        <KpiCards
+          thisMonthRev={thisMonthRev} prevMonthRev={prevMonthRev} revChange={revChange}
+          rentedCount={rentedCount} totalItems={totalItems}
+          smaVals={smaVals} latestSmaVal={latestSmaVal} forecastRev={forecastRev}
+          analyticsSummary={analyticsSummary}
+        />
 
         {analyticsData && (
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
@@ -749,694 +567,72 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
 
         {/* Row 1: Revenue Chart + Status Distribution */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
-            <div className="flex items-center justify-between gap-2 px-5 md:px-7 pt-5 md:pt-7 pb-2">
-              <h3 className="font-bold text-gray-900 text-base md:text-lg">
-                {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : 'Monthly Revenue'}
-              </h3>
-              {isMonthlyView && (
-                <div className="flex items-center gap-0.5 shrink-0">
-                  {!viewingCurrentMonth && (
-                    <button onClick={goCurrentMonth}
-                      className="px-2.5 min-h-[32px] rounded-lg text-[11px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
-                      This month
-                    </button>
-                  )}
-                  <button onClick={() => stepMonth(-1)} aria-label="Previous month" title="Previous month"
-                    className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
-                    <ChevronLeft size={16} />
-                  </button>
-                  <button onClick={() => stepMonth(1)} disabled={viewingCurrentMonth} aria-label="Next month" title="Next month"
-                    className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-              )}
-            </div>
-            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">
-              {isMonthlyView
-                ? (viewingCurrentMonth ? 'Week-by-week revenue with next week projection' : 'Week-by-week revenue for the selected month')
-                : 'Revenue trend with next month projection'}
-            </p>
-            {revChart.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-12">{revChartEmptyLabel}</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={revChart} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={revChart.length > 7 ? -35 : 0} textAnchor={revChart.length > 7 ? 'end' : 'middle'} height={revChart.length > 7 ? 56 : 30} />
-                  <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} />
-                  <Tooltip content={<RevenueTooltip />} cursor={{ fill: '#f9fafb' }} />
-                  <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56} minPointSize={4}>
-                    {revChart.map((e, i) => (
-                      <Cell key={i}
-                        fill={e.rev <= 0 ? '#e5e7eb' : e.forecast ? '#bf4a53' : '#1f2937'}
-                        fillOpacity={e.forecast ? 0.22 : e.rev <= 0 ? 0.5 : 1}
-                        stroke={e.forecast ? '#bf4a53' : 'none'}
-                        strokeWidth={e.forecast ? 2 : 0}
-                        strokeDasharray={e.forecast ? '4 3' : 'none'}
-                      />
-                    ))}
-                  </Bar>
-                  <ReferenceLine y={0} stroke="#e5e7eb" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
-            <h3 className="font-bold text-gray-900 text-lg">Status Distribution</h3>
-            {totalTx === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">No transactions yet.</p>
-            ) : (
-              <>
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie
-                      data={statusDist}
-                      cx="50%" cy="50%"
-                      innerRadius={58} outerRadius={82}
-                      dataKey="value"
-                      activeIndex={activePie}
-                      activeShape={(props) => { const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props; return <g><Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 6} startAngle={startAngle} endAngle={endAngle} fill={fill} /><Sector cx={cx} cy={cy} innerRadius={innerRadius - 4} outerRadius={innerRadius - 2} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.3} /></g>; }}
-                      onMouseEnter={(_, i) => setActivePie(i)}
-                      onMouseLeave={() => setActivePie(null)}
-                    >
-                      {statusDist.map((e, i) => <Cell key={i} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="grid grid-cols-2 gap-2">
-                  {statusDist.map(d => {
-                    const Icon = STATUS_ICONS[d.name];
-                    return (
-                      <div key={d.name} className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl">
-                        <Icon size={14} style={{ color: d.color }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-600">{d.name}</p>
-                          <p className="text-sm font-bold text-gray-900">{d.value} <span className="text-xs font-normal text-gray-400">({Math.round((d.value / totalTx) * 100)}%)</span></p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
+          <RevenueChart
+            isMonthlyView={isMonthlyView} monthName={monthName}
+            appliedYear={appliedYear} appliedMonth={appliedMonth}
+            viewingCurrentMonth={viewingCurrentMonth}
+            revChart={revChart} revChartEmptyLabel={revChartEmptyLabel}
+            stepMonth={stepMonth} goCurrentMonth={goCurrentMonth}
+          />
+          <StatusDistribution
+            totalTx={totalTx} statusDist={statusDist}
+            activePie={activePie} setActivePie={setActivePie}
+          />
         </div>
 
         {/* Row 2: Demand Forecast + Top Items */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2">
-            <div className="flex items-center justify-between gap-3 px-5 md:px-7 pt-5 md:pt-7 pb-2">
-              <h3 className="font-bold text-gray-900 text-base md:text-lg">Demand Forecast</h3>
-              <div role="tablist" aria-label="Forecast granularity" className="flex gap-1 bg-gray-100 rounded-xl p-1 shrink-0">
-                {['monthly', 'weekly'].map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    role="tab"
-                    aria-selected={granularity === g}
-                    onClick={() => { setGranularity(g); if (g === 'weekly') loadWeeklyForecast(); }}
-                    className={`px-3 min-h-[32px] rounded-lg text-[11px] font-bold capitalize transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
-                      granularity === g ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {g}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-1">
-              {weeklyLoading
-                ? 'Loading weekly buckets…'
-                : showingWeekly
-                  ? '3‑week moving average with rental counts'
-                  : '3‑month moving average with rental counts'}
-            </p>
-            {activeForecast?.confidenceNote && (
-              <p className="px-5 md:px-7 pb-4">
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${CONFIDENCE_STYLES[activeForecast.confidence] || 'bg-gray-100 text-gray-500'}`}>
-                  {activeForecast.confidenceNote}
-                </span>
-              </p>
-            )}
-            {!hasSma ? (
-              <div>
-                <ResponsiveContainer width="100%" height={230}>
-                  <ComposedChart data={countChart} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} angle={countChart.length > 7 ? -35 : 0} textAnchor={countChart.length > 7 ? 'end' : 'middle'} height={countChart.length > 7 ? 52 : 30} interval={0} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#1f2937" />
-                  </ComposedChart>
-                </ResponsiveContainer>
-                <p className="text-xs text-gray-400 text-center pb-4 px-7">At least {3 - validSmaCount} more {showingWeekly ? 'weeks' : 'months'} of data needed for SMA trend.</p>
-              </div>
-            ) : (
-              <div>
-                <ResponsiveContainer width="100%" height={270}>
-                  <ComposedChart data={forecastData} margin={{ top: 16, right: 16, bottom: 8, left: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} angle={forecastData.length > 8 ? -35 : 0} textAnchor={forecastData.length > 8 ? 'end' : 'middle'} height={forecastData.length > 8 ? 52 : 30} interval={0} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} />
-                    <Tooltip
-                      content={({ active, payload, label }) => {
-                        if (!active || !payload?.length) return null;
-                        const month = forecastData.find(d => d.label === label);
-                        return (
-                          <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm space-y-1">
-                            <p className="font-bold text-gray-900">{month?.full || label}</p>
-                            {payload.map((p, i) => (
-                              p.value !== null && <p key={i} className="text-gray-600" style={{ color: p.color }}>
-                                {p.name}: {p.name === smaName ? Number(p.value).toFixed(1) : p.value}
-                              </p>
-                            ))}
-                            {month?.forecast && <p className="text-[11px] text-gray-400 italic">Projected</p>}
-                </div>
-                        );
-                      }}
-                    />
-                    <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={48} fill="#1f2937" fillOpacity={0.35} />
-                    <Line type="monotone" dataKey="sma" name={smaName} stroke="#bf4a53" strokeWidth={3}
-                      dot={{ r: 5, fill: '#bf4a53', strokeWidth: 0 }}
-                      activeDot={{ r: 8, fill: '#bf4a53', stroke: '#fff', strokeWidth: 2 }}
-                      connectNulls={false}
-                    />
-                    {seasonDots.map((d) => (
-                      <ReferenceDot key={d.full} x={d.label} y={d.count} r={5} fill="#bf4a53" stroke="#fff" strokeWidth={2} />
-                    ))}
-                  </ComposedChart>
-                </ResponsiveContainer>
-
-                {seasonDots.length > 0 && (
-                  <p className="text-[11px] text-gray-400 text-center px-7 -mt-1">
-                    <span className="inline-block w-2 h-2 rounded-full bg-[#bf4a53] mr-1.5" aria-hidden="true" />
-                    {[...new Set(seasonDots.map((d) => SEASON_MARKERS[SHORT_MONTHS.indexOf(d.full.split(' ')[0])]))].join(' · ')}
-                  </p>
-                )}
-
-                {/* SMA Summary */}
-                <div className="grid grid-cols-3 gap-2 md:gap-3 px-5 md:px-7 pb-5 md:pb-6">
-                  <div className="bg-gray-50 rounded-xl p-3 text-center">
-                    <p className="text-[11px] text-gray-500 font-medium">Current SMA</p>
-                    <p className="text-lg font-bold text-gray-900">{latestSmaVal.toFixed(1)}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3 text-center">
-                    <p className="text-[11px] text-gray-500 font-medium">Previous</p>
-                    <p className="text-lg font-bold text-gray-900">{prevSmaVal.toFixed(1)}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3 text-center">
-                    <p className="text-[11px] text-gray-500 font-medium">Trend</p>
-                    <p className={`text-lg font-bold flex items-center justify-center gap-1 ${smaTrend === 'up' ? 'text-emerald-600' : smaTrend === 'down' ? 'text-red-500' : 'text-gray-500'}`}>
-                      {smaTrend === 'stable' ? 'Flat' : `${Math.abs(latestSmaVal - prevSmaVal).toFixed(1)}`}
-                    </p>
-                  </div>
-                </div>
-
-                {/* 3-period outlook table (projected rentals + peso estimate) */}
-                {projections.length > 0 && (
-                  <div className="px-5 md:px-7 pb-5 md:pb-6">
-                    <div className="border border-dashed border-[#bf4a53]/30 rounded-2xl overflow-hidden">
-                      <p className="text-[11px] font-bold text-[#bf4a53] uppercase tracking-wide px-4 pt-3">Next 3 periods · projected</p>
-                      <table className="w-full text-sm mt-1">
-                        <thead>
-                          <tr className="text-[11px] text-gray-400">
-                            <th className="text-left font-semibold px-4 py-2">Period</th>
-                            <th className="text-right font-semibold px-4 py-2">Rentals</th>
-                            <th className="text-right font-semibold px-4 py-2">Est. revenue</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {projections.map((p) => (
-                            <tr key={p.label} className="border-t border-gray-100">
-                              <td className="px-4 py-2 font-semibold text-gray-800">{p.label}</td>
-                              <td className="px-4 py-2 text-right tabular-nums text-gray-700">{p.value ?? '—'}</td>
-                              <td className="px-4 py-2 text-right tabular-nums font-bold text-gray-900">
-                                {p.value === null || p.value === undefined ? '—' : avgPriceKnown ? fmt(p.value * avgPrice) : '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-3xl p-5 md:p-6 border border-gray-100/80 shadow-sm flex flex-col min-h-0">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center shrink-0">
-                <BarChart3 size={16} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-gray-900 text-base md:text-lg leading-tight">Top Rented Items</h3>
-                <p className="text-[11px] text-gray-400 font-medium mt-0.5">Ranked by rentals this period</p>
-              </div>
-              {popularItems.length > 0 && (
-                <span className="text-[11px] font-bold text-gray-400 bg-gray-100 rounded-full px-2.5 py-0.5 shrink-0">{popularItems.length}</span>
-              )}
-            </div>
-            {popularItems.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-6">No rentals yet.</p>
-            ) : (
-              <ul className="mt-3 space-y-2.5 overflow-y-auto pr-1 -mr-1 max-h-72 min-h-0">
-                {popularItems.map((item) => {
-                  const pct = Math.min((item.rentals / Math.max(...popularItems.map(t => t.rentals), 1)) * 100, 100);
-                  // Tied rental counts share the same rank (competition ranking:
-                  // rank = 1 + number of items strictly ahead).
-                  const rank = popularItems.findIndex((t) => t.rentals === item.rentals) + 1;
-                  return (
-                    <li key={item.id} className="p-3 rounded-2xl bg-gray-50/70 border border-gray-100">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0 ${rank === 1 ? 'bg-[#bf4a53] text-white' : 'bg-gray-200/80 text-gray-600'}`}>{rank}</span>
-                        <span className="flex-1 min-w-0 text-[13px] font-semibold text-gray-800 leading-snug truncate">{item.name}</span>
-                        <span className="text-xs font-bold text-gray-900 bg-white border border-gray-200 rounded-full px-2 py-0.5 shrink-0 tabular-nums">{item.rentals}x</span>
-                      </div>
-                      <div className="ml-9 w-[calc(100%-2.25rem)] bg-gray-200/60 rounded-full h-1.5 mt-2 overflow-hidden">
-                        <div className="h-1.5 rounded-full bg-[#bf4a53]" style={{ width: `${pct}%` }} />
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {underperforming.length > 0 && popularItems.length > 0 && (
-              <div className="pt-2 border-t border-gray-100">
-                <button type="button" onClick={() => openSmartModal('never')}
-                  className="group w-full flex items-center gap-1.5 mb-2 text-left rounded-lg">
-                  <p className="text-xs font-semibold text-orange-500 flex-1">{underperforming.length} item(s) never rented</p>
-                  <span className="text-[11px] font-bold text-orange-600 bg-orange-50 rounded-full px-2 py-0.5">{underperforming.length}</span>
-                  <ChevronRight size={13} className="text-gray-300 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
-                </button>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {underperforming.slice(0, 3).map(item => (
-                    <div key={item.id} className="flex items-center gap-2 bg-orange-50 rounded-xl p-1.5 min-w-0">
-                      <ItemImage image={imgById.get(item.id)} alt={item.name} thumb className="w-9 h-9 rounded-lg object-cover shrink-0" />
-                      <p className="text-[11px] font-semibold text-orange-700 leading-tight line-clamp-2 min-w-0">{item.name}</p>
-                    </div>
-                  ))}
-                  {underperforming.length > 3 && (
-                    <button type="button" onClick={() => openSmartModal('never')}
-                      className="flex items-center justify-center min-h-[52px] rounded-xl border border-dashed border-orange-300 text-[11px] font-bold text-orange-600 hover:bg-orange-50 active:scale-[0.98] transition-all">
-                      +{underperforming.length - 3} more
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          <DemandForecast
+            granularity={granularity} setGranularity={setGranularity}
+            loadWeeklyForecast={loadWeeklyForecast} weeklyLoading={weeklyLoading}
+            showingWeekly={showingWeekly} activeForecast={activeForecast}
+            hasSma={hasSma} countChart={countChart} validSmaCount={validSmaCount}
+            forecastData={forecastData} latestSmaVal={latestSmaVal} prevSmaVal={prevSmaVal}
+            smaTrend={smaTrend} smaName={smaName} seasonDots={seasonDots}
+            projections={projections} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice}
+          />
+          <TopRented
+            popularItems={popularItems} underperforming={underperforming}
+            imgById={imgById} openSmartModal={openSmartModal}
+          />
         </div>
 
         {/* Row 2b: Smart actions — deterministic rules (no AI): restock what
             demand outruns, clear what's idle, clean what's wanted next */}
         {(restockRules.length > 0 || clearanceRules.length > 0 || cleaningRules.length > 0) && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
-              <button type="button" onClick={() => restockRules.length > 0 && openSmartModal('restock')}
-                disabled={restockRules.length === 0}
-                className={`w-full flex items-center gap-2 text-left rounded-xl ${restockRules.length > 0 ? 'group cursor-pointer' : 'cursor-default'}`}>
-                <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2 flex-1">
-                  <TrendingUp size={17} className="text-emerald-600" /> Restock
-                </h3>
-                {restockRules.length > 0 && (
-                  <>
-                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 rounded-full px-2.5 py-0.5">{restockRules.length}</span>
-                    <ChevronRight size={15} className="text-gray-300 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all" />
-                  </>
-                )}
-              </button>
-              {restockRules.length === 0 ? (
-                <p className="text-sm text-gray-400">Stock covers projected demand.</p>
-              ) : (
-                restockRules.slice(0, 4).map((r) => (
-                  <div key={r.category} className="bg-emerald-50/60 rounded-2xl px-4 py-3 text-sm">
-                    <p className="font-bold text-gray-900">{r.category} <span className="text-emerald-600">+{r.shortfall} pc{r.shortfall === 1 ? '' : 's'}</span></p>
-                    <p className="text-xs text-gray-500 mt-0.5">Projected {r.projection}/mo · {r.freeUnits} free · {r.reason}</p>
-                  </div>
-                ))
-              )}
-              {restockRules.length > 4 && (
-                <button type="button" onClick={() => openSmartModal('restock')}
-                  className="w-full py-2 rounded-xl text-xs font-bold text-emerald-700 hover:bg-emerald-50 transition-colors">
-                  View all {restockRules.length}
-                </button>
-              )}
-            </div>
-            <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
-              <button type="button" onClick={() => clearanceRules.length > 0 && openSmartModal('clearance')}
-                disabled={clearanceRules.length === 0}
-                className={`w-full flex items-center gap-2 text-left rounded-xl ${clearanceRules.length > 0 ? 'group cursor-pointer' : 'cursor-default'}`}>
-                <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2 flex-1">
-                  <AlertTriangle size={17} className="text-orange-500" /> Clearance
-                </h3>
-                {clearanceRules.length > 0 && (
-                  <>
-                    <span className="text-[11px] font-bold text-orange-600 bg-orange-50 rounded-full px-2.5 py-0.5">{clearanceRules.length}</span>
-                    <ChevronRight size={15} className="text-gray-300 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
-                  </>
-                )}
-              </button>
-              {clearanceRules.length === 0 ? (
-                <p className="text-sm text-gray-400">Nothing idle — everything earns.</p>
-              ) : (
-                clearanceRules.slice(0, 4).map((it) => (
-                  <div key={it.id} className="flex items-center gap-3 bg-orange-50/60 rounded-2xl p-3 text-sm">
-                    <ItemImage image={it.image} alt={it.name} thumb className="w-10 h-10 rounded-xl object-cover shrink-0" />
-                    <div className="min-w-0">
-                      <p className="font-bold text-gray-900 truncate">{it.name}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{it.category} · {it.reason} — put on sale</p>
-                    </div>
-                  </div>
-                ))
-              )}
-              {clearanceRules.length > 4 && (
-                <button type="button" onClick={() => openSmartModal('clearance')}
-                  className="w-full py-2 rounded-xl text-xs font-bold text-orange-600 hover:bg-orange-50 transition-colors">
-                  View all {clearanceRules.length}
-                </button>
-              )}
-            </div>
-            <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-3">
-              <button type="button" onClick={() => cleaningRules.length > 0 && openSmartModal('cleaning')}
-                disabled={cleaningRules.length === 0}
-                className={`w-full flex items-center gap-2 text-left rounded-xl ${cleaningRules.length > 0 ? 'group cursor-pointer' : 'cursor-default'}`}>
-                <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2 flex-1">
-                  <RotateCcw size={17} className="text-[#bf4a53]" /> Clean next
-                </h3>
-                {cleaningRules.length > 0 && (
-                  <>
-                    <span className="text-[11px] font-bold text-[#bf4a53] bg-[#bf4a53]/5 rounded-full px-2.5 py-0.5">{cleaningRules.length}</span>
-                    <ChevronRight size={15} className="text-gray-300 group-hover:text-[#bf4a53] group-hover:translate-x-0.5 transition-all" />
-                  </>
-                )}
-              </button>
-              {cleaningRules.length === 0 ? (
-                <p className="text-sm text-gray-400">Cleaning queue is empty.</p>
-              ) : (
-                cleaningRules.slice(0, 4).map((it, i) => (
-                  <button key={it.id} type="button" onClick={() => openCleanQueue(it)}
-                    title="Open in the cleaning queue"
-                    className="w-full flex items-center gap-3 text-sm text-left rounded-xl hover:bg-gray-50 active:scale-[0.99] transition-all">
-                    <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
-                    <ItemImage image={it.image} alt={it.name} thumb className="w-10 h-10 rounded-xl object-cover shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-bold text-gray-900 truncate">{it.name}</p>
-                      <p className="text-xs text-gray-500">{it.category}{it.demand >= 0 ? ` · demand ${it.demand}/mo` : ''}</p>
-                    </div>
-                    <ChevronRight size={14} className="text-gray-300 shrink-0" />
-                  </button>
-                ))
-              )}
-              {cleaningRules.length > 4 && (
-                <button type="button" onClick={() => openSmartModal('cleaning')}
-                  className="w-full py-2 rounded-xl text-xs font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 transition-colors">
-                  View all {cleaningRules.length}
-                </button>
-              )}
-            </div>
-          </div>
+          <SmartActions
+            restockRules={restockRules} clearanceRules={clearanceRules} cleaningRules={cleaningRules}
+            openSmartModal={openSmartModal} openCleanQueue={openCleanQueue}
+          />
         )}
 
         {/* Row 3: Category Performance */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm lg:col-span-2">
-            <h3 className="font-bold text-gray-900 text-lg mb-5">Category Performance</h3>
-            {utilData.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">No category data.</p>
-            ) : (
-              <div className="space-y-5">
-                {utilData.map(u => {
-                  const maxCatRev = Math.max(...utilData.map(x => x.revenue), 1);
-                  const revPct = (u.revenue / maxCatRev) * 100;
-                  return (
-                    <div key={u.category}>
-                      <div className="flex justify-between items-center mb-1.5">
-                        <span className="text-sm font-semibold text-gray-700 capitalize">{u.category}</span>
-                        <div className="flex items-center gap-3 text-xs">
-                          <span className="text-gray-500">{u.rate}% utilised</span>
-                          <span className="font-bold text-gray-900">{u.revenue > 0 ? fmt(u.revenue) : '—'}</span>
-                        </div>
-                      </div>
-                      <div className="flex gap-1.5 h-2">
-                        <div className="flex-1 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-[#bf4a53]" style={{ width: `${u.rate}%` }} />
-                        </div>
-                        <div className="flex-1 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-gray-900" style={{ width: `${revPct}%` }} />
-                        </div>
-                      </div>
-                      <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
-                        <span>Utilisation</span>
-                        <span>Revenue share</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-3xl p-5 md:p-6 border border-gray-100/80 shadow-sm flex flex-col min-h-0">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
-                <Lightbulb size={16} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-gray-900 text-base md:text-lg leading-tight">Insights</h3>
-                <p className="text-[11px] text-gray-400 font-medium mt-0.5">
-                  {aiSuggestions?.length ? 'AI-generated promo & restock suggestions' : 'Rule-based highlights from live data'}
-                </p>
-              </div>
-              {(aiSuggestions?.length || insights.length) > 0 && (
-                <span className="text-[11px] font-bold text-gray-400 bg-gray-100 rounded-full px-2.5 py-0.5 shrink-0">
-                  {aiSuggestions?.length || insights.length}
-                </span>
-              )}
-            </div>
-            {role === 'Admin' && (
-              <button onClick={() => handleAiSuggest(Boolean(aiSuggestions))} disabled={suggestLoading}
-                className={`mt-3 w-full inline-flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 rounded-xl transition-all active:scale-[0.99] disabled:opacity-50 ${
-                  aiSuggestions
-                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                    : 'bg-[#bf4a53] text-white shadow-sm hover:bg-red-700'
-                }`}>
-                {suggestLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                {suggestLoading ? 'Generating…' : aiSuggestions ? 'Refresh AI suggestions' : 'Get AI suggestions'}
-              </button>
-            )}
-            {suggestLoading ? (
-              <div className="space-y-3 py-4">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-11/12" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-4/5" />
-              </div>
-            ) : aiSuggestions?.length ? (
-              <div className="mt-3 min-h-0">
-                <ul className="space-y-2.5 overflow-y-auto pr-1 -mr-1 max-h-72">
-                  {aiSuggestions.map((text, i) => (
-                    <li key={i} className="flex items-start gap-2.5 p-3 rounded-2xl bg-emerald-50/50 border border-emerald-100/70 text-[13px] text-gray-700 leading-relaxed break-words">
-                      <span className="w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
-                      <span className="flex-1 min-w-0">{text}</span>
-                    </li>
-                  ))}
-                </ul>
-                {aiSuggestions.length > 4 && (
-                  <p className="text-[11px] text-gray-400 text-center pt-2">Scroll for more · {aiSuggestions.length} total</p>
-                )}
-              </div>
-            ) : insights.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-6">Not enough data for insights yet.</p>
-            ) : (
-              <div className="mt-3 min-h-0">
-                <ul className="space-y-2.5 overflow-y-auto pr-1 -mr-1 max-h-72">
-                  {insights.map((text, i) => (
-                    <li key={i} className="flex items-start gap-2.5 p-3 rounded-2xl bg-gray-50/70 border border-gray-100 text-[13px] text-gray-700 leading-relaxed break-words">
-                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#bf4a53] shrink-0" />
-                      <span className="flex-1 min-w-0">{text}</span>
-                    </li>
-                  ))}
-                </ul>
-                {insights.length > 4 && (
-                  <p className="text-[11px] text-gray-400 text-center pt-2">Scroll for more · {insights.length} total</p>
-                )}
-              </div>
-            )}
-          </div>
+          <CategoryPerformance utilData={utilData} />
+          <InsightsPanel
+            role={role} aiSuggestions={aiSuggestions} suggestLoading={suggestLoading}
+            handleAiSuggest={handleAiSuggest} insights={insights}
+          />
         </div>
 
         </div>
 
-        {/* AI Report + last saved reports — one card */}
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
-          <div className="relative overflow-hidden bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] p-4 sm:p-6">
-            <div className="absolute -right-10 -top-14 w-44 h-44 rounded-full bg-white/10" />
-            <div className="absolute right-16 -bottom-12 w-28 h-28 rounded-full bg-white/5" />
-            <div className="relative flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-inner shrink-0">
-                  <Sparkles size={18} />
-                </div>
-                <h3 className="font-bold text-white text-[15px] sm:text-base leading-tight flex-1">AI Business Report</h3>
-              </div>
-              <p className="text-[11px] sm:text-xs text-white/75 leading-relaxed sm:flex-1 sm:min-w-0">
-                A full written breakdown of revenue, demand and inventory — ready in about 30 seconds.
-              </p>
-              <button onClick={() => { setReportLoading(true); api.post('/ai/generate-report', undefined, { timeout: 60000 }).then(r => { setAiReport(r.report || r); setShowReportModal(true); loadRecentReports(); }).catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); }).finally(() => setReportLoading(false)); }}
-                disabled={reportLoading}
-                className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-6 py-2.5 sm:py-3 bg-white text-[#a63f47] text-sm font-bold rounded-2xl sm:rounded-full shadow-sm hover:bg-red-50 active:scale-[0.98] transition-all disabled:opacity-60"
-              >
-                {reportLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-                {reportLoading ? 'Generating…' : 'Generate Report'}
-              </button>
-            </div>
-          </div>
-          {role === 'Admin' && (recentReports.length > 0 || reportsLoading) && (
-            <div className="p-5 md:p-6 border-t border-gray-100">
-              <div className="flex items-center gap-2 mb-4">
-                <History size={16} className="text-gray-400" />
-                <h3 className="font-bold text-gray-900 text-sm flex-1">Last saved reports</h3>
-                {recentReports.length > 0 && (
-                  <span className="text-[11px] font-bold text-gray-400 bg-gray-100 rounded-full px-2.5 py-0.5">{recentReports.length}</span>
-                )}
-                {reportsLoading && <Loader2 size={13} className="animate-spin text-gray-400" />}
-              </div>
-              <div className="space-y-3">
-                {recentReports.slice(reportsPage * REPORTS_PAGE_SIZE, reportsPage * REPORTS_PAGE_SIZE + REPORTS_PAGE_SIZE).map((r) => (
-                  <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl bg-gray-50/70 border border-gray-100">
-                    <div className="min-w-0 flex-1 space-y-1.5">
-                      <p className="text-[13px] font-bold text-gray-900 leading-tight">
-                        {new Date(r.createdAt).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {(r.provider || r.model) && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-200/70 text-gray-500">{[r.provider, r.model].filter(Boolean).join(' · ')}</span>
-                        )}
-                        {r.origin === 'cloud'
-                          ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-600">cloud only</span>
-                          : r.uploaded
-                            ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">cloud ✓</span>
-                            : null}
-                      </div>
-                      <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">{r.excerpt || 'Business performance report'}</p>
-                    </div>
-                    <button
-                      onClick={() => openSavedReport(r.id)}
-                      disabled={openingReportId === r.id}
-                      className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 active:scale-[0.98] transition-all disabled:opacity-50"
-                    >
-                      {openingReportId === r.id ? <Loader2 size={12} className="animate-spin" /> : <Eye size={12} />}
-                      View
-                    </button>
-                  </div>
-                ))}
-              </div>
-              {recentReports.length > REPORTS_PAGE_SIZE && (
-                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-                  <span className="text-[11px] text-gray-400 font-semibold tabular-nums">
-                    Page {reportsPage + 1} of {Math.ceil(recentReports.length / REPORTS_PAGE_SIZE)}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setReportsPage(p => Math.max(0, p - 1))} disabled={reportsPage === 0}
-                      aria-label="Previous reports page"
-                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
-                      <ChevronLeft size={15} />
-                    </button>
-                    <button onClick={() => setReportsPage(p => Math.min(Math.ceil(recentReports.length / REPORTS_PAGE_SIZE) - 1, p + 1))}
-                      disabled={reportsPage >= Math.ceil(recentReports.length / REPORTS_PAGE_SIZE) - 1}
-                      aria-label="Next reports page"
-                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
-                      <ChevronRight size={15} />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <ReportSection
+          role={role} reportLoading={reportLoading} onGenerate={handleGenerateReport}
+          recentReports={recentReports} reportsLoading={reportsLoading}
+          reportsPage={reportsPage} REPORTS_PAGE_SIZE={REPORTS_PAGE_SIZE} setReportsPage={setReportsPage}
+          openSavedReport={openSavedReport} openingReportId={openingReportId}
+        />
+
+        <SmartListModal
+          smartModal={smartModal} smartClosing={smartClosing} closeSmartModal={closeSmartModal}
+          restockRules={restockRules} clearanceRules={clearanceRules} cleaningRules={cleaningRules}
+          underperforming={underperforming} imgById={imgById}
+          onSaleItem={(it) => setSaleTarget({ id: it.id, name: it.name })}
+          openCleanQueue={openCleanQueue}
+        />
       </div>
 
-      {smartModal && (() => {
-        const cfg = {
-          restock: { icon: TrendingUp, iconCls: 'text-emerald-600', title: 'Restock list', sub: 'Projected demand outruns free stock' },
-          clearance: { icon: AlertTriangle, iconCls: 'text-orange-500', title: 'Clearance list', sub: 'Idle pieces — put on sale (top 5)' },
-          cleaning: { icon: RotateCcw, iconCls: 'text-[#bf4a53]', title: 'Cleaning order', sub: 'Clean-first order by coming demand' },
-          never: { icon: AlertTriangle, iconCls: 'text-orange-500', title: 'Never rented', sub: 'Zero rentals this period — consider promotions' },
-        }[smartModal];
-        const Icon = cfg.icon;
-        return (
-          <div className={`fixed inset-0 z-[200] transition-opacity duration-150 ${smartClosing ? 'opacity-0' : 'opacity-100'}`}>
-            <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${smartClosing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={closeSmartModal} />
-            <div className="fixed inset-0 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
-              <div role="dialog" aria-modal="true" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md max-h-[92dvh] sm:max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${smartClosing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
-                <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80">
-                  <div className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center shrink-0">
-                    <Icon size={18} className={cfg.iconCls} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-bold text-gray-900 leading-tight">{cfg.title}</h3>
-                    <p className="text-xs text-gray-400 mt-0.5">{cfg.sub}</p>
-                  </div>
-                  <button onClick={closeSmartModal} aria-label="Close list"
-                    className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors shrink-0">
-                    <X size={17} />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 pb-8 min-h-[220px] space-y-2.5">
-                  {smartModal === 'restock' && restockRules.map((r) => (
-                    <div key={r.category} className="bg-emerald-50/60 rounded-2xl px-4 py-3 text-sm">
-                      <p className="font-bold text-gray-900">{r.category} <span className="text-emerald-600">+{r.shortfall} pc{r.shortfall === 1 ? '' : 's'}</span></p>
-                      <p className="text-xs text-gray-500 mt-0.5">Projected {r.projection}/mo · {r.freeUnits} free · {r.reason}</p>
-                    </div>
-                  ))}
-                  {smartModal === 'clearance' && clearanceRules.map((it) => (
-                    <button key={it.id} type="button" onClick={() => setSaleTarget({ id: it.id, name: it.name })}
-                      title={`Put ${it.name} on sale`}
-                      className="w-full flex items-center gap-3 bg-orange-50/60 rounded-2xl p-3 text-sm text-left hover:bg-orange-50 hover:ring-1 hover:ring-orange-200 transition-all">
-                      <ItemImage image={it.image} alt={it.name} thumb className="w-11 h-11 rounded-xl object-cover shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-bold text-gray-900 truncate">{it.name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{it.category} · {it.reason} — put on sale</p>
-                      </div>
-                      <Tag size={14} className="text-orange-400 shrink-0" />
-                    </button>
-                  ))}
-                  {smartModal === 'cleaning' && cleaningRules.map((it, i) => (
-                    <button key={it.id} type="button" onClick={() => openCleanQueue(it)}
-                      title="Open in the cleaning queue"
-                      className="w-full flex items-center gap-3 text-sm bg-gray-50/60 rounded-2xl p-3 text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
-                      <span className="w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
-                      <ItemImage image={it.image} alt={it.name} thumb className="w-11 h-11 rounded-xl object-cover shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-bold text-gray-900 truncate">{it.name}</p>
-                        <p className="text-xs text-gray-500">{it.category}{it.demand >= 0 ? ` · demand ${it.demand}/mo` : ''}</p>
-                      </div>
-                      <ChevronRight size={14} className="text-gray-300 shrink-0" />
-                    </button>
-                  ))}
-                  {smartModal === 'never' && underperforming.map((it) => (
-                    <button key={it.id} type="button" onClick={() => setSaleTarget({ id: it.id, name: it.name })}
-                      title={`Put ${it.name} on sale`}
-                      className="w-full flex items-center gap-3 bg-orange-50/60 rounded-2xl p-3 text-sm text-left hover:bg-orange-50 hover:ring-1 hover:ring-orange-200 transition-all">
-                      <ItemImage image={it.image || imgById.get(it.id)} alt={it.name} thumb className="w-11 h-11 rounded-xl object-cover shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-bold text-gray-900 truncate">{it.name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{it.category} · never rented — put on sale</p>
-                      </div>
-                      <Tag size={14} className="text-orange-400 shrink-0" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
       {showReportModal && <AIReportModal geminiReport={aiReport} onClose={() => { setShowReportModal(false); setAiReport(null); }} />}
       {saleTarget && (
         <SaleModal itemId={saleTarget.id} onClose={() => setSaleTarget(null)} />
