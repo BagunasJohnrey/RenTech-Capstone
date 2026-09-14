@@ -167,7 +167,7 @@ const handleRadioKeys = (e) => {
   };
 
   return (
-    <div className={`fixed inset-0 z-[100] transition-opacity duration-150 ${closing || dismissing ? 'opacity-0' : 'opacity-100'}`}
+    <div className={`fixed inset-0 z-[310] transition-opacity duration-150 ${closing || dismissing ? 'opacity-0' : 'opacity-100'}`}
       style={dragY != null && !dismissing ? { opacity: Math.max(0.25, 1 - dragY / 500) } : undefined}
     >
       <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
