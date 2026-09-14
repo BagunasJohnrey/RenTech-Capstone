@@ -63,6 +63,15 @@ export async function getRentalDefaults(_req: AuthenticatedRequest, res: Respons
 export async function updateRules(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const result = await settingsService.updateBusinessRules(req.body);
+    try {
+      await createAuditLog({
+        action: 'settings.rules.update', entity: 'settings', entityId: 'rental-rules',
+        performedById: req.user?.id ?? null,
+        newValue: req.body ?? {},
+      });
+    } catch {
+      // audit is best-effort — never fail the save because of it
+    }
     res.json(result);
   } catch (err) {
     next(err);
@@ -81,6 +90,16 @@ export async function listTemplates(_req: AuthenticatedRequest, res: Response, n
 export async function createTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const template = await settingsService.createSmsTemplate(req.body);
+    try {
+      await createAuditLog({
+        action: 'settings.sms-template.create', entity: 'sms-template',
+        entityId: String((template as { id?: unknown })?.id ?? ''),
+        performedById: req.user?.id ?? null,
+        newValue: req.body ?? {},
+      });
+    } catch {
+      // audit is best-effort
+    }
     res.status(201).json(template);
   } catch (err) {
     next(err);
@@ -90,6 +109,16 @@ export async function createTemplate(req: AuthenticatedRequest, res: Response, n
 export async function updateTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const template = await settingsService.updateSmsTemplate(String(req.params.id), req.body);
+    try {
+      await createAuditLog({
+        action: 'settings.sms-template.update', entity: 'sms-template',
+        entityId: String(req.params.id),
+        performedById: req.user?.id ?? null,
+        newValue: req.body ?? {},
+      });
+    } catch {
+      // audit is best-effort
+    }
     res.json(template);
   } catch (err) {
     next(err);
@@ -99,6 +128,15 @@ export async function updateTemplate(req: AuthenticatedRequest, res: Response, n
 export async function deleteTemplate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const result = await settingsService.deleteSmsTemplate(String(req.params.id));
+    try {
+      await createAuditLog({
+        action: 'settings.sms-template.delete', entity: 'sms-template',
+        entityId: String(req.params.id),
+        performedById: req.user?.id ?? null,
+      });
+    } catch {
+      // audit is best-effort
+    }
     res.json(result);
   } catch (err) {
     next(err);
