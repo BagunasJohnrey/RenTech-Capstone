@@ -7,6 +7,9 @@ type TxShape = {
   rentalDate: Date;
   returnDate: Date | null;
   dueDate: Date;
+  status: string;
+  releasePhoto: string | null;
+  conditionPhoto: string | null;
 };
 
 export async function getInventoryAnalytics(startDate?: Date) {
@@ -29,6 +32,9 @@ export async function getInventoryAnalytics(startDate?: Date) {
         rentalDate: true,
         returnDate: true,
         dueDate: true,
+        status: true,
+        releasePhoto: true,
+        conditionPhoto: true,
       },
     });
 
@@ -63,6 +69,12 @@ export async function getInventoryAnalytics(startDate?: Date) {
         ? Math.ceil((now.getTime() - lastReturn.returnDate!.getTime()) / (1000 * 60 * 60 * 24))
         : null;
 
+      // Transaction footprint for the Item Performance tx-status filter:
+      // every status this item has ever held + whether any handover was
+      // photo-proven ("Released", same meaning as the History tabs).
+      const txStatuses = [...new Set(tx.map(t => t.status))];
+      const hasReleased = tx.some(t => t.releasePhoto || t.conditionPhoto);
+
       return {
         id: item.id,
         name: item.name,
@@ -76,6 +88,8 @@ export async function getInventoryAnalytics(startDate?: Date) {
         utilizationPct,
         daysIdle,
         image: item.image,
+        txStatuses,
+        hasReleased,
       };
     });
 

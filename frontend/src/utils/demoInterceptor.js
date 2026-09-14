@@ -77,6 +77,9 @@ let transactions = [
   tx('44444444-4444-4444-8444-444444444444', 6, 'c-maria', 'Reserved', 1, 4, 3800, 0),
   tx('55555555-5555-4555-8555-555555555555', 8, 'demo-customer-profile', 'Active', -1, 3, 2600, 1300),
 ];
+// One picked-up rental carries handover photo proof, so the demo exercises
+// the "Released" transaction state like the real app does.
+transactions.find((t) => t.itemId === 8).releasePhoto = 'demo/release.jpg';
 
 let notifications = [
   { id: 'n11', type: 'customer_message', title: 'Message from Maria Santos', message: 'Hi! Can I move my fitting to Friday afternoon instead?', transactionId: '44444444-4444-4444-8444-444444444444', isRead: false, createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString() },
@@ -173,6 +176,10 @@ const DEMO_ITEM_STATS = {
 };
 
 const demoInventoryAnalytics = () => {
+  // Transaction footprint per item (mirrors the backend shape) derived live
+  // from the demo ledger so demo bookings/returns keep the filter truthful.
+  const txStatusesOf = (id) => [...new Set(transactions.filter((t) => t.itemId === id).map((t) => t.status))];
+  const hasReleasedOf = (id) => transactions.some((t) => t.itemId === id && (t.releasePhoto || t.conditionPhoto));
   const rows = items.map((it) => {
     const s = DEMO_ITEM_STATS[it.id] ?? { totalRentals: 0, revenueGenerated: 0, totalRentedDays: 0, utilizationPct: 0, daysIdle: null };
     return {
@@ -188,6 +195,8 @@ const demoInventoryAnalytics = () => {
       utilizationPct: s.utilizationPct,
       daysIdle: s.daysIdle,
       image: it.image,
+      txStatuses: txStatusesOf(it.id),
+      hasReleased: hasReleasedOf(it.id),
     };
   });
   const byRevenue = [...rows].sort((a, b) => b.revenueGenerated - a.revenueGenerated);

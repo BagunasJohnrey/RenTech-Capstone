@@ -33,10 +33,10 @@ const META_MAP = {
   Deleted: `${itemPill('Deleted').dot} text-white`,
 };
 
-export default function CatalogView({ role, inventory, onCustomerBook, onEdit, onStatusChange, onMarkOutOfService, onStaffBookItem, onCheckAvailability, onRestore, onRequestDelete, loading, guest, onGuestBook, onExitGuest, onViewDetail }) {
+export default function CatalogView({ role, inventory, onCustomerBook, onEdit, onStatusChange, onMarkOutOfService, onStaffBookItem, onCheckAvailability, onRestore, onRequestDelete, loading, guest, onGuestBook, onExitGuest, onViewDetail, initialSearch, onConsumeSearch }) {
   const isStaff = role !== 'Customer';
   const STATUSES = role === 'Admin' ? ADMIN_STATUSES : isStaff ? STAFF_STATUSES : CUSTOMER_STATUSES;
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchRef = useRef(null);
 

@@ -1,4 +1,4 @@
-﻿import { useState, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import CancelBookingModal from '../components/CancelBookingModal';
@@ -37,9 +37,9 @@ const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Rese
 // `components/DateRangePicker.jsx`. This page only deals in [from, to]
 // strings and a single popover-open flag.
 
-export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, prefetchTx, loading, onNavigateDetail }) {
+export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
   const isStaff = role !== 'Customer';
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
   const [activeStatusFilter, setActiveStatusFilter] = useState('All');
 
@@ -53,6 +53,17 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [sendingSms, setSendingSms] = useState(false);
   const itemsPerPage = 10;
+
+  // One-shot search prefill (e.g. jumping from Item Performance): apply it,
+  // then clear the source so later visits start unfiltered.
+  useEffect(() => {
+    if (initialSearch) {
+      setSearchQuery(initialSearch);
+      setCurrentPage(1);
+      onConsumeSearch?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSearch]);
 
   // Rows navigate to a real URL when the app provides a router callback;
   // otherwise fall back to the local modal (e.g. standalone usage).
