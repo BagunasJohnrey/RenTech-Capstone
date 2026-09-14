@@ -33,12 +33,16 @@ export function HistorySkeleton() {
 
 export function AIInsightsSkeleton() {
   return (
-    <div className="space-y-8 max-w-5xl mx-auto">
-      {/* Header + controls */}
+    <div className="space-y-8 max-w-lg mx-auto md:max-w-3xl lg:max-w-[1200px]">
+      {/* Header + one-line controls */}
       <div className="space-y-3">
         <Skeleton className="h-7 w-64" />
         <Skeleton className="h-4 w-96 max-w-full" />
-        <Skeleton className="h-8 w-40 rounded-full" />
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-8 w-48 rounded-full" />
+          <Skeleton className="h-8 w-24 rounded-full" />
+          <Skeleton className="h-8 w-20 rounded-full" />
+        </div>
       </div>
 
       {/* KPI cards */}
@@ -63,22 +67,27 @@ export function AIInsightsSkeleton() {
       </div>
 
       {/* Chart + side panel rows */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Skeleton className="h-72 rounded-3xl lg:col-span-2" />
         <Skeleton className="h-72 rounded-3xl" />
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Skeleton className="h-72 rounded-3xl lg:col-span-2" />
         <Skeleton className="h-72 rounded-3xl" />
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Skeleton className="h-72 rounded-3xl lg:col-span-2" />
         <Skeleton className="h-72 rounded-3xl" />
       </div>
 
-      {/* Report button */}
-      <div className="flex justify-end">
-        <Skeleton className="h-12 w-56 rounded-full" />
+      {/* Report banner + saved-reports list */}
+      <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
+        <Skeleton className="h-32 rounded-none" />
+        <div className="p-5 md:p-6 space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-[72px] rounded-2xl" />
+          ))}
+        </div>
       </div>
     </div>
   );
