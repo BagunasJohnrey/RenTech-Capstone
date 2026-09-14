@@ -34,6 +34,10 @@ RenTech's data is Postgres on **Supabase**. Disaster recovery is **platform-mana
 3. (Recommended on Pro) enable **Point-in-Time Recovery** and note the retention window in the dashboard.
 4. (Optional extra safety) set up a weekly `pg_dump` script downloaded to the owner's machine — Supabase also provides the connection string in `Project Settings → Database`. Example (`pg_dump`) run: `pg_dump -h db.<ref>.supabase.co -U postgres -Fc -f rentech_backup_<date>.dump` (note: pooler port 6543/PgBouncer does not run DDL/dump; use the direct `:5432` connection for dumps — see AGENTS.md).
 
+## Troubleshooting
+
+- **`new row violates row-level security policy` on cloud upload**: the service_role key bypasses RLS entirely, so this always means the *running* backend is using a different key — a stale local process (fully stop it and restart `npm run dev`), or the host's env vars beating `backend/.env` (on Render: dashboard → Environment → set `SUPABASE_SERVICE_ROLE_KEY` to the service_role JWT from Supabase → Project Settings → API, then redeploy). The boot log prints `[supabase] service key role: …` — it must say `service_role`, and the retry endpoint's server log spells this out when it happens.
+
 ## Restore procedure
 
 1. In the Supabase dashboard: **Database → Backups** → choose the restore point (latest daily backup or a PITR timestamp).

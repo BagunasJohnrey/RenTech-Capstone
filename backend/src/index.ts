@@ -84,6 +84,13 @@ app.use(errorHandler);
 app.listen(env.PORT, () => {
   console.log(`Server running on port ${env.PORT} [${env.NODE_ENV}]`);
   console.log(`[storage] Supabase URL: ${env.SUPABASE_URL}`);
+  // The service key MUST carry role=service_role: with an anon key every
+  // service-role path (storage uploads, auth.admin.*) fails confusingly
+  // (e.g. RLS violations on backup uploads). Claims only, never the secret.
+  import('./config/supabase.js').then(
+    ({ supabaseKeyRole }) => console.log(`[supabase] service key role: ${supabaseKeyRole()}`),
+    () => {}
+  );
 
   // Ensure the private image bucket exists so item-photo uploads can mint
   // signed URLs (otherwise generateUploadUrl throws "Failed to generate upload URL").

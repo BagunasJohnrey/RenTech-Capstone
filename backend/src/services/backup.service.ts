@@ -329,12 +329,28 @@ async function uploadBackupToCloud(meta: BackupMeta, jsonBody: string): Promise<
           contentType: 'application/json', upsert: false,
         });
       }
-      if (a?.error) return `data: ${a.error.message ?? 'unknown'}`;
+      if (a?.error) {
+        const msg = a.error.message ?? 'unknown';
+        if (/row-level security/i.test(msg)) {
+          // service_role bypasses RLS entirely, so this means the RUNNING
+          // process is not using it: stale local backend (restart npm run dev)
+          // or a wrong SUPABASE_SERVICE_ROLE_KEY on the host (Render env vars
+          // beat backend/.env). Say so plainly instead of a bare RLS error.
+          console.warn(`[backups] RLS denied the cloud upload — backend is not running with the service_role key. Restart it after fixing SUPABASE_SERVICE_ROLE_KEY (see [supabase] service key role boot line).`);
+        }
+        return `data: ${msg}`;
+      }
       // The sidecar may be rewritten (re-uploads) — upsert allowed.
       const b = await api.upload!(`${meta.id}${META_SUFFIX}`, Buffer.from(sidecar, 'utf8'), {
         contentType: 'application/json', upsert: true,
       });
-      if (b?.error) return `sidecar: ${b.error.message ?? 'unknown'}`;
+      if (b?.error) {
+        const msg = b.error.message ?? 'unknown';
+        if (/row-level security/i.test(msg)) {
+          console.warn(`[backups] RLS denied the cloud upload — backend is not running with the service_role key. Restart it after fixing SUPABASE_SERVICE_ROLE_KEY (see [supabase] service key role boot line).`);
+        }
+        return `sidecar: ${msg}`;
+      }
       return true;
     })();
     const ok = await Promise.race([run, deadline]);
