@@ -7,7 +7,7 @@ import { AuthenticatedRequest } from '../types/index.js';
 // month/year. The service fills in `end` when start is set but end isn't
 // ("one month after start"), so a past month correctly returns only THAT
 // month instead of everything since.
-function getPeriodFilter(period?: string, year?: number, month?: number): { start?: Date; end?: Date; past?: boolean; weekly?: boolean } {
+export function getPeriodFilter(period?: string, year?: number, month?: number): { start?: Date; end?: Date; past?: boolean; weekly?: boolean } {
   const now = new Date();
   const thisYear = now.getFullYear();
   if (period === 'monthly') {

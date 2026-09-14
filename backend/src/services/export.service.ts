@@ -55,7 +55,7 @@ function columnLetter(n: number): string {
   return s;
 }
 
-function buildWorkbook(opts: {
+interface SheetSpec {
   sheetName: string;
   title: string;
   subtitle: string;
@@ -64,18 +64,23 @@ function buildWorkbook(opts: {
   statusKey?: string;
   totalsCols?: string[]; // numeric column keys to sum into a footer row
   totalLabel?: string;
-  filterFrom?: number; // 1-based first column to expose the filter dropdown
-  filterTo?: number;   // 1-based last column of the filter dropdown range
-}): ExcelJS.Workbook {
-  const {
-    sheetName, title, subtitle, columns, rows,
-    statusKey, totalsCols = [], totalLabel = 'TOTAL',
-    filterFrom = 1, filterTo = columns.length,
-  } = opts;
+}
+
+function newWorkbook(title: string): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'RenTech';
   wb.title = title;
   wb.subject = title;
+  return wb;
+}
+
+// Adds one report sheet to an (existing) workbook so the combined download can
+// hold Transactions + Revenue + Inventory as separate sheets in a single file.
+function addSheet(wb: ExcelJS.Workbook, opts: SheetSpec): void {
+  const {
+    sheetName, title, subtitle, columns, rows,
+    statusKey, totalsCols = [], totalLabel = 'TOTAL',
+  } = opts;
 
   const ws = wb.addWorksheet(sheetName, {
     views: [{ state: 'frozen', ySplit: 3 }], // freeze header under the title bar
@@ -196,16 +201,21 @@ function buildWorkbook(opts: {
     });
   }
 
-  // ── Autofilter over a chosen column band (skip when no rows) ──────────
-  // Only meaningful columns (dates, status, prices) get the dropdown arrow;
-  // identity/text columns like ID/Customer/Notes stay clean.
-  if (rows.length > 0 && filterFrom <= filterTo) {
+  // ── Autofilter over the whole table (skip when no rows) ───────────────
+  // The range MUST start on the header row and span every column: a narrower
+  // band leaves the outside columns behind when the user sorts, scrambling
+  // e.g. Customer/Item against their dates and amounts.
+  if (rows.length > 0) {
     ws.autoFilter = {
-      from: { row: dataStartRow, column: filterFrom },
-      to: { row: lastDataRow, column: filterTo },
+      from: { row: headerRowIdx, column: 1 },
+      to: { row: lastDataRow, column: lastCol },
     };
   }
+}
 
+function buildWorkbook(opts: SheetSpec): ExcelJS.Workbook {
+  const wb = newWorkbook(opts.title);
+  addSheet(wb, opts);
   return wb;
 }
 
@@ -217,8 +227,23 @@ async function toBuffer(wb: ExcelJS.Workbook): Promise<Buffer> {
 // Reports
 // ════════════════════════════════════════════════════════════════════════════
 
-export async function exportTransactions(): Promise<Buffer> {
+// Optional [start, end) window (same convention as the dashboard period
+// filter) so the workbook download can be scoped to Overall / a year / a
+// month. Transactions filter on createdAt, matching the dashboard KPIs.
+export interface ExportWindow { start?: Date; end?: Date }
+
+function txDateWhere(win?: ExportWindow) {
+  if (!win?.start) return {};
+  return { createdAt: { gte: win.start, ...(win.end ? { lt: win.end } : {}) } };
+}
+
+function scopeSuffix(scopeLabel?: string): string {
+  return scopeLabel ? ` · ${scopeLabel}` : '';
+}
+
+async function transactionsSheet(win?: ExportWindow, scopeLabel?: string): Promise<SheetSpec> {
   const transactions = await prisma.transaction.findMany({
+    where: { ...txDateWhere(win) },
     include: {
       customer: { select: { name: true, email: true } },
       item: { select: { name: true, category: true } },
@@ -262,25 +287,24 @@ export async function exportTransactions(): Promise<Buffer> {
     Notes: tx.notes || '',
   }));
 
-  const wb = buildWorkbook({
+  return {
     sheetName: 'Transactions',
     title: "Mylene's Boutique — Transactions",
-    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })} · ${transactions.length} rental record(s)`,
+    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}${scopeSuffix(scopeLabel)} · ${transactions.length} rental record(s)`,
     columns,
     rows,
     statusKey: 'Status',
     totalsCols: ['Rental Fee', 'Downpayment', 'Late Penalty', 'Damage Fee', 'Balance'],
-    // Filters: Rental Date (col 6) … Balance (col 14) — dates, status & money.
-    filterFrom: 6,
-    filterTo: 14,
-  });
-
-  return toBuffer(wb);
+  };
 }
 
-export async function exportRevenue(): Promise<Buffer> {
+export async function exportTransactions(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
+  return toBuffer(buildWorkbook(await transactionsSheet(win, scopeLabel)));
+}
+
+async function revenueSheet(win?: ExportWindow, scopeLabel?: string): Promise<SheetSpec> {
   const transactions = await prisma.transaction.findMany({
-    where: { status: { in: ['Returned', 'Active', 'Overdue'] } },
+    where: { status: { in: ['Returned', 'Active', 'Overdue'] }, ...txDateWhere(win) },
     include: {
       customer: { select: { name: true } },
       item: { select: { name: true, category: true } },
@@ -322,27 +346,29 @@ export async function exportRevenue(): Promise<Buffer> {
     'Return Date': tx.returnDate ? tx.returnDate.toISOString().split('T')[0] : '',
   }));
 
-  const wb = buildWorkbook({
+  return {
     sheetName: 'Revenue',
     title: "Mylene's Boutique — Revenue",
-    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })} · ${rows.length} paid rental(s)`,
+    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}${scopeSuffix(scopeLabel)} · ${rows.length} paid rental(s)`,
     columns,
     rows,
     statusKey: 'Status',
     totalsCols: ['Rental Fee', 'Downpayment', 'Late Penalty', 'Damage Fee', 'Total Paid', 'Balance'],
-    // Filters: Rental Fee (col 5) … Return Date (col 14) — money, status & dates.
-    filterFrom: 5,
-    filterTo: 14,
-  });
-
-  return toBuffer(wb);
+  };
 }
 
-export async function exportInventory(): Promise<Buffer> {
+export async function exportRevenue(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
+  return toBuffer(buildWorkbook(await revenueSheet(win, scopeLabel)));
+}
+
+async function inventorySheet(win?: ExportWindow, scopeLabel?: string): Promise<SheetSpec> {
   const items = await prisma.inventoryItem.findMany({
     include: {
       transactions: {
-        where: { status: { in: ['Active', 'Returned', 'Overdue'] } },
+        where: {
+          status: { in: ['Active', 'Returned', 'Overdue'] },
+          ...txDateWhere(win),
+        },
         select: { id: true, rentalFee: true },
       },
     },
@@ -373,19 +399,28 @@ export async function exportInventory(): Promise<Buffer> {
     Description: item.description || '',
   }));
 
-  const wb = buildWorkbook({
+  return {
     sheetName: 'Inventory',
     title: "Mylene's Boutique — Inventory",
-    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })} · ${items.length} item(s)`,
+    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}${scopeSuffix(scopeLabel)} · ${items.length} item(s)`,
     columns,
     rows,
     statusKey: 'Status',
     totalsCols: ['Total Revenue'],
-    // Filters: Price (col 4) … Total Revenue (col 8) — price, status, rentals.
-    filterFrom: 4,
-    filterTo: 8,
-  });
+  };
+}
 
+export async function exportInventory(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
+  return toBuffer(buildWorkbook(await inventorySheet(win, scopeLabel)));
+}
+
+// One .xlsx with a sheet per report — the AI Insights "Excel" button calls
+// this so Overall / Yearly / Monthly all download together, pre-scoped.
+export async function exportWorkbook(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
+  const wb = newWorkbook("Mylene's Boutique — Full Report");
+  addSheet(wb, await transactionsSheet(win, scopeLabel));
+  addSheet(wb, await revenueSheet(win, scopeLabel));
+  addSheet(wb, await inventorySheet(win, scopeLabel));
   return toBuffer(wb);
 }
 
