@@ -95,10 +95,10 @@ export default function NotificationsView({ role, onNavigateTab }) {
     <div className="max-w-2xl mx-auto">
       {/* Header card */}
       <div className="bg-white rounded-3xl shadow-sm ring-1 ring-black/5 overflow-hidden mb-5">
-        <div className="relative px-6 pt-5 pb-4 bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] overflow-hidden">
+        <div className="relative px-4 sm:px-6 pt-5 pb-4 bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] overflow-hidden">
           <div className="absolute -right-8 -top-10 w-36 h-36 rounded-full bg-white/10" />
           <div className="absolute -right-2 top-10 w-20 h-20 rounded-full bg-white/5" />
-          <div className="relative flex items-center justify-between gap-3">
+          <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-11 h-11 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-inner shrink-0">
                 <Bell size={20} />
@@ -114,11 +114,11 @@ export default function NotificationsView({ role, onNavigateTab }) {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-2 w-full sm:w-auto sm:shrink-0">
               {unread.length > 0 && (
                 <button
                   onClick={handleMarkAllRead}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold text-white/80 hover:text-white hover:bg-white/15 transition-colors"
+                  className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 rounded-xl text-[11px] font-bold text-white/80 hover:text-white hover:bg-white/15 bg-white/10 sm:bg-transparent transition-colors whitespace-nowrap"
                 >
                   <CheckCheck size={14} /> Mark all read
                 </button>
@@ -126,7 +126,7 @@ export default function NotificationsView({ role, onNavigateTab }) {
               {notifications.length > 0 && (
                 <button
                   onClick={() => setConfirmDelete({ mode: 'all' })}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold text-white/80 hover:text-white hover:bg-white/15 transition-colors"
+                  className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-3 py-2.5 sm:py-2 rounded-xl text-[11px] font-bold text-white/80 hover:text-white hover:bg-white/15 bg-white/10 sm:bg-transparent transition-colors whitespace-nowrap"
                 >
                   <Trash2 size={14} /> Clear all
                 </button>
@@ -161,9 +161,9 @@ export default function NotificationsView({ role, onNavigateTab }) {
 
       {/* List */}
       <div className="bg-white rounded-3xl shadow-sm ring-1 ring-black/5 overflow-hidden">
-        <div className="p-3 space-y-1.5">
+        <div className="p-4 space-y-3">
           {loading ? (
-            <div className="space-y-1.5 py-4">
+            <div className="space-y-3 py-4">
               {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3 p-3">
                   <Skeleton className="w-10 h-10 rounded-xl shrink-0" />
@@ -189,28 +189,28 @@ export default function NotificationsView({ role, onNavigateTab }) {
               </p>
             </div>
           ) : (
-            <div className="stagger">
+            <div className="stagger space-y-2">
               {visible.map((n) => {
                 const Icon = n.cfg.icon;
                 return (
                   <div
                     key={n.id}
-                    className={`group relative w-full text-left flex items-start gap-3 p-3 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
+                    className={`group relative w-full text-left flex items-start gap-4 p-4 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
                       n.isRead ? '' : 'bg-gradient-to-r from-[#bf4a53]/[0.06] to-transparent'
                     }`}
                   >
                     {!n.isRead && (
-                      <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-[#bf4a53]" />
+                      <span className="absolute left-0 top-4 bottom-4 w-[3px] rounded-r-full bg-[#bf4a53]" />
                     )}
                     <button
                       onClick={() => handleOpen(n)}
-                      className="flex-1 min-w-0 flex items-start gap-3 text-left"
+                      className="flex-1 min-w-0 flex items-start gap-4 text-left"
                       aria-label={`Open ${n.title}`}
                     >
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${n.cfg.iconBg}`}>
                         <Icon size={17} className={n.cfg.iconColor} />
                       </div>
-                      <div className="flex-1 min-w-0 pt-0.5">
+                      <div className="flex-1 min-w-0 py-0.5">
                         <div className="flex items-center gap-1.5">
                           <p className="text-[13px] font-bold text-gray-900 truncate">{n.title}</p>
                           <span className={`text-[10px] font-bold px-1.5 py-px rounded-full bg-gray-100 text-gray-400 shrink-0 ${n.cfg.iconColor}`}>

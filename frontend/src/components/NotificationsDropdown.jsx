@@ -291,9 +291,9 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
           </div>
 
           {/* List */}
-          <div className="max-h-80 overflow-y-auto hide-scrollbar p-3 space-y-1.5">
+          <div className="max-h-80 overflow-y-auto hide-scrollbar p-4 space-y-3">
             {loading ? (
-              <div className="space-y-1.5 py-2">
+              <div className="space-y-3 py-3">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="flex items-center gap-3 p-2.5">
                     <Skeleton className="w-9 h-9 rounded-xl shrink-0" />
@@ -317,28 +317,28 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
                 </p>
               </div>
             ) : (
-              <div className="stagger">
+              <div className="stagger space-y-2">
                 {visible.map((n) => {
                   const Icon = n.cfg.icon;
                   return (
                     <div
                       key={n.id}
-                      className={`group relative w-full text-left flex items-start gap-3 p-3 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
+                      className={`group relative w-full text-left flex items-start gap-4 p-4 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
                         n.isRead ? '' : 'bg-gradient-to-r from-[#bf4a53]/[0.06] to-transparent'
                       }`}
                     >
                       {!n.isRead && (
-                        <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-[#bf4a53]" />
+                        <span className="absolute left-0 top-4 bottom-4 w-[3px] rounded-r-full bg-[#bf4a53]" />
                       )}
                       <button
                         onClick={() => handleOpen(n)}
-                        className="flex-1 min-w-0 flex items-start gap-3 text-left"
+                        className="flex-1 min-w-0 flex items-start gap-4 text-left"
                         aria-label={`Open ${n.title}`}
                       >
                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${n.cfg.iconBg}`}>
                           <Icon size={16} className={n.cfg.iconColor} />
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 py-0.5">
                           <div className="flex items-center gap-1.5">
                             <p className="text-[13px] font-bold text-gray-900 truncate">{n.title}</p>
                             <span className={`text-[10px] font-bold px-1.5 py-px rounded-full bg-gray-100 text-gray-400 shrink-0 ${n.cfg.iconColor}`}>
@@ -364,7 +364,7 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
             )}
           </div>
 
-          <div className="px-3 py-2 border-t border-gray-100/70">
+          <div className="px-4 py-3 border-t border-gray-100/70">
             <button
               onClick={onViewAll}
               className="w-full py-2.5 rounded-xl text-[12px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 active:bg-[#bf4a53]/10 transition-colors"
