@@ -109,6 +109,12 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
   text-align: center;
 }
 
+/* Bottom-sheet height cap with a deterministic fallback chain (plain CSS —
+   class order here is guaranteed, unlike competing arbitrary utilities).
+   svh wins where supported: it tracks the SMALLEST viewport, so the sheet
+   always fits with a top gap even when dynamic chrome misreports. */
+.sheet-cap { max-height: 95vh; max-height: 92dvh; max-height: 92svh; }
+
 /* On-screen (non-print) tightening so the long report reads on phones.
    Print/PDF output keeps the roomy desktop metrics above. */
 @media (max-width: 639px) {

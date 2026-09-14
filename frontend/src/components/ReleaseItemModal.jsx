@@ -160,7 +160,7 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
       <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
         <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-release-item"
           ref={sheetRef}
-          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md max-h-[95vh] max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing && dragY == null && !dismissing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : !entered && !closing && !dismissing && dragY == null ? 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200' : ''}`}
+          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md sheet-cap sm:max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing && dragY == null && !dismissing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : !entered && !closing && !dismissing && dragY == null ? 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200' : ''}`}
           style={
             dismissing
               ? { transform: 'translateY(105%)', transition: 'transform 190ms ease-in' }

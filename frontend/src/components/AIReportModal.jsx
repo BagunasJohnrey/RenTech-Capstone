@@ -47,7 +47,7 @@ export default function AIReportModal({ geminiReport, onClose }) {
       <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
       <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
       <div
-        className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-3xl max-h-[92dvh] sm:max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`}
+        className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-3xl sheet-cap sm:max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* On-screen modal header (not printed) */}

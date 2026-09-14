@@ -238,7 +238,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             on some browsers when the sheet itself is the scroll container). */}
         <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail"
           ref={sheetRef}
-          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg max-h-[95vh] max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing && dragY == null && !dismissing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : !entered && !closing && !dismissing && dragY == null ? 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200' : ''}`}
+          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg sheet-cap sm:max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing && dragY == null && !dismissing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : !entered && !closing && !dismissing && dragY == null ? 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200' : ''}`}
           style={
             dismissing
               ? { transform: 'translateY(105%)', transition: 'transform 190ms ease-in' }
@@ -559,7 +559,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               stacked blurs jank low-end phones. */}
           <div className={`fixed inset-0 bg-gray-900/50 ${payClosing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-150'}`} onClick={closePayModal} />
           <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-12 pb-0 sm:p-4 pointer-events-none">
-            <div role="dialog" aria-modal="true" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[95vh] max-h-[92dvh] overflow-y-auto p-5 sm:p-6 space-y-5 pointer-events-auto transform-gpu ${payClosing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
+            <div role="dialog" aria-modal="true" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm sheet-cap overflow-y-auto p-5 sm:p-6 space-y-5 pointer-events-auto transform-gpu ${payClosing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
             {paySuccess ? (
               <div className="text-center py-4">
                 <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">

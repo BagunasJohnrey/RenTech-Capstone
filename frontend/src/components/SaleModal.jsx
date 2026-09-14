@@ -86,7 +86,7 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
       <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
       <div className="fixed inset-0 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
         <div role="dialog" aria-modal="true" aria-label="Put item on sale"
-          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[92dvh] sm:max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`}
+          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm sheet-cap sm:max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`}
           onClick={e => e.stopPropagation()}>
           <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80">
             <div className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center shrink-0">

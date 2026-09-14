@@ -118,7 +118,10 @@ export default function AppLayout({
           </span>
         </div>
       )}
-      <div className="w-full h-screen bg-[#fcfcfd] flex flex-col md:flex-row overflow-hidden relative text-gray-800">
+      {/* h-screen fallback first: browsers with dynamic viewport units track
+          the visible area (URL bar / keyboard) so fixed sheets and the shell
+          never size against the hidden large viewport on mobile Chrome. */}
+      <div className="w-full h-screen supports-[height:100dvh]:h-[100dvh] bg-[#fcfcfd] flex flex-col md:flex-row overflow-hidden relative text-gray-800">
 
         <Sidebar
           role={viewRole}
@@ -130,7 +133,7 @@ export default function AppLayout({
           taskBadge={taskBadge}
         />
 
-        <main className="grow flex flex-col min-w-0 h-screen overflow-hidden relative pb-24 md:pb-0">
+        <main className="grow flex flex-col min-w-0 h-screen supports-[height:100dvh]:h-[100dvh] overflow-hidden relative pb-24 md:pb-0">
           {/* PWA install nudge — mobile only, after login, all roles. */}
           <InstallAppBanner />
           <header className="bg-white/70 backdrop-blur-xl border-b border-gray-100/50 px-5 md:px-10 py-4 flex items-center justify-between z-20 shrink-0">
