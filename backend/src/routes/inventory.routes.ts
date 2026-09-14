@@ -29,4 +29,8 @@ router.delete('/:id', authMiddleware, requireRole(Role.Admin), inventoryControll
 // or taking a batch out of service). Admin + Staff only.
 router.patch('/bulk-status', authMiddleware, requireRole(Role.Admin, Role.Staff), validate(inventoryController.bulkStatusSchema), inventoryController.bulkSetStatus);
 
+// Bulk sale update: set onSale/discountPct/salePrice/saleEndsAt on a batch.
+// Admin only (assertSaleAdminOnly enforces in the controller).
+router.patch('/bulk-sale', authMiddleware, requireRole(Role.Admin), validate(inventoryController.bulkSaleSchema), inventoryController.bulkSaleUpdate);
+
 export default router;

@@ -67,6 +67,16 @@ export const bulkStatusSchema = z.object({
   }),
 });
 
+export const bulkSaleSchema = z.object({
+  body: z.object({
+    ids: z.array(z.number().int().positive()).min(1),
+    onSale: z.boolean(),
+    discountPct: numOrNull(z.number().min(0).max(100)),
+    salePrice: numOrNull(z.number().positive()),
+    saleEndsAt: isoDateOrNull,
+  }),
+});
+
 export const availabilitySchema = z.object({
   query: z.object({
     // Numeric guard: transform would yield NaN for "abc"; reject as 400 not 500.
@@ -197,6 +207,26 @@ export async function bulkSetStatus(req: AuthenticatedRequest, res: Response, ne
       req.body.ids,
       req.body.status as 'Available' | 'Cleaning' | 'OutOfService',
       req.body.outOfServiceReason ?? null,
+      req.user.id
+    );
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function bulkSaleUpdate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    assertSaleAdminOnly(req.body, req.user.role);
+    const result = await inventoryService.bulkUpdateSale(
+      req.body.ids,
+      {
+        onSale: req.body.onSale,
+        discountPct: req.body.discountPct,
+        salePrice: req.body.salePrice,
+        saleEndsAt: req.body.saleEndsAt,
+      },
       req.user.id
     );
     res.json(result);

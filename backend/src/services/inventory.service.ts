@@ -36,6 +36,9 @@ export async function listItems(
         where: { status: { in: ['Active', 'Overdue', 'Reserved'] } },
         select: { status: true, rentalDate: true, dueDate: true },
       },
+      _count: {
+        select: { transactions: true },
+      },
     },
   });
 
@@ -71,7 +74,7 @@ export async function listItems(
     if (opts.exclude?.includes(displayStatus)) continue;
 
     if (!statusFilter || statusFilter === displayStatus) {
-      results.push({ ...rest, effectiveStatus: displayStatus });
+      results.push({ ...rest, effectiveStatus: displayStatus, rentalCount: item._count.transactions });
     }
   }
 
@@ -244,6 +247,50 @@ export async function bulkSetStatus(
 
   clearDataCache();
 
+  return { updated: result.count };
+}
+
+// Bulk sale update: set onSale/discountPct/salePrice/saleEndsAt on a batch of
+// items at once. Admin-only (enforced by caller).
+export async function bulkUpdateSale(
+  ids: number[],
+  saleData: {
+    onSale: boolean;
+    discountPct?: number | null;
+    salePrice?: number | null;
+    saleEndsAt?: string | null;
+  },
+  performedById?: string
+) {
+  if (ids.length === 0) return { updated: 0 };
+
+  const items = await prisma.inventoryItem.findMany({ where: { id: { in: ids } } });
+  if (items.length !== ids.length) {
+    throw new AppError(404, 'One or more items were not found');
+  }
+
+  const result = await prisma.inventoryItem.updateMany({
+    where: { id: { in: ids } },
+    data: {
+      onSale: saleData.onSale,
+      discountPct: saleData.discountPct ?? null,
+      salePrice: saleData.salePrice ?? null,
+      saleEndsAt: saleData.saleEndsAt ?? null,
+    },
+  });
+
+  try {
+    await createAuditLog({
+      action: 'update',
+      entity: 'inventory',
+      entityId: `bulk-sale:${ids.join(',')}`,
+      performedById,
+      oldValue: { ids, sale: items.map(i => ({ id: i.id, onSale: i.onSale, discountPct: i.discountPct, salePrice: i.salePrice, saleEndsAt: i.saleEndsAt })) },
+      newValue: { ids, sale: saleData },
+    });
+  } catch { /* non-critical */ }
+
+  clearDataCache();
   return { updated: result.count };
 }
 
