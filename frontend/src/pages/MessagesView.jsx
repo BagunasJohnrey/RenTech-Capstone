@@ -8,8 +8,8 @@ import ConfirmModal from '../components/ConfirmModal';
 
 // Admin inbox for customer messages (cancellation requests, questions).
 // Reads the signed-in admin's own `customer_message` notifications — the
-// contact endpoint fans one out per staff/admin, so this is each admin's
-// personal copy (marking read/deleting never affects other staff).
+// contact endpoint fans one out per admin, so this is each admin's
+// personal copy (marking read/deleting never affects other admins).
 export default function MessagesView({ onOpenBooking }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);

@@ -23,7 +23,7 @@ describe('GET /api/catalog', () => {
   it('should list available items without auth', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findMany.mockResolvedValueOnce([
-      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [] },
+      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [], _count: { transactions: 0 } },
     ]);
 
     const res = await request(app).get('/api/catalog');
@@ -296,6 +296,22 @@ describe('POST /api/customers/contact', () => {
       .send({ transactionId: 'booking-1', message: 'Please cancel this booking for me, thanks!' });
 
     expect(res.status).toBe(200);
+  });
+
+  it('should fan out customer messages to admins only (not staff)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.notification.createMany = vi.fn().mockResolvedValue({ count: 1 });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(200);
+    const findManyCall = (prisma.profile.findMany as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { select?: unknown })?.select
+    );
+    expect(findManyCall?.[0]).toMatchObject({ where: { role: 'Admin' } });
   });
 
   it('should reject messaging about another customer booking', async () => {

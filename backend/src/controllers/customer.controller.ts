@@ -158,8 +158,8 @@ export const contactAdminSchema = z.object({
   }),
 });
 
-// Customer → boutique team message (e.g. "please cancel my booking").
-// Primary channel is an in-app notification to every staff/admin — repeat
+// Customer → admin message (e.g. "please cancel my booking").
+// Primary channel is an in-app notification to admins only — repeat
 // messages must NOT be deduped, so this writes directly instead of reusing
 // notifyStaffMembers. Admin email is best-effort and never fails the request.
 export async function contactAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -180,13 +180,13 @@ export async function contactAdmin(req: AuthenticatedRequest, res: Response, nex
     }
 
     const ref = tx ? ` (booking ${String((tx as { txNumber?: unknown }).txNumber ?? tx.id)})` : '';
-    const staff = await prisma.profile.findMany({
-      where: { role: { in: ['Staff', 'Admin'] } },
-      select: { id: true },
+    const admins = await prisma.profile.findMany({
+      where: { role: 'Admin' },
+      select: { id: true, email: true },
     });
-    if (staff.length) {
+    if (admins.length) {
       await prisma.notification.createMany({
-        data: staff.map((s: { id: string }) => ({
+        data: admins.map((s: { id: string }) => ({
           profileId: s.id,
           transactionId: tx ? tx.id : null,
           type: 'customer_message',
@@ -198,7 +198,6 @@ export async function contactAdmin(req: AuthenticatedRequest, res: Response, nex
 
     let emailed = false;
     try {
-      const admins = await prisma.profile.findMany({ where: { role: 'Admin' }, select: { email: true } });
       const itemRef = tx ? `<p style="color:#6b7280">Booking: ${escapeHtml(String((tx as { txNumber?: unknown }).txNumber ?? tx.id))}</p>` : '';
       for (const a of admins as { email: string }[]) {
         if (!isSendableEmail(a.email)) continue;

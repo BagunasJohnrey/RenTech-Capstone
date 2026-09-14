@@ -15,7 +15,7 @@ describe('GET /api/inventory', () => {
     // The service includes each item's active transactions for the effective
     // status — the fixture must mirror that shape.
     prisma.inventoryItem.findMany.mockResolvedValueOnce([
-      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [] },
+      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [], _count: { transactions: 0 } },
     ]);
 
     const res = await request(app).get('/api/inventory');
