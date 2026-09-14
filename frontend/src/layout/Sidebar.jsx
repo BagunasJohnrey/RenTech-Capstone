@@ -79,7 +79,6 @@ export default function Sidebar({ role, activeTab, setActiveTab, navItems, onReq
                       {taskBadge}
                     </span>
                   )}
-                  {item.special && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#bf4a53] animate-pulse shadow-[0_0_8px_rgba(191,74,83,0.8)]" />}
                 </>
               )}
             </button>

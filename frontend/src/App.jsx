@@ -63,7 +63,7 @@ const navItems = {
     { id: 'Dashboard', icon: LayoutGrid, label: 'Dashboard' },
     { id: 'Catalog', icon: ShoppingBag, label: 'Inventory' },
     { id: 'History', icon: Clock, label: 'Transactions' },
-    { id: 'AI Insights', icon: Sparkles, label: 'AI Intelligence', special: true },
+    { id: 'AI Insights', icon: Sparkles, label: 'Reports', special: true },
     { id: 'Messages', icon: MessageCircle, label: 'Messages' },
     { id: 'Settings', icon: Settings, label: 'Settings' },
   ],
