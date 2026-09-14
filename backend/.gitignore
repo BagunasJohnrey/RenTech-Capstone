@@ -47,3 +47,6 @@ server.log
 
 # Vitest coverage
 coverage
+
+# One-click JSON backups + saved AI reports (contain live customer PII)
+data/

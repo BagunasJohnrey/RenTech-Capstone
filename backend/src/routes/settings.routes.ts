@@ -27,6 +27,15 @@ router.post('/sms-templates', requireRole(Role.Admin), requireMfaAdmin, validate
 router.put('/sms-templates/:id', requireRole(Role.Admin), requireMfaAdmin, validate(settingsController.updateTemplateSchema), settingsController.updateTemplate);
 router.delete('/sms-templates/:id', requireRole(Role.Admin), requireMfaAdmin, settingsController.deleteTemplate);
 
+// Admin-only one-click JSON backups (Data & Backups tab): full-table dump
+// plus visible history. MFA-gated like the other sensitive admin routes —
+// backups contain customer PII.
+router.get('/backups', requireRole(Role.Admin), requireMfaAdmin, settingsController.listBackups);
+router.post('/backups', requireRole(Role.Admin), requireMfaAdmin, settingsController.createBackup);
+router.post('/backups/import', requireRole(Role.Admin), requireMfaAdmin, validate(settingsController.importBackupSchema), settingsController.importBackup);
+router.post('/backups/:id/upload', requireRole(Role.Admin), requireMfaAdmin, settingsController.retryBackupUpload);
+router.get('/backups/:id/download', requireRole(Role.Admin), requireMfaAdmin, settingsController.downloadBackup);
+
 // Admin-only: live connectivity/health probe for external integrations
 // (Gemini AI, Semaphore SMS, PayMongo payments).
 router.get('/integrations-status', requireRole(Role.Admin), requireMfaAdmin, settingsController.getIntegrationsStatus);

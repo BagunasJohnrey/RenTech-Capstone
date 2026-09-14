@@ -316,6 +316,8 @@ vi.mock('../src/config/database.js', () => {
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: 'log-1' }),
+      findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     payment: {
@@ -323,6 +325,7 @@ vi.mock('../src/config/database.js', () => {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'pay-new', ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
     },
     notification: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -336,12 +339,25 @@ vi.mock('../src/config/database.js', () => {
     sentSms: {
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'sms-new', ...args.data })),
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       delete: vi.fn().mockResolvedValue({ id: 'sms-deleted' }),
     },
     businessRule: {
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ ...args.data })),
       upsert: vi.fn().mockImplementation((args) => Promise.resolve({ key: args.where.key, value: args.create.value })),
+    },
+    promoCode: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'promo-new', ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
     },
     smsTemplate: {
       findUnique: vi.fn().mockResolvedValue(null),

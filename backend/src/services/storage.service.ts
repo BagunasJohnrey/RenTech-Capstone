@@ -285,6 +285,105 @@ export function storageErrorStatus(error: {
   return 404;
 }
 
+// ── Backup manifest ───────────────────────────────────────────────────────
+// Recursive file inventory of both buckets for the admin one-click backup.
+// Returns best-effort metadata (bucket/path/size/updatedAt) — NEVER the
+// binary bytes (those would explode the JSON and time out the download).
+// Binaries stay covered by Supabase PITR + backend/backup-storage.cjs.
+// This never throws: any failure yields an empty/incomplete manifest so a
+// storage blip can never fail the whole backup.
+export interface StorageManifestFile {
+  bucket: string;
+  path: string;
+  size: number | null;
+  updatedAt: string | null;
+}
+
+export interface StorageManifest {
+  files: StorageManifestFile[];
+  fileCount: number;
+  totalBytes: number;
+  incomplete: boolean;
+}
+
+type StorageListEntry = {
+  name: string;
+  id?: string | null;
+  updated_at?: string | null;
+  metadata?: { size?: number | null } | null;
+};
+
+async function listBucketRecursive(bucket: string, prefix: string, out: StorageManifestFile[]): Promise<void> {
+  const client = supabaseAdmin as unknown as {
+    storage?: { from?: (b: string) => { list?: (p: string, opts?: unknown) => Promise<{ data?: StorageListEntry[] | null; error?: { message?: string } | null }> } };
+  };
+  const api = client?.storage?.from?.(bucket);
+  if (!api?.list) return;
+  let offset = 0;
+  const pageSize = 100;
+  for (;;) {
+    let data: StorageListEntry[] | null | undefined;
+    let error: { message?: string } | null | undefined;
+    try {
+      ({ data, error } = await api.list(prefix, {
+        limit: pageSize,
+        offset,
+        sortBy: { column: 'name', order: 'asc' },
+      }));
+    } catch {
+      return; // transport failure — keep whatever was collected so far
+    }
+    if (error || !data || data.length === 0) return;
+    for (const entry of data) {
+      if (!entry || typeof entry.name !== 'string' || entry.name.length === 0) continue;
+      const fullPath = prefix ? `${prefix}${entry.name}` : entry.name;
+      if (entry.id == null) {
+        // Folder placeholder — descend (guard against pathological depth).
+        if (fullPath.split('/').length < 12) {
+          await listBucketRecursive(bucket, `${fullPath}/`, out);
+        }
+        continue;
+      }
+      out.push({
+        bucket,
+        path: fullPath,
+        size: typeof entry.metadata?.size === 'number' ? entry.metadata.size : null,
+        updatedAt: entry.updated_at ?? null,
+      });
+    }
+    if (data.length < pageSize) return;
+    offset += pageSize;
+    if (offset > 10000) return; // sanity cap — ~10k objects per bucket
+  }
+}
+
+// Collects the manifest for both buckets with an overall deadline so a slow
+// storage API can't hold the backup request open. Buckets are attempted
+// independently — one failing still returns the other's files.
+export async function collectStorageManifest(timeoutMs = 15000): Promise<StorageManifest> {
+  const files: StorageManifestFile[] = [];
+  let incomplete = false;
+  const buckets = [CATALOG_BUCKET, BUCKET_NAME];
+  const run = (async () => {
+    await Promise.all(
+      buckets.map(async (bucket) => {
+        try {
+          await listBucketRecursive(bucket, '', files);
+        } catch {
+          incomplete = true;
+        }
+      })
+    );
+  })();
+  const timer = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), timeoutMs));
+  const result = await Promise.race([run.then(() => 'done' as const), timer]);
+  if (result === 'timeout') incomplete = true;
+  // Deterministic order for stable diffs.
+  files.sort((a, b) => (a.bucket === b.bucket ? (a.path < b.path ? -1 : 1) : a.bucket < b.bucket ? -1 : 1));
+  const totalBytes = files.reduce((s, f) => s + (typeof f.size === 'number' ? f.size : 0), 0);
+  return { files, fileCount: files.length, totalBytes, incomplete };
+}
+
 // Remove a stored object. Best-effort — a missing/bogus path must not fail the
 // caller's delete flow, so errors are logged and swallowed.
 export async function removeObject(path: string) {

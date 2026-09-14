@@ -4,6 +4,7 @@ import ProfileHeader from '../components/settings/ProfileHeader';
 import CustomerSettings from '../components/settings/CustomerSettings';
 import AdminSectionTabs from '../components/settings/AdminSectionTabs';
 import GeneralTab from '../components/settings/GeneralTab';
+import DataBackupsTab from '../components/settings/DataBackupsTab';
 import NotificationsTab from '../components/settings/NotificationsTab';
 import IntegrationsTab from '../components/settings/IntegrationsTab';
 import TeamTab from '../components/settings/TeamTab';
@@ -57,6 +58,7 @@ export default function ProfileSettingsView({
           <AdminSectionTabs active={adminSection} onChange={setAdminSection} />
 
           {adminSection === 'general' && <GeneralTab />}
+          {adminSection === 'data' && <DataBackupsTab />}
           {adminSection === 'notifications' && <NotificationsTab profile={profile} />}
           {adminSection === 'integrations' && <IntegrationsTab />}
           {adminSection === 'promotions' && <PromoCodesManager />}

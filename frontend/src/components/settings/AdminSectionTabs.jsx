@@ -1,4 +1,4 @@
-import { Building2, Bell, ShieldCheck, Users, Percent, HelpCircle } from 'lucide-react';
+import { Building2, Bell, ShieldCheck, Users, Percent, HelpCircle, Database } from 'lucide-react';
 
 // Admin Settings is split into tabs so the operations area stays navigable
 // instead of one long wall of cards.
@@ -7,6 +7,7 @@ export const ADMIN_SECTIONS = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'integrations', label: 'Integrations', icon: ShieldCheck },
   { id: 'promotions', label: 'Promotions', icon: Percent },
+  { id: 'data', label: 'Data & Backups', icon: Database },
   { id: 'team', label: 'Team & Security', icon: Users },
   { id: 'help', label: 'Help Guide', icon: HelpCircle },
 ];
