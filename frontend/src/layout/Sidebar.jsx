@@ -4,10 +4,18 @@ import { HelpCircle, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 // Desktop sidebar collapse preference (persisted; mobile is unaffected — the
 // sidebar is hidden below md and replaced by the bottom nav).
 const COLLAPSED_KEY = 'rentech_sidebar_collapsed';
+// Below this width the sidebar starts as an icon rail so tablets don't lose
+// a quarter of the screen to labels like "AI Intelligence". An explicit
+// toggle always wins and is what gets persisted.
+const RAIL_BREAKPOINT = 1024;
 
 export default function Sidebar({ role, activeTab, setActiveTab, navItems, onRequestLogout, customerName, taskBadge = 0 }) {
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
+    try {
+      const saved = localStorage.getItem(COLLAPSED_KEY);
+      if (saved !== null) return saved === '1';
+    } catch { /* storage unavailable */ }
+    return typeof window !== 'undefined' && window.innerWidth < RAIL_BREAKPOINT;
   });
 
   const toggleCollapsed = () => {
@@ -23,7 +31,7 @@ export default function Sidebar({ role, activeTab, setActiveTab, navItems, onReq
   const isActiveFn = (id) => activeTab === id || (id === 'Home' && activeTab === 'Dashboard');
 
   return (
-    <aside className={`hidden md:flex flex-col bg-white/80 backdrop-blur-xl border-r border-gray-100/50 sticky top-0 h-screen z-20 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
+    <aside className={`hidden md:flex flex-col shrink-0 bg-white/80 backdrop-blur-xl border-r border-gray-100/50 sticky top-0 h-screen z-20 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
       {/* Logo + role + collapse toggle */}
       <div className={`border-b border-gray-100/50 flex items-center gap-3 ${collapsed ? 'flex-col px-2 py-6 gap-2' : 'p-8'}`}>
         <img src="/RenTech.png" alt="" className="w-10 h-10 rounded-full object-cover border-2 border-gray-200 shrink-0" />
