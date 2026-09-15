@@ -33,6 +33,7 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
     // /inventory/analytics for this period — skip the duplicate request.
     if (initialData) {
       setData(initialData);
+      setPage(0);
       return;
     }
     const params = period && period !== 'Overall' ? `?period=${period.toLowerCase()}` : '';
