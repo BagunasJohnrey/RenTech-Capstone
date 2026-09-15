@@ -197,7 +197,12 @@ export default function CustomerRentalFlow({
       // currently Rented/Reserved) so customers can reserve future-free dates.
       if (item.status === 'OutOfService' || item.status === 'Deleted') return false;
       const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
-      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+      const q = searchQuery.trim().toLowerCase();
+      const tags = Array.isArray(item.occasions) ? item.occasions : [];
+      const matchesSearch = !q
+        || item.name.toLowerCase().includes(q)
+        || (item.category || '').toLowerCase().includes(q)
+        || tags.some((t) => String(t).toLowerCase().includes(q));
       return matchesCat && matchesSearch;
     });
   }, [inventory, selectedCategories, searchQuery]);

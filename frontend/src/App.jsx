@@ -930,6 +930,7 @@ export default function RentechApp() {
             })()}
             submitLabel="Save Changes"
             showPhoto
+            showOccasions
             showSale={role === 'Admin'}
             onSubmit={(values) => handleUpdateItem(values)}
             onClose={() => setEditingItem(null)}
@@ -941,6 +942,7 @@ export default function RentechApp() {
             statusOptions={['Available', 'Cleaning', 'OutOfService']}
             submitLabel="Add Item"
             showCategory
+            showOccasions
             showPhoto
             showSale={role === 'Admin'}
             maxWidth="max-w-lg"

@@ -1,6 +1,7 @@
 import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { itemPill } from '../utils/statusColors';
+import { normalizeOccasions } from '../utils/occasions';
 
 // Determine whether a sale is currently active and the resulting price.
 export function getSaleInfo(item) {
@@ -63,6 +64,20 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</span>
           </div>
           <h3 className="font-bold text-gray-900 text-[13px] leading-tight truncate">{item.name}</h3>
+          {normalizeOccasions(item.occasions).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {normalizeOccasions(item.occasions).slice(0, 2).map((occ) => (
+                <span key={occ} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] border border-[#bf4a53]/20">
+                  {occ}
+                </span>
+              ))}
+              {normalizeOccasions(item.occasions).length > 2 && (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                  +{normalizeOccasions(item.occasions).length - 2}
+                </span>
+              )}
+            </div>
+          )}
           <p className="font-bold text-[13px]">
             {sale.active ? (
               <>
@@ -180,6 +195,20 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
       <div className="p-4 flex flex-col flex-1 gap-1">
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</div>
         <h3 className="font-bold text-gray-900 text-sm leading-tight line-clamp-2">{item.name}</h3>
+        {normalizeOccasions(item.occasions).length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {normalizeOccasions(item.occasions).slice(0, 2).map((occ) => (
+              <span key={occ} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] border border-[#bf4a53]/20">
+                {occ}
+              </span>
+            ))}
+            {normalizeOccasions(item.occasions).length > 2 && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                +{normalizeOccasions(item.occasions).length - 2}
+              </span>
+            )}
+          </div>
+        )}
         <p className="font-bold text-sm">
           {sale.active ? (
             <>

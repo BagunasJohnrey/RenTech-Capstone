@@ -3,6 +3,7 @@ import { X, Camera } from 'lucide-react';
 import { storageService } from '../services';
 import { useToast } from './Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { OCCASIONS, OCCASIONS_BY_CATEGORY, normalizeOccasions } from '../utils/occasions';
 
 const FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1566162200445-98319fdb5515?auto=format&fit=crop&q=80&w=400';
@@ -25,6 +26,7 @@ export default function ItemForm({
   statusOptions = ['Available', 'Cleaning', 'OutOfService'],
   submitLabel = 'Save',
   showCategory = false,
+  showOccasions = false,
   showPhoto = false,
   showSale = false,
   onSubmit,
@@ -37,6 +39,7 @@ export default function ItemForm({
   const [price, setPrice] = useState(initial.price ?? '');
   const [status, setStatus] = useState(initial.status ?? 'Available');
   const [category, setCategory] = useState(initial.category ?? 'Gown');
+  const [occasions, setOccasions] = useState(() => normalizeOccasions(initial.occasions));
   const [imagePath, setImagePath] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -132,7 +135,12 @@ export default function ItemForm({
     e.preventDefault();
     if (!name || !price) return;
     const values = { name, price: parseFloat(price), status };
-    if (showCategory) values.category = category;
+    if (showCategory) {
+      values.category = category;
+    }
+    if (showOccasions) {
+      values.occasions = occasions;
+    }
     if (showPhoto) {
       const img = imagePath && imagePath.startsWith('blob:') ? null : imagePath;
       // New upload wins; otherwise keep the item's current photo (or fall
@@ -222,6 +230,42 @@ export default function ItemForm({
               </select>
             </div>
           </div>
+
+          {showOccasions && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Fits occasions</label>
+                <button
+                  type="button"
+                  onClick={() => setOccasions(OCCASIONS_BY_CATEGORY[category] || [])}
+                  className="text-[10px] font-bold text-[#bf4a53] hover:underline"
+                >
+                  Use {category} defaults
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {OCCASIONS.map((occ) => {
+                  const active = occasions.includes(occ);
+                  return (
+                    <button
+                      key={occ}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setOccasions((prev) => prev.includes(occ) ? prev.filter((o) => o !== occ) : [...prev, occ])}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                        active
+                          ? 'bg-[#bf4a53] text-white border-[#bf4a53] shadow-sm'
+                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                      }`}
+                    >
+                      {occ}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-gray-400">Tag every occasion this item fits — customers can filter and search by these tags.</p>
+            </div>
+          )}
 
           {showPhoto && (
             <div className="space-y-2">

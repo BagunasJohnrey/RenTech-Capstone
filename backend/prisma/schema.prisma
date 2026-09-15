@@ -63,6 +63,7 @@ model InventoryItem {
   id          Int        @id @default(autoincrement())
   name        String
   category    String
+  occasions   String[]   @default([])
   price       Float
   status      ItemStatus @default(Available)
   image       String?

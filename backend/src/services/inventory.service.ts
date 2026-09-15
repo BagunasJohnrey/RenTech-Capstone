@@ -13,7 +13,7 @@ export async function listItems(
   statusFilter?: string,
   category?: string,
   search?: string,
-  opts: { rawStatus?: boolean; exclude?: string[] } = {}
+  opts: { rawStatus?: boolean; exclude?: string[]; occasion?: string } = {}
 ) {
   const where: Prisma.InventoryItemWhereInput = {};
 
@@ -21,10 +21,15 @@ export async function listItems(
     where.category = { equals: category, mode: 'insensitive' };
   }
 
+  if (opts.occasion) {
+    where.occasions = { has: opts.occasion };
+  }
+
   if (search) {
     where.OR = [
       { name: { contains: search, mode: 'insensitive' } },
       { description: { contains: search, mode: 'insensitive' } },
+      { category: { contains: search, mode: 'insensitive' } },
     ];
   }
 
@@ -118,6 +123,7 @@ export async function getItem(id: number) {
 export async function createItem(data: {
   name: string;
   category: string;
+  occasions?: string[];
   price: number;
   image?: string;
   description?: string;
@@ -137,6 +143,7 @@ export async function createItem(data: {
 export async function updateItem(id: number, data: {
   name?: string;
   category?: string;
+  occasions?: string[];
   price?: number;
   status?: ItemStatus;
   outOfServiceReason?: string | null;

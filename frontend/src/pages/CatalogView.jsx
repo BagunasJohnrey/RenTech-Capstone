@@ -4,6 +4,7 @@ import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import { FeaturedSkeleton } from '../components/Skeleton';
 import { itemPill } from '../utils/statusColors';
 import { categoryPriority, sortByCategory } from '../utils/categorySort';
+import { OCCASIONS, matchesOccasions, matchesOccasionQuery, normalizeOccasions } from '../utils/occasions';
 
 const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
 const STAFF_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService'];
@@ -44,6 +45,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
   const [activeStatusFilter, setActiveStatusFilter] = useState('All');
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedOccasions, setSelectedOccasions] = useState([]);
   const [activeSizeFilter, setActiveSizeFilter] = useState('All');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
@@ -91,6 +93,7 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
 const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
     + (selectedCategories.length > 0 ? 1 : 0)
+    + (selectedOccasions.length > 0 ? 1 : 0)
     + (activeSizeFilter !== 'All' ? 1 : 0)
     + (minPrice !== '' || maxPrice !== '' ? 1 : 0)
     + (onSaleOnly ? 1 : 0)
@@ -98,8 +101,8 @@ const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
 
   const filteredInventory = useMemo(() => {
     const filtered = inventory.filter(item => {
-      const q = searchQuery.toLowerCase();
-      if (q && !item.name.toLowerCase().includes(q) && !item.category.toLowerCase().includes(q)) return false;
+      const q = searchQuery.toLowerCase().trim();
+      if (q && !item.name.toLowerCase().includes(q) && !(item.category || '').toLowerCase().includes(q) && !matchesOccasionQuery(item, q)) return false;
       if (activeStatusFilter === 'All' && item.status === 'Deleted') return false;
       if (activeStatusFilter !== 'All') {
         // Customers/guests: "Available" = truly free (no bookings);
@@ -118,6 +121,7 @@ const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
         if (!match) return false;
       }
       if (selectedCategories.length > 0 && !selectedCategories.includes(item.category)) return false;
+      if (!matchesOccasions(item, selectedOccasions)) return false;
       if (activeSizeFilter !== 'All' && item.size !== activeSizeFilter) return false;
       if (minPrice !== '' && item.price < Number(minPrice)) return false;
       if (maxPrice !== '' && item.price > Number(maxPrice)) return false;
@@ -138,11 +142,12 @@ const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
       filtered.sort((a, b) => a.name.localeCompare(b.name));
     }
     return filtered;
-  }, [inventory, searchQuery, activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, isStaff, sortBy]);
+  }, [inventory, searchQuery, activeStatusFilter, selectedCategories, selectedOccasions, activeSizeFilter, minPrice, maxPrice, onSaleOnly, isStaff, sortBy]);
 
 const clearFilters = () => {
     setActiveStatusFilter('All');
     setSelectedCategories([]);
+    setSelectedOccasions([]);
     setActiveSizeFilter('All');
     setMinPrice('');
     setMaxPrice('');
@@ -156,9 +161,15 @@ const toggleCategory = (cat) => {
     );
   };
 
+  const toggleOccasion = (occ) => {
+    setSelectedOccasions(prev =>
+      prev.includes(occ) ? prev.filter(o => o !== occ) : [...prev, occ]
+    );
+  };
+
   // Changes whenever a filter/search/toggle changes — keys the item grid so
   // it replays a quick fade on the way in instead of hard-swapping.
-  const gridKey = JSON.stringify([activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, searchQuery, sortBy]);
+  const gridKey = JSON.stringify([activeStatusFilter, selectedCategories, selectedOccasions, activeSizeFilter, minPrice, maxPrice, onSaleOnly, searchQuery, sortBy]);
 
   // Search suggestions
   const suggestions = useMemo(() => {
@@ -167,13 +178,19 @@ const toggleCategory = (cat) => {
     const seen = new Set();
     const results = [];
     // Category matches
-    const cats = [...new Set(inventory.map(i => i.category))].filter(c => c.toLowerCase().includes(q));
+    const cats = [...new Set(inventory.map(i => i.category))].filter(c => (c || '').toLowerCase().includes(q));
     for (const c of cats.slice(0, 3)) {
       const key = `cat:${c}`;
       if (!seen.has(key)) { seen.add(key); results.push({ type: 'category', label: c, value: c }); }
     }
-    // Item name matches
-    const matchingItems = inventory.filter(i => i.name.toLowerCase().includes(q));
+    // Occasion-tag matches (e.g. typing "wedding" suggests the occasion filter)
+    const occs = OCCASIONS.filter(o => o.toLowerCase().includes(q));
+    for (const o of occs.slice(0, 3)) {
+      const key = `occ:${o}`;
+      if (!seen.has(key)) { seen.add(key); results.push({ type: 'occasion', label: o, value: o }); }
+    }
+    // Item name matches (name, category, or occasion tags)
+    const matchingItems = inventory.filter(i => i.name.toLowerCase().includes(q) || (i.category || '').toLowerCase().includes(q) || matchesOccasionQuery(i, q));
     for (const i of sortByCategory(matchingItems).slice(0, 5)) {
       const key = `item:${i.id}`;
       if (!seen.has(key)) { seen.add(key); results.push({ type: 'item', label: i.name, value: i.name, category: i.category }); }
@@ -327,7 +344,7 @@ const toggleCategory = (cat) => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input
             type="text"
-            placeholder={isStaff ? 'Search items by name or category...' : 'Search (e.g. Gatsby, Suit)...'}
+            placeholder={isStaff ? 'Search items by name, category, or occasion...' : 'Search (e.g. Wedding, Gown)...'}
             value={searchQuery}
             onChange={e => { setSearchQuery(e.target.value); setShowSuggestions(true); }}
             onFocus={() => { if (searchQuery.trim()) setShowSuggestions(true); }}
@@ -344,6 +361,7 @@ const toggleCategory = (cat) => {
             <div className="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white rounded-2xl border border-gray-100 shadow-xl shadow-gray-950/10 overflow-hidden">
               {(() => {
                 const cats = suggestions.filter(s => s.type === 'category');
+                const occs = suggestions.filter(s => s.type === 'occasion');
                 const items = suggestions.filter(s => s.type === 'item');
                 return (
                   <>
@@ -368,7 +386,29 @@ const toggleCategory = (cat) => {
                         ))}
                       </div>
                     )}
-                    {cats.length > 0 && items.length > 0 && <div className="mx-3 border-t border-gray-100" />}
+                    {occs.length > 0 && (
+                      <div className="p-2">
+                        <p className="px-2.5 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Occasions</p>
+                        {occs.map((s, idx) => (
+                          <button
+                            key={`occ-${idx}`}
+                            onClick={() => {
+                              setSelectedOccasions(prev => prev.includes(s.value) ? prev : [...prev, s.value]);
+                              setShowFilters(true);
+                              setSearchQuery('');
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-2.5 py-2 hover:bg-[#bf4a53]/5 rounded-xl text-left transition-colors group"
+                          >
+                            <span className="shrink-0 w-8 h-8 rounded-xl bg-gradient-to-br from-[#bf4a53]/10 to-orange-100 flex items-center justify-center group-hover:from-[#bf4a53] group-hover:to-orange-400 transition-all">
+                              <Tag size={14} className="text-[#bf4a53] group-hover:text-white transition-colors" />
+                            </span>
+                            <span className="text-sm font-semibold text-gray-800">{s.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {(cats.length > 0 || occs.length > 0) && items.length > 0 && <div className="mx-3 border-t border-gray-100" />}
                     {items.length > 0 && (
                       <div className="p-2">
                         <p className="px-2.5 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Items</p>
@@ -557,6 +597,45 @@ const toggleCategory = (cat) => {
             </div>
           </div>
 
+          {/* Occasion filter — Advanced only (staff/admin + customers).
+              Tags come from each item's occasions list, so searching or
+              filtering by occasion returns items tagged to fit it. */}
+          <div className="px-4 pb-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Occasion</span>
+              {selectedOccasions.length > 0 && (
+                <button onClick={() => setSelectedOccasions([])} className="text-[11px] font-bold text-[#bf4a53] hover:underline">
+                  Clear occasions
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {OCCASIONS.map((occ) => {
+                const active = selectedOccasions.includes(occ);
+                const count = inventory.filter((i) => normalizeOccasions(i.occasions).includes(occ)).length;
+                return (
+                  <button
+                    key={occ}
+                    type="button"
+                    onClick={() => toggleOccasion(occ)}
+                    aria-pressed={active}
+                    title={count > 0 ? `${count} item${count === 1 ? '' : 's'} tagged ${occ}` : `No items tagged ${occ} yet`}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                      active
+                        ? 'bg-[#bf4a53] text-white shadow-sm'
+                        : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
+                    }`}
+                  >
+                    {occ}
+                    <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center tabular-nums ${active ? 'bg-white/25 text-white' : 'bg-gray-200/70 text-gray-500'}`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Active filter chips + clear */}
           {activeFilterCount > 0 && (
             <div className="px-4 py-2.5 bg-gray-50/80 border-t border-gray-50 flex items-center gap-2 overflow-x-auto hide-scrollbar">
@@ -572,6 +651,14 @@ const toggleCategory = (cat) => {
                 <span key={cat} className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
                   {cat}
                   <button onClick={() => toggleCategory(cat)} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+              {selectedOccasions.map(occ => (
+                <span key={`occ-${occ}`} className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-[#bf4a53]/10 rounded-full border border-[#bf4a53]/30 text-[10px] font-bold text-[#bf4a53] shadow-sm">
+                  {occ}
+                  <button onClick={() => toggleOccasion(occ)} className="text-[#bf4a53]/60 hover:text-[#bf4a53] ml-0.5">
                     <X size={11} />
                   </button>
                 </span>
