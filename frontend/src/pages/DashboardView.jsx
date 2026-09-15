@@ -313,13 +313,6 @@ export default function DashboardView({ role, transactions, inventory, customerI
             <h2 className="text-[28px] leading-tight font-bold text-gray-900 tracking-tight">Staff Dashboard</h2>
             <p className="text-sm text-gray-500 mt-1">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
           </div>
-          <div className="flex items-center gap-2.5 bg-white border border-gray-200/80 rounded-full pl-3 pr-4 py-1.5 shadow-sm">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-            </span>
-            <span className="text-xs font-semibold text-gray-600 tracking-wide">All systems normal</span>
-          </div>
         </header>
 
         {/* Desktop bento grid — mobile/tablet/iPad get more vertical breathing room */}
@@ -636,13 +629,6 @@ export default function DashboardView({ role, transactions, inventory, customerI
         <div>
           <h2 className="text-[28px] leading-tight font-bold text-gray-900 tracking-tight">Admin Dashboard</h2>
           <p className="text-sm text-gray-500 mt-1">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
-        </div>
-        <div className="flex items-center gap-2.5 bg-white border border-gray-200/80 rounded-full pl-3 pr-4 py-1.5 shadow-sm">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-          </span>
-          <span className="text-xs font-semibold text-gray-600 tracking-wide">All systems normal</span>
         </div>
       </header>
 
