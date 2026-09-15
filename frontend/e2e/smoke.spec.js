@@ -17,8 +17,10 @@ test.describe('RenTech smoke', () => {
     const loginBtn = page.getByRole('button', { name: /sign ?in|log ?in/i }).first();
     await expect(loginBtn).toBeVisible();
     await loginBtn.click();
+    // Sign-in is a real route (deep-linkable, works in new tabs).
+    await expect(page).toHaveURL(/\/sign-in$/);
     await expect(page.getByText(/email/i)).toBeVisible();
-    await expect(page.getByText(/password/i)).toBeVisible();
+    await expect(page.getByText('Password', { exact: true })).toBeVisible();
   });
 
   for (const role of roles) {

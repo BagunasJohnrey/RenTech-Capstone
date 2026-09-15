@@ -36,6 +36,19 @@ describe('GET /api/catalog', () => {
     expect(res.status).toBe(200);
   });
 
+  it('should filter by occasion tag', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([]);
+
+    const res = await request(app).get('/api/catalog?occasion=Wedding');
+    expect(res.status).toBe(200);
+    expect(prisma.inventoryItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ occasions: { has: 'Wedding' } }),
+      })
+    );
+  });
+
   it('should search by name', async () => {
     const res = await request(app).get('/api/catalog?search=Suit');
     expect(res.status).toBe(200);

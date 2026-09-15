@@ -7,6 +7,7 @@ import {
 import ItemImage from '../components/ItemImage';
 import { getSaleInfo } from '../components/ItemCard';
 import { sortByCategory } from '../utils/categorySort';
+import { customerService } from '../services/customer';
 
 // --- Custom Styles (unchanged) ---
 const customStyles = `
@@ -103,12 +104,9 @@ function useFeaturedItems(fallback) {
 
   useEffect(() => {
     let active = true;
-    const API_BASE = import.meta.env.VITE_API_URL || '/api';
-    fetch(`${API_BASE}/catalog`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
+    // Proper endpoint: GET /api/catalog via the shared api utility (central
+    // base URL, demo-mode interception, and error handling included).
+    customerService.catalog()
       .then((data) => {
         if (!active) return;
         const list = Array.isArray(data) ? data : [];

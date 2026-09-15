@@ -31,6 +31,19 @@ describe('GET /api/inventory', () => {
     expect(res.status).toBe(200);
   });
 
+  it('should filter by occasion tag', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([]);
+
+    const res = await request(app).get('/api/inventory?occasion=Birthday');
+    expect(res.status).toBe(200);
+    expect(prisma.inventoryItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ occasions: { has: 'Birthday' } }),
+      })
+    );
+  });
+
   it('should filter by status when authenticated', async () => {
     const res = await request(app)
       .get('/api/inventory?status=Rented')
@@ -89,6 +102,21 @@ describe('POST /api/inventory', () => {
       .send({ name: 'Staff Created', category: 'Suit', price: 2500 });
 
     expect(res.status).toBe(201);
+  });
+
+  it('should accept occasion tags on create', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/inventory')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ name: 'Horror Nun Costume', category: 'Costume', price: 2000, occasions: ['Birthday', 'Costume Party'] });
+
+    expect(res.status).toBe(201);
+    expect(prisma.inventoryItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ occasions: ['Birthday', 'Costume Party'] }),
+      })
+    );
   });
 
   it('should reject when customer', async () => {

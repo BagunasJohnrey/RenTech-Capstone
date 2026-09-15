@@ -37,6 +37,12 @@ export const HOME_PATH = {
   Customer: '/',
 };
 
+// Public signed-out routes (no role required). Sign-in and the guest
+// collection are real URLs so they are deep-linkable, survive new tabs /
+// refresh, and work with back/forward — not just in-memory view state.
+export const SIGN_IN_PATH = '/sign-in';
+export const GUEST_COLLECTION_PATH = '/collection';
+
 const HOME_TAB = { Admin: 'Dashboard', Staff: 'Dashboard', Customer: 'Home' };
 
 export function tabPath(role, tabId) {
