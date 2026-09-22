@@ -937,6 +937,7 @@ export default function RentechApp() {
               return manual.includes(editingItem.status) ? manual : [...manual, editingItem.status];
             })()}
             submitLabel="Save Changes"
+            showCategory
             showPhoto
             showOccasions
             showSale={role === 'Admin'}

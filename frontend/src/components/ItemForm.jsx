@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Camera } from 'lucide-react';
+import { X, Camera, Shirt, Loader2 } from 'lucide-react';
 import { storageService } from '../services';
 import { useToast } from './Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -12,8 +12,10 @@ const isAbsoluteUrl = (p) =>
   typeof p === 'string' && (p.startsWith('http://') || p.startsWith('https://') || p.startsWith('data:'));
 
 // Must stay in sync with the item types used across the app (preferences,
-// catalog filters, recommendations).
+// catalog filters, recommendations). The backend accepts any non-empty
+// category string, so staff can also type a custom one via "Custom…".
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
+const CUSTOM_OPTION = '__custom__';
 
 // Shared inventory item editor used for both "Add" and "Edit". Common fields
 // (name / price / status + modal chrome) live here; callers toggle category
@@ -38,7 +40,15 @@ export default function ItemForm({
   const [name, setName] = useState(initial.name ?? '');
   const [price, setPrice] = useState(initial.price ?? '');
   const [status, setStatus] = useState(initial.status ?? 'Available');
-  const [category, setCategory] = useState(initial.category ?? 'Gown');
+  // A stored category outside the preset list (e.g. from an older custom
+  // entry) opens the form in "Custom" mode with the value preserved.
+  const [category, setCategory] = useState(() =>
+    initial.category && !ITEM_TYPES.includes(initial.category) ? CUSTOM_OPTION : (initial.category ?? 'Gown')
+  );
+  const [customCategory, setCustomCategory] = useState(() =>
+    initial.category && !ITEM_TYPES.includes(initial.category) ? initial.category : ''
+  );
+  const effectiveCategory = category === CUSTOM_OPTION ? customCategory.trim() : category;
   const [occasions, setOccasions] = useState(() => normalizeOccasions(initial.occasions));
   const [imagePath, setImagePath] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
@@ -134,9 +144,13 @@ export default function ItemForm({
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name || !price) return;
-    const values = { name, price: parseFloat(price), status };
+    const values = { name: name.trim(), price: parseFloat(price), status };
     if (showCategory) {
-      values.category = category;
+      if (!effectiveCategory) {
+        toastError('Please enter a custom category name');
+        return;
+      }
+      values.category = effectiveCategory.slice(0, 40);
     }
     if (showOccasions) {
       values.occasions = occasions;
@@ -161,68 +175,95 @@ export default function ItemForm({
     }
   };
 
+  // Canonical modal input theme (mirrors SaleModal / CustomerEditModal):
+  // white surface, brand focus ring — replaces the old gray-50 fill.
+  const inputClass =
+    'w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-2.5 text-[13px] font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15 transition-all';
+  const categoryDefaults = OCCASIONS_BY_CATEGORY[effectiveCategory] || [];
+
   return (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 animate-in fade-in duration-200" onClick={onClose}>
-      <div className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full ${maxWidth} max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom sm:zoom-in-95 duration-200`} onClick={(e) => e.stopPropagation()}>
-        <div className="shrink-0 flex justify-between items-center px-5 sm:px-6 py-4 border-b border-gray-100/80 bg-gray-50/50 rounded-t-3xl sm:rounded-t-3xl">
-          <div className="min-w-0">
-            <h3 className="font-bold text-lg text-gray-900 leading-tight truncate">{title}</h3>
-            {subtitle && <p className="text-xs text-gray-500 font-medium mt-0.5">{subtitle}</p>}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full ${maxWidth} max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom sm:zoom-in-95 duration-200`} onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl sm:rounded-t-3xl">
+          <div className="w-10 h-10 rounded-2xl bg-[#bf4a53]/10 flex items-center justify-center shrink-0">
+            <Shirt size={18} className="text-[#bf4a53]" />
           </div>
-          <button onClick={onClose} aria-label="Close editor" className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors shrink-0">
-            <X size={20} />
+          <div className="flex-1 min-w-0">
+            <h3 className="font-bold text-gray-900 leading-tight truncate">{title}</h3>
+            <p className="text-xs text-gray-400 mt-0.5 truncate">{subtitle || 'Fill in the garment details below'}</p>
+          </div>
+          <button onClick={onClose} aria-label="Close editor" className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
+            <X size={17} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
-          <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain px-5 sm:px-6 py-5 space-y-5">
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
+          <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 space-y-4">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Garment Name</label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full bg-gray-50/50 border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:bg-white focus:border-gray-400 transition-all"
+                className={inputClass}
                 placeholder="e.g. Golden Sequin Gown"
               />
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Price (₱)</label>
               <input
                 type="number"
                 required
+                min="1"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
-                className="w-full bg-gray-50/50 border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:bg-white focus:border-gray-400 transition-all"
+                className={inputClass}
                 placeholder="1500"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             {showCategory && (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Category</label>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full bg-gray-50/50 border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:bg-white focus:border-gray-400 transition-all cursor-pointer"
+                  className={`${inputClass} cursor-pointer`}
                 >
                   {ITEM_TYPES.map((type) => (
                     <option key={type} value={type}>{type}</option>
                   ))}
+                  <option value={CUSTOM_OPTION}>Custom…</option>
                 </select>
+                {category === CUSTOM_OPTION && (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={customCategory}
+                    onChange={(e) => setCustomCategory(e.target.value)}
+                    maxLength={40}
+                    placeholder="e.g. Kimono, Tuxedo"
+                    aria-label="Custom category name"
+                    className={`${inputClass} mt-2 animate-in fade-in duration-150`}
+                  />
+                )}
               </div>
             )}
-            <div className={`space-y-2 ${showCategory ? '' : 'col-span-2'}`}>
+            <div className={`space-y-1.5 ${showCategory ? '' : 'col-span-2'}`}>
               <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Current Status</label>
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
-                className="w-full bg-gray-50/50 border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:bg-white focus:border-gray-400 transition-all cursor-pointer"
+                className={`${inputClass} cursor-pointer`}
               >
                 {statusOptions.map((opt) => (
                   <option key={opt} value={opt}>{opt}</option>
@@ -230,18 +271,23 @@ export default function ItemForm({
               </select>
             </div>
           </div>
+          {showCategory && category === CUSTOM_OPTION && (
+            <p className="-mt-2 text-[11px] text-gray-400">Custom categories appear automatically in the catalog filters.</p>
+          )}
 
           {showOccasions && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Fits occasions</label>
-                <button
-                  type="button"
-                  onClick={() => setOccasions(OCCASIONS_BY_CATEGORY[category] || [])}
-                  className="text-[10px] font-bold text-[#bf4a53] hover:underline"
-                >
-                  Use {category} defaults
-                </button>
+                {categoryDefaults.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setOccasions(categoryDefaults)}
+                    className="text-[10px] font-bold text-[#bf4a53] hover:underline"
+                  >
+                    Use {effectiveCategory || category} defaults
+                  </button>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 {OCCASIONS.map((occ) => {
@@ -268,22 +314,26 @@ export default function ItemForm({
           )}
 
           {showPhoto && (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
                 <Camera size={14} /> Photo
               </label>
-              <div className="relative h-40 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden">
+              <div className="relative h-40 bg-gray-50/70 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden">
                 {previewUrl ? (
                   <>
                     <img src={previewUrl} className="w-full h-full object-cover" alt="" />
-                    <button type="button" onClick={() => { setPreviewUrl(''); setImagePath(''); }} className="absolute top-2 right-2 p-1.5 bg-[#bf4a53] text-white rounded-full shadow">
+                    <button type="button" onClick={() => { setPreviewUrl(''); setImagePath(''); }} aria-label="Remove photo" className="absolute top-2 right-2 p-1.5 bg-[#bf4a53] text-white rounded-full shadow hover:bg-red-700 transition-colors">
                       <X size={12} />
                     </button>
                   </>
                 ) : (
                   <label className="cursor-pointer text-center p-4">
                     <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
-                    <Camera size={28} className="text-gray-400 mx-auto mb-1" />
+                    {uploading ? (
+                      <Loader2 size={28} className="text-[#bf4a53] mx-auto mb-1 animate-spin" />
+                    ) : (
+                      <Camera size={28} className="text-gray-400 mx-auto mb-1" />
+                    )}
                     <p className="text-xs font-bold text-gray-400 uppercase">
                       {uploading ? 'Uploading…' : 'Tap to upload photo'}
                     </p>
@@ -305,8 +355,8 @@ export default function ItemForm({
                 />
               </label>
               {onSale && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3 animate-in fade-in duration-150">
+                  <div className="space-y-1.5">
                     <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Discount %</label>
                     <input
                       type="number"
@@ -314,28 +364,28 @@ export default function ItemForm({
                       max="100"
                       value={discountPct}
                       onChange={(e) => setDiscountPct(e.target.value)}
-                      className="w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:border-gray-400"
+                      className={inputClass}
                       placeholder="0"
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Sale Price ₱</label>
                     <input
                       type="number"
                       min="0"
                       value={salePrice}
                       onChange={(e) => setSalePrice(e.target.value)}
-                      className="w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:border-gray-400"
+                      className={inputClass}
                       placeholder="optional"
                     />
                   </div>
-                  <div className="col-span-2 space-y-2">
+                  <div className="col-span-2 space-y-1.5">
                     <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Sale Ends (optional)</label>
                     <input
                       type="date"
                       value={saleEndsAt}
                       onChange={(e) => setSaleEndsAt(e.target.value)}
-                      className="w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:border-gray-400"
+                      className={inputClass}
                     />
                   </div>
                   <p className="col-span-2 text-[11px] text-gray-400">
@@ -350,11 +400,12 @@ export default function ItemForm({
 
           <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-3.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
             <div className="grid grid-cols-2 gap-3">
-              <button type="button" onClick={onClose} className="py-3 text-[13px] font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
+              <button type="button" onClick={onClose} className="py-3 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
                 Cancel
               </button>
-              <button type="submit" disabled={uploading} className="py-3 text-[13px] font-bold text-white bg-[#bf4a53] hover:bg-red-700 rounded-2xl shadow-sm shadow-red-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50">
-                {submitLabel}
+              <button type="submit" disabled={uploading} className="py-3 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 active:scale-[0.98] rounded-2xl shadow-sm shadow-red-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                {uploading && <Loader2 size={15} className="animate-spin" />}
+                {uploading ? 'Uploading…' : submitLabel}
               </button>
             </div>
           </div>

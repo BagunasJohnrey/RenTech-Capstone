@@ -97,12 +97,33 @@ app.listen(env.PORT, () => {
   ensureBucket()
     .then(async () => {
       // Quick startup sanity: verify the bucket has files and signed URLs work.
+      // NOTE: root listing can return folder placeholders (e.g. "rental/" —
+      // the private bucket now only holds `rental/` condition shots), which
+      // have id == null and can never be signed. Descend one level to find a
+      // real file instead of signing the folder name (old code logged a
+      // benign `FAIL (Object not found)` for "rental" on every boot).
       const { supabaseAdmin } = await import('./config/supabase.js');
-      const { data: files } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').list('', { limit: 3 });
-      console.log(`[storage] bucket check (${process.env.STORAGE_BUCKET || 'rentech-images'}): ${files?.length ?? 0} sample files found`);
-      if (files?.[0]) {
-        const { data, error } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').createSignedUrl(files[0].name, 60);
-        console.log(`[storage] signed URL test for "${files[0].name}":`, error ? `FAIL (${error.message})` : 'OK');
+      const bucket = process.env.STORAGE_BUCKET || 'rentech-images';
+      const { data: files } = await supabaseAdmin.storage.from(bucket).list('', { limit: 10 });
+      console.log(`[storage] bucket check (${bucket}): ${files?.length ?? 0} sample entries found`);
+      let sample: string | null = null;
+      for (const entry of files ?? []) {
+        const rec = entry as { name?: string; id?: string | null };
+        if (!rec?.name) continue;
+        const isFolder = rec.id == null && !/\.[a-z0-9]+$/i.test(rec.name);
+        if (!isFolder) { sample = rec.name; break; }
+        const { data: inner } = await supabaseAdmin.storage.from(bucket).list(rec.name, { limit: 5 });
+        const innerFile = (inner ?? []).find((e) => {
+          const r = e as { name?: string; id?: string | null };
+          return !!r?.name && r.id != null;
+        }) as { name?: string } | undefined;
+        if (innerFile?.name) { sample = `${rec.name}/${innerFile.name}`; break; }
+      }
+      if (sample) {
+        const { data, error } = await supabaseAdmin.storage.from(bucket).createSignedUrl(sample, 60);
+        console.log(`[storage] signed URL test for "${sample}":`, error ? `FAIL (${error.message})` : 'OK');
+      } else {
+        console.log('[storage] signed URL test skipped — no sample file in bucket');
       }
     })
     .catch((err) => console.error('Storage bucket init failed:', err));
