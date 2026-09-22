@@ -24,6 +24,10 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
       toastError('Full name is required (min 2 characters)');
       return;
     }
+    if (form.phone && form.phone.length !== 11) {
+      toastError('Phone must be exactly 11 digits');
+      return;
+    }
     setSaving(true);
     try {
       const prefs = typeof form.preferences === 'string'
@@ -68,7 +72,8 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
 
         <div className="p-5 space-y-4">
           <Field label="Full Name" required value={form.name} onChange={(e) => update('name', e.target.value)} className={inputClass} autoComplete="name" />
-          <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value.replace(/\D/g, ''))} className={inputClass} inputMode="tel" autoComplete="tel" placeholder="0917…" />
+          <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} className={`${inputClass}${form.phone && form.phone.length !== 11 ? ' border-red-300' : ''}`} inputMode="tel" autoComplete="tel" placeholder="09171234567" />
+          {form.phone && form.phone.length !== 11 && <p className="text-[10px] text-red-500 -mt-2">Phone must be exactly 11 digits (e.g. 09171234567)</p>}
           <Field label="Address" value={form.address} onChange={(e) => update('address', e.target.value)} className={inputClass} autoComplete="street-address" placeholder="Street, Balayan, Batangas" />
           <Field label="Interests (comma separated item types)" value={form.preferences}
             onChange={(e) => update('preferences', e.target.value)} className={inputClass}

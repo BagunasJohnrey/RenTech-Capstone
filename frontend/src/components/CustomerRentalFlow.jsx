@@ -80,6 +80,7 @@ export default function CustomerRentalFlow({
           return_days_after_event: d.return_days_after_event || 1,
           min_downpayment: d.min_downpayment || 0,
         });
+        setDownpaymentAmount(d.min_downpayment || 200);
         if (!eventDateTouched.current) {
           const dt = new Date();
           dt.setDate(dt.getDate() + d.rental_period_days);
@@ -118,7 +119,7 @@ export default function CustomerRentalFlow({
   // after any promo). Same as the server's requireMinimumDownpayment rule so
   // promo-discounted bookings can't be blocked by an over-large minimum.
   // Prefilled with the flat floor once an item is picked (step 0 resets it).
-  const [downpaymentAmount, setDownpaymentAmount] = useState(0);
+  const [downpaymentAmount, setDownpaymentAmount] = useState(200);
   const [confirmedTx, setConfirmedTx] = useState(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
@@ -1013,7 +1014,7 @@ export default function CustomerRentalFlow({
                     type="number"
                     inputMode="decimal"
                     placeholder="0"
-                    value={downpaymentAmount}
+                    value={downpaymentAmount || ''}
                     min={minDownpayment}
                     aria-label="Required downpayment amount"
                     onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
