@@ -309,9 +309,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
     ).slice(0, 3);
     const daysLate = (tx) => tx.dueDate ? Math.max(1, Math.ceil((today - new Date(tx.dueDate)) / 86400000)) : '?';
     return (
-      <div className="max-w-lg mx-auto md:max-w-3xl lg:max-w-[1200px]">
+      <div className="max-w-lg mx-auto md:max-w-3xl xl:max-w-[1200px]">
         {/* Header (mobile/tablet) — unchanged */}
-        <div className="flex items-center justify-between mb-5 md:mb-6 lg:hidden">
+        <div className="flex items-center justify-between mb-5 md:mb-6 xl:hidden">
           <div>
             <h2 className="text-xl font-bold text-gray-900 tracking-tight">Staff Dashboard</h2>
             <p className="text-sm text-gray-500 mt-0.5">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
@@ -319,18 +319,19 @@ export default function DashboardView({ role, transactions, inventory, customerI
         </div>
 
         {/* Desktop header band */}
-        <header className="hidden lg:flex items-center justify-between mb-7 pb-5 border-b border-gray-200/80">
+        <header className="hidden xl:flex items-center justify-between mb-7 pb-5 border-b border-gray-200/80">
           <div>
             <h2 className="text-[28px] leading-tight font-bold text-gray-900 tracking-tight">Staff Dashboard</h2>
             <p className="text-sm text-gray-500 mt-1">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
           </div>
         </header>
 
-        {/* Desktop bento grid — mobile/tablet/iPad get more vertical breathing room */}
-        <div className="space-y-5 md:space-y-7 pt-2 lg:pt-0 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
+        {/* Desktop bento grid — mobile/tablet/iPad get the stacked layout with
+            more vertical breathing room (iPad trips lg, so bento waits for xl) */}
+        <div className="space-y-5 md:space-y-7 pt-2 xl:pt-0 xl:space-y-0 xl:grid xl:grid-cols-12 xl:gap-6 xl:items-start">
 
         {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop */}
-        <div className="lg:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 lg:gap-5">
+        <div className="xl:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 xl:gap-5">
           <button onClick={() => onNavigate('History')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pickups Today</p>
@@ -358,27 +359,27 @@ export default function DashboardView({ role, transactions, inventory, customerI
         </div>
 
         {/* Right rail: Quick Actions + (desktop) Today at a Glance + Overdue Follow-ups */}
-        <aside className="lg:col-span-3 lg:col-start-10 lg:row-start-2 lg:row-span-3 lg:self-start space-y-4 md:space-y-6 lg:space-y-6">
+        <aside className="xl:col-span-3 xl:col-start-10 xl:row-start-2 xl:row-span-3 xl:self-start space-y-4 md:space-y-6 xl:space-y-6">
 
           {/* Quick Actions panel */}
-          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 flex flex-col gap-3 lg:gap-4">
-            <p className="hidden lg:block text-[11px] font-bold text-gray-400 uppercase tracking-widest -mb-1">Quick Actions</p>
+          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 flex flex-col gap-3 xl:gap-4">
+            <p className="hidden xl:block text-[11px] font-bold text-gray-400 uppercase tracking-widest -mb-1">Quick Actions</p>
             {/* Primary CTA */}
             <button data-tour="new-rental" onClick={onOpenNewRental}
-              className="w-full flex items-center justify-center gap-3 bg-[#bf4a53] text-white font-bold text-base lg:text-[15px] py-5 lg:py-3.5 rounded-2xl lg:rounded-xl shadow-lg shadow-red-500/20 hover:bg-red-700 btn-press transition-all min-h-[56px] lg:min-h-0">
+              className="w-full flex items-center justify-center gap-3 bg-[#bf4a53] text-white font-bold text-base xl:text-[15px] py-5 xl:py-3.5 rounded-2xl xl:rounded-xl shadow-lg shadow-red-500/20 hover:bg-red-700 btn-press transition-all min-h-[56px] xl:min-h-0">
               <Plus size={22} strokeWidth={3} />
               New Rental
             </button>
             {/* Secondary CTA */}
             <button data-tour="returns" onClick={() => onNavigate('History')}
-              className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-200 lg:border-gray-200 text-gray-900 font-bold text-base lg:text-[15px] py-4 lg:py-3.5 rounded-2xl lg:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] lg:min-h-0 shadow-sm lg:shadow-none">
+              className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-200 xl:border-gray-200 text-gray-900 font-bold text-base xl:text-[15px] py-4 xl:py-3.5 rounded-2xl xl:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] xl:min-h-0 shadow-sm xl:shadow-none">
               <Undo2 size={20} />
               Process Return
             </button>
             {/* Scan QR (visible only while the QR-codes flag is ON) */}
             {qrCodesOn && onOpenScanner && (
               <button onClick={onOpenScanner}
-                className="w-full flex items-center justify-center gap-3 bg-white border-2 border-dashed border-gray-300 text-gray-700 font-bold text-base lg:text-[15px] py-4 lg:py-3 rounded-2xl lg:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] lg:min-h-0 shadow-sm lg:shadow-none">
+                className="w-full flex items-center justify-center gap-3 bg-white border-2 border-dashed border-gray-300 text-gray-700 font-bold text-base xl:text-[15px] py-4 xl:py-3 rounded-2xl xl:rounded-xl hover:bg-gray-50 btn-press transition-all min-h-[56px] xl:min-h-0 shadow-sm xl:shadow-none">
                 <ScanLine size={20} />
                 Scan QR
               </button>
@@ -386,7 +387,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </div>
 
           {/* Today at a Glance (desktop only) */}
-          <div className="hidden lg:block bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
+          <div className="hidden xl:block bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
             <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">Today at a Glance</p>
             <div className="flex items-center gap-2 text-gray-900">
               <TrendingUp size={18} className="text-emerald-500 shrink-0" />
@@ -427,7 +428,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
         </aside>
 
         {/* Upcoming Today — main column */}
-        <div className="lg:col-span-9 lg:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 lg:p-6">
+        <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Upcoming Today</h3>
             {upcomingToday.length > 0 && (
@@ -465,7 +466,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
 
         {/* Active Rentals — main column */}
         {recentRentals.length > 0 && (
-          <div className="lg:col-span-9 lg:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 lg:p-6">
+          <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
               <button onClick={() => onNavigate('History')}
@@ -504,7 +505,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
             .slice(0, 3);
           if (attentionItems.length === 0) return null;
           return (
-            <div className="lg:col-span-9 lg:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 lg:p-6">
+            <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Needs Attention</h3>
                 <button onClick={() => goFiltered('Catalog', 'OutOfService')} className="text-xs font-semibold text-[#bf4a53] hover:underline">
@@ -537,7 +538,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
         {/* Cleaning reminder — staff jumps straight to the In Cleaning card on
             Tasks (scrolls there); full queue lives there */}
         {role === 'Staff' && cleaningCount > 0 && (
-          <div className="lg:col-span-9 lg:col-start-1 bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+          <div className="xl:col-span-9 xl:col-start-1 bg-orange-50 border border-orange-200 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
               <Droplets size={16} className="text-orange-500 shrink-0" />
               <p className="text-sm font-semibold text-gray-800 truncate">
@@ -633,9 +634,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
   const maxTop = topItems.length > 0 ? topItems[0][1] : 1;
 
   return (
-    <div className="max-w-lg mx-auto md:max-w-3xl lg:max-w-[1200px]">
+    <div className="max-w-lg mx-auto md:max-w-3xl xl:max-w-[1200px]">
       {/* Header (mobile/tablet) */}
-      <div className="flex items-center justify-between mb-5 md:mb-6 lg:hidden">
+      <div className="flex items-center justify-between mb-5 md:mb-6 xl:hidden">
         <div>
           <h2 className="text-xl font-bold text-gray-900 tracking-tight">Admin Dashboard</h2>
           <p className="text-sm text-gray-500 mt-0.5">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
@@ -643,17 +644,17 @@ export default function DashboardView({ role, transactions, inventory, customerI
       </div>
 
       {/* Desktop header band */}
-      <header className="hidden lg:flex items-center justify-between mb-7 pb-5 border-b border-gray-200/80">
+      <header className="hidden xl:flex items-center justify-between mb-7 pb-5 border-b border-gray-200/80">
         <div>
           <h2 className="text-[28px] leading-tight font-bold text-gray-900 tracking-tight">Admin Dashboard</h2>
           <p className="text-sm text-gray-500 mt-1">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
         </div>
       </header>
 
-      <div className="space-y-5 md:space-y-7 pt-2 lg:pt-0 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
+      <div className="space-y-5 md:space-y-7 pt-2 xl:pt-0 xl:space-y-0 xl:grid xl:grid-cols-12 xl:gap-6 xl:items-start">
 
         {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop */}
-        <div className="lg:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 lg:gap-5">
+        <div className="xl:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 xl:gap-5">
           <button onClick={() => onNavigate('AI Insights')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Monthly Revenue</p>
@@ -685,9 +686,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
         </div>
 
         {/* Left column — Revenue Trend + Top Items + Overdue follow-ups */}
-        <div className="lg:col-span-9 space-y-4 md:space-y-6 lg:space-y-6">
+        <div className="xl:col-span-9 space-y-4 md:space-y-6 xl:space-y-6">
           {/* Revenue Trend (6 months) */}
-          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 lg:p-6">
+          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Revenue Trend</h3>
               <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">₱{revenueToday.toLocaleString()} collected today</span>
@@ -724,7 +725,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
           </div>
 
           {/* Top Rented Items */}
-          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 lg:p-6">
+          <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4">Top Rented Items</h3>
             {topItems.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-6 font-medium">No rental data yet.</p>
@@ -756,7 +757,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
               .sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt))[0];
             const daysWaiting = oldest ? Math.max(1, Math.ceil((today - new Date(oldest.updatedAt)) / 86400000)) : null;
             return (
-              <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 lg:p-6">
+              <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Cleaning Queue</h3>
                   <button onClick={() => setShowCleaningQueue(true)} className="text-xs font-semibold text-[#bf4a53] hover:underline">View Queue</button>
@@ -782,7 +783,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
         </div>
 
         {/* Right rail — Business Health + Inventory Health + AI Insights */}
-        <aside className="lg:col-span-3 lg:self-start space-y-4 md:space-y-6 lg:space-y-6">
+        <aside className="xl:col-span-3 xl:self-start space-y-4 md:space-y-6 xl:space-y-6">
 
           {/* Business Health */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5">
