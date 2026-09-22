@@ -907,6 +907,7 @@ export default function CustomerRentalFlow({
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
                   <Calendar size={14} /> Rental Schedule
                 </h4>
+                <p className="text-[10px] text-gray-400 -mt-2">Tap once for pickup, tap again for event date.</p>
                 {isCleaning ? (
                   <div className="flex items-start gap-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
                     <Calendar size={16} className="mt-0.5 text-amber-500" />

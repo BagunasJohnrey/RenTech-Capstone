@@ -793,6 +793,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Rental Dates</label>
+                  <p className="text-[10px] text-gray-400 mb-2">Tap once for pickup, tap again for event date.</p>
                   <BookingCalendar
                     pickup={customer.rentalDate}
                     event={customer.eventDate}
