@@ -32,6 +32,15 @@ const statusColors = Object.fromEntries(
 
 const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved'];
 
+const SORT_OPTIONS = [
+  { value: 'priority', label: 'Status priority' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'dueSoon', label: 'Due soonest' },
+  { value: 'amountDesc', label: 'Highest amount' },
+];
+const SORT_LABELS = Object.fromEntries(SORT_OPTIONS.map((o) => [o.value, o.label]));
+
 // Date filter: the heavy lifting (two-month popover, presets, hover-range
 // highlight, single-tap vs range, future-date support) lives in
 // `components/DateRangePicker.jsx`. This page only deals in [from, to]
@@ -45,6 +54,9 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
 
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // 'priority' is the role-aware default (staff chase Overdue first,
+  // customers watch Active first) — see statusPriority below.
+  const [sortBy, setSortBy] = useState('priority');
   const [currentPage, setCurrentPage] = useState(1);
   const [detailTx, setDetailTx] = useState(null);
   const [cancelTx, setCancelTx] = useState(null);
@@ -205,13 +217,15 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   );
 
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
-    + ((dateFrom !== '' || dateTo !== '') ? 1 : 0);
+    + ((dateFrom !== '' || dateTo !== '') ? 1 : 0)
+    + (sortBy !== 'priority' ? 1 : 0);
 
   const clearFilters = () => {
     setActiveStatusFilter('All');
 
     setDateFrom('');
     setDateTo('');
+    setSortBy('priority');
     setCurrentPage(1);
   };
 
@@ -242,7 +256,18 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     }
   };
 
-  const statusPriority = { Active: 0, Overdue: 1, Reserved: 2, Returned: 3, Cancelled: 4 };
+  // Default order is role-aware: staff chase late returns (Overdue first),
+  // customers watch what's currently in their closet (Active first).
+  const statusPriority = isStaff
+    ? { Overdue: 0, Active: 1, Reserved: 2, Returned: 3, Cancelled: 4 }
+    : { Active: 0, Overdue: 1, Reserved: 2, Returned: 3, Cancelled: 4 };
+
+  const txDateOf = (tx) => new Date(tx.date || tx.rentalDate || 0).getTime();
+  const txDueOf = (tx) => (tx.dueDate ? new Date(tx.dueDate).getTime() : NaN);
+  const txAmountOf = (tx) => Number(tx.rentalFee ?? tx.amount ?? 0);
+  // Deterministic tiebreak so equal keys order identically across renders.
+  const txTiebreak = (a, b) => String(a.txNumber ?? a.id ?? '').localeCompare(
+    String(b.txNumber ?? b.id ?? ''), undefined, { numeric: true });
 
   // Search + date subset first so the pill counts always match the list.
   const searchDateFiltered = transactions
@@ -292,10 +317,35 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
       return true;
     })
     .sort((a, b) => {
-      const pa = statusPriority[a.status] ?? 99;
-      const pb = statusPriority[b.status] ?? 99;
-      if (pa !== pb) return pa - pb;
-      return new Date(b.date || b.rentalDate || 0) - new Date(a.date || a.rentalDate || 0);
+      switch (sortBy) {
+        case 'newest':
+          return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
+        case 'oldest':
+          return txDateOf(a) - txDateOf(b) || txTiebreak(a, b);
+        case 'dueSoon': {
+          // Overdue rentals are the fire — always first (most overdue =
+          // earliest due date first), then everything else by due date
+          // ascending. Rows without a due date sink below dated rows.
+          const oa = a.status === 'Overdue' ? 0 : 1;
+          const ob = b.status === 'Overdue' ? 0 : 1;
+          if (oa !== ob) return oa - ob;
+          const da = txDueOf(a);
+          const db = txDueOf(b);
+          if (Number.isNaN(da) && Number.isNaN(db)) return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
+          if (Number.isNaN(da)) return 1;
+          if (Number.isNaN(db)) return -1;
+          return da - db || txTiebreak(a, b);
+        }
+        case 'amountDesc':
+          return txAmountOf(b) - txAmountOf(a) || txTiebreak(a, b);
+        case 'priority':
+        default: {
+          const pa = statusPriority[a.status] ?? 99;
+          const pb = statusPriority[b.status] ?? 99;
+          if (pa !== pb) return pa - pb;
+          return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
+        }
+      }
     });
 
   const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
@@ -404,18 +454,35 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               </div>
             </div>
 
-            {/* Date row — the trigger pill doubles as the visible selection
-                summary; clicking opens a two-month calendar popover (portal
-                to <body>, so the panel's `overflow-hidden` can't clip it). */}
-            {isStaff && (
-              <div className="px-4 py-3 border-b border-gray-50">
-                <DateRangePicker
-                  from={dateFrom}
-                  to={dateTo}
-                  onChange={applyDateRange}
-                />
-              </div>
-            )}
+            {/* Sort + Date row — matched labeled controls side by side
+                (stacked on mobile). The date popover portals to <body>, so
+                the panel's `overflow-hidden` can't clip it. */}
+            <div className={`px-4 py-3 border-b border-gray-50 grid grid-cols-1 gap-2.5 ${isStaff ? 'sm:grid-cols-2' : ''}`}>
+              <label className="flex items-center gap-2 min-w-0">
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Sort</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => { setSortBy(e.target.value); setCurrentPage(1); }}
+                  aria-label="Sort transactions"
+                  className="flex-1 min-w-0 appearance-none bg-gray-50 border border-gray-200/60 rounded-lg py-2 pl-3 pr-8 text-sm font-medium text-gray-700 focus:outline-none focus:border-gray-400 transition-colors cursor-pointer bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%239ca3af%22 stroke-width=%223%22%3E%3Cpath d=%22m6 9 6 6 6-6%22/%3E%3C/svg%3E')] bg-no-repeat bg-[position:right_0.6rem_center]"
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              {isStaff && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Date</span>
+                  <DateRangePicker
+                    from={dateFrom}
+                    to={dateTo}
+                    onChange={applyDateRange}
+                    boxed
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Active filter chips + Clear all */}
             {activeFilterCount > 0 && (
@@ -433,6 +500,14 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     <Calendar size={11} className="text-gray-400" />
                     {formatDateRangeLabel(dateFrom, dateTo)}
                     <button onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                      <X size={11} />
+                    </button>
+                  </span>
+                )}
+                {sortBy !== 'priority' && (
+                  <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
+                    Sort: {SORT_LABELS[sortBy]}
+                    <button onClick={() => { setSortBy('priority'); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
                       <X size={11} />
                     </button>
                   </span>
