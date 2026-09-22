@@ -317,6 +317,7 @@ vi.mock('../src/config/database.js', () => {
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: 'log-1' }),
       findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },

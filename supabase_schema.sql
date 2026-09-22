@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS "transactions" (
   "tx_number"               SERIAL NOT NULL,
   "customer_id"             TEXT NOT NULL,
   "processed_by_id"         TEXT,
+  "assisted_by_id"          TEXT,
+  "released_by_id"          TEXT,
   "item_id"                 INTEGER NOT NULL,
   "promo_code_id"           TEXT,
   "rental_date"             TIMESTAMP(3) NOT NULL,
@@ -262,6 +264,8 @@ CREATE INDEX IF NOT EXISTS "transactions_item_id_status_idx" ON "transactions"("
 CREATE INDEX IF NOT EXISTS "transactions_customer_id_status_idx" ON "transactions"("customer_id", "status");
 CREATE INDEX IF NOT EXISTS "transactions_status_due_date_idx" ON "transactions"("status", "due_date");
 CREATE INDEX IF NOT EXISTS "transactions_processed_by_id_idx" ON "transactions"("processed_by_id");
+CREATE INDEX IF NOT EXISTS "transactions_assisted_by_id_idx" ON "transactions"("assisted_by_id");
+CREATE INDEX IF NOT EXISTS "transactions_released_by_id_idx" ON "transactions"("released_by_id");
 CREATE INDEX IF NOT EXISTS "transactions_created_at_idx" ON "transactions"("created_at");
 
 CREATE UNIQUE INDEX IF NOT EXISTS "promo_codes_code_key" ON "promo_codes"("code");
@@ -288,6 +292,14 @@ ALTER TABLE "transactions" ADD CONSTRAINT "transactions_customer_id_fkey"
 ALTER TABLE "transactions" DROP CONSTRAINT IF EXISTS "transactions_processed_by_id_fkey";
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_processed_by_id_fkey"
   FOREIGN KEY ("processed_by_id") REFERENCES "profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "transactions" DROP CONSTRAINT IF EXISTS "transactions_assisted_by_id_fkey";
+ALTER TABLE "transactions" ADD CONSTRAINT "transactions_assisted_by_id_fkey"
+  FOREIGN KEY ("assisted_by_id") REFERENCES "profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+ALTER TABLE "transactions" DROP CONSTRAINT IF EXISTS "transactions_released_by_id_fkey";
+ALTER TABLE "transactions" ADD CONSTRAINT "transactions_released_by_id_fkey"
+  FOREIGN KEY ("released_by_id") REFERENCES "profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 ALTER TABLE "transactions" DROP CONSTRAINT IF EXISTS "transactions_item_id_fkey";
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_item_id_fkey"

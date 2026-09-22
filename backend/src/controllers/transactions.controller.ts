@@ -133,6 +133,22 @@ export async function getTransaction(req: AuthenticatedRequest, res: Response, n
   }
 }
 
+// Staff activity timeline for one transaction (who assisted / released /
+// returned / edited / cancelled it). Staff/Admin only; the service resolves
+// staff names so the frontend can render "Assisted by X · Released by Y".
+export async function getTransactionAudits(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const tx = await transactionService.getTransaction(String(req.params.id));
+    if (req.user?.role === Role.Customer && tx.customerId !== req.user.id) {
+      throw new AppError(403, 'You can only view your own transactions');
+    }
+    const audits = await transactionService.getTransactionAudits(String(req.params.id));
+    res.json(audits);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Staff QR scan lookup: accepts `RT-XXXXXXXX`, the raw 8-char code, or a full
 // shareable URL carrying `?tx=RT-XXXXXXXX`. Staff/Admin only (route-guarded) so
 // customer QR payloads can't be enumerated by other customers.

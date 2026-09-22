@@ -271,13 +271,19 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
       ]);
       if (!customer || !item) throw new Error('missing customer/item');
       const processedById = str(r.processedById);
+      const assistedById = str((r as Row).assistedById);
+      const releasedById = str((r as Row).releasedById);
       const promoCodeId = str(r.promoCodeId);
-      const [processedBy, promo] = await Promise.all([
+      const [processedBy, assistedBy, releasedBy, promo] = await Promise.all([
         processedById ? m.profile.findUnique?.({ where: { id: processedById } }) : Promise.resolve(null),
+        assistedById ? m.profile.findUnique?.({ where: { id: assistedById } }) : Promise.resolve(null),
+        releasedById ? m.profile.findUnique?.({ where: { id: releasedById } }) : Promise.resolve(null),
         promoCodeId ? m.promoCode.findUnique?.({ where: { id: promoCodeId } }) : Promise.resolve(null),
       ]);
       const data: Row = {
-        customerId, processedById: processedBy ? processedById : null, itemId,
+        customerId, processedById: processedBy ? processedById : null,
+        assistedById: assistedBy ? assistedById : null,
+        releasedById: releasedBy ? releasedById : null, itemId,
         promoCodeId: promo ? promoCodeId : null,
         rentalDate, dueDate, returnDate: dateOrNull(r.returnDate), status,
         rentalFee, downpayment: numOrNull(r.downpayment) ?? 0,

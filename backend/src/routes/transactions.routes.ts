@@ -16,6 +16,8 @@ router.get('/upcoming', requireRole(Role.Admin, Role.Staff), transactionControll
 router.get('/scan/:id', requireRole(Role.Admin, Role.Staff), transactionController.scanTransaction);
 
 router.get('/', transactionController.listTransactions);
+// Static segment first so "audits" is never parsed as a transaction id.
+router.get('/:id/audits', requireRole(Role.Admin, Role.Staff), transactionController.getTransactionAudits);
 router.get('/:id', transactionController.getTransaction);
 
 // Customers book exclusively through /bookings (which enforces the flat

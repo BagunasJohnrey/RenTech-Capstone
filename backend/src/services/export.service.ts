@@ -247,6 +247,8 @@ async function transactionsSheet(win?: ExportWindow, scopeLabel?: string): Promi
     include: {
       customer: { select: { name: true, email: true } },
       item: { select: { name: true, category: true } },
+      assistedBy: { select: { name: true } },
+      releasedBy: { select: { name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -255,6 +257,8 @@ async function transactionsSheet(win?: ExportWindow, scopeLabel?: string): Promi
     { header: 'Transaction ID', key: 'ID', width: 22 },
     { header: 'Customer', key: 'Customer', width: 22 },
     { header: 'Email', key: 'Email', width: 28 },
+    { header: 'Assisted By', key: 'Assisted By', width: 20 },
+    { header: 'Released By', key: 'Released By', width: 20 },
     { header: 'Item', key: 'Item', width: 26 },
     { header: 'Category', key: 'Category', width: 16 },
     { header: 'Rental Date', key: 'Rental Date', width: 14, type: 'date' },
@@ -273,6 +277,8 @@ async function transactionsSheet(win?: ExportWindow, scopeLabel?: string): Promi
     ID: tx.txNumber,
     Customer: tx.customer?.name || '',
     Email: tx.customer?.email || '',
+    'Assisted By': (tx as { assistedBy?: { name?: string } | null }).assistedBy?.name || '',
+    'Released By': (tx as { releasedBy?: { name?: string } | null }).releasedBy?.name || '',
     Item: tx.item?.name || '',
     Category: tx.item?.category || '',
     'Rental Date': tx.rentalDate.toISOString().split('T')[0],

@@ -51,6 +51,8 @@ model Profile {
 
   customerTransactions Transaction[]    @relation("CustomerTransactions")
   processedByTransactions Transaction[] @relation("ProcessedByTransactions")
+  assistedTransactions Transaction[] @relation("AssistedTransactions")
+  releasedTransactions Transaction[] @relation("ReleasedTransactions")
   notifications  Notification[]
   sentMessages   SentSms[]              @relation("SentMessages")
   sentByMessages SentSms[]              @relation("SentByMessages")
@@ -88,6 +90,10 @@ model Transaction {
   txNumber        Int               @default(autoincrement()) @map("tx_number")
   customerId      String            @map("customer_id")
   processedById   String?           @map("processed_by_id")
+  // Staff who created/assisted the booking (set once at create, never overwritten).
+  assistedById    String?           @map("assisted_by_id")
+  // Staff who physically released the item at pickup (set once at release).
+  releasedById    String?           @map("released_by_id")
   itemId          Int               @map("item_id")
   promoCodeId     String?           @map("promo_code_id")
   rentalDate      DateTime          @map("rental_date")
@@ -121,6 +127,8 @@ model Transaction {
 
   customer      Profile        @relation("CustomerTransactions", fields: [customerId], references: [id])
   processedBy   Profile?       @relation("ProcessedByTransactions", fields: [processedById], references: [id])
+  assistedBy    Profile?       @relation("AssistedTransactions", fields: [assistedById], references: [id], onDelete: SetNull)
+  releasedBy    Profile?       @relation("ReleasedTransactions", fields: [releasedById], references: [id], onDelete: SetNull)
   item          InventoryItem  @relation(fields: [itemId], references: [id])
   promoCode     PromoCode?     @relation(fields: [promoCodeId], references: [id])
   notifications Notification[]
@@ -131,6 +139,8 @@ model Transaction {
   @@index([customerId, status])
   @@index([status, dueDate])
   @@index([processedById])
+  @@index([assistedById])
+  @@index([releasedById])
   @@index([createdAt])
   @@map("transactions")
 }

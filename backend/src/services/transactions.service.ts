@@ -193,6 +193,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
         data: {
           customerId: data.customerId,
           processedById: processedById ?? null,
+          // Staff audit: who assisted this booking (walk-ins included). Set
+          // ONCE here and never overwritten — release/return write their own
+          // columns/logs instead of clobbering this. Null = online booking.
+          assistedById: processedById ?? null,
           itemId: data.itemId,
           rentalDate: start,
           dueDate: end,
@@ -236,7 +240,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     entity: 'transaction',
     entityId: transaction.id,
     performedById: processedById,
-    newValue: { transactionId: transaction.id, itemId: data.itemId, customerId: data.customerId },
+    newValue: { transactionId: transaction.id, itemId: data.itemId, customerId: data.customerId, assistedById: processedById ?? null },
   });
 
   // Auto-confirmation notification
@@ -337,12 +341,20 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   return transaction;
 }
 
+// Staff audit selects: every full-record read carries who assisted the
+// booking, who released the item, and who last handled it.
+const staffAuditSelect = {
+  customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
+  processedBy: { select: { id: true, name: true } },
+  assistedBy: { select: { id: true, name: true } },
+  releasedBy: { select: { id: true, name: true } },
+} as const;
+
 export async function getTransaction(id: string) {
   const tx = await prisma.transaction.findUnique({
     where: { id },
     include: {
-      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
-      processedBy: { select: { id: true, name: true } },
+      ...staffAuditSelect,
       item: true,
       payments: { orderBy: { createdAt: 'desc' } },
     },
@@ -364,8 +376,7 @@ export async function getTransactionByBookingCode(code: string) {
   const tx = await prisma.transaction.findFirst({
     where: { id: { startsWith: clean.toLowerCase() } },
     include: {
-      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
-      processedBy: { select: { id: true, name: true } },
+      ...staffAuditSelect,
       item: true,
       payments: { orderBy: { createdAt: 'desc' } },
     },
@@ -397,6 +408,8 @@ export async function listTransactions(params: {
         include: {
           customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
           item: { select: { id: true, name: true, category: true } },
+          assistedBy: { select: { id: true, name: true } },
+          releasedBy: { select: { id: true, name: true } },
         },
       orderBy: { createdAt: 'desc' },
       take: params.limit ?? 500,
@@ -741,7 +754,17 @@ export async function releaseRental(
       releasePhoto: releasePhoto ?? null,
       notes: notes ?? undefined,
       processedById,
+      // Staff audit: who physically released the item. Set ONCE (first release
+      // wins) so a re-release can't rewrite history; assistedBy is untouched.
+      ...(tx.releasedById ? {} : { releasedById: processedById }),
       ...alterationPatch,
+    },
+    include: {
+      assistedBy: { select: { id: true, name: true } },
+      releasedBy: { select: { id: true, name: true } },
+      processedBy: { select: { id: true, name: true } },
+      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
+      item: true,
     },
   });
 
@@ -750,14 +773,19 @@ export async function releaseRental(
     data: { status: ItemStatus.Rented },
   });
 
-  await createAuditLog({
-    action: 'update',
-    entity: 'transaction',
-    entityId: transactionId,
-    performedById: processedById,
-    newValue: { status: 'Active', released: true },
-    oldValue: { status: tx.status },
-  });
+  // A re-release (photo retake / notes touch-up) must not log a second
+  // "Item released" entry — otherwise the staff timeline shows a phantom
+  // double release. First release wins; the audit logs it exactly once.
+  if (!tx.releasedById) {
+    await createAuditLog({
+      action: 'update',
+      entity: 'transaction',
+      entityId: transactionId,
+      performedById: processedById,
+      newValue: { status: 'Active', released: true, releasedById: (updated as { releasedById?: string | null }).releasedById ?? null },
+      oldValue: { status: tx.status },
+    });
+  }
 
   // Order-pickup email (Brevo, best-effort — the item is in the customer's hands).
   try {
@@ -791,6 +819,60 @@ export async function releaseRental(
   clearDataCache();
 
   return updated;
+}
+
+// Staff activity timeline for one transaction: every audit_logs row for this
+// transaction (create/release/return/edit/cancel) plus its payment records,
+// oldest first, with the acting staff member's name resolved. Staff/Admin
+// only (route-guarded); AuditLog has no profile relation, so names resolve
+// via one profile query.
+export async function getTransactionAudits(transactionId: string) {
+  const [txLogs, payLogs] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: { entity: 'transaction', entityId: transactionId },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    }),
+    prisma.auditLog.findMany({
+      where: { entity: 'payment' },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    }),
+  ]);
+  const logs = [
+    ...txLogs,
+    ...payLogs.filter(
+      (l) => (l.newValue as { transactionId?: string } | null)?.transactionId === transactionId
+    ),
+  ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  // Defense-in-depth: collapse repeat "released" entries to the FIRST one.
+  // The release path now logs exactly once (first release wins), but legacy
+  // rows with two releases would otherwise render a phantom double entry.
+  const seenRelease = { done: false };
+  const deduped = logs.filter((l) => {
+    if ((l.newValue as { released?: boolean } | null)?.released === true) {
+      if (seenRelease.done) return false;
+      seenRelease.done = true;
+    }
+    return true;
+  });
+  const staffIds = [...new Set(deduped.map((l) => l.performedById).filter((id): id is string => !!id))];
+  const staff = staffIds.length
+    ? await prisma.profile.findMany({
+        where: { id: { in: staffIds } },
+        select: { id: true, name: true, role: true },
+      })
+    : [];
+  const byId = new Map(staff.map((s) => [s.id, s]));
+  return deduped.map((l) => ({
+    id: l.id,
+    action: l.action,
+    entity: l.entity,
+    oldValue: l.oldValue,
+    newValue: l.newValue,
+    createdAt: l.createdAt,
+    performedBy: l.performedById ? (byId.get(l.performedById) ?? { id: l.performedById, name: 'Unknown staff', role: null }) : null,
+  }));
 }
 
 export async function getUpcomingReturns() {
