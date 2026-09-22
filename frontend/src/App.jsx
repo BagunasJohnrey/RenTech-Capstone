@@ -885,6 +885,7 @@ export default function RentechApp() {
                 onOpenChatbot={() => setShowChatbot(true)}
                 onOpenScanner={() => setShowScanner(true)}
                 onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
+                onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))}
               />
             )}
             {activeTab === 'Tasks' && (

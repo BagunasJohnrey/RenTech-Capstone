@@ -43,22 +43,24 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
   const [showFilters, setShowFilters] = useState(false);
 
-  // Deep-link from the Tasks cleaning queue ("View All"): ?status=Cleaning
-  // pre-selects the status chip so the staff lands on the filtered catalog.
-  const [activeStatusFilter, setActiveStatusFilter] = useState(() => {
+  // Deep-link (?status=…): View All buttons elsewhere (Tasks cleaning queue,
+  // dashboard Needs Attention / Cleaning reminder) pre-select the status chip
+  // so the user lands on the filtered catalog.
+  const readStatusParam = () => {
     try {
       const s = new URLSearchParams(window.location.search).get('status');
-      return (s === 'In Cleaning' || s === 'Cleaning') ? 'Cleaning' : 'All';
+      if (s === 'In Cleaning' || s === 'Cleaning') return 'Cleaning';
+      if (s === 'OutOfService' || s === 'Out of Service') return 'OutOfService';
+      return 'All';
     } catch { return 'All'; }
-  });
+  };
+  const [activeStatusFilter, setActiveStatusFilter] = useState(readStatusParam);
   useEffect(() => {
-    try {
-      const s = new URLSearchParams(window.location.search).get('status');
-      if (s === 'In Cleaning' || s === 'Cleaning') {
-        setActiveStatusFilter('Cleaning');
-        setShowFilters(true);
-      }
-    } catch {}
+    const s = readStatusParam();
+    if (s !== 'All') {
+      setActiveStatusFilter(s);
+      setShowFilters(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [selectedCategories, setSelectedCategories] = useState([]);
