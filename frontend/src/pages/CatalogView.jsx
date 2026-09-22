@@ -43,7 +43,24 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
   const [showFilters, setShowFilters] = useState(false);
 
-  const [activeStatusFilter, setActiveStatusFilter] = useState('All');
+  // Deep-link from the Tasks cleaning queue ("View All"): ?status=Cleaning
+  // pre-selects the status chip so the staff lands on the filtered catalog.
+  const [activeStatusFilter, setActiveStatusFilter] = useState(() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      return (s === 'In Cleaning' || s === 'Cleaning') ? 'Cleaning' : 'All';
+    } catch { return 'All'; }
+  });
+  useEffect(() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      if (s === 'In Cleaning' || s === 'Cleaning') {
+        setActiveStatusFilter('Cleaning');
+        setShowFilters(true);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedOccasions, setSelectedOccasions] = useState([]);
   const [activeSizeFilter, setActiveSizeFilter] = useState('All');

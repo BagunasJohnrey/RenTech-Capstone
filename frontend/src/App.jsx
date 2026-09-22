@@ -891,11 +891,13 @@ export default function RentechApp() {
               <TasksPage
                 transactions={transactions}
                 inventory={inventory}
+                role={viewRole}
                 onReturn={handleReturnClick}
                 onNavigate={goTab}
                 onRelease={handleReleaseRental}
                 onMarkClean={markItemClean}
                 onBulkClean={handleBulkClean}
+                onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))}
               />
             )}
             {activeTab === 'Catalog' && (

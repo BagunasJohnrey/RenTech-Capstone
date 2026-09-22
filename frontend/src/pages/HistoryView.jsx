@@ -50,7 +50,13 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const isStaff = role !== 'Customer';
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
-  const [activeStatusFilter, setActiveStatusFilter] = useState('All');
+  const initialStatus = (() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      return ALL_STATUSES.includes(s) ? s : 'All';
+    } catch { return 'All'; }
+  })();
+  const [activeStatusFilter, setActiveStatusFilter] = useState(initialStatus);
 
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -86,6 +92,21 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSearch]);
+
+  // Deep-link from Staff Tasks "View All" (Ready for Pickup → Reserved,
+  // Overdue → Overdue): ?status=Reserved / ?status=Overdue. Open the
+  // filter panel so it's obvious why the list is limited.
+  useEffect(() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      if (s && ALL_STATUSES.includes(s) && s !== activeStatusFilter) {
+        setActiveStatusFilter(s);
+        setShowFilters(true);
+      }
+    } catch {}
+    // only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Rows navigate to a real URL when the app provides a router callback;
   // otherwise fall back to the local modal (e.g. standalone usage).
