@@ -11,6 +11,9 @@ export const transactionsService = {
 
   get: (id) => api.get(`/transactions/${id}`),
 
+  // Staff activity timeline (who assisted / released / returned / edited).
+  audits: (id) => api.get(`/transactions/${id}/audits`),
+
   upcoming: () => api.get('/transactions/upcoming'),
 
   create: (payload) => api.post('/transactions', payload),

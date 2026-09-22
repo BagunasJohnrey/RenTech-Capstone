@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, MapPin } from 'lucide-react';
-import { customerLabel, customerPhone, itemLabel } from '../utils/format';
+import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, MapPin, UserCheck, PackageCheck, History } from 'lucide-react';
+import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
 import { normalizeTx, invalidateTxCache } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
@@ -42,6 +42,27 @@ function DetailRow({ label, value, highlight }) {
   );
 }
 
+// Staff attribution: backend includes assistedBy/releasedBy objects on the
+// full record; list rows only carry the ids, which the audit timeline can
+// fill in. Falls back gracefully when nobody is recorded (online bookings).
+const staffName = (staff) => {
+  if (!staff) return null;
+  if (typeof staff === 'object') return staff.name || null;
+  return null;
+};
+
+// Human-readable one-liner for an audit-log row in the staff timeline.
+const auditLabel = (log) => {
+  const nv = log?.newValue ?? {};
+  if (log?.action === 'create' && log?.entity === 'transaction') return 'Booking created';
+  if (log?.entity === 'payment') return `Payment recorded${nv.amount != null ? ` · ₱${Number(nv.amount).toLocaleString()}` : ''}`;
+  if (nv.released) return 'Item released (pickup)';
+  if (nv.status === 'Returned') return 'Item returned';
+  if (nv.status === 'Cancelled') return 'Booking cancelled';
+  if (log?.action === 'update' && log?.entity === 'transaction') return 'Booking updated';
+  return `${log?.action || 'Activity'} · ${log?.entity || 'record'}`;
+};
+
 export default function TransactionDetailModal({ transaction, onClose, fetchFull, role, onReturn }) {
   const flags = useFeatureFlags();
   // Freeze the page behind the sheet; the backdrop is tap-to-close only.
@@ -58,6 +79,14 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // Gate the body on enrichment: everything appears at once when the full
   // record lands — never staged pop-ins. Header/footer use instant list data.
   const [enriching, setEnriching] = useState(() => !!(transaction?.id && fetchFull));
+  // Staff audit timeline (who assisted / released / returned / edited).
+  // Staff-only endpoint — customers get a 403, which we swallow silently.
+  // Starts true so the body gate below holds the skeleton until the timeline
+  // lands alongside the record — both fire in parallel on mount, and the
+  // sheet appears once with everything instead of staged pop-ins.
+  const isStaffView = role === 'Admin' || role === 'Staff';
+  const [audits, setAudits] = useState([]);
+  const [auditsLoading, setAuditsLoading] = useState(true);
   // Smooth exits: play the slide/fade-out, then unmount. Every dismiss path
   // goes through these instead of cutting instantly.
   const [closing, setClosing] = useState(false);
@@ -152,19 +181,41 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     setTx(transaction);
   }, [transaction?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Enrichment + audit timeline fire in PARALLEL on open; the body gate below
+  // holds the skeleton until BOTH resolve, so the sheet (incl. Staff Audit)
+  // appears in one paint — never a staged pop-in of the Activity list after
+  // the rest of the body. Audit fetch is best-effort: a 403 (non-staff) or a
+  // network blip simply hides the section instead of blocking the sheet.
   useEffect(() => {
+    setAudits([]);
+    let cancelled = false;
+    const jobs = [];
     if (transaction?.id && fetchFull) {
-      let cancelled = false;
       setEnriching(true);
-      // normalize the full record so customerProfile is always present —
-      // otherwise the address flickers in from the list item then vanishes.
-      fetchFull(transaction.id)
-        .then((full) => { if (!cancelled && !closingRef.current) { setTx(normalizeTx(full)); setEnriching(false); } })
-        .catch(() => { if (!cancelled) setEnriching(false); });
-      return () => { cancelled = true; };
+      jobs.push(
+        // normalize the full record so customerProfile is always present —
+        // otherwise the address flickers in from the list item then vanishes.
+        fetchFull(transaction.id)
+          .then((full) => { if (!cancelled && !closingRef.current) setTx(normalizeTx(full)); })
+          .catch(() => {})
+          .finally(() => { if (!cancelled) setEnriching(false); })
+      );
+    } else {
+      setEnriching(false);
     }
-    setEnriching(false);
-  }, [transaction?.id, fetchFull]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (isStaffView && transaction?.id) {
+      setAuditsLoading(true);
+      jobs.push(
+        api.get(`/transactions/${transaction.id}/audits`)
+          .then((logs) => { if (!cancelled) setAudits(Array.isArray(logs) ? logs : []); })
+          .catch(() => { if (!cancelled) setAudits([]); })
+          .finally(() => { if (!cancelled) setAuditsLoading(false); })
+      );
+    } else {
+      setAuditsLoading(false);
+    }
+    return () => { cancelled = true; };
+  }, [transaction?.id, fetchFull, isStaffView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!tx) return null;
 
@@ -183,7 +234,22 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const rawCustomer = (tx.customer && typeof tx.customer === 'object' ? tx.customer : null)
     || (transaction?.customer && typeof transaction.customer === 'object' ? transaction.customer : null);
   const custAddr = tx.customerProfile?.address || rawCustomer?.address || transaction?.customerProfile?.address;
+  // Tap-to-call for staff (mirrors the History list). Null for customers and
+  // when no usable number exists.
+  const custTel = isStaffView ? customerTelLink(custProfile, tx.contact || tx.customerPhone || transaction?.contact || transaction?.customerPhone) : null;
   const custInitial = (customerLabel(tx.customer) || '?').charAt(0).toUpperCase();
+  // Staff audit: who assisted this booking (walk-ins included) and who
+  // physically released the item. Full record carries the objects; list rows
+  // may only carry the ids — the timeline backfills names from audit logs.
+  const assistedFromTx = staffName(tx.assistedBy);
+  const releasedFromTx = staffName(tx.releasedBy);
+  const assistedFromLog = audits.find((l) => l?.action === 'create')?.performedBy?.name || null;
+  const releasedFromLog = [...audits].reverse().find((l) => l?.newValue?.released)?.performedBy?.name || null;
+  const assistedName = assistedFromTx || assistedFromLog;
+  const releasedName = releasedFromTx || releasedFromLog;
+  // The body gate above holds the skeleton until the timeline lands, so by
+  // the time we render here the data is final — no loading branch needed.
+  const showStaffAudit = isStaffView && (assistedName || releasedName || audits.length > 0);
   const rentalTotal = Number(tx.rentalFee ?? tx.amount ?? 0) || 0;
   const paidSoFar = Number(tx.totalPaid ?? 0) || 0;
   const paidPct = rentalTotal > 0 ? Math.min(100, Math.round((paidSoFar / rentalTotal) * 100)) : 0;
@@ -290,9 +356,11 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
         </div>
 
         <div ref={bodyRef} className="p-5 sm:p-6 space-y-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
-          {enriching ? (
+          {(enriching || (isStaffView && auditsLoading)) ? (
             // Structural placeholder matching the body rhythm — swapped for
-            // the real sections in one paint, no staged pop-ins.
+            // the real sections in one paint, no staged pop-ins. Staff view
+            // holds until BOTH the record and the timeline land (they race in
+            // parallel), so Activity never pops in after the rest of the body.
             <div className="space-y-6" aria-hidden="true">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Skeleton className="h-[104px] rounded-2xl" />
@@ -316,24 +384,41 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   <p className="font-bold text-gray-900 truncate">{customerLabel(tx.customer) || '—'}</p>
                 </div>
               </div>
-              {/* Contact rows render only once the number/address is actually
-                  received — never placeholders. */}
-              {(custPhone || custAddr) && (
-                <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
-                  {custPhone && (
+              {/* Contact rows: number is tap-to-call for staff (mirrors the
+                  History list). Walk-ins booked before the contact handoff
+                  fix have no phone/address on file — say so explicitly so it
+                  reads as missing data, not a hidden UI. */}
+              <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
+                {custPhone ? (
+                  custTel ? (
+                    <a href={custTel} className="flex items-center gap-1.5 text-xs text-gray-500 min-w-0 hover:text-emerald-600 transition-colors" aria-label={`Call ${custPhone}`}>
+                      <Phone size={12} className="text-gray-400 shrink-0" />
+                      <span className="truncate font-semibold underline decoration-dotted underline-offset-2">{custPhone}</span>
+                    </a>
+                  ) : (
                     <p className="flex items-center gap-1.5 text-xs text-gray-500 min-w-0">
                       <Phone size={12} className="text-gray-400 shrink-0" />
                       <span className="truncate">{custPhone}</span>
                     </p>
-                  )}
-                  {custAddr && (
-                    <p className="flex items-center gap-1.5 text-xs text-gray-500 min-w-0">
-                      <MapPin size={12} className="text-gray-400 shrink-0" />
-                      <span className="truncate uppercase">{custAddr}</span>
-                    </p>
-                  )}
-                </div>
-              )}
+                  )
+                ) : (
+                  <p className="flex items-center gap-1.5 text-xs text-amber-600 min-w-0">
+                    <Phone size={12} className="shrink-0" />
+                    <span className="italic">No contact number on file</span>
+                  </p>
+                )}
+                {custAddr ? (
+                  <p className="flex items-center gap-1.5 text-xs text-gray-500 min-w-0">
+                    <MapPin size={12} className="text-gray-400 shrink-0" />
+                    <span className="truncate uppercase">{custAddr}</span>
+                  </p>
+                ) : (
+                  <p className="flex items-center gap-1.5 text-xs text-amber-600 min-w-0">
+                    <MapPin size={12} className="shrink-0" />
+                    <span className="italic">No address on file</span>
+                  </p>
+                )}
+              </div>
             </div>
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
               <div className="flex items-center gap-3">
@@ -359,6 +444,64 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               </div>
             </div>
           </div>
+
+          {/* Staff audit — who assisted this booking (walk-ins included)
+              and who released the item at pickup, plus the full activity
+              timeline. Staff/Admin only; never rendered for customers. */}
+          {showStaffAudit && (
+            <div>
+              <div className="flex items-center gap-1.5 text-gray-400 mb-3">
+                <UserCheck size={13} />
+                <span className="text-[10px] font-bold uppercase tracking-wide">Staff Audit</span>
+              </div>
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-4 space-y-3">
+                {assistedName && (
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
+                      <UserCheck size={15} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Assisted by</p>
+                      <p className="text-sm font-bold text-gray-900 truncate">{assistedName}</p>
+                    </div>
+                  </div>
+                )}
+                {releasedName && (
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                      <PackageCheck size={15} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Released by</p>
+                      <p className="text-sm font-bold text-gray-900 truncate">{releasedName}</p>
+                    </div>
+                  </div>
+                )}
+                {!assistedName && !releasedName && audits.length === 0 && (
+                  <p className="text-xs text-gray-400 italic">No staff activity recorded (online booking).</p>
+                )}
+                {audits.length > 0 && (
+                  <div className={(assistedName || releasedName) ? 'pt-3 border-t border-gray-100' : ''}>
+                    <p className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">
+                      <History size={11} /> Activity
+                    </p>
+                    <ol className="relative space-y-3 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200">
+                      {audits.map((log) => (
+                        <li key={log.id} className="relative pl-7">
+                          <span className={`absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-4 ${log?.newValue?.released ? 'bg-blue-500 ring-blue-100' : log?.action === 'create' ? 'bg-violet-500 ring-violet-100' : log?.entity === 'payment' ? 'bg-emerald-500 ring-emerald-100' : 'bg-gray-300 ring-gray-100'}`} />
+                          <p className="text-xs font-bold text-gray-900">{auditLabel(log)}</p>
+                          <p className="text-[11px] text-gray-500">
+                            {log?.performedBy?.name || 'System'}
+                            {log?.createdAt ? ` · ${fmtDate(log.createdAt)}` : ''}
+                          </p>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Schedule timeline */}
           <div>

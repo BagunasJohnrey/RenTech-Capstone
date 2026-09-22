@@ -53,12 +53,17 @@ const CUSTOMERS = {
   'c-pedro': { id: 'c-pedro', name: 'Pedro Reyes', email: 'pedro@example.com', phone: '09170002222', address: 'Calatagan, Batangas' },
 };
 
+const DEMO_ASSISTED = { id: 'demo-staff-profile', name: 'Kai (Demo Staff)' };
+const DEMO_RELEASED = { id: 's-2', name: 'Ana (Demo Staff 2)' };
+
 const tx = (id, itemId, customerId, status, startOff, dueOff, fee, paid) => {
   const item = items.find((i) => i.id === itemId);
   const customer = CUSTOMERS[customerId];
   return {
     id, txNumber: id, itemId, status,
     customerId, processedById: 'demo-staff-profile',
+    assistedById: 'demo-staff-profile', assistedBy: { ...DEMO_ASSISTED },
+    releasedById: null, releasedBy: null,
     rentalDate: day(startOff), dueDate: day(dueOff),
     date: day(startOff),
     rentalFee: fee, downpayment: Math.round(fee * 0.5), totalPaid: paid,
@@ -435,8 +440,30 @@ function route(method, path, body) {
   }
   if (P(/^\/transactions\/[0-9a-f-]+\/release$/) && method === 'PUT') {
     const t = transactions.find((x) => path.includes(x.id));
-    if (t) t.releasePhoto = body.releasePhoto ?? 'demo/release.jpg';
+    if (t) {
+      t.releasePhoto = body.releasePhoto ?? 'demo/release.jpg';
+      if (!t.releasedById) { t.releasedById = 's-2'; t.releasedBy = { ...DEMO_RELEASED }; }
+    }
     return { value: clone(t ?? {}) };
+  }
+  if (P(/^\/transactions\/[0-9a-f-]+\/audits$/) && method === 'GET') {
+    const t = transactions.find((x) => path.includes(x.id));
+    const log = [];
+    if (t) {
+      log.push({
+        id: 'demo-a1', action: 'create', entity: 'transaction',
+        oldValue: null, newValue: { transactionId: t.id, assistedById: t.assistedById ?? 'demo-staff-profile' },
+        createdAt: t.createdAt, performedBy: { ...DEMO_ASSISTED, role: 'Staff' },
+      });
+      if (t.releasePhoto) {
+        log.push({
+          id: 'demo-a2', action: 'update', entity: 'transaction',
+          oldValue: { status: 'Reserved' }, newValue: { status: 'Active', released: true, releasedById: t.releasedById ?? 's-2' },
+          createdAt: t.createdAt, performedBy: { ...(t.releasedBy ?? DEMO_RELEASED), role: 'Staff' },
+        });
+      }
+    }
+    return { value: log };
   }
   if (P(/^\/transactions\/[0-9a-f-]+\/cancel$/) && method === 'PUT') {
     const t = transactions.find((x) => path.includes(x.id));
