@@ -28,6 +28,10 @@ export default function ItemForm({
   statusOptions = ['Available', 'Cleaning', 'OutOfService'],
   submitLabel = 'Save',
   showCategory = false,
+  // Distinct categories already saved in inventory (passed from App) — custom
+  // categories staff added before appear as regular options, so the dropdown
+  // grows the more the boutique uses it.
+  knownCategories = [],
   showOccasions = false,
   showPhoto = false,
   showSale = false,
@@ -40,13 +44,22 @@ export default function ItemForm({
   const [name, setName] = useState(initial.name ?? '');
   const [price, setPrice] = useState(initial.price ?? '');
   const [status, setStatus] = useState(initial.status ?? 'Available');
-  // A stored category outside the preset list (e.g. from an older custom
-  // entry) opens the form in "Custom" mode with the value preserved.
+  // Saved customs (from inventory) join the presets in the dropdown.
+  const savedExtras = [...new Set(
+    (knownCategories || [])
+      .map((c) => String(c ?? '').trim())
+      .filter((c) => c && !ITEM_TYPES.includes(c))
+  )].sort((a, b) => a.localeCompare(b));
+  const categoryOptions = [...ITEM_TYPES, ...savedExtras];
+  // A stored category outside the preset + saved lists (e.g. typed elsewhere)
+  // opens the form in "Custom" mode with the value preserved.
   const [category, setCategory] = useState(() =>
-    initial.category && !ITEM_TYPES.includes(initial.category) ? CUSTOM_OPTION : (initial.category ?? 'Gown')
+    initial.category && !ITEM_TYPES.includes(initial.category) && !(knownCategories || []).includes(initial.category)
+      ? CUSTOM_OPTION
+      : (initial.category ?? 'Gown')
   );
   const [customCategory, setCustomCategory] = useState(() =>
-    initial.category && !ITEM_TYPES.includes(initial.category) ? initial.category : ''
+    initial.category && !categoryOptions.includes(initial.category) ? initial.category : ''
   );
   const effectiveCategory = category === CUSTOM_OPTION ? customCategory.trim() : category;
   const [occasions, setOccasions] = useState(() => normalizeOccasions(initial.occasions));
@@ -239,23 +252,11 @@ export default function ItemForm({
                   onChange={(e) => setCategory(e.target.value)}
                   className={`${inputClass} cursor-pointer`}
                 >
-                  {ITEM_TYPES.map((type) => (
+                  {categoryOptions.map((type) => (
                     <option key={type} value={type}>{type}</option>
                   ))}
                   <option value={CUSTOM_OPTION}>Custom…</option>
                 </select>
-                {category === CUSTOM_OPTION && (
-                  <input
-                    type="text"
-                    autoFocus
-                    value={customCategory}
-                    onChange={(e) => setCustomCategory(e.target.value)}
-                    maxLength={40}
-                    placeholder="e.g. Kimono, Tuxedo"
-                    aria-label="Custom category name"
-                    className={`${inputClass} mt-2 animate-in fade-in duration-150`}
-                  />
-                )}
               </div>
             )}
             <div className={`space-y-1.5 ${showCategory ? '' : 'col-span-2'}`}>
@@ -271,8 +272,23 @@ export default function ItemForm({
               </select>
             </div>
           </div>
+          {/* Custom category — full-width, larger field. Once saved, the value
+              joins the dropdown above (and the catalog filters) automatically. */}
           {showCategory && category === CUSTOM_OPTION && (
-            <p className="-mt-2 text-[11px] text-gray-400">Custom categories appear automatically in the catalog filters.</p>
+            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom category name</label>
+              <input
+                type="text"
+                autoFocus
+                value={customCategory}
+                onChange={(e) => setCustomCategory(e.target.value)}
+                maxLength={40}
+                placeholder="e.g. Kimono, Tuxedo, Debut Gown"
+                aria-label="Custom category name"
+                className="w-full bg-white border border-gray-200/80 rounded-2xl px-5 py-3.5 text-[15px] font-semibold text-gray-900 placeholder-gray-400 placeholder:font-medium focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15 transition-all"
+              />
+              <p className="text-[11px] text-gray-400">It will stay in the category list for next time.</p>
+            </div>
           )}
 
           {showOccasions && (

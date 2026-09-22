@@ -8,7 +8,7 @@ import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
-import { customerLabel, customerTelLink, itemLabel } from '../utils/format';
+import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
 import { isReleased, getReleasePhoto, invalidateTxCache } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import ItemImage from '../components/ItemImage';
@@ -51,7 +51,17 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [releaseTx, setReleaseTx] = useState(null);
   const [editRental, setEditRental] = useState(null);       // tx staff is editing (booking dates/notes + customer)
   const [smsModalTx, setSmsModalTx] = useState(null);
+  const [smsMessage, setSmsMessage] = useState('');
   const [sendingSms, setSendingSms] = useState(false);
+
+  const openSmsModal = (tx) => {
+    setSmsMessage(defaultOverdueMessage(tx));
+    setSmsModalTx(tx);
+  };
+  const closeSmsModal = () => {
+    setSmsModalTx(null);
+    setSmsMessage('');
+  };
   const itemsPerPage = 10;
 
   // One-shot search prefill (e.g. jumping from Item Performance): apply it,
@@ -101,7 +111,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     // of the menu there (same rule as Return, which is inline-or-menu only).
     if (tel && tx.status !== 'Overdue') items.push({ key: 'call', icon: Phone, label: 'Call customer', href: tel, tone: 'text-emerald-600' });
     if (tx.status === 'Overdue' && isStaff) {
-      items.push({ key: 'sms', icon: MessageCircle, label: 'Send SMS', onSelect: () => setSmsModalTx(tx) });
+      items.push({ key: 'sms', icon: MessageCircle, label: 'Send SMS', onSelect: () => openSmsModal(tx) });
     }
     // Overdue rows lead with the call action inline, so the return flow
     // lives here instead of crowding the row (see renderRowActions).
@@ -212,15 +222,17 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const handleContactAdmin = (payload) => customerService.contactAdmin(payload);
 
   const handleSendSMS = async (tx) => {
+    const message = smsMessage.trim();
+    if (!message || sendingSms) return;
     setSendingSms(true);
     try {
       await api.post('/sms/send', {
         profileId: tx.customerId,
         transactionId: tx.id,
-        message: `Hi ${customerLabel(tx.customer)}, your rental of ${itemLabel(tx.item)} is now overdue. Please return immediately to minimize penalties. Thank you!`,
+        message,
       });
       setSendingSms(false);
-      setSmsModalTx(null);
+      closeSmsModal();
       alert('SMS sent successfully.');
     } catch (err) {
       setSendingSms(false);
@@ -622,10 +634,10 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         />
       )}
 
-      {/* SMS Confirmation Modal */}
+      {/* SMS Confirmation Modal — message is editable per send */}
       {smsModalTx && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-          onClick={() => setSmsModalTx(null)}>
+          onClick={closeSmsModal}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
             onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center p-6 border-b border-gray-100/80">
@@ -633,7 +645,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 <h3 className="font-bold text-lg text-gray-900">Confirm SMS</h3>
                 <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
               </div>
-              <button onClick={() => setSmsModalTx(null)}
+              <button onClick={closeSmsModal}
                 className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
                 <X size={20} />
               </button>
@@ -644,11 +656,29 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Due Date:</span> <strong className="text-red-500">{smsModalTx.dueDate || smsModalTx.date}</strong></p>
               </div>
-              <p className="text-xs text-gray-500 text-center">The SMS will say: "Please return your rented item immediately."</p>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
+                  <button onClick={() => setSmsMessage(defaultOverdueMessage(smsModalTx))}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Restore the default message">
+                    <RotateCcw size={11} /> Reset
+                  </button>
+                </div>
+                <textarea
+                  value={smsMessage}
+                  onChange={(e) => setSmsMessage(e.target.value.slice(0, 1600))}
+                  rows={4}
+                  className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm leading-relaxed min-h-[100px] focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all"
+                />
+                <p className={`text-[11px] text-right font-medium ${smsMessage.length > 160 ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {smsMessage.length}/1600{ smsMessage.length > 160 ? ` · ~${Math.ceil(smsMessage.length / 160)} segments` : '' }
+                </p>
+              </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={() => setSmsModalTx(null)}
+                <button onClick={closeSmsModal}
                   className="flex-1 py-2.5 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-full transition-colors">Cancel</button>
-                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms}
+                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms || !smsMessage.trim()}
                   className="flex-1 py-2.5 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-full transition-colors shadow-sm shadow-red-500/20">
                   {sendingSms ? 'Sending...' : 'Send SMS'}
                 </button>

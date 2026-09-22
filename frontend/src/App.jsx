@@ -192,6 +192,17 @@ export default function RentechApp() {
   // Editable customer profile + sync with auth profile — useCustomerProfile (SoC).
   const { customerInfo, syncFromProfile, updateCustomer } = useCustomerProfile(updateProfile);
 
+  // Distinct saved categories (presets + any custom ones staff added) so the
+  // Add/Edit item form keeps every used category in its dropdown.
+  const knownCategories = useMemo(() => {
+    const seen = new Set();
+    for (const item of inventory || []) {
+      const c = typeof item?.category === 'string' ? item.category.trim() : '';
+      if (c) seen.add(c);
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [inventory]);
+
   // Overdue badge count for Tasks nav
   const overdueCount = useMemo(() => {
     if (!transactions.length) return 0;
@@ -940,6 +951,7 @@ export default function RentechApp() {
             })()}
             submitLabel="Save Changes"
             showCategory
+            knownCategories={knownCategories}
             showPhoto
             showOccasions
             showSale={role === 'Admin'}
@@ -953,6 +965,7 @@ export default function RentechApp() {
             statusOptions={['Available', 'Cleaning', 'OutOfService']}
             submitLabel="Add Item"
             showCategory
+            knownCategories={knownCategories}
             showOccasions
             showPhoto
             showSale={role === 'Admin'}

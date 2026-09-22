@@ -24,3 +24,9 @@ export function itemLabel(i) {
   if (typeof i === 'object') return i.name || '';
   return i;
 }
+
+// Default staff-composed overdue nudge. Shown pre-filled in the manual-SMS
+// modal so staff can tweak it per customer before sending.
+export function defaultOverdueMessage(tx) {
+  return `Hi ${customerLabel(tx?.customer)}, your rental of ${itemLabel(tx?.item)} is now overdue. Please return immediately to minimize penalties. Thank you!`;
+}
