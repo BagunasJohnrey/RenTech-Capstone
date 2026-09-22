@@ -6,6 +6,7 @@ import * as inventoryService from '../services/inventory.service.js';
 import { getInventoryAnalytics } from '../services/inventoryAnalytics.service.js';
 import * as optimization from '../services/optimization.service.js';
 import * as aiReportService from '../services/aiReport.service.js';
+import * as aiPromoSuggestionService from '../services/aiPromoSuggestion.service.js';
 import type { CategoryProjection, AnalyticsItemShape } from '../services/optimization.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
@@ -126,3 +127,97 @@ export async function deleteReport(req: AuthenticatedRequest, res: Response, nex
 export const reportSchema = z.object({
   body: z.object({}).optional(),
 });
+
+export const suggestPromosSchema = z.object({
+  body: z.object({}).optional(),
+});
+
+export async function suggestPromos(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const [items, activePromos, kpis, insights] = await Promise.all([
+      inventoryService.listItems(),
+      import('../services/promoCodes.service.js').then(m => m.listPromoCodes()),
+      dashboardService.getKpis().catch(() => ({})),
+      dashboardService.getInsights().catch(() => ({})),
+    ]);
+
+    const inventory = items.slice(0, 80).map(i => ({
+      id: i.id,
+      name: i.name,
+      category: i.category,
+      price: i.price,
+      rentalCount: i.rentalCount ?? 0,
+      onSale: i.onSale,
+      status: i.status,
+    }));
+
+    const promos = (Array.isArray(activePromos) ? activePromos : [])
+      .filter((p: { isActive?: boolean }) => p.isActive !== false)
+      .map((p: { code: string; discountPct: number }) => ({ code: p.code, discountPct: p.discountPct }));
+
+    const now = new Date();
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const currentMonth = monthNames[now.getMonth()] + ' ' + now.getFullYear();
+
+    // Enhanced context: KPIs + insights for smarter suggestions
+    const revenueByCategory = (insights as Record<string, unknown>)?.revenueByCategory as Record<string, number> | undefined;
+    const underperforming = (insights as Record<string, unknown>)?.underperforming as { name: string; category: string; rentals: number }[] | undefined;
+    const topRented = (insights as Record<string, unknown>)?.topRented as { name: string; category: string; rentals: number }[] | undefined;
+
+    const result = await geminiService.suggestPromos({
+      inventory,
+      activePromos: promos,
+      currentMonth,
+      kpis: kpis as Record<string, number> || {},
+      revenueByCategory,
+      underperforming,
+      topRented,
+    });
+
+    // Auto-save successful suggestions for history
+    if (result.source === 'ai' && (result.suggestions.itemSuggestions?.length || result.suggestions.voucherSuggestions?.length)) {
+      try {
+        const saved = await aiPromoSuggestionService.savePromoSuggestion({
+          suggestions: result.suggestions,
+          source: result.source,
+          provider: result.provider ?? null,
+          model: result.model ?? null,
+          createdBy: req.user?.id ?? null,
+          currentMonth,
+        });
+        return res.json({ ...result, suggestionId: saved.id });
+      } catch {
+        // fall through — return suggestions without history
+      }
+    }
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listSavedSuggestions(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await aiPromoSuggestionService.listPromoSuggestions());
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getSavedSuggestion(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await aiPromoSuggestionService.getPromoSuggestion(String(req.params.id)));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteSavedSuggestion(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const removed = await aiPromoSuggestionService.deletePromoSuggestion(String(req.params.id));
+    if (!removed) throw new AppError(404, 'Suggestion not found');
+    res.json({ message: 'Suggestion deleted' });
+  } catch (err) {
+    next(err);
+  }
+}

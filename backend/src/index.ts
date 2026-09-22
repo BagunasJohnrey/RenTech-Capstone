@@ -133,6 +133,9 @@ app.listen(env.PORT, () => {
   // instead of failing with "Bucket not found" after a fresh restart.
   ensureBackupBucket().catch((err) => console.error('Backup bucket init failed:', err));
   ensureAiReportsBucket().catch((err) => console.error('Reports bucket init failed:', err));
+  import('./services/aiPromoSuggestion.service.js').then(m =>
+    m.ensurePromoSuggestionsBucket().catch((err) => console.error('Promo suggestions bucket init failed:', err))
+  );
 
   // Pre-warm the dashboard cache so the first page load (AI Insights, KPIs,
   // revenue charts) is a cache hit instead of paying the cold-connection +

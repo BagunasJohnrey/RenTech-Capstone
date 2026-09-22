@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, SIGN_IN_PATH, GUEST_COLLECTION_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
-  ClipboardList, AlertTriangle
+  ClipboardList, AlertTriangle, Tag
 } from 'lucide-react';
 
 import { useAuth } from './hooks/useAuth';
@@ -48,6 +48,7 @@ const DashboardView = lazy(() => import('./pages/DashboardView'));
 const AIInsightsView = lazy(() => import('./pages/AIInsightsView'));
 const InventoryAnalyticsView = lazy(() => import('./pages/InventoryAnalyticsView'));
 const ProfileSettingsView = lazy(() => import('./pages/ProfileSettingsView'));
+const PromotionsView = lazy(() => import('./pages/PromotionsView'));
 const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
 const NotificationsView = lazy(() => import('./pages/NotificationsView'));
 const MessagesView = lazy(() => import('./pages/MessagesView'));
@@ -64,6 +65,7 @@ const navItems = {
   Admin: [
     { id: 'Dashboard', icon: LayoutGrid, label: 'Dashboard' },
     { id: 'Catalog', icon: ShoppingBag, label: 'Inventory' },
+    { id: 'Promotions', icon: Tag, label: 'Promotions' },
     { id: 'History', icon: Clock, label: 'Transactions' },
     { id: 'AI Insights', icon: Sparkles, label: 'Reports', special: true },
     // Messages inbox intentionally has no nav entry (desktop sidebar + mobile
@@ -75,6 +77,7 @@ const navItems = {
     { id: 'Dashboard', icon: LayoutGrid, label: 'Dashboard' },
     { id: 'Tasks', icon: ClipboardList, label: 'Tasks' },
     { id: 'Catalog', icon: ShoppingBag, label: 'Catalog' },
+    { id: 'Promotions', icon: Tag, label: 'Promotions' },
     { id: 'History', icon: Clock, label: 'Logs & Returns' },
     { id: 'Settings', icon: Settings, label: 'Settings' },
   ],
@@ -933,6 +936,9 @@ export default function RentechApp() {
             )}
             {activeTab === 'AI Insights' && (
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} />
+            )}
+            {activeTab === 'Promotions' && (
+              <PromotionsView inventory={inventory} onEditItem={setEditingItem} />
             )}
             {(activeTab === 'Profile' || activeTab === 'Settings') && (
               <ProfileSettingsView

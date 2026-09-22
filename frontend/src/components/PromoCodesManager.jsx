@@ -3,12 +3,21 @@ import { Plus, Trash2, Percent, CheckCircle2, XCircle } from 'lucide-react';
 import { api } from '../utils/api';
 import { SkeletonList } from '../components/Skeleton';
 
-export default function PromoCodesManager() {
+export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
   const [codes, setCodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ code: '', discountPct: 10, maxUses: '', expiresAt: '' });
   const [msg, setMsg] = useState('');
+
+  // When an AI suggestion is applied, open the form pre-filled
+  useEffect(() => {
+    if (initialForm) {
+      setForm(prev => ({ ...prev, ...initialForm }));
+      setShowForm(true);
+      if (onClearInitialForm) onClearInitialForm();
+    }
+  }, [initialForm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchCodes = () => {
     api.get('/promo-codes').then(data => { if (Array.isArray(data)) setCodes(data); }).catch(() => {}).finally(() => setLoading(false));

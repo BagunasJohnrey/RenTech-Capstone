@@ -709,6 +709,186 @@ CORRECTION REQUIRED: The previous draft was rejected because it contained a ₱ 
   };
 }
 
+// ─── AI Promo Suggestions ────────────────────────────────────────────────
+
+const PROMO_SUGGEST_SYSTEM = `You are a promotions advisor for Mylene's Boutique, a Philippine clothing rental shop (gowns, suits, barongs, Filipiniana, costumes) in Balayan, Batangas.
+
+Your job: analyze the boutique's inventory performance, revenue data, and seasonal context to suggest two types of promotions:
+
+1. ITEM SALE SUGGESTIONS — specific items to put on sale
+2. VOUCHER CODE SUGGESTIONS — promo codes customers can use at checkout
+
+ANALYSIS APPROACH:
+- Cross-reference revenue by category with inventory to find underperforming stock
+- Use rental counts to identify stagnant items that need a push
+- Consider seasonal Philippine events (graduations in May, weddings Feb-May, holidays Dec, etc.)
+- Factor in KPIs: utilization rate, overdue rate, and revenue trends
+- Suggest voucher codes that drive volume (graduation bundles, holiday promos, off-peak retention)
+- Every suggestion MUST include a clear rationale explaining the WHY with data backing
+
+RULES:
+- Only suggest items that exist in the provided inventory list — never invent items
+- Do NOT duplicate current active promos
+- Suggest realistic discount ranges (10-30%)
+- Voucher codes should be short, memorable, and relevant (e.g., GRAD2026, SUMMER15, WEDDING10)
+- Output ONLY valid JSON matching the schema below — no markdown, no explanation
+
+OUTPUT SCHEMA (strict JSON):
+{
+  "itemSuggestions": [
+    {
+      "itemId": <number>,
+      "itemName": "<exact item name from inventory>",
+      "discountPct": <number 10-30>,
+      "suggestedExpiryDays": <number>,
+      "rationale": "<why — reference specific data like rental count, revenue, seasonal event>"
+    }
+  ],
+  "voucherSuggestions": [
+    {
+      "code": "<UPPERCASE_CODE>",
+      "discountPct": <number 10-30>,
+      "maxUses": <number>,
+      "expiresInDays": <number>,
+      "rationale": "<why — reference specific data like seasonal event, retention need, volume goal>"
+    }
+  ]
+}`;
+
+export interface PromoSuggestion {
+  itemSuggestions: {
+    itemId: number;
+    itemName: string;
+    discountPct: number;
+    suggestedExpiryDays: number;
+    rationale: string;
+  }[];
+  voucherSuggestions: {
+    code: string;
+    discountPct: number;
+    maxUses: number;
+    expiresInDays: number;
+    rationale: string;
+  }[];
+}
+
+function parsePromoSuggestions(text: string): PromoSuggestion | null {
+  try {
+    // Strip markdown fences if the model wraps the JSON
+    const cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.itemSuggestions) && Array.isArray(parsed.voucherSuggestions)) {
+      return parsed as PromoSuggestion;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function suggestPromos(data: {
+  inventory: { id: number; name: string; category: string; price: number; rentalCount: number; onSale: boolean; status: string }[];
+  activePromos: { code: string; discountPct: number }[];
+  currentMonth: string;
+  kpis?: Record<string, number>;
+  revenueByCategory?: Record<string, number>;
+  underperforming?: { name: string; category: string; rentals: number }[];
+  topRented?: { name: string; category: string; rentals: number }[];
+}): Promise<{ suggestions: PromoSuggestion; source: string; provider?: string; model?: string; retryable?: boolean }> {
+  if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
+    return {
+      suggestions: { itemSuggestions: [], voucherSuggestions: [] },
+      source: 'fallback',
+    };
+  }
+
+  const inventoryList = data.inventory
+    .filter(i => i.status === 'Available' || i.status === 'Rented')
+    .map(i => `ID:${i.id} | ${i.name} | ${i.category} | ₱${i.price} | ${i.rentalCount} rentals | ${i.onSale ? 'ON SALE' : 'not on sale'}`)
+    .join('\n');
+  const activePromoList = data.activePromos.length
+    ? data.activePromos.map(p => `${p.code} (${p.discountPct}% off)`).join(', ')
+    : 'None';
+
+  const userPrompt = `Current month: ${data.currentMonth}
+
+ACTIVE PROMOS (do NOT duplicate these):
+${activePromoList}
+
+INVENTORY (only suggest items from this list):
+${inventoryList}
+${data.kpis && Object.keys(data.kpis).length ? `\nKEY PERFORMANCE INDICATORS:\n${JSON.stringify(data.kpis)}` : ''}
+${data.revenueByCategory && Object.keys(data.revenueByCategory).length ? `\nREVENUE BY CATEGORY:\n${JSON.stringify(data.revenueByCategory)}` : ''}
+${data.underperforming?.length ? `\nUNDERPERFORMING ITEMS (low rental count — prioritize for sales):\n${data.underperforming.map(i => `${i.name} (${i.category}) — ${i.rentals} rentals`).join('\n')}` : ''}
+${data.topRented?.length ? `\nTOP RENTED ITEMS (demand leaders — consider for promo bundling):\n${data.topRented.map(i => `${i.name} (${i.category}) — ${i.rentals} rentals`).join('\n')}` : ''}
+
+SEASONAL CONTEXT for the Philippines:
+- January: New Year, Sinulog/Festival season
+- February: Valentine's Day, love/wedding theme
+- March-April: Summer, Holy Week
+- May: Graduation season (debuts, graduation ceremonies)
+- June-August: Rainy season, corporate events
+- September-October: BER months, early holiday prep
+- November: Undas (All Saints'), early Christmas
+- December: Christmas parties, year-end galas, Simbang Gabi
+
+Based on all the data above, suggest item sales and voucher codes. Return ONLY the JSON schema.`;
+
+  const callWithProvider = async (callFn: (system: string, history: { role: string; text: string }[], latest: string) => Promise<string | { text: string; model: string }>) => {
+    const result = await callFn(PROMO_SUGGEST_SYSTEM, [], userPrompt);
+    const text = typeof result === 'string' ? result : result.text;
+    const model = typeof result === 'string' ? undefined : result.model;
+    const parsed = parsePromoSuggestions(text);
+    if (!parsed) throw new Error('Failed to parse AI promo suggestions');
+    return { suggestions: parsed, model };
+  };
+
+  if (env.GEMINI_API_KEY) {
+    try {
+      const { suggestions, model } = await callWithProvider(async (sys, _h, latest) => callGemini(sys, [], latest));
+      return { suggestions, source: 'ai', provider: 'gemini', model: model ?? 'gemini-2.5-flash' };
+    } catch (err) {
+      if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
+        return isRateLimited(err)
+          ? { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error', retryable: true as never }
+          : { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+      }
+    }
+  }
+
+  if (env.GROQ_API_KEY) {
+    try {
+      const { suggestions, model } = await callWithProvider(async (sys, _h, latest) => {
+        const r = await callGroq(sys, [], latest);
+        return { text: r.text, model: r.model };
+      });
+      return { suggestions, source: 'ai', provider: 'groq', model };
+    } catch (err) {
+      if (!env.OPENROUTER_API_KEY) {
+        return isRateLimited(err)
+          ? { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error', retryable: true as never }
+          : { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+      }
+    }
+  }
+
+  if (env.OPENROUTER_API_KEY) {
+    try {
+      const { suggestions, model } = await callWithProvider(async (sys, _h, latest) => {
+        const r = await callOpenRouter(sys, [], latest);
+        return { text: r.text, model: r.model };
+      });
+      return { suggestions, source: 'ai', provider: 'openrouter', model };
+    } catch (err) {
+      return isRateLimited(err)
+        ? { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error', retryable: true as never }
+        : { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+    }
+  }
+
+  return { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+}
+
 // Anti-hallucination guard: every ₱/Php amount in the generated report must
 // appear in the source data (within 5% tolerance to allow K/M rounding). If the
 // model invents a figure, the report is rejected rather than shown — the UI

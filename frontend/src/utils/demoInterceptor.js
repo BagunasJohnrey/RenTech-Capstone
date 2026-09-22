@@ -116,6 +116,8 @@ let demoReports = [
   { id: 'rpt-demo-1', createdAt: new Date(Date.now() - 4 * 86400000).toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: revenue steady, 2 overdue rentals need attention.', length: 298, uploaded: true, origin: 'cloud' },
 ];
 
+let demoPromoSuggestions = [];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -596,6 +598,48 @@ function route(method, path, body) {
       },
     };
   }
+
+  // ---- Saved promo suggestions (demo) ----
+  if (path === '/ai/promo-suggestions' && method === 'GET') {
+    return { value: clone(demoPromoSuggestions) };
+  }
+  if (P(/^\/ai\/promo-suggestions\/(.+)$/) && method === 'GET') {
+    const id = P(/^\/ai\/promo-suggestions\/(.+)$/)[1];
+    const found = demoPromoSuggestions.find(s => s.id === id);
+    if (!found) return { status: 404, error: 'Not found (demo)' };
+    return { value: clone(found) };
+  }
+  if (P(/^\/ai\/promo-suggestions\/(.+)$/) && method === 'DELETE') {
+    const id = P(/^\/ai\/promo-suggestions\/(.+)$/)[1];
+    demoPromoSuggestions = demoPromoSuggestions.filter(s => s.id !== id);
+    return { value: { message: 'Deleted (demo)' } };
+  }
+  // When suggest-promos runs, also save to demo list
+  if (path === '/ai/suggest-promos') {
+    const suggestionId = 'promo-demo-' + Date.now();
+    const now = new Date();
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const demoSuggestions = {
+      itemSuggestions: [
+        { itemId: items[0]?.id || 1, itemName: items[0]?.name || 'Floral Gown Set', discountPct: 20, suggestedExpiryDays: 30, rationale: 'Wedding season peak — gowns have 40% lower utilization than expected this month.' },
+        { itemId: items[2]?.id || 3, itemName: items[2]?.name || 'Classic Barong', discountPct: 15, suggestedExpiryDays: 15, rationale: 'Graduation month — barong demand spikes 2x in May-June.' },
+      ],
+      voucherSuggestions: [
+        { code: 'GRAD2026', discountPct: 10, maxUses: 50, expiresInDays: 30, rationale: 'Graduation month promo to drive bulk bookings from groups and families.' },
+        { code: 'SUMMER15', discountPct: 15, maxUses: 30, expiresInDays: 60, rationale: 'Off-peak season retention — encourage repeat customers during slower months.' },
+      ],
+    };
+    const savedMeta = {
+      id: suggestionId, createdAt: now.toISOString(), createdBy: 'demo-admin', source: 'ai', provider: 'demo', model: 'demo',
+      currentMonth: monthNames[now.getMonth()] + ' ' + now.getFullYear(),
+      itemCount: demoSuggestions.itemSuggestions.length, voucherCount: demoSuggestions.voucherSuggestions.length,
+      excerpt: `${demoSuggestions.itemSuggestions.length} item sale idea(s), ${demoSuggestions.voucherSuggestions.length} voucher code(s)`,
+      uploaded: true, origin: 'both', suggestions: demoSuggestions,
+    };
+    demoPromoSuggestions.unshift(savedMeta);
+    return { value: { suggestions: demoSuggestions, source: 'ai', provider: 'demo', model: 'demo', suggestionId } };
+  }
+
   if (path === '/ai/generate-report') {
     const created = { id: 'rpt-demo-' + Date.now(), createdAt: new Date().toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: Gowns drive revenue, Barong needs promotion, demand trending up.', length: 420, uploaded: true, origin: 'both' };
     demoReports.unshift(created);

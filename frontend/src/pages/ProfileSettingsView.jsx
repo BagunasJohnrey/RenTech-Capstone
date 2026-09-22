@@ -1,6 +1,4 @@
 import { useState } from 'react';
-import PromoCodesManager from '../components/PromoCodesManager';
-import BulkSaleManager from '../components/BulkSaleManager';
 import ProfileHeader from '../components/settings/ProfileHeader';
 import CustomerSettings from '../components/settings/CustomerSettings';
 import AdminSectionTabs from '../components/settings/AdminSectionTabs';
@@ -63,12 +61,6 @@ export default function ProfileSettingsView({
           {adminSection === 'data' && <DataBackupsTab />}
           {adminSection === 'notifications' && <NotificationsTab profile={profile} />}
           {adminSection === 'integrations' && <IntegrationsTab />}
-          {adminSection === 'promotions' && (
-            <>
-              <PromoCodesManager />
-              <BulkSaleManager />
-            </>
-          )}
           {adminSection === 'team' && (
             <TeamTab
               staffList={staffList}
