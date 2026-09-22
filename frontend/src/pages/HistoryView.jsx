@@ -123,7 +123,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     }
     const cancellable = isStaffRole
       ? ['Active', 'Reserved', 'Overdue'].includes(tx.status)
-      : tx.status === 'Active' && role === 'Customer';
+      : ['Active', 'Reserved'].includes(tx.status) && role === 'Customer';
     if (cancellable) {
       items.push({ key: 'cancel', icon: XCircle, label: 'Cancel booking', danger: true, onSelect: () => setCancelTx(tx) });
     }
@@ -188,8 +188,10 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         />
       )}
       {/* Customer-side: the overflow menu would hold exactly one item (Cancel
-          booking), so render it inline instead of behind a "⋯" tap. */}
-      {role === 'Customer' && tx.status === 'Active' && (
+          booking), so render it inline instead of behind a "⋯" tap.
+          Reserved rows get it too (direct cancel — nothing released yet);
+          Active rows route through the required admin message. */}
+      {role === 'Customer' && ['Active', 'Reserved'].includes(tx.status) && (
         <button
           onClick={() => setCancelTx(tx)}
           className="inline-flex items-center gap-1 px-3 py-2 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-600 hover:text-white rounded-full transition-colors"
@@ -247,8 +249,19 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     .filter((tx) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
+      // Pure numbers match the booking # only — matching them against UUID
+      // fragments returns noise (nearly every UUID contains "41" somewhere).
+      const isNumeric = /^\d+$/.test(q);
+      // Booking QR codes look like RT-797B2B97 (first 8 hex chars of the
+      // UUID): strip the prefix + dashes so they match the record.
+      const qCompact = q.replace(/^rt-/, '').replace(/-/g, '');
+      const idCompact = (tx.id || '').toLowerCase().replace(/-/g, '');
+      const idMatch = isNumeric
+        ? false
+        : (tx.id || '').toLowerCase().includes(q) || (!!qCompact && idCompact.includes(qCompact));
       return (
-        (tx.id || '').toLowerCase().includes(q) ||
+        idMatch ||
+        String(tx.txNumber ?? '').toLowerCase().includes(q) ||
         (customerLabel(tx.customer) || '').toLowerCase().includes(q) ||
         (itemLabel(tx.item) || '').toLowerCase().includes(q)
       );
@@ -322,7 +335,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
             <input
               type="text"
-              placeholder="Search by ID, customer, or item..."
+              placeholder="Search by booking #, ID, customer, or item..."
               value={searchQuery}
               onChange={handleSearchChange}
               className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors"
@@ -481,7 +494,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       onMouseLeave={cancelWarm}
                     >
                       <td className="px-6 py-4 font-bold text-gray-900 font-mono text-xs">
-{String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}
+                        #{tx.txNumber ?? '—'}
                       </td>
                       {role !== 'Customer' && (
                         <td className="px-6 py-4 text-gray-700 font-medium">{customerLabel(tx.customer) || '—'}</td>
@@ -569,7 +582,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 <div className="flex justify-between items-start gap-3">
                   <div className="min-w-0">
                     <p className="text-xs font-mono font-bold text-gray-900">
-                      #{String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}
+                      #{tx.txNumber ?? '—'}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">{formatDate(tx.rentalDate || tx.date)}</p>
                   </div>

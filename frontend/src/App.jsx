@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, SIGN_IN_PATH, GUEST_COLLECTION_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
-  ClipboardList, AlertTriangle, MessageCircle
+  ClipboardList, AlertTriangle
 } from 'lucide-react';
 
 import { useAuth } from './hooks/useAuth';
@@ -64,7 +64,9 @@ const navItems = {
     { id: 'Catalog', icon: ShoppingBag, label: 'Inventory' },
     { id: 'History', icon: Clock, label: 'Transactions' },
     { id: 'AI Insights', icon: Sparkles, label: 'Reports', special: true },
-    { id: 'Messages', icon: MessageCircle, label: 'Messages' },
+    // Messages inbox intentionally has no nav entry (desktop sidebar + mobile
+    // top shortcut both render from this list) — staff/admin reach it through
+    // Notifications → Messages and notification taps instead.
     { id: 'Settings', icon: Settings, label: 'Settings' },
   ],
   Staff: [
@@ -927,7 +929,7 @@ export default function RentechApp() {
               <HelpGuide role={viewRole} onStartTutorial={() => setShowOnboarding(true)} />
             )}
             {activeTab === 'Notifications' && (
-              <NotificationsView role={viewRole} onNavigateTab={goTab} />
+              <NotificationsView role={viewRole} onNavigateTab={goTab} onOpenBooking={(txId) => navigate(txDetailPath(viewRole, txId))} />
             )}
             {activeTab === 'Messages' && (
               <MessagesView onOpenBooking={(txId) => navigate(txDetailPath(viewRole, txId))} />

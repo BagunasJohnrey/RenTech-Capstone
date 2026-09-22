@@ -96,7 +96,9 @@ export default function CancelBookingModal({ tx, role, onClose, onCancel, onSend
           </p>
         )}
 
-        {isCustomer && (
+        {/* No message box on Reserved — direct cancel is available, so the
+            optional field is just noise. Active/Overdue require it. */}
+        {isCustomer && tx.status !== 'Reserved' && (
           <div className="border border-gray-100 rounded-2xl p-4 mb-4">
             <label htmlFor="cancel-admin-message" className="text-xs font-bold text-gray-700 flex items-center gap-1.5 mb-2">
               <MessageCircle size={14} className="text-[#bf4a53]" />
@@ -136,7 +138,10 @@ export default function CancelBookingModal({ tx, role, onClose, onCancel, onSend
             className="flex-1 py-3 font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 rounded-full transition-colors">
             Keep booking
           </button>
-          {!needsStaff && (
+          {/* Direct cancel: staff anytime (pre-pickup states), customers only
+              while Reserved (nothing released yet). Active/Overdue customers
+              must message first — the admin cancels after reading it. */}
+          {!needsStaff && (!isCustomer || tx.status === 'Reserved') && (
             <button onClick={handleCancel} disabled={cancelling}
               className="flex-1 py-3 font-bold text-sm text-white bg-red-500 hover:bg-red-600 rounded-full transition-colors disabled:opacity-50">
               {cancelling ? 'Cancelling…' : 'Cancel booking'}
