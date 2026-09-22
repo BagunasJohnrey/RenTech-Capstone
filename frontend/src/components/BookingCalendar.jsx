@@ -129,7 +129,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
         })}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 mt-3 text-[10px] text-gray-500">
+      <div className="flex flex-wrap items-center justify-center gap-3 mt-3 text-[10px] text-gray-500">
         <span className="flex items-center gap-1">
           <span className="w-3 h-3 rounded bg-[#bf4a53]" /> Pickup
         </span>
@@ -144,7 +144,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
         </span>
       </div>
 
-      <p className="mt-2 text-[10px] text-gray-400">
+      <p className="mt-2 text-[10px] text-gray-400 text-center">
         {!pickup
           ? 'Tap a date to set the pickup date.'
           : !event
@@ -166,7 +166,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
       )}
 
       {(pickup || event) && (
-        <div className="mt-2 text-[11px] text-gray-600 flex flex-wrap gap-x-3">
+        <div className="mt-2 text-[11px] text-gray-600 flex flex-wrap justify-center gap-x-3">
           {pickup && (
             <span>
               Pickup: <b>{fmt(pickup)}</b>
