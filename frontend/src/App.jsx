@@ -448,6 +448,12 @@ export default function RentechApp() {
   const handleStaffNewRental = async (data) => {
     const payload = {
       customerName: data.customer,
+      // Walk-in contact handoff: the form collects these (StaffNewRental) and
+      // the backend persists them onto the (possibly auto-created) profile.
+      // Dropping them here used to save walk-ins with phone/address = null,
+      // which is why the detail modal showed no number or address.
+      contact: data.contact || undefined,
+      address: data.address || undefined,
       itemId: data.itemId,
       rentalDate: data.rentalDate,
       dueDate: data.returnDate || data.dueDate,
