@@ -39,6 +39,7 @@ import AvailabilityCalendar from './components/AvailabilityCalendar';
 import OnboardingTutorial from './components/OnboardingTutorial';
 import GlobalSearchModal from './components/GlobalSearchModal';
 import ItemDetailModal from './components/ItemDetailModal';
+import MfaStepUpModal from './components/MfaStepUpModal';
 
 // Route-level screens are code-split so the heavy recharts bundle (dashboard /
 // analytics) is only fetched when those tabs are actually opened.
@@ -191,6 +192,19 @@ export default function RentechApp() {
   } = useTransactions();
   // Staff accounts (Admin) — encapsulated in useStaff (SoC).
   const { staffAccounts, staffLoadError, loadStaff, addStaff, removeStaff, updateStaff } = useStaff();
+
+  // In-session MFA step-up: any 403 mfa_challenge_required (api.js broadcast)
+  // pops the verification prompt instead of stranding admin tabs behind a
+  // dead-end error. On success we retry the staff list (Team tab) — other
+  // tabs recover on their next Refresh.
+  const [showMfaStepUp, setShowMfaStepUp] = useState(false);
+  useEffect(() => {
+    const open = () => {
+      if (role === 'Admin') setShowMfaStepUp(true);
+    };
+    window.addEventListener('rentech:mfa-challenge', open);
+    return () => window.removeEventListener('rentech:mfa-challenge', open);
+  }, [role]);
   // Editable customer profile + sync with auth profile — useCustomerProfile (SoC).
   const { customerInfo, syncFromProfile, updateCustomer } = useCustomerProfile(updateProfile);
 
@@ -1096,6 +1110,19 @@ export default function RentechApp() {
             onClose={() => setShowGlobalSearch(false)}
         onNavigate={(tab) => { goTab(tab); setShowGlobalSearch(false); }}
       />
+        )}
+
+        {/* MFA step-up: re-verify the second factor for the current session
+            (no sign-out needed) when the marker was lost on token rotation */}
+        {showMfaStepUp && role === 'Admin' && (
+          <MfaStepUpModal
+            onClose={() => setShowMfaStepUp(false)}
+            onVerified={() => {
+              setShowMfaStepUp(false);
+              toastSuccess('Verified — reloading secure sections…');
+              loadStaff().catch(() => {});
+            }}
+          />
         )}
 
         {/* QR Scanner – staff picks RELEASE/RETURN, then scans the booking QR */}

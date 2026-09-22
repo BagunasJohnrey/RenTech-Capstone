@@ -99,6 +99,13 @@ async function request(method, path, body = undefined, _retried = false, opts = 
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
+    // MFA-gated admin route hit without a verified second factor for this
+    // session (e.g. the marker was lost on token rotation). Broadcast so the
+    // app can offer in-session step-up verification instead of a dead-end
+    // error. Callers still receive the thrown error as usual.
+    if (typeof window !== 'undefined' && res.status === 403 && errorBody?.code === 'mfa_challenge_required') {
+      window.dispatchEvent(new CustomEvent('rentech:mfa-challenge'));
+    }
     const err = new Error(errorBody.error || `Request failed with status ${res.status}`);
     err.status = res.status;
     err.body = errorBody;

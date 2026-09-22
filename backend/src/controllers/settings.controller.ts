@@ -258,8 +258,26 @@ export async function importBackup(req: AuthenticatedRequest, res: Response, nex
 // PayMongo, and Brevo in parallel (each with its own timeout) so one down
 // service can't delay or mask the others. Never throws; each provider reports
 // its own status.
-export async function getIntegrationsStatus(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+//
+// Short server-side cache: each check fans out to 6 external probes, so the
+// result is memoized for 60s and served with the `checkedAt` of the actual
+// probe. `?fresh=1` forces a live re-probe (manual Refresh button). Disabled
+// under NODE_ENV=test so tests never see a stale probe.
+let integrationsCache: { at: number; body: Record<string, unknown> } | null = null;
+const INTEGRATIONS_CACHE_MS = 60_000;
+
+export async function getIntegrationsStatus(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
+    const fresh = (req.query as Record<string, unknown> | undefined)?.fresh === '1'
+      || (req.query as Record<string, unknown> | undefined)?.fresh === 'true';
+    if (
+      !fresh
+      && integrationsCache
+      && Date.now() - integrationsCache.at < INTEGRATIONS_CACHE_MS
+      && process.env.NODE_ENV !== 'test'
+    ) {
+      return res.json({ ...integrationsCache.body });
+    }
     const [ai, semaphore, paymongo, brevo] = await Promise.all([
       geminiService.checkAiHealth(),
       semaphoreService.checkSemaphoreHealth(),
@@ -269,14 +287,17 @@ export async function getIntegrationsStatus(_req: AuthenticatedRequest, res: Res
     // The AI health probe covers all three model providers (gemini → groq →
     // openrouter); expose each under its own key so the UI can show one row
     // per provider.
-    res.json({
+    const body = {
       gemini: ai,
       groq: ai.providers?.groq,
       openrouter: ai.providers?.openrouter,
       semaphore,
       paymongo,
       brevo,
-    });
+      checkedAt: new Date().toISOString(),
+    };
+    integrationsCache = { at: Date.now(), body };
+    res.json(body);
   } catch (err) {
     next(err);
   }

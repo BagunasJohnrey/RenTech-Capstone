@@ -49,12 +49,13 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
       .catch((err) => {
         if (!active) return;
         // MFA-gated: a 403 means this session hasn't verified the second
-        // factor (e.g. signed in with Google before the marker fix landed).
-        // Surface WHY instead of a silently dead "Add PIN" button.
+        // factor for its current token (e.g. rotation after the sign-in
+        // expired in the background). Surface WHY instead of a silently dead
+        // "Add PIN" button — the verification prompt opens automatically.
         if (err?.status === 403) {
           setPinError(
             err?.body?.code === 'mfa_challenge_required'
-              ? 'This session needs an MFA verification — sign out and sign back in with your email and password (complete the authenticator prompt), then set the PIN.'
+              ? 'This session needs a quick MFA verification — enter your authenticator code in the prompt (no need to sign out), then retry.'
               : err?.body?.error || 'Not available in this session.'
           );
         }
@@ -288,7 +289,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
               <span>
                 {staffLoadError?.body?.code === 'mfa_challenge_required'
-                  ? 'This session needs an MFA verification — sign out and sign back in with your email and password (complete the authenticator prompt), then reload this tab.'
+                  ? 'This session needs a quick MFA verification — enter your authenticator code in the prompt (no need to sign out). The list reloads automatically once verified.'
                   : staffLoadError?.body?.error || 'Staff list is unavailable in this session.'}
               </span>
             </div>

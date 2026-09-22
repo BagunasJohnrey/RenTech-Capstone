@@ -216,13 +216,26 @@ export async function refresh(req: Request, res: Response, next: NextFunction) {
     // If the session being refreshed was MFA-verified, carry the marker over
     // to the new access token (the marker is bound to the old token, so it
     // must be re-minted for the rotated token to keep MFA-gated routes open).
-    const wasMfaVerified = isMfaVerifiedCookie(req, getAccessTokenFromCookie(req) ?? '');
+    const oldAccessToken = getAccessTokenFromCookie(req);
+    const wasMfaVerified = isMfaVerifiedCookie(req, oldAccessToken ?? '');
     const refreshed = await authService.refreshWithRefreshToken(refreshToken);
     const profile = await prisma.profile.findUnique({
       where: { userId: refreshed.user!.id },
     });
+    // Fallback: the rt_access cookie disappears when the JWT expires (~1h),
+    // so a refresh after idle/sleep can't present the old marker-bound token
+    // and the marker would be silently dropped — stranding the admin behind
+    // 403 mfa_challenge_required on every MFA-gated route until a full
+    // re-login. A valid trust-this-device cookie for this account is
+    // equivalent proof (login itself skips the TOTP challenge on trust), so
+    // carry the marker over instead of dropping it.
+    const trustedFallback = !!profile
+      && (profile as { role?: string }).role === 'Admin'
+      && (profile as { mfaEnabled?: boolean }).mfaEnabled === true
+      && !!profile.email
+      && isMfaTrustedCookie(req, profile.email);
     setSessionCookies(res, refreshed as RtSession);
-    if (wasMfaVerified && refreshed.access_token) {
+    if ((wasMfaVerified || trustedFallback) && refreshed.access_token) {
       setMfaVerifiedCookie(res, refreshed.access_token);
     }
     res.json({
@@ -793,6 +806,58 @@ export async function mfaChallenge(req: Request, res: Response, next: NextFuncti
       setMfaTrustedCookie(res, profile.email);
     }
     res.json({ message: 'MFA verified', user: profile });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Phase 5: in-session step-up re-verification. When a valid admin session
+// loses its MFA-verified marker (e.g. token rotation after the access cookie
+// expired, or a session minted before the marker fix), the admin can re-prove
+// the second factor WITHOUT signing out and signing back in: verify a TOTP
+// or backup code against the current session's profile and mint a fresh
+// marker for the current access token. Deliberately NOT behind
+// requireMfaAdmin — it is the remedy for a missing marker.
+export const mfaStepUpSchema = z.object({
+  body: z.object({
+    code: z.string().min(1),
+    trustDevice: z.boolean().optional(),
+  }),
+});
+
+export async function mfaStepUp(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    if (req.user.role !== 'Admin') throw new AppError(403, 'MFA is admin-only');
+    const { code } = req.body as { code: string };
+    const profile = await prisma.profile.findUnique({
+      where: { userId: req.user.userId },
+    });
+    if (!profile?.mfaEnabled) throw new AppError(400, 'MFA is not enabled for this account');
+
+    // Same verification order as the login challenge: TOTP first, then backup code.
+    let verified = false;
+    const decryptedSecret = profile.totpSecret ? decryptField(profile.totpSecret) : null;
+    if (decryptedSecret && /^\d{6}$/.test(code)) {
+      verified = mfaService.verifyTotpToken(decryptedSecret, code);
+    }
+    if (!verified) {
+      verified = await mfaService.consumeBackupCode(req.user.userId, code);
+    }
+    if (!verified) throw new AppError(401, 'Invalid code');
+
+    // Mint the marker for the CURRENT access token (cookie first, Bearer
+    // fallback for machine-to-machine callers) so MFA-gated routes open
+    // immediately — no re-login needed.
+    const currentToken = getAccessTokenFromCookie(req) ?? (typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ')
+      ? req.headers.authorization.split(' ')[1]
+      : undefined);
+    if (!currentToken) throw new AppError(401, 'No active session — please sign in again');
+    setMfaVerifiedCookie(res, currentToken);
+    if ((req.body as { trustDevice?: boolean }).trustDevice === true && profile.email) {
+      setMfaTrustedCookie(res, profile.email);
+    }
+    res.json({ message: 'MFA verified' });
   } catch (err) {
     next(err);
   }
