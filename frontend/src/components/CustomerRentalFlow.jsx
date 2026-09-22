@@ -242,17 +242,23 @@ export default function CustomerRentalFlow({
   const displayedItems = filteredCatalog.slice(0, visibleCount);
   const allLoaded = visibleCount >= filteredCatalog.length;
 
+  // Reveal the next page of items. Used by infinite scroll AND the explicit
+  // "Show more" button — the button matters on tall screens where the capped
+  // list fits the first page exactly and no scroll event ever fires.
+  const loadMore = useCallback(() => {
+    if (loadingMore || allLoaded) return;
+    setLoadingMore(true);
+    setTimeout(() => {
+      setVisibleCount((prev) => Math.min(prev + ITEMS_PER_LOAD, filteredCatalog.length));
+      setLoadingMore(false);
+    }, 400);
+  }, [loadingMore, allLoaded, filteredCatalog.length]);
+
   const handleCatalogScroll = useCallback(() => {
     const el = catalogRef.current;
-    if (!el || loadingMore || allLoaded) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) {
-      setLoadingMore(true);
-      setTimeout(() => {
-        setVisibleCount((prev) => Math.min(prev + ITEMS_PER_LOAD, filteredCatalog.length));
-        setLoadingMore(false);
-      }, 400);
-    }
-  }, [loadingMore, allLoaded, filteredCatalog.length]);
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) loadMore();
+  }, [loadMore]);
 
   const toggleAccountDetails = (useAccount) => {
     setUseAccountDetails(useAccount);
@@ -745,7 +751,7 @@ export default function CustomerRentalFlow({
                 {fieldErrors.item}
               </div>
             )}
-            <div ref={catalogRef} onScroll={handleCatalogScroll} className="flex-1 overflow-y-auto pr-1 hide-scrollbar">
+            <div ref={catalogRef} onScroll={handleCatalogScroll} className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[200px] max-h-[36vh] sm:max-h-[44vh]">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {displayedItems.map((item) => (
                   <button type="button" key={item.id} onClick={() => setSelectedItem(item)}
@@ -781,6 +787,15 @@ export default function CustomerRentalFlow({
               </div>
               <div className="py-3 flex justify-center">
                 {loadingMore && <Loader2 size={18} className="text-gray-400 animate-spin" />}
+                {!loadingMore && !allLoaded && (
+                  <button
+                    type="button"
+                    onClick={loadMore}
+                    className="px-5 py-2 rounded-full text-xs font-bold text-[#bf4a53] bg-red-50 hover:bg-red-100 active:scale-[0.98] transition-all"
+                  >
+                    Show more ({filteredCatalog.length - visibleCount} more)
+                  </button>
+                )}
                 {!loadingMore && allLoaded && filteredCatalog.length > 0 && (
                   <p className="text-xs text-gray-400">All items loaded</p>
                 )}

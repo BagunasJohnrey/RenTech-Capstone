@@ -145,13 +145,36 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const [includeDownpayment, setIncludeDownpayment] = useState(false);
   const [downpaymentAmount, setDownpaymentAmount] = useState('');
 
-  // Discount (requires admin approval)
+  // Discount: staff picks the % first; the admin approves that exact amount
+  // with their PIN at order confirmation. The approval is bound to the % +
+  // item — any change after approval voids it and forces re-approval, so
+  // staff can't get a blank approval and inflate the discount afterwards.
   const [discountPct, setDiscountPct] = useState(0);
-  const [discountAuthorized, setDiscountAuthorized] = useState(null);
+  const [discountAuthorized, setDiscountAuthorized] = useState(null); // { admin, pct, itemId } | null
   const [showAdminAuth, setShowAdminAuth] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
+
+  // Approval is only valid for the exact % + item the admin saw.
+  const isDiscountApproved = !!discountAuthorized
+    && discountPct > 0
+    && discountAuthorized.pct === discountPct
+    && discountAuthorized.itemId === selectedItem?.id;
+
+  const handleDiscountChange = (pct) => {
+    setDiscountPct(pct);
+    // Any edit after approval voids it — the new amount needs its own approval.
+    if (discountAuthorized && discountAuthorized.pct !== pct) setDiscountAuthorized(null);
+  };
+
+  // Switching items voids the approval (the peso amount changed).
+  useEffect(() => {
+    if (discountAuthorized && discountAuthorized.itemId !== selectedItem?.id) {
+      setDiscountAuthorized(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItem?.id]);
 
   // When event date changes, auto-update return date to next day
   const handleEventDateChange = (d) => {
@@ -254,14 +277,16 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     return Object.keys(errs).length === 0;
   };
 
-  // Derived totals
+  // Derived totals — always reflect the selected % so the admin sees the
+  // exact amount they are approving. The booking itself only carries the
+  // discount when it is approved (see submitBooking).
   const totals = useMemo(() => {
     const base = selectedItem?.price || 0;
-    const discountAmt = discountAuthorized ? Math.round(base * (discountPct / 100)) : 0;
+    const discountAmt = Math.round(base * (discountPct / 100));
     const afterDiscount = base - discountAmt;
     const dp = includeDownpayment ? (Number(downpaymentAmount) || 0) : 0;
     return { baseRate: base, discount: discountAmt, discountedRate: afterDiscount, downpayment: dp, balance: afterDiscount - dp };
-  }, [selectedItem, includeDownpayment, downpaymentAmount, discountPct, discountAuthorized]);
+  }, [selectedItem, includeDownpayment, downpaymentAmount, discountPct]);
 
   // Live field validity (green glow when valid)
   const fieldValid = useMemo(() => {
@@ -322,19 +347,25 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const displayedItems = filteredCatalog.slice(0, visibleCount);
   const allLoaded = visibleCount >= filteredCatalog.length;
 
+  // Reveal the next page of items. Used by infinite scroll AND the explicit
+  // "Show more" button — the button matters on tall screens where the capped
+  // list fits the first page exactly and no scroll event ever fires.
+  const loadMore = useCallback(() => {
+    if (loadingMore || allLoaded) return;
+    setLoadingMore(true);
+    // Simulate network
+    setTimeout(() => {
+      setVisibleCount(prev => Math.min(prev + ITEMS_PER_LOAD, filteredCatalog.length));
+      setLoadingMore(false);
+    }, 400);
+  }, [loadingMore, allLoaded, filteredCatalog.length]);
+
   // Infinite scroll handler
   const handleCatalogScroll = useCallback(() => {
     const el = catalogRef.current;
-    if (!el || loadingMore || allLoaded) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) {
-      setLoadingMore(true);
-      // Simulate network
-      setTimeout(() => {
-        setVisibleCount(prev => Math.min(prev + ITEMS_PER_LOAD, filteredCatalog.length));
-        setLoadingMore(false);
-      }, 400);
-    }
-  }, [loadingMore, allLoaded, filteredCatalog.length]);
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) loadMore();
+  }, [loadMore]);
 
   // Navigation helpers
   const handleBack = () => {
@@ -406,13 +437,17 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     return () => window.removeEventListener('rentech:request-close', onRequestClose);
   }, [requestNavigate, showDiscardConfirm, showAdminAuth]);
 
-  // Admin authorization via the admin's 4-digit discount PIN
+  // Admin authorization via the admin's 4-digit discount PIN — approves the
+  // exact % + item currently selected and LOCKS it (the slider disables, so
+  // staff can't edit the discount after approval; Remove + re-pick needs a
+  // fresh approval). PIN success never auto-submits: staff press Confirm
+  // again to process the order.
   const handleAuthorize = async () => {
     if (adminPin.length !== 4) { setAuthError('Enter the 4-digit PIN'); return; }
     setAuthLoading(true); setAuthError('');
     try {
       const res = await api.post('/auth/verify-admin', { pin: adminPin });
-      setDiscountAuthorized(res.admin);
+      setDiscountAuthorized({ admin: res.admin, pct: discountPct, itemId: selectedItem?.id });
       setShowAdminAuth(false);
       setAdminPin('');
     } catch (err) {
@@ -435,8 +470,25 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     if (step === 3) {
       if (submittingRef.current) return;
       if (!validateStep2()) return;
-      submittingRef.current = true;
-      setSubmitting(true);
+      // Discount without a matching approval → admin PIN first (approves the
+      // exact amount shown). No auto-submit: staff press Confirm again after.
+      if (discountPct > 0 && !isDiscountApproved) {
+        setAuthError('');
+        setAdminPin('');
+        setShowAdminAuth(true);
+        return;
+      }
+      submitBooking();
+      return;
+    }
+    setStep(s => s + 1);
+  };
+
+  const submitBooking = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    {
       const transactionData = {
         customer: customer.name,
         contact: customer.contact,
@@ -447,8 +499,8 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         amount: totals.discountedRate,
         downpayment: totals.downpayment,
         balance: totals.balance,
-        discountPct: discountAuthorized ? discountPct : 0,
-        discountApprovedBy: discountAuthorized?.name || null,
+        discountPct: isDiscountApproved ? discountPct : 0,
+        discountApprovedBy: isDiscountApproved ? discountAuthorized?.admin?.name || null : null,
         size,
         measurements,
         notes: customer.notes,
@@ -467,9 +519,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         setSubmitting(false);
         submittingRef.current = false;
       }
-      return;
     }
-    setStep(s => s + 1);
   };
 
   // Progress labels for step indicator
@@ -608,7 +658,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               <div
                 ref={catalogRef}
                 onScroll={handleCatalogScroll}
-                className="flex-1 overflow-y-auto pr-1 hide-scrollbar min-h-[240px]"
+                className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[36vh] sm:max-h-[44vh]"
               >
                 {filteredCatalog.length === 0 ? (
                   <div className="flex flex-col items-center justify-center text-center px-6 py-10 min-h-[220px]">
@@ -660,9 +710,18 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 </div>
 
 
-                {/* Loader / end indicator */}
+                {/* Loader / show-more / end indicator */}
                 <div className="py-3 flex justify-center">
                   {loadingMore && <Loader2 size={18} className="text-gray-400 animate-spin" />}
+                  {!loadingMore && !allLoaded && (
+                    <button
+                      type="button"
+                      onClick={loadMore}
+                      className="px-5 py-2 rounded-full text-xs font-bold text-[#bf4a53] bg-red-50 hover:bg-red-100 active:scale-[0.98] transition-all"
+                    >
+                      Show more ({filteredCatalog.length - visibleCount} more)
+                    </button>
+                  )}
                   {!loadingMore && allLoaded && filteredCatalog.length > 0 && (
                     <p className="text-xs text-gray-400">All items loaded</p>
                   )}
@@ -869,46 +928,54 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     <div className="flex justify-between text-[#bf4a53]"><span>Downpayment</span><span>-₱{totals.downpayment.toLocaleString()}</span></div>
                   )}
                   <div className="flex justify-between font-bold text-base border-t pt-3 mt-2"><span>Balance</span><span className="text-[#bf4a53]">₱{totals.balance.toLocaleString()}</span></div>
-                  {discountAuthorized && (
-                    <p className="text-[10px] text-emerald-600 font-medium text-center pt-1">Discount authorized by {discountAuthorized.name}</p>
+                  {discountPct > 0 && (
+                    isDiscountApproved ? (
+                      <p className="text-[10px] text-emerald-600 font-medium text-center pt-1">Discount approved by {discountAuthorized.admin?.name}</p>
+                    ) : (
+                      <p className="text-[10px] text-amber-600 font-medium text-center pt-1">Discount needs admin approval at confirmation</p>
+                    )
                   )}
                   {customer.notes && <p className="text-xs text-gray-500 italic mt-2">Notes: {customer.notes}</p>}
                 </div>
 </div>
 
-              {/* Discount Section */}
+              {/* Discount Section — staff picks the %; the admin approves it
+                  with their PIN when Confirm is pressed (not before). */}
               <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Percent size={16} className="text-gray-500" />
                     <h4 className="font-bold text-sm text-gray-900">Discount</h4>
                   </div>
-                  {!discountAuthorized ? (
-                    <button onClick={() => setShowAdminAuth(true)}
-                      className="text-xs font-bold text-[#bf4a53] hover:underline">
-                      + Apply Discount
-                    </button>
-                  ) : (
-                    <button onClick={() => { setDiscountAuthorized(null); setDiscountPct(0); }}
+                  {discountPct > 0 && (
+                    <button onClick={() => { handleDiscountChange(0); }}
                       className="text-xs font-bold text-red-500 hover:underline">
                       Remove
                     </button>
                   )}
                 </div>
-                {discountAuthorized && (
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <input type="range" min={0} max={50} value={discountPct}
-                        onChange={e => setDiscountPct(Number(e.target.value))}
-                        className="flex-1 accent-[#bf4a53]" />
-                      <span className="text-sm font-bold text-gray-900 w-12 text-right">{discountPct}%</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-1 text-[11px] text-emerald-600 font-medium">
-                      <ShieldCheck size={12} />
-                      Authorized by {discountAuthorized.name}
-                    </div>
+                <div>
+                  <div className="flex items-center gap-3">
+                    <input type="range" min={0} max={50} value={discountPct}
+                      onChange={e => handleDiscountChange(Number(e.target.value))}
+                      disabled={isDiscountApproved}
+                      className="flex-1 accent-[#bf4a53] disabled:opacity-40 disabled:cursor-not-allowed"
+                      aria-label="Discount percent" />
+                    <span className="text-sm font-bold text-gray-900 w-12 text-right">{discountPct}%</span>
                   </div>
-                )}
+                  {discountPct > 0 && (
+                    isDiscountApproved ? (
+                      <div className="flex items-center gap-1.5 mt-1 text-[11px] text-emerald-600 font-medium">
+                        <ShieldCheck size={12} />
+                        Approved by {discountAuthorized.admin?.name} — {discountPct}% (₱{totals.discount.toLocaleString()} off) · locked (Remove to change)
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-[11px] text-amber-600 font-medium">
+                        {discountPct}% (₱{totals.discount.toLocaleString()} off) — an admin will approve this exact amount when you confirm the order.
+                      </p>
+                    )
+                  )}
+                </div>
               </div>
 
             </div>
@@ -998,7 +1065,11 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
           <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
           <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-admin-auth" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
             <h4 id="dialog-title-admin-auth" className="font-bold text-gray-900">Admin Authorization</h4>
-            <p className="text-xs text-gray-500">Enter the admin's 4-digit PIN to apply a discount.</p>
+            <p className="text-xs text-gray-500">
+              {discountPct > 0
+                ? <>Approve a <strong className="text-gray-900">{discountPct}% discount (₱{totals.discount.toLocaleString()} off)</strong> on <strong className="text-gray-900">{selectedItem?.name}</strong>? Enter the admin's 4-digit PIN to lock it in — then press Confirm again to process the order.</>
+                : <>Enter the admin's 4-digit PIN to apply a discount.</>}
+            </p>
             {authError && <p className="text-xs text-red-500 font-medium bg-red-50 p-3 rounded-xl">{authError}</p>}
             <input type="password" inputMode="numeric" placeholder="••••" maxLength={4}
               value={adminPin}
