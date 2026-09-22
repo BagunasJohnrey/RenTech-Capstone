@@ -459,13 +459,15 @@ export default function RentechApp() {
 
   // Process return (FIX D: surface errors). A damaged return takes the item
   // OUT of rotation (skips cleaning); an intact return goes to Cleaning.
-  const handleProcessReturn = async (txId, isDamaged, isLate, returnPhoto, damageReason) => {
+  const handleProcessReturn = async (txId, isDamaged, _isLate, returnPhoto, damageReason, damageFee) => {
     try {
       const updated = await processReturnTx(txId, {
         returnDate: new Date().toISOString().split('T')[0],
         isDamaged: !!isDamaged,
         returnPhoto: returnPhoto || undefined,
         damageReason: damageReason || undefined,
+        // Custom per-return damage fee (null/undefined = backend default).
+        damageFee: damageFee ?? undefined,
       });
       if (updated.itemId) {
         markItemStatus(updated.itemId, isDamaged ? 'OutOfService' : 'Cleaning');

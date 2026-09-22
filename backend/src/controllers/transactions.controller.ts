@@ -45,7 +45,8 @@ export const returnSchema = z.object({
     // Validate the date shape so a bad string is a 400, not a 500 from new Date().
     returnDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid return date').optional(),     // server falls back to "now" if omitted
     isDamaged: z.boolean().optional().default(false),
-    isLate: z.boolean().optional(),        // informational; late fee computed by date anyway
+    isLate: z.boolean().optional(),        // legacy informational flag, ignored (late fees removed)
+    damageFee: z.coerce.number().min(0).max(1000000).optional(), // per-return override; omit for the default
     returnPhoto: z.string().optional(),
     conditionPhoto: z.string().optional(), // legacy alias
     notes: z.string().optional(),
@@ -184,7 +185,8 @@ export async function processReturn(req: AuthenticatedRequest, res: Response, ne
       req.body.isDamaged ?? false,
       req.body.returnPhoto ?? req.body.conditionPhoto,
       req.body.notes,
-      req.body.damageReason
+      req.body.damageReason,
+      req.body.damageFee ?? null
     );
 
     res.json(result);

@@ -278,10 +278,14 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   } catch { /* QR generation is non-critical */ }
   (transaction as Record<string, unknown>).qrCodeDataUri = qrCodeDataUri;
 
-  // Auto-confirmation SMS
+  // Auto-confirmation SMS — skipped when the customer opted out
+  // (notifyPrefs.booking === false). The in-app + staff alerts above still
+  // fire, mirroring the overdue opt-out behavior.
   try {
     const customerProfile = await prisma.profile.findUnique({ where: { id: data.customerId } });
-    if (customerProfile?.phone) {
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsBookingSms = !prefs || prefs.booking !== false;
+    if (customerProfile?.phone && wantsBookingSms) {
       const template = await prisma.smsTemplate.findFirst({ where: { name: 'booking_confirmation' } });
       const message = template?.content
         ? applyTemplate(template.content, {
@@ -411,7 +415,8 @@ export async function processReturn(
   isDamaged: boolean,
   returnPhoto?: string,
   notes?: string,
-  damageReason?: string
+  damageReason?: string,
+  damageFeeOverride?: number | null
 ) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -426,7 +431,9 @@ export async function processReturn(
   if (tx.status === 'Cancelled') throw new AppError(400, 'Transaction was cancelled');
 
   const retDate = new Date(returnDate);
-  const fees = await calculateFees(tx.rentalDate, tx.dueDate, retDate, isDamaged);
+  const fees = await calculateFees(tx.rentalDate, tx.dueDate, retDate, isDamaged, {
+    damageFee: damageFeeOverride,
+  });
 
   const additionalCharges = fees.latePenalty + fees.damageFee;
   const newBalance = tx.balance + additionalCharges;
@@ -466,13 +473,14 @@ export async function processReturn(
   });
 
   // Staff alert: late return (only when returned after the due date).
+  // No penalty is charged (late fees removed) — this is an FYI for the queue.
   if (retDate.getTime() > tx.dueDate.getTime()) {
     try {
       await notifyStaffMembers({
         transactionId,
         type: 'late_return',
         title: 'Late Return',
-        message: `${tx.customer.name} returned "${tx.item.name}" late — penalty ₱${fees.latePenalty.toLocaleString()}.`,
+        message: `${tx.customer.name} returned "${tx.item.name}" late (no penalty charged).`,
       });
     } catch { /* notification is non-critical */ }
   }

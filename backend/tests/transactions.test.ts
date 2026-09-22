@@ -38,6 +38,61 @@ describe('POST /api/transactions', () => {
     expect(res.body.rentalFee).toBe(5000);
   });
 
+  // The prisma transaction.create mock returns { id, ...data } with no
+  // included item/customer, so the notification/SMS blocks (which read
+  // transaction.item.name) need a fuller shape stubbed per-test.
+  const setupBookingSmsTest = async (notifyPrefs: Record<string, boolean> | null) => {
+    const { prisma } = await import('../src/config/database.js');
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([{ message_id: 'm1' }]) });
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+    vi.mocked(prisma.transaction.create).mockResolvedValueOnce({
+      id: 'tx-new', customerId: 'customer-id-111', itemId: 1,
+      rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
+      status: 'Reserved', rentalFee: 5000, downpayment: 1000, balance: 4000,
+      item: { id: 1, name: 'Test Gown' },
+      customer: { id: 'customer-id-111', name: 'SMS Customer' },
+    } as any);
+    const orig = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args?.where?.id === 'customer-id-111') {
+        return Promise.resolve({ id: 'customer-id-111', name: 'SMS Customer', phone: '09171234567', email: null, notifyPrefs });
+      }
+      return orig!(args);
+    });
+    return orig;
+  };
+
+  it('should skip booking SMS when customer opted out (notifyPrefs.booking=false)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const orig = await setupBookingSmsTest({ booking: false });
+
+    const res = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
+
+    expect(res.status).toBe(201);
+    expect(prisma.sentSms.create).not.toHaveBeenCalled();
+    vi.mocked(prisma.profile.findUnique).mockImplementation(orig!);
+  });
+
+  it('should send booking SMS by default (no opt-out)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const orig = await setupBookingSmsTest(null);
+
+    const res = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
+
+    expect(res.status).toBe(201);
+    expect(prisma.sentSms.create).toHaveBeenCalled();
+    vi.mocked(prisma.profile.findUnique).mockImplementation(orig!);
+  });
+
   it('should reject when customer posts directly (customers use /bookings)', async () => {
     const res = await request(app)
       .post('/api/transactions')
@@ -196,7 +251,7 @@ describe('PUT /api/transactions/:id/return', () => {
     expect(res.body.fees).toBeDefined();
   });
 
-  it('should charge late penalty', async () => {
+  it('should waive late penalty (late fees removed)', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-2', itemId: 1, customerId: 'customer-id-111',
@@ -212,7 +267,27 @@ describe('PUT /api/transactions/:id/return', () => {
       .send({ returnDate: '2026-07-10', isDamaged: false });
 
     expect(res.status).toBe(200);
-    expect(res.body.fees.latePenalty).toBeGreaterThan(0);
+    expect(res.body.fees.latePenalty).toBe(0);
+    expect(res.body.fees.daysLate).toBeGreaterThan(0);
+  });
+
+  it('should honor a custom damage fee override', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-4', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date('2026-07-01'), dueDate: new Date('2026-07-04'),
+      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      latePenalty: 0, damageFee: 0, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Rented' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-4/return')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ returnDate: '2026-07-04', isDamaged: true, damageFee: 2500, damageReason: 'Torn' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.fees.damageFee).toBe(2500);
   });
 
   it('should reject if already returned', async () => {

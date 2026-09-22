@@ -11,6 +11,6 @@ export function loadJSON(key, fallback) {
 }
 
 export const DEFAULT_BUSINESS = { name: 'RenTech Boutique', address: '', contact: '', taxId: '' };
-export const DEFAULT_POLICIES = { defaultDays: 3, latePenalty: 500, minDown: 200, damageFee: 1000 };
+export const DEFAULT_POLICIES = { defaultDays: 3, minDown: 200, damageFee: 1000 };
 export const DEFAULT_AUTOMATION = { escalationDays: 3, retentionMonths: 12 };
 export const DEFAULT_NOTIF = { booking: true, reminder: true, lateReturn: true, email: true };

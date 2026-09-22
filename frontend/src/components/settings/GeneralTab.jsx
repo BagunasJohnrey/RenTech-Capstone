@@ -49,7 +49,6 @@ export default function GeneralTab() {
 
       const pol = { ...policies };
       if (rules.rental_period_days) pol.defaultDays = parseInt(rules.rental_period_days) || pol.defaultDays;
-      if (rules.late_penalty_per_day) pol.latePenalty = parseInt(rules.late_penalty_per_day) || pol.latePenalty;
       if (rules.min_downpayment) pol.minDown = parseInt(rules.min_downpayment) || pol.minDown;
       if (rules.damage_fee) pol.damageFee = parseInt(rules.damage_fee) || pol.damageFee;
       setPolicies(pol);
@@ -93,7 +92,6 @@ export default function GeneralTab() {
     setPolMsg('Rental policies saved!');
     syncRulesToBackend({
       rental_period_days: String(localPolicies.defaultDays),
-      late_penalty_per_day: String(localPolicies.latePenalty),
       min_downpayment: String(localPolicies.minDown),
       damage_fee: String(localPolicies.damageFee),
     });
@@ -184,12 +182,11 @@ export default function GeneralTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
             <NumberField label="Default Rental Period" value={localPolicies.defaultDays} min={1} max={30}
               onChange={(v) => setLocalPolicies({ ...localPolicies, defaultDays: v })} suffix="days" />
-            <NumberField label="Late Penalty (charged per day)" value={localPolicies.latePenalty} min={0}
-              onChange={(v) => setLocalPolicies({ ...localPolicies, latePenalty: v })} prefix="₱" suffix="per day" widthClass="w-32" />
             <NumberField label="Minimum Downpayment" value={localPolicies.minDown} min={0}
               onChange={(v) => setLocalPolicies({ ...localPolicies, minDown: v })} prefix="₱" suffix="per booking" widthClass="w-32" />
-            <NumberField label="Damage Fee" value={localPolicies.damageFee} min={0}
-              onChange={(v) => setLocalPolicies({ ...localPolicies, damageFee: v })} prefix="₱" suffix="per damaged item" widthClass="w-32" />
+            <NumberField label="Default Damage Fee" value={localPolicies.damageFee} min={0}
+              onChange={(v) => setLocalPolicies({ ...localPolicies, damageFee: v })} prefix="₱" suffix="per damaged item" widthClass="w-32"
+              hint="Applied when the return form's fee field is left blank — staff can still type a custom amount per return." />
             <div className="flex gap-2 pt-1 sm:col-span-2">
               <button onClick={savePolicies} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
               <button onClick={() => { setEditPolicies(false); setLocalPolicies(policies); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
@@ -197,11 +194,10 @@ export default function GeneralTab() {
             {polMsg && <p className="text-xs text-emerald-600 font-bold sm:col-span-2">{polMsg}</p>}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <InfoTile label="Rental Period" value={`${policies.defaultDays} days`} />
-            <InfoTile label="Late Fee" value={`₱${policies.latePenalty}/day`} />
             <InfoTile label="Min Downpayment" value={`₱${policies.minDown}`} />
-            <InfoTile label="Damage Fee" value={`₱${policies.damageFee}`} />
+            <InfoTile label="Default Damage Fee" value={`₱${policies.damageFee}`} />
           </div>
         )}
       </SettingsCard>
