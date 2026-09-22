@@ -49,6 +49,7 @@ export default function GeneralTab() {
 
       const pol = { ...policies };
       if (rules.rental_period_days) pol.defaultDays = parseInt(rules.rental_period_days) || pol.defaultDays;
+      if (rules.return_days_after_event) pol.returnAfterEvent = parseInt(rules.return_days_after_event) || pol.returnAfterEvent;
       if (rules.min_downpayment) pol.minDown = parseInt(rules.min_downpayment) || pol.minDown;
       if (rules.damage_fee) pol.damageFee = parseInt(rules.damage_fee) || pol.damageFee;
       setPolicies(pol);
@@ -92,6 +93,7 @@ export default function GeneralTab() {
     setPolMsg('Rental policies saved!');
     syncRulesToBackend({
       rental_period_days: String(localPolicies.defaultDays),
+      return_days_after_event: String(localPolicies.returnAfterEvent),
       min_downpayment: String(localPolicies.minDown),
       damage_fee: String(localPolicies.damageFee),
     });
@@ -182,6 +184,9 @@ export default function GeneralTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
             <NumberField label="Default Rental Period" value={localPolicies.defaultDays} min={1} max={30}
               onChange={(v) => setLocalPolicies({ ...localPolicies, defaultDays: v })} suffix="days" />
+            <NumberField label="Return After Event" value={localPolicies.returnAfterEvent} min={0} max={7}
+              onChange={(v) => setLocalPolicies({ ...localPolicies, returnAfterEvent: v })} suffix="days"
+              hint="How many days after the event the item is due back." />
             <NumberField label="Minimum Downpayment" value={localPolicies.minDown} min={0}
               onChange={(v) => setLocalPolicies({ ...localPolicies, minDown: v })} prefix="₱" suffix="per booking" widthClass="w-32" />
             <NumberField label="Default Damage Fee" value={localPolicies.damageFee} min={0}
@@ -196,6 +201,7 @@ export default function GeneralTab() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <InfoTile label="Rental Period" value={`${policies.defaultDays} days`} />
+            <InfoTile label="Return After Event" value={`${policies.returnAfterEvent} day${policies.returnAfterEvent !== 1 ? 's' : ''}`} />
             <InfoTile label="Min Downpayment" value={`₱${policies.minDown}`} />
             <InfoTile label="Default Damage Fee" value={`₱${policies.damageFee}`} />
           </div>

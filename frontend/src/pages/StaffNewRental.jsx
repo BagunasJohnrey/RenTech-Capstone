@@ -83,6 +83,14 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   const todayStr = useMemo(() => todayYmd(), []);
 
+  // Fetch return-days-after-event setting from admin rules.
+  const [returnDays, setReturnDays] = useState(1);
+  useEffect(() => {
+    api.get('/settings/rental-defaults')
+      .then((d) => { if (d?.return_days_after_event) setReturnDays(d.return_days_after_event); })
+      .catch(() => {});
+  }, []);
+
   // Existing bookings for the selected item (active/overdue/returned) => unavailable dates,
   // including the 1-day cleaning window after a return. Sourced from the backend so it
   // stays consistent with the customer flow and the availability checks.
@@ -104,7 +112,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     const updated = { ...customer, rentalDate: p, eventDate: e };
     if (e) {
       const ret = new Date(e);
-      ret.setDate(ret.getDate() + 1);
+      ret.setDate(ret.getDate() + returnDays);
       updated.returnDate = toLocalYmd(ret);
     }
     setCustomer(updated);
@@ -115,7 +123,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     const updated = { ...customer, rentalDate: d };
     if (d > customer.eventDate) {
       const ret = new Date(d);
-      ret.setDate(ret.getDate() + 1);
+      ret.setDate(ret.getDate() + returnDays);
       updated.eventDate = d;
       updated.returnDate = toLocalYmd(ret);
     }
@@ -174,10 +182,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItem?.id]);
 
-  // When event date changes, auto-update return date to next day
+  // When event date changes, auto-update return date
   const handleEventDateChange = (d) => {
     const ret = new Date(d);
-    ret.setDate(ret.getDate() + 1);
+    ret.setDate(ret.getDate() + returnDays);
     setCustomer({ ...customer, eventDate: d, returnDate: toLocalYmd(ret) });
   };
 
@@ -798,6 +806,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     pickup={customer.rentalDate}
                     event={customer.eventDate}
                     bookedRanges={bookedRanges}
+                    returnDays={returnDays}
                     onChange={handleCalendarChange}
                   />
                   {fieldErrors.rentalDate && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.rentalDate}</p>}
@@ -806,7 +815,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   <Calendar size={16} className="text-amber-500 mt-0.5" />
                   <div>
                     <p className="text-xs font-bold text-amber-800">Pick up before your event date</p>
-                    <p className="text-[11px] text-amber-600/80 mt-0.5">Return due the day after your event ({new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}).</p>
+                    <p className="text-[11px] text-amber-600/80 mt-0.5">Return due {returnDays === 1 ? 'the day after' : `${returnDays} days after`} your event ({new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}).</p>
                   </div>
                 </div>
                 {availability.checking && (

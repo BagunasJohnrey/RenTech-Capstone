@@ -69,13 +69,17 @@ export default function CustomerRentalFlow({
   const eventDateTouched = useRef(false);
   // Suggested rental period + minimum downpayment come from the admin's
   // business rules (public endpoint) — fall back to the 3-day / ₱200 defaults.
-  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, min_downpayment: 200 });
+  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200 });
   useEffect(() => {
     let cancelled = false;
     api.get('/settings/rental-defaults')
       .then((d) => {
         if (cancelled || !d || typeof d.rental_period_days !== 'number') return;
-        setRentalDefaults({ rental_period_days: d.rental_period_days, min_downpayment: d.min_downpayment || 0 });
+        setRentalDefaults({
+          rental_period_days: d.rental_period_days,
+          return_days_after_event: d.return_days_after_event || 1,
+          min_downpayment: d.min_downpayment || 0,
+        });
         if (!eventDateTouched.current) {
           const dt = new Date();
           dt.setDate(dt.getDate() + d.rental_period_days);
@@ -89,9 +93,9 @@ export default function CustomerRentalFlow({
     if (!eventDate) return '';
     const d = new Date(eventDate);
     if (isNaN(d.getTime())) return '';
-    d.setDate(d.getDate() + 1);
+    d.setDate(d.getDate() + rentalDefaults.return_days_after_event);
     return toLocalYmd(d);
-  }, [eventDate]);
+  }, [eventDate, rentalDefaults.return_days_after_event]);
   const [useAccountDetails, setUseAccountDetails] = useState(true);
   const [customer, setCustomer] = useState({
     name: customerInfo?.name || '',
@@ -918,6 +922,7 @@ export default function CustomerRentalFlow({
                   pickup={rentalDate}
                   event={eventDate}
                   bookedRanges={bookedRanges}
+                  returnDays={rentalDefaults.return_days_after_event}
                   onChange={(p, e) => {
                     eventDateTouched.current = true;
                     setRentalDate(p);
@@ -931,7 +936,7 @@ export default function CustomerRentalFlow({
                   <span className="text-amber-500 mt-0.5"><Calendar size={16} /></span>
                   <div>
                     <p className="text-xs font-bold text-amber-800">Pick up from the store before your event date</p>
-                    <p className="text-[11px] text-amber-600 mt-0.5">Return is due the day after your event ({formatDate(dueDate)}).</p>
+                    <p className="text-[11px] text-amber-600 mt-0.5">Return is due {rentalDefaults.return_days_after_event === 1 ? 'the day after' : `${rentalDefaults.return_days_after_event} days after`} your event ({formatDate(dueDate)}).</p>
                   </div>
                 </div>
 
