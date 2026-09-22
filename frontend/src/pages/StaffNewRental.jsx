@@ -7,13 +7,9 @@ import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
 import { inventoryService } from '../services/inventory';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { toLocalYmd, todayYmd } from '../utils/format';
 
 const ITEMS_PER_LOAD = 6;
-
-const toLocalYmd = (d) => {
-  const x = new Date(d);
-  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
-};
 
 export default function StaffNewRental({ inventory, transactions = [], onAddTransaction, onClose, initialItem }) {
   // Discard-confirmation for Back / close: shown when the form has unsaved
@@ -85,7 +81,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => todayYmd(), []);
 
   // Existing bookings for the selected item (active/overdue/returned) => unavailable dates,
   // including the 1-day cleaning window after a return. Sourced from the backend so it
@@ -121,7 +117,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       const ret = new Date(d);
       ret.setDate(ret.getDate() + 1);
       updated.eventDate = d;
-      updated.returnDate = ret.toISOString().split('T')[0];
+      updated.returnDate = toLocalYmd(ret);
     }
     setCustomer(updated);
   };
@@ -129,13 +125,15 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // Customer details
   const [customer, setCustomer] = useState(() => {
     const now = new Date();
-    const eventD = new Date(now.getTime() + 2 * 86400000);
-    const returnD = new Date(eventD.getTime() + 1 * 86400000);
+    const eventD = new Date(now);
+    eventD.setDate(eventD.getDate() + 2);
+    const returnD = new Date(eventD);
+    returnD.setDate(returnD.getDate() + 1);
     return {
       name: '', contact: '', address: '',
-      rentalDate: now.toISOString().split('T')[0],
-      eventDate: eventD.toISOString().split('T')[0],
-      returnDate: returnD.toISOString().split('T')[0],
+      rentalDate: todayYmd(),
+      eventDate: toLocalYmd(eventD),
+      returnDate: toLocalYmd(returnD),
       notes: '',
       photoUrl: null,
     };
@@ -180,7 +178,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const handleEventDateChange = (d) => {
     const ret = new Date(d);
     ret.setDate(ret.getDate() + 1);
-    setCustomer({ ...customer, eventDate: d, returnDate: ret.toISOString().split('T')[0] });
+    setCustomer({ ...customer, eventDate: d, returnDate: toLocalYmd(ret) });
   };
 
   // Size & measurements

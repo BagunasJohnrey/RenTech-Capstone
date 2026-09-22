@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, Plus } from 'lucide-react';
+import { todayYmd } from '../utils/format';
 
 export default function NewRentalModal({ onClose, onAdd, inventory }) {
   const [customer, setCustomer] = useState('');
@@ -8,7 +9,7 @@ export default function NewRentalModal({ onClose, onAdd, inventory }) {
   const [amount, setAmount] = useState('');
   const [photoUrl, setPhotoUrl] = useState('');
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayYmd();
 
   const handleSubmit = (e) => {
     e.preventDefault();

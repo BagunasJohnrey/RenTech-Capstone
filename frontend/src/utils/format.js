@@ -1,3 +1,15 @@
+// Local YYYY-MM-DD string (avoids toISOString() UTC offset bug).
+export function toLocalYmd(d) {
+  const x = new Date(d);
+  if (isNaN(x.getTime())) return '';
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+
+// Today's date in local YYYY-MM-DD.
+export function todayYmd() {
+  return toLocalYmd(new Date());
+}
+
 export function customerLabel(c) {
   if (!c) return '';
   if (typeof c === 'object') return c.name || c.contact || c.email || 'Customer';

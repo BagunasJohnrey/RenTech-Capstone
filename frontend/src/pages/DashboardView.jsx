@@ -11,6 +11,7 @@ import { txPill } from '../utils/statusColors';
 import { promoService } from '../services/promo';
 import { sortByCategory } from '../utils/categorySort';
 import { tabPath } from '../utils/routing';
+import { todayYmd } from '../utils/format';
 
 export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook, onNavigateDetail }) {
   const navigate = useNavigate();
@@ -279,7 +280,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
   dayStart.setHours(0, 0, 0, 0);
 
   // Today's due returns (FIX G: from server when available)
-  const todayStr = today.toISOString().split('T')[0];
+  const todayStr = todayYmd();
   const upcomingToday = todayStats
     ? todayStats.dueToday.slice(0, 3)
     : transactions.filter(tx =>

@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { useToast } from './Toast';
 import ItemImage from './ItemImage';
 import { Skeleton } from './Skeleton';
+import { todayYmd } from '../utils/format';
 
 export default function AvailabilityCalendar({ item, onClose }) {
   const [blockedRanges, setBlockedRanges] = useState([]);
@@ -35,7 +36,7 @@ export default function AvailabilityCalendar({ item, onClose }) {
     setChecking(false);
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayYmd();
 
   return (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>

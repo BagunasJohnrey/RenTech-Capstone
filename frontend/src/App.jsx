@@ -12,6 +12,7 @@ import { useTransactions, normalizeTx } from './hooks/useTransactions';
 import { useStaff } from './hooks/useStaff';
 import { useCustomerProfile } from './hooks/useCustomerProfile';
 import { api, API_ORIGIN } from './utils/api';
+import { todayYmd } from './utils/format';
 import { useToast } from './components/Toast';
 
 import LoginPage from './pages/LoginPage';
@@ -495,7 +496,7 @@ export default function RentechApp() {
   const handleProcessReturn = async (txId, isDamaged, _isLate, returnPhoto, damageReason, damageFee) => {
     try {
       const updated = await processReturnTx(txId, {
-        returnDate: new Date().toISOString().split('T')[0],
+        returnDate: todayYmd(),
         isDamaged: !!isDamaged,
         returnPhoto: returnPhoto || undefined,
         damageReason: damageReason || undefined,
@@ -890,7 +891,7 @@ export default function RentechApp() {
                 onNavigate={goTab}
                 onOpenChatbot={() => setShowChatbot(true)}
                 onOpenScanner={() => setShowScanner(true)}
-                onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
+                onCustomerBook={(item) => setCustomerRental({ item, date: todayYmd() })}
                 onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))}
               />
             )}
@@ -914,7 +915,7 @@ export default function RentechApp() {
                 transactions={transactions}
                 loading={inventoryLoading}
                 onBook={(item, date) => setCustomerRental({ item, date })}
-                onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
+                onCustomerBook={(item) => setCustomerRental({ item, date: todayYmd() })}
                 onViewDetail={(item) => navigate(itemDetailPath(viewRole, item.id))}
                 onEdit={setEditingItem}
                 onDelete={handleDeleteInventoryItem}
@@ -1092,7 +1093,7 @@ export default function RentechApp() {
             onBook={() => {
               const it = detailItem;
               navigate(basePath, { replace: true });
-              setCustomerRental({ item: it, date: new Date().toISOString().split('T')[0] });
+              setCustomerRental({ item: it, date: todayYmd() });
             }}
           />
         )}
@@ -1207,7 +1208,7 @@ export default function RentechApp() {
       onFabClick={() => {
         if (viewRole === 'Admin') goTab('AI Insights');
         else if (viewRole === 'Staff') setShowStaffRental(true);
-        else setCustomerRental({ item: null, date: new Date().toISOString().split('T')[0] });
+        else setCustomerRental({ item: null, date: todayYmd() });
       }}
     >
       <Suspense fallback={<PageSkeleton tab={activeTab} />}>

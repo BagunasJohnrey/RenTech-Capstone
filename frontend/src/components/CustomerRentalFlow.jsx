@@ -11,6 +11,7 @@ import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
+import { todayYmd, toLocalYmd } from '../utils/format';
 import BookingQR from './BookingQR';
 import QRCode from 'qrcode';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
@@ -51,7 +52,7 @@ export default function CustomerRentalFlow({
   useEscapeClose(onClose);
   const [step, setStep] = useState(() => (preselectedItem ? 1 : 0));
   const [selectedItem, setSelectedItem] = useState(preselectedItem || null);
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => todayYmd(), []);
   const [rentalDate, setRentalDate] = useState(preselectedDate || todayStr);
   const measurementFields = useMemo(() => {
     const isFemale = selectedItem?.category?.toLowerCase().includes('gown');
@@ -63,7 +64,7 @@ export default function CustomerRentalFlow({
   const [eventDate, setEventDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 3);
-    return d.toISOString().split('T')[0];
+    return toLocalYmd(d);
   });
   const eventDateTouched = useRef(false);
   // Suggested rental period + minimum downpayment come from the admin's
@@ -78,7 +79,7 @@ export default function CustomerRentalFlow({
         if (!eventDateTouched.current) {
           const dt = new Date();
           dt.setDate(dt.getDate() + d.rental_period_days);
-          setEventDate(dt.toISOString().split('T')[0]);
+          setEventDate(toLocalYmd(dt));
         }
       })
       .catch(() => {});
@@ -89,7 +90,7 @@ export default function CustomerRentalFlow({
     const d = new Date(eventDate);
     if (isNaN(d.getTime())) return '';
     d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
+    return toLocalYmd(d);
   }, [eventDate]);
   const [useAccountDetails, setUseAccountDetails] = useState(true);
   const [customer, setCustomer] = useState({
