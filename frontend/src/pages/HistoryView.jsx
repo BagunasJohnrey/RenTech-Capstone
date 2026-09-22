@@ -30,7 +30,7 @@ const statusColors = Object.fromEntries(
   Object.entries(TX_STATUS_PILLS).map(([k, v]) => [k, `${v.bg} ${v.text}`])
 );
 
-const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved', 'Released'];  // Released = Active/Overdue with conditionPhoto
+const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved'];
 
 // Date filter: the heavy lifting (two-month popover, presets, hover-range
 // highlight, single-tap vs range, future-date support) lives in
@@ -242,7 +242,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
 
   const statusPriority = { Active: 0, Overdue: 1, Reserved: 2, Returned: 3, Cancelled: 4 };
 
-  const filteredTransactions = transactions
+  // Search + date subset first so the pill counts always match the list.
+  const searchDateFiltered = transactions
     .filter((tx) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
@@ -251,13 +252,6 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         (customerLabel(tx.customer) || '').toLowerCase().includes(q) ||
         (itemLabel(tx.item) || '').toLowerCase().includes(q)
       );
-    })
-    .filter((tx) => {
-      if (activeStatusFilter !== 'All') {
-        if (activeStatusFilter === 'Released') return isReleased(tx);
-        return tx.status === activeStatusFilter;
-      }
-      return true;
     })
     .filter((tx) => {
       if (dateFrom) {
@@ -269,6 +263,18 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         const endDate = new Date(dateTo);
         endDate.setHours(23, 59, 59, 999);
         if (txDate > endDate) return false;
+      }
+      return true;
+    });
+
+  const statusCounts = {};
+  for (const tx of searchDateFiltered) {
+    if (tx.status) statusCounts[tx.status] = (statusCounts[tx.status] || 0) + 1;
+  }
+  const filteredTransactions = searchDateFiltered
+    .filter((tx) => {
+      if (activeStatusFilter !== 'All') {
+        return tx.status === activeStatusFilter;
       }
       return true;
     })
@@ -365,19 +371,20 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
                 {ALL_STATUSES.map(s => {
                   const active = activeStatusFilter === s;
-                  const count = s !== 'All'
-                    ? s === 'Released'
-                      ? transactions.filter(isReleased).length
-                      : transactions.filter(tx => tx.status === s).length
-                    : '';
+                  const count = s === 'All' ? searchDateFiltered.length : (statusCounts[s] || 0);
                   return (
                     <button key={s} onClick={() => { setActiveStatusFilter(s); setCurrentPage(1); }}
-                      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                      className={`shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
                         active
                           ? 'bg-gray-900 text-white shadow-sm'
                           : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
                       }`}>
-                      {s === 'All' ? 'All' : s}{count ? ` ${count}` : ''}
+                      <span>{s}</span>
+                      <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold inline-flex items-center justify-center tabular-nums ${
+                        active ? 'bg-white/20 text-white' : 'bg-gray-200/70 text-gray-600'
+                      }`}>
+                        {count}
+                      </span>
                     </button>
                   );
                 })}
@@ -489,12 +496,15 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       </td>
                       <td className="px-6 py-4 text-gray-500 text-[13px]">{formatDate(tx.rentalDate || tx.date)}</td>
                       <td className="px-6 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
-                          {tx.status || '—'}
-                        </span>
-                        {tx.alterationStatus && (
-                          <span className={`ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                        {/* One pill only: an active alteration replaces the
+                            booking status instead of stacking beside it. */}
+                        {tx.alterationStatus ? (
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
                             {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                          </span>
+                        ) : (
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
+                            {tx.status || '—'}
                           </span>
                         )}
                       </td>
@@ -563,15 +573,16 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">{formatDate(tx.rentalDate || tx.date)}</p>
                   </div>
-                  <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
-                    {tx.status || '—'}
-                  </span>
+                  {tx.alterationStatus ? (
+                    <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                      {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                    </span>
+                  ) : (
+                    <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {tx.status || '—'}
+                    </span>
+                  )}
                 </div>
-                {tx.alterationStatus && (
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                    {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
-                  </span>
-                )}
 
                 {role !== 'Customer' && (
                   <p className="text-sm text-gray-700 min-w-0">

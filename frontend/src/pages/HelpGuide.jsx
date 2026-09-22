@@ -7,9 +7,9 @@ import {
 import { itemPill, txPill } from '../utils/statusColors';
 import { TERMS_SECTIONS, TermsBadge } from '../components/TermsContent';
 
-const staffFaqs = [
+export const staffFaqs = [
   { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental", or open Catalog, find an Available item, and tap "Book for Customer" on its card. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
-  { q: 'How do I process a return?', a: 'From Dashboard tap "Process Return", or find the active rental under Transactions. Check the condition, toggle any late/damage fees, then confirm. The item automatically flips to Cleaning — it goes back to Available once someone marks it cleaned. If you log a damage reason, the item skips cleaning and goes straight to Out of Service.' },
+  { q: 'How do I process a return?', a: 'From Dashboard tap "Process Return", or find the active rental under Records. Pick the condition: Good sends the item to Cleaning (back to Available once washed); Damaged needs a reason and an optional custom fee, and takes the item Out of Service. Add a condition photo if you like, then Confirm — the button locks while it processes so a double-tap can\u2019t file it twice.' },
   { q: 'How do I add an item to inventory?', a: 'Tap "+ Add Item" in the header or inside Catalog. Fill in the name, category, price, and photo. Only Admins and Staff can add items; Admins can also set them on sale (discount % or fixed sale price, optionally with an end date).' },
   { q: 'How do I take an item off the floor temporarily?', a: 'Open Catalog, find the item, and tap "Pull from rental" — the item flips to Out of Service so customers can no longer book it. When the repair or cleaning is done, tap "Restore to Available" on the same card to put it back.' },
   { q: 'How do I view demand forecasts and reports?', a: 'Admins can open "AI Insights" from the sidebar — demand forecast, utilization breakdown, monthly revenue, and the "Generate AI Report" button that drafts a summary for you. See the "Insights" section below for what every term means.' },
@@ -26,7 +26,7 @@ const customerFaqs = [
 
 // Inventory lifecycle legend (Staff/Admin only) — maps each on-card action
 // button to what it actually does, so nobody has to guess from the icon.
-const inventoryActions = [
+export const inventoryActions = [
   { status: 'Available', PillIcon: Wrench, pillCls: 'bg-red-50 text-red-700 border border-red-200', btnLabel: 'Pull from rental',
     desc: 'For damaged or maintenance-needed pieces. The item flips to Out of Service, is hidden from the catalog, and existing bookings stay intact.' },
   { status: 'Cleaning', PillIcon: CheckCircle2, pillCls: 'bg-emerald-600 text-white', btnLabel: 'Mark as clean',
@@ -37,14 +37,14 @@ const inventoryActions = [
 
 // Status reference for the "no action" states, so staff know the card
 // isn't missing a button.
-const statusReference = [
+export const statusReference = [
   { status: 'Rented', desc: 'A customer has the item. Status moves automatically as the booking progresses — no manual change needed.' },
   { status: 'Reserved', desc: 'The item is locked into an upcoming booking. Same as Rented: handled by the booking itself.' },
   { status: 'Deleted', desc: 'Soft-archived. Hidden from the catalog; only Admin can bring it back via the Restore (Undo2) icon on the card corner.' },
 ];
 
 // What each transaction badge means on the dashboard / transactions list.
-const transactionStatuses = [
+export const transactionStatuses = [
   { key: 'Reserved', Icon: Calendar, desc: 'Booking confirmed and paid — the item is locked until pickup. Handled automatically, no action needed.' },
   { key: 'Active', Icon: PackageCheck, desc: 'The customer currently has the item — the rental is live. Moves to Returned automatically when you process the return.' },
   { key: 'Overdue', Icon: AlertTriangle, desc: 'The item was due and has not come back. Red = act now: the customer gets late-return SMS, and it stays flagged until the return is processed.' },
@@ -52,8 +52,15 @@ const transactionStatuses = [
   { key: 'Cancelled', Icon: XCircle, desc: 'Booking revoked. The item frees up for other customers; downpayment refunds follow store policy.' },
 ];
 
+// Alteration flags (from the glossary) — when set, the alteration badge
+// replaces the booking status so there is only ever one badge per row.
+export const alterationStatuses = [
+  { key: 'Alteration Pending', cls: 'bg-amber-50 text-amber-600 border-amber-200', desc: 'The piece needs fitting work (e.g. hemming) before it can be released.' },
+  { key: 'Alteration Ready', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200', desc: 'Fitting work is done — the piece is ready to release.' },
+];
+
 // What the colored pills across the app mean — one color = one meaning.
-const colorLegend = [
+export const colorLegend = [
   { key: 'Available', cls: 'bg-emerald-500', label: 'Emerald — good / ready', desc: 'Available, Returned, or "open" statuses. Everything is fine and the item can be rented.' },
   { key: 'Rented', cls: 'bg-blue-500', label: 'Blue — out with a customer', desc: 'Rented, Active. The item is in a customer\'s hands right now.' },
   { key: 'Reserved', cls: 'bg-indigo-400', label: 'Indigo — booked ahead', desc: 'Reserved. Locked into an upcoming booking, not yet picked up.' },
@@ -63,7 +70,7 @@ const colorLegend = [
 ];
 
 // Everyday labels staff will see on the dashboard and why they matter.
-const dashboardTerms = [
+export const dashboardTerms = [
   { Icon: ClipboardList, title: 'Today\'s Priority', desc: 'The action queue the system builds for you — pickups due, returns due, and overdue follow-ups, ranked by urgency.' },
   { Icon: DoorOpen, title: 'Pickups Today', desc: 'Rented items scheduled to be handed over today. Hand the item out to start the Active rental.' },
   { Icon: CalendarCheck, title: 'Due Today / "d overdue"', desc: 'Items expected back today. Once a rental passes its due date it turns red and is counted as overdue — chase the customer.' },
@@ -85,6 +92,7 @@ export default function HelpGuide({ role, onStartTutorial }) {
   const [openTerm, setOpenTerm] = useState(null);
   const isCustomer = role?.toLowerCase() === 'customer';
   const isAdmin = role?.toLowerCase() === 'admin';
+  const isStaff = !isCustomer && !isAdmin;
   const faqs = isCustomer ? customerFaqs : staffFaqs;
 
   return (
@@ -192,6 +200,15 @@ export default function HelpGuide({ role, onStartTutorial }) {
                 </div>
               );
             })}
+            {alterationStatuses.map(({ key, cls, desc }) => (
+              <div key={key} className="flex items-start gap-3 p-4 bg-gray-50/40">
+                <span className={`shrink-0 inline-flex items-center px-2 py-1 rounded-full border text-[10px] font-bold ${cls}`}>
+                  {key}
+                </span>
+                <p className="text-sm text-gray-600 leading-relaxed flex-1">{desc}</p>
+              </div>
+            ))}
+            <p className="px-4 py-3 text-[11px] text-gray-400 bg-gray-50/40">When an alteration flag is set, its badge replaces the booking status — only one badge per row.</p>
           </div>
         </div>
       )}
@@ -259,7 +276,9 @@ export default function HelpGuide({ role, onStartTutorial }) {
         </div>
       </div>
 
-      {/* Terms & Conditions + Privacy Policy — collapsible dropdowns */}
+      {/* Terms & Conditions + Privacy Policy — collapsible dropdowns.
+          Hidden for staff (customer-facing legal text, not front-desk ops). */}
+      {!isStaff && (
       <div>
         <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
           <ShieldCheck size={18} className="text-emerald-600 shrink-0" /> Terms and Conditions &amp; Privacy Policy
@@ -315,6 +334,7 @@ export default function HelpGuide({ role, onStartTutorial }) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

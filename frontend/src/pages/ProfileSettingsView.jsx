@@ -12,6 +12,7 @@ import TeamTab from '../components/settings/TeamTab';
 import AccountActions from '../components/settings/AccountActions';
 import InstallAppSetting from '../components/settings/InstallAppSetting';
 import HelpGuide from './HelpGuide';
+import StaffHelpGuide from './StaffHelpGuide';
 
 // Settings shell: shared page header + the active section for the signed-in
 // role. Admin-only operational settings are organized into tabs, with each
@@ -82,6 +83,9 @@ export default function ProfileSettingsView({
           {adminSection === 'help' && <HelpGuide role={role} />}
         </>
       )}
+
+      {/* Staff-only Help Guide (Admin has the shared guide as a tab above) */}
+      {role === 'Staff' && <StaffHelpGuide />}
 
       {/* Install App — persistent entry point above Sign Out */}
       <InstallAppSetting />
