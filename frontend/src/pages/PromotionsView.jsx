@@ -356,68 +356,77 @@ export default function PromotionsView({ inventory, onEditItem }) {
                     const salePrice = currentPrice * (1 - s.discountPct / 100);
                     if (isDismissed) return null;
                     return (
-                      <div key={i} className={`bg-white/10 rounded-2xl p-3 backdrop-blur-sm transition-all ${isApplied ? 'ring-1 ring-white/30' : ''}`}>
-                        <div className="flex gap-3">
-                          {/* Item Image */}
-                          <div className="w-16 h-16 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-white/10 shrink-0">
-                            <ItemImage
-                              thumb
-                              image={item?.image}
-                              alt={s.itemName}
-                              className="w-full h-full object-cover"
-                              placeholderSize={18}
-                            />
+                      <div key={i} className={`bg-white/10 rounded-2xl p-3 md:p-4 backdrop-blur-sm transition-all ${isApplied ? 'ring-1 ring-white/30' : ''}`}>
+                        {/* Mobile: stacked layout */}
+                        <div className="md:hidden">
+                          <div className="flex gap-3">
+                            <div className="w-16 h-16 rounded-xl overflow-hidden bg-white/10 shrink-0">
+                              <ItemImage thumb image={item?.image} alt={s.itemName} className="w-full h-full object-cover" placeholderSize={18} />
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <p className="text-sm font-bold leading-tight">{s.itemName}</p>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">{s.discountPct}% off</span>
+                                {s.suggestedExpiryDays && (
+                                  <span className="text-[10px] text-white/40 flex items-center gap-1">
+                                    <Clock size={9} /> {s.suggestedExpiryDays}d
+                                  </span>
+                                )}
+                              </div>
+                              {currentPrice > 0 && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] text-white/40 line-through">₱{currentPrice.toLocaleString()}</span>
+                                  <span className="text-[11px] font-bold text-emerald-300">₱{salePrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                                  <span className="text-[10px] text-white/30">/day</span>
+                                </div>
+                              )}
+                              <p
+                                onClick={() => setExpandedNames(prev => { const n = new Set(prev); const k = 'r-' + (s.itemId || s.itemName); n.has(k) ? n.delete(k) : n.add(k); return n; })}
+                                className={`text-white/60 text-xs cursor-pointer select-none hover:text-white/80 transition-colors ${expandedNames.has('r-' + (s.itemId || s.itemName)) ? '' : 'line-clamp-2'}`}
+                                title={s.rationale}
+                              >{s.rationale}</p>
+                            </div>
                           </div>
-                           {/* Content */}
-                          <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-white/10">
+                            <button onClick={() => setDismissedItems(prev => new Set([...prev, s.itemId || s.itemName]))}
+                              className="text-[11px] text-white/40 hover:text-white/70 transition-colors">Dismiss</button>
+                            <button onClick={() => handleApplyToItem(s)} disabled={isApplied}
+                              className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-[11px] font-bold transition-colors ${isApplied ? 'bg-white/10 text-white/40 cursor-default' : 'bg-white text-[#bf4a53] hover:bg-white/90'}`}>
+                              {isApplied ? 'Applied' : 'Apply'}{!isApplied && <ArrowRight size={11} />}
+                            </button>
+                          </div>
+                        </div>
+                        {/* Desktop/tablet: horizontal layout */}
+                        <div className="hidden md:flex items-start gap-4">
+                          <div className="w-20 h-20 rounded-xl overflow-hidden bg-white/10 shrink-0">
+                            <ItemImage thumb image={item?.image} alt={s.itemName} className="w-full h-full object-cover" placeholderSize={22} />
+                          </div>
+                          <div className="min-w-0 flex-1 space-y-1.5">
                             <p className="text-sm font-bold leading-tight">{s.itemName}</p>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">{s.discountPct}% off</span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] font-bold bg-white/20 px-2.5 py-0.5 rounded-full">{s.discountPct}% off</span>
                               {s.suggestedExpiryDays && (
-                                <span className="text-[10px] text-white/40 flex items-center gap-1">
-                                  <Clock size={9} /> {s.suggestedExpiryDays}d
+                                <span className="text-[11px] text-white/50 flex items-center gap-1"><Clock size={10} /> {s.suggestedExpiryDays}d</span>
+                              )}
+                              {currentPrice > 0 && (
+                                <span className="text-[11px] text-white/50">
+                                  <span className="line-through">₱{currentPrice.toLocaleString()}</span>
+                                  {' '}<span className="font-bold text-emerald-300">₱{salePrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>/day
                                 </span>
                               )}
                             </div>
-                            {currentPrice > 0 && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-[11px] text-white/40 line-through">₱{currentPrice.toLocaleString()}</span>
-                                <span className="text-[11px] font-bold text-emerald-300">₱{salePrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                                <span className="text-[10px] text-white/30">/day</span>
-                              </div>
-                            )}
-                            <p
-                              onClick={() => setExpandedNames(prev => {
-                                const next = new Set(prev);
-                                const key = 'rationale-' + (s.itemId || s.itemName);
-                                next.has(key) ? next.delete(key) : next.add(key);
-                                return next;
-                              })}
-                              className={`text-white/60 text-xs cursor-pointer select-none hover:text-white/80 transition-colors ${
-                                expandedNames.has('rationale-' + (s.itemId || s.itemName)) ? '' : 'line-clamp-2'
-                              }`}
-                              title={s.rationale}
-                            >{s.rationale}</p>
+                            <p className="text-white/60 text-xs leading-relaxed">{s.rationale}</p>
                           </div>
-                        </div>
-                        {/* Actions row */}
-                        <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-white/10">
-                          <button
-                            onClick={() => setDismissedItems(prev => new Set([...prev, s.itemId || s.itemName]))}
-                            className="text-[11px] text-white/40 hover:text-white/70 transition-colors"
-                          >
-                            Dismiss
-                          </button>
-                          <button
-                            onClick={() => handleApplyToItem(s)}
-                            disabled={isApplied}
-                            className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-[11px] font-bold transition-colors ${
-                              isApplied ? 'bg-white/10 text-white/40 cursor-default' : 'bg-white text-[#bf4a53] hover:bg-white/90'
-                            }`}
-                          >
-                            {isApplied ? 'Applied' : 'Apply'}
-                            {!isApplied && <ArrowRight size={11} />}
-                          </button>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!isApplied && (
+                              <button onClick={() => setDismissedItems(prev => new Set([...prev, s.itemId || s.itemName]))}
+                                className="text-[11px] text-white/40 hover:text-white/70 transition-colors px-2 py-2">Dismiss</button>
+                            )}
+                            <button onClick={() => handleApplyToItem(s)} disabled={isApplied}
+                              className={`flex items-center gap-1 px-4 py-2 rounded-full text-xs font-bold transition-colors ${isApplied ? 'bg-white/10 text-white/40 cursor-default' : 'bg-white text-[#bf4a53] hover:bg-white/90'}`}>
+                              {isApplied ? 'Applied' : 'Apply'}{!isApplied && <ArrowRight size={12} />}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -437,41 +446,45 @@ export default function PromotionsView({ inventory, onEditItem }) {
                   {suggestions.voucherSuggestions.map((s, i) => {
                     const isApplied = appliedVouchers.has(s.code);
                     return (
-                      <div key={i} className="bg-white/10 rounded-2xl p-3 backdrop-blur-sm">
-                        <div className="space-y-1.5">
+                      <div key={i} className="bg-white/10 rounded-2xl p-3 md:p-4 backdrop-blur-sm">
+                        {/* Mobile: stacked */}
+                        <div className="md:hidden space-y-1.5">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-bold font-mono">{s.code}</p>
                             <span className="text-[10px] font-bold bg-white/20 px-2 py-0.5 rounded-full">{s.discountPct}% off</span>
                             {s.maxUses && <span className="text-[10px] text-white/50">max {s.maxUses}</span>}
                             {s.expiresInDays && (
-                              <span className="text-[10px] text-white/40 flex items-center gap-1">
-                                <Clock size={9} /> {s.expiresInDays}d
-                              </span>
+                              <span className="text-[10px] text-white/40 flex items-center gap-1"><Clock size={9} /> {s.expiresInDays}d</span>
                             )}
                           </div>
                           <p
-                            onClick={() => setExpandedNames(prev => {
-                              const next = new Set(prev);
-                              const key = 'voucher-' + s.code;
-                              next.has(key) ? next.delete(key) : next.add(key);
-                              return next;
-                            })}
-                            className={`text-white/60 text-xs cursor-pointer select-none hover:text-white/80 transition-colors ${
-                              expandedNames.has('voucher-' + s.code) ? '' : 'line-clamp-2'
-                            }`}
+                            onClick={() => setExpandedNames(prev => { const n = new Set(prev); const k = 'v-' + s.code; n.has(k) ? n.delete(k) : n.add(k); return n; })}
+                            className={`text-white/60 text-xs cursor-pointer select-none hover:text-white/80 transition-colors ${expandedNames.has('v-' + s.code) ? '' : 'line-clamp-2'}`}
                             title={s.rationale}
                           >{s.rationale}</p>
+                          <div className="flex items-center justify-end pt-2 border-t border-white/10">
+                            <button onClick={() => handleCreateCode(s)} disabled={isApplied}
+                              className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-[11px] font-bold transition-colors ${isApplied ? 'bg-white/10 text-white/40 cursor-default' : 'bg-white text-[#bf4a53] hover:bg-white/90'}`}>
+                              {isApplied ? 'Created' : 'Create Code'}{!isApplied && <ArrowRight size={11} />}
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-end mt-2.5 pt-2 border-t border-white/10">
-                          <button
-                            onClick={() => handleCreateCode(s)}
-                            disabled={isApplied}
-                            className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-[11px] font-bold transition-colors ${
-                              isApplied ? 'bg-white/10 text-white/40 cursor-default' : 'bg-white text-[#bf4a53] hover:bg-white/90'
-                            }`}
-                          >
-                            {isApplied ? 'Created' : 'Create Code'}
-                            {!isApplied && <ArrowRight size={11} />}
+                        {/* Desktop/tablet: horizontal */}
+                        <div className="hidden md:flex items-start gap-4">
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <p className="text-sm font-bold font-mono">{s.code}</p>
+                              <span className="text-[11px] font-bold bg-white/20 px-2.5 py-0.5 rounded-full">{s.discountPct}% off</span>
+                              {s.maxUses && <span className="text-[11px] text-white/50">max {s.maxUses}</span>}
+                              {s.expiresInDays && (
+                                <span className="text-[11px] text-white/50 flex items-center gap-1"><Clock size={10} /> {s.expiresInDays}d</span>
+                              )}
+                            </div>
+                            <p className="text-white/60 text-xs leading-relaxed">{s.rationale}</p>
+                          </div>
+                          <button onClick={() => handleCreateCode(s)} disabled={isApplied}
+                            className={`shrink-0 flex items-center gap-1 px-4 py-2 rounded-full text-xs font-bold transition-colors ${isApplied ? 'bg-white/10 text-white/40 cursor-default' : 'bg-white text-[#bf4a53] hover:bg-white/90'}`}>
+                            {isApplied ? 'Created' : 'Create Code'}{!isApplied && <ArrowRight size={12} />}
                           </button>
                         </div>
                       </div>
