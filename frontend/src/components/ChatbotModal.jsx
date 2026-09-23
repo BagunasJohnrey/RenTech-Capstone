@@ -425,7 +425,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
                                     <span className="text-[10px] text-gray-400 line-through">₱{Number(originalPrice || 0).toLocaleString()}</span>
                                   </div>
                                 ) : (
-                                  <p className="text-[11px] text-gray-600 font-semibold mt-0.5">₱{Number(item.price || 0).toLocaleString()}<span className="text-[9px] text-gray-400 font-medium"> / day</span></p>
+                                  <p className="text-[11px] text-gray-600 font-semibold mt-0.5">₱{Number(item.price || 0).toLocaleString()}</p>
                                 )}
                                 {onBook && (
                                   <button

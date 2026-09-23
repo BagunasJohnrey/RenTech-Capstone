@@ -377,7 +377,6 @@ export default function PromotionsView({ inventory, onEditItem }) {
                                 <div className="flex items-center gap-2">
                                   <span className="text-[11px] text-white/40 line-through">₱{currentPrice.toLocaleString()}</span>
                                   <span className="text-[11px] font-bold text-emerald-300">₱{salePrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                                  <span className="text-[10px] text-white/30">/day</span>
                                 </div>
                               )}
                               <p
@@ -411,7 +410,7 @@ export default function PromotionsView({ inventory, onEditItem }) {
                               {currentPrice > 0 && (
                                 <span className="text-[11px] text-white/50">
                                   <span className="line-through">₱{currentPrice.toLocaleString()}</span>
-                                  {' '}<span className="font-bold text-emerald-300">₱{salePrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>/day
+                                  {' '}<span className="font-bold text-emerald-300">₱{salePrice.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                                 </span>
                               )}
                             </div>

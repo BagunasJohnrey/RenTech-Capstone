@@ -689,7 +689,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     type="button"
                     key={item.id}
                     onClick={() => { setSelectedItem(prev => prev?.id === item.id ? null : item); setSize(''); }}
-                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ${item.status}, ₱${item.price.toLocaleString()} per day`}
+                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ${item.status}, ₱${item.price.toLocaleString()} per event`}
                     className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'
                     }`}

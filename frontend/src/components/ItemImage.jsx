@@ -11,11 +11,21 @@ import {
 // thumb) — skip straight to the full image instead of 404ing every mount.
 const deadThumbs = new Set();
 
-function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eager = false, thumb = false }) {
+function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eager = false, thumb = false, onSettled }) {
   const ref = useRef(null);
   const [inView, setInView] = useState(eager);
   const [src, setSrc] = useState(() => (image && isAbsoluteUrl(image) ? image : null));
   const [thumbFailed, setThumbFailed] = useState(false);
+  // Settles exactly once per image: parent cards gate on this to hold the
+  // whole card on a skeleton until the photo is in (or definitively failed).
+  const settledRef = useRef(false);
+  const settle = () => {
+    if (!settledRef.current) {
+      settledRef.current = true;
+      onSettled?.();
+    }
+  };
+  useEffect(() => { settledRef.current = false; }, [image]);
 
   const wantThumb = thumb && !isPrivatePath(image) && !thumbFailed && !deadThumbs.has(image);
 
@@ -47,6 +57,10 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
     if (!inView) return;
     if (!image || isAbsoluteUrl(image)) {
       setSrc(image || null);
+      // No image at all: the placeholder IS the final state — settle now so
+      // gating parents don't hold a skeleton forever. (Absolute URLs still
+      // load async; their <img onLoad> settles them.)
+      if (!image) settle();
       return;
     }
     // Grid thumbs: the small public webp first; onError below falls back to
@@ -62,12 +76,13 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
 
   const handleError = () => {
     // Thumb 404 (legacy object) -> remember + fall back to full image once.
-    // Anything else failing -> placeholder.
+    // Anything else failing -> placeholder, which is final: settle the gate.
     if (wantThumb && src && src.includes('/thumbs/')) {
       deadThumbs.add(image);
       setThumbFailed(true);
     } else {
       setSrc(null);
+      settle();
     }
   };
 
@@ -87,6 +102,7 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
       loading={eager ? 'eager' : 'lazy'}
       decoding="async"
       fetchPriority={eager ? 'high' : 'auto'}
+      onLoad={settle}
       onError={handleError}
     />
   );

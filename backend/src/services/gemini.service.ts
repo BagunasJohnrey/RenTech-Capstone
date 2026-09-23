@@ -6,7 +6,7 @@ const FAQ: Record<string, string> = {
   'price': 'Our rentals range roughly ₱2,500–₱5,000 depending on the garment. Browse the catalog for exact pricing per item.',
   'how long': 'Our standard rental period is 3 days. Extensions may be arranged by contacting us directly.',
   'rental period': 'Standard rental is 3 days. Need it longer? Message us and we can arrange an extension.',
-  'late': 'Late returns incur a penalty of ₱500 per day. Please return items on time to avoid additional charges.',
+  'late': 'No late fees here — just please return items on time so the next customer gets them as scheduled. We will send you a reminder before your due date.',
   'damage': 'If an item is damaged, a damage fee of ₱1,000 will be applied. We encourage you to inspect items upon pickup.',
   'deposit': 'A minimum downpayment of ₱200 is required to confirm your booking. The balance is due upon return.',
   'downpayment': 'A downpayment (min ₱200) secures your booking; the remaining balance is settled when you return the item.',
@@ -22,7 +22,7 @@ const FAQ: Record<string, string> = {
   'payment': 'We accept GCash, cards, and over-the-counter payments. A downpayment confirms your slot; balance on return.',
   'alter': 'Minor alterations can be arranged for select items—let us know your measurements when booking.',
   'deliver': 'Pickup is at our Balayan, Batangas boutique. Delivery may be arranged for select areas—ask our staff!',
-  'return': 'Return your item by the due date at the boutique. Late returns incur ₱500/day, so we\'ll send a reminder.',
+  'return': 'Return your item by the due date at the boutique. There are no late fees — we will send a reminder so you do not forget.',
   'clean': 'Every item is professionally cleaned and inspected after each rental, so you always get it fresh.',
   // Basic styling & occasion guidance (offline fallback for the AI stylist).
   'wedding': 'For a wedding, classic gowns and Filipiniana are lovely as a guest or principal sponsor. Go for soft pastels or elegant neutrals, and long gowns for formal vows. Browse the catalog for our current gown and Filipiniana styles!',

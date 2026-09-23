@@ -1,5 +1,7 @@
+import { useEffect, useRef, useState } from 'react';
 import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
 import ItemImage from './ItemImage';
+import { SkeletonCard } from './Skeleton';
 import { itemPill } from '../utils/statusColors';
 import { normalizeOccasions } from '../utils/occasions';
 
@@ -19,8 +21,54 @@ export function getSaleInfo(item) {
   return { active: true, price, pct };
 }
 
+// Holds a card on its skeleton until its photo settles (loaded or
+// definitively failed — never forever). The hidden eager preloader starts
+// only when the card nears the viewport, so below-fold grids keep the lazy
+// fetch behavior instead of downloading every thumb on mount.
+function useImageGate(item) {
+  const [ready, setReady] = useState(!item?.image);
+  const [inView, setInView] = useState(false);
+  const ref = useRef(null);
+  const imageKey = item?.image;
+  const idKey = item?.id;
+  useEffect(() => { setReady(!item?.image); }, [idKey, imageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (inView) return;
+    if (typeof IntersectionObserver === 'undefined' || !ref.current) {
+      setInView(true);
+      return;
+    }
+    const el = ref.current;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '400px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [inView]);
+  const markReady = () => setReady(true);
+  const skeleton = (
+    <div ref={ref}>
+      <SkeletonCard />
+      {inView && !!item?.image && (
+        <span className="hidden" aria-hidden="true">
+          <ItemImage thumb image={item.image} alt="" eager onSettled={markReady} />
+        </span>
+      )}
+    </div>
+  );
+  return { ready, skeleton };
+}
+
 function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, showBook }) {
   const sale = getSaleInfo(item);
+  const gate = useImageGate(item);
+  if (!gate.ready) return gate.skeleton;
   return (
     <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
       <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
@@ -83,10 +131,9 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
               <>
                 <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
                 <span className="text-gray-400 font-medium text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
-                <span className="text-gray-400 font-medium text-xs"> / day</span>
               </>
             ) : (
-              <span className="text-gray-900">₱{item.price.toLocaleString()} <span className="text-gray-400 font-medium text-xs">/ day</span></span>
+              <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
             )}
           </p>
         </div>
@@ -163,6 +210,8 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
   const isStaff = role !== 'Customer';
   const meta = itemPill(item.status);
   const StatusIcon = meta.icon;
+  const gate = useImageGate(item);
+  if (!gate.ready) return gate.skeleton;
 
   if (isStaff) {
     if (isAdmin) {

@@ -768,7 +768,7 @@ export default function CustomerRentalFlow({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {displayedItems.map((item) => (
                   <button type="button" key={item.id} onClick={() => setSelectedItem(item)}
-                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per day`}
+                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per event`}
                     className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'}`}>
                     <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />

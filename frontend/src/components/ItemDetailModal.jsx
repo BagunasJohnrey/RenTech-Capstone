@@ -45,6 +45,16 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
     setChecking(false);
   };
 
+  // Auto-run the check shortly after both dates are picked so the button
+  // becomes a manual retry, not a required tap. The `checking` guard inside
+  // checkAvailability collapses overlaps (auto + manual tap at once = 1 call).
+  useEffect(() => {
+    if (!selectedStart || !selectedEnd || !item?.id) return;
+    const t = setTimeout(() => { checkAvailability(); }, 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStart, selectedEnd, item?.id]);
+
   if (!item) return null;
   const sale = getSaleInfo(item);
 
@@ -74,11 +84,10 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               <>
                 <span className="text-2xl font-extrabold text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
                 <span className="text-gray-400 font-medium text-sm line-through">₱{item.price.toLocaleString()}</span>
-                <span className="text-gray-400 font-medium text-xs mb-1">/ day</span>
               </>
             ) : (
               <span className="text-2xl font-extrabold text-gray-900">
-                ₱{item.price.toLocaleString()} <span className="text-gray-400 font-medium text-sm">/ day</span>
+                ₱{item.price.toLocaleString()}
               </span>
             )}
             <span className={`ml-auto text-[11px] font-bold px-2 py-1 rounded-full ${itemPill(item.status).bg} ${itemPill(item.status).text}`}>
@@ -133,10 +142,9 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               onChange={(p, e) => { setSelectedStart(p); setSelectedEnd(e); setCheckResult(null); }}
               bookedRanges={blockedRanges}
             />
-            <button onClick={checkAvailability} disabled={!selectedStart || !selectedEnd || checking}
-              className="mt-2.5 w-full py-2 bg-gray-900 text-white text-sm font-bold rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-              {checking ? 'Checking...' : 'Check Availability'}
-            </button>
+            {checking && !checkResult && (
+              <p className="mt-2.5 text-xs font-semibold text-gray-400">Checking availability…</p>
+            )}
             {checkResult && (
               <div className={`mt-2.5 px-3 py-2 rounded-lg flex items-center gap-2 text-xs font-semibold ${checkResult.available ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
                 {checkResult.available ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}

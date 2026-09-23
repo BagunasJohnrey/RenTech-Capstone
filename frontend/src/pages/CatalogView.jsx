@@ -735,7 +735,7 @@ const toggleCategory = (cat) => {
           </div>
         ) : (
           <>
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
             {displayedInventory.map(item => (
               <ItemCard key={item.id} item={item} role={role} guest={guest}
                 onBook={() => handleItemAction(item)}

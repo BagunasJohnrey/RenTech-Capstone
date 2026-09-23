@@ -61,28 +61,28 @@ const galleryItems = [
     id: 1,
     title: 'Emerald Silk Mermaid Evening Gown',
     category: 'Gowns',
-    price: 'From ₱1,500 / day',
+    price: 'From ₱1,500',
     img: 'https://www.misshow.com/cdn/shop/files/Elegant-Stunning-Off-the-Shoulder-Mermaid-Prom-Evening-Dresses-Ruffles-With-Split.jpg?v=1763109918'
   },
   {
     id: 2,
     title: 'Hand-Painted Maria Clara Ensembles',
     category: 'Filipiniana',
-    price: 'From ₱1,500 / day',
+    price: 'From ₱1,500',
     img: 'https://cmcbaronglv.com/cdn/shop/files/1_d5ba90b4-d664-40db-8bed-ef53a23792e5.png?v=1748915935&width=713'
   },
   {
     id: 3,
     title: 'Organza Barong with Geometric Patterns',
     category: 'Barong',
-    price: 'From ₱1,500 / day',
+    price: 'From ₱1,500',
     img: 'https://barongsrus.com/wp-content/uploads/2023/08/1070A_SMM.jpg'
   },
   {
     id: 4,
     title: 'Forest Green 3-Piece Wool Suit',
     category: 'Suits',
-    price: 'From ₱1,500 / day',
+    price: 'From ₱1,500',
     img: 'https://i.pinimg.com/1200x/77/49/8b/77498bef8f7d20fed02a499253c3beef.jpg'
   }
 ];
@@ -91,7 +91,7 @@ const faqs = [
   { q: "How does the online reservation work?", a: "You can browse our catalog, check date-specific availability, and secure your booking by paying a downpayment online. Physical pickup and return must be done at the boutique." },
   { q: "Do you offer door-to-door delivery?", a: "No. Our system follows a strictly in-store fulfillment model. All fittings, item pickups, and returns must be conducted personally at Mylene's Boutique in Balayan." },
   { q: "Do you offer wedding gowns?", a: "Our current catalog strictly caters to social events such as proms, debuts, and pageants. We expressly exclude wedding-related rentals and bridal packages." },
-  { q: "What happens if I return the item late or damaged?", a: "Our automated system calculates late penalties and damage fees based on predefined business rules. You will be notified via SMS regarding your return deadlines to help you avoid these fees." }
+  { q: "What happens if I return the item late or damaged?", a: "There are no late fees — just return on time so the next booking stays on schedule. Damage fees apply per our policy for damaged items. You will be notified via SMS regarding your return deadlines." }
 ];
 
 // Fetch up to 4 available pieces from the PUBLIC catalog for the gallery
@@ -192,11 +192,11 @@ const GalleryCard = ({ item, onBrowse }) => {
           {isReal ? (
             hasSale ? (
               <>
-                <span className="line-through opacity-70 mr-1.5">From ₱{Number(item._item.price).toLocaleString()} / day</span>
-                <span className="text-white font-semibold">₱{Number(price).toLocaleString()} / day</span>
+                <span className="line-through opacity-70 mr-1.5">From ₱{Number(item._item.price).toLocaleString()}</span>
+                <span className="text-white font-semibold">₱{Number(price).toLocaleString()}</span>
               </>
             ) : (
-              <>From ₱{Number(item._item.price).toLocaleString()} / day</>
+              <>From ₱{Number(item._item.price).toLocaleString()}</>
             )
           ) : (
             item.price
