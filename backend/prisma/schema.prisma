@@ -66,6 +66,9 @@ model InventoryItem {
   name        String
   category    String
   occasions   String[]   @default([])
+  // Staff-only color tags (never rendered on cards) — powers the catalog
+  // Colors filter, text search, and RAG color matching ("green theme gowns").
+  colors      String[]   @default([])
   price       Float
   status      ItemStatus @default(Available)
   image       String?
@@ -76,6 +79,10 @@ model InventoryItem {
   salePrice   Float?     @map("sale_price")
   saleEndsAt  DateTime?  @map("sale_ends_at")
   outOfServiceReason String? @map("out_of_service_reason")
+  // Tier 2 RAG: dense embedding (Gemini text-embedding-004, 768-dim).
+  // NULL until the offline reindex runs. Raw SQL (match_chunks RPC) reads it
+  // so retrieval works even before `prisma generate` picks up this column.
+  embedding Unsupported("vector(768)")?
   createdAt   DateTime   @default(now()) @map("created_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
 
@@ -83,6 +90,26 @@ model InventoryItem {
 
   @@index([name, category, status])
   @@map("inventory_items")
+}
+
+// Tier 2 RAG: semantic knowledge index (pgvector, HNSW). One chunk per
+// inventory item (source='inventory', sourceId=item id), one per BusinessRule
+// (source='rule'), one per SmsTemplate (source='template'). Written ONLY by
+// the offline ingestion path (scripts/reindex-knowledge.ts, POST /ai/reindex)
+// — never on the chat request path.
+model KnowledgeChunk {
+  // Native UUID PK to match prisma/rag_pgvector.sql (Prisma's uuid() default
+  // would be TEXT and `db push` would try to rewrite the live PK column).
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source    String
+  sourceId  String?  @map("source_id")
+  chunk     String
+  embedding Unsupported("vector(768)")?
+  metadata  Json?
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([source, sourceId])
+  @@map("knowledge_chunks")
 }
 
 model Transaction {

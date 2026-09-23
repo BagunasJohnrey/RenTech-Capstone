@@ -28,6 +28,7 @@ export const createItemSchema = z.object({
     name: z.string().min(1),
     category: z.string().min(1),
     occasions: z.array(z.string().min(1).max(40)).max(12).optional(),
+    colors: z.array(z.string().min(1).max(30)).max(10).optional(),
     price: z.coerce.number().positive(),
     image: z.string().nullable().optional(),
     description: z.string().nullable().optional(),
@@ -46,6 +47,7 @@ export const updateItemSchema = z.object({
     name: z.string().min(1).optional(),
     category: z.string().min(1).optional(),
     occasions: z.array(z.string().min(1).max(40)).max(12).optional(),
+    colors: z.array(z.string().min(1).max(30)).max(10).optional(),
     price: z.coerce.number().positive().optional(),
     status: z.nativeEnum(ItemStatus).optional(),
     outOfServiceReason: z.string().nullable().optional(),
@@ -179,7 +181,7 @@ export async function updateItem(req: AuthenticatedRequest, res: Response, next:
     assertSaleAdminOnly(req.body, req.user?.role);
 
     if (req.user?.role === Role.Staff) {
-      const allowedFields = ['name', 'category', 'occasions', 'price', 'description', 'size', 'image', 'status', 'outOfServiceReason'];
+      const allowedFields = ['name', 'category', 'occasions', 'colors', 'price', 'description', 'size', 'image', 'status', 'outOfServiceReason'];
       const attemptedFields = Object.keys(req.body);
       const disallowed = attemptedFields.filter(f => !allowedFields.includes(f));
       if (disallowed.length > 0) {

@@ -17,6 +17,9 @@ router.post('/reports/:id/upload', authMiddleware, requireRole(Role.Admin), aiCo
 router.delete('/reports/:id', authMiddleware, requireRole(Role.Admin), aiController.deleteReport);
 router.get('/reports/:id', authMiddleware, requireRole(Role.Admin), aiController.getReport);
 router.post('/suggest-promos', authMiddleware, requireRole(Role.Admin), validate(aiController.suggestPromosSchema), aiController.suggestPromos);
+// RAG ops (Admin only): vector-index health + offline knowledge reindex.
+router.get('/rag-health', authMiddleware, requireRole(Role.Admin), aiController.ragHealth);
+router.post('/reindex', authMiddleware, requireRole(Role.Admin), aiController.reindex);
 router.get('/promo-suggestions', authMiddleware, requireRole(Role.Admin), aiController.listSavedSuggestions);
 router.get('/promo-suggestions/:id', authMiddleware, requireRole(Role.Admin), aiController.getSavedSuggestion);
 router.delete('/promo-suggestions/:id', authMiddleware, requireRole(Role.Admin), aiController.deleteSavedSuggestion);

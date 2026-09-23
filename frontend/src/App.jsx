@@ -223,6 +223,19 @@ export default function RentechApp() {
     return [...seen].sort((a, b) => a.localeCompare(b));
   }, [inventory]);
 
+  // Distinct saved colors (fixed list + any customs staff typed) so the
+  // Add/Edit form offers every used color as a chip next time.
+  const knownColors = useMemo(() => {
+    const seen = new Set();
+    for (const item of inventory || []) {
+      for (const c of Array.isArray(item?.colors) ? item.colors : []) {
+        const t = typeof c === 'string' ? c.trim() : '';
+        if (t) seen.add(t);
+      }
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [inventory]);
+
   // Overdue badge count for Tasks nav
   const overdueCount = useMemo(() => {
     if (!transactions.length) return 0;
@@ -992,6 +1005,9 @@ export default function RentechApp() {
             knownCategories={knownCategories}
             showPhoto
             showOccasions
+            showColors
+            knownColors={knownColors}
+            role={role}
             showSale={role === 'Admin'}
             onSubmit={(values) => handleUpdateItem(values)}
             onClose={() => setEditingItem(null)}
@@ -1005,7 +1021,10 @@ export default function RentechApp() {
             showCategory
             knownCategories={knownCategories}
             showOccasions
+            showColors
+            knownColors={knownColors}
             showPhoto
+            role={role}
             showSale={role === 'Admin'}
             maxWidth="max-w-lg"
             onSubmit={handleAddItem}

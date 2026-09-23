@@ -56,7 +56,11 @@ const STYLING_FAQ_KEYS = new Set([
   'color', 'fit', 'style', 'accessories',
 ]);
 
-function findFaqAnswerWithAi(message: string, aiAvailable: boolean): string | null {
+export function isAiAvailable(): boolean {
+  return !!env.GEMINI_API_KEY || !!env.GROQ_API_KEY || !!env.OPENROUTER_API_KEY;
+}
+
+export function findFaqAnswerWithAi(message: string, aiAvailable: boolean): string | null {
   const lower = message.toLowerCase();
   for (const [keyword, answer] of Object.entries(FAQ)) {
     if (lower.includes(keyword)) {
@@ -371,13 +375,25 @@ async function callGeminiReport(prompt: string): Promise<string> {
   return report;
 }
 
-export async function chatWithAi(message: string, history?: { role: string; text: string }[], inventory?: { name: string; category: string; price: number; onSale?: boolean; salePrice?: number | null }[]) {
+export interface StylistInventoryItem {
+  name: string; category: string; price: number; onSale?: boolean | null; salePrice?: number | null;
+}
+
+export interface StylistPolicy { key: string; value: string; }
+
+// RAG context: either the legacy bare item array or the full retrieval
+// context { items, policies } assembled by rag.service.retrieveStylistContext.
+export type StylistContextInput =
+  | StylistInventoryItem[]
+  | { items?: StylistInventoryItem[]; policies?: StylistPolicy[] };
+
+export async function chatWithAi(message: string, history?: { role: string; text: string }[], inventory?: StylistContextInput) {
   const guard = applyGuardrails(message);
   if (guard) {
     return { reply: guard, source: 'guardrail' };
   }
 
-  const aiAvailable = !!env.GEMINI_API_KEY || !!env.GROQ_API_KEY || !!env.OPENROUTER_API_KEY;
+  const aiAvailable = isAiAvailable();
 
   const faqAnswer = findFaqAnswerWithAi(message, aiAvailable);
   if (faqAnswer) {
@@ -389,13 +405,19 @@ export async function chatWithAi(message: string, history?: { role: string; text
     text: h.text,
   }));
 
-  // Ground the stylist in the REAL catalog (injected by the controller straight
-  // from the database). The AI may only recommend items from this list and may
-  // never invent availability or prices.
-  const inventoryContext = Array.isArray(inventory) && inventory.length
-    ? `\n\nREAL STORE INVENTORY (from the live database — the ONLY items you may recommend; never invent others):\n${inventory.map(i => `${i.onSale ? `[ON SALE] ` : ''}${i.name} — ${i.category} — ₱${i.salePrice ?? i.price}`).join('\n')}\n`
+  // Ground the stylist in the REAL catalog (RAG top-k subset injected by the
+  // controller straight from the database). The AI may only recommend items
+  // from this list and may never invent availability or prices. Policy lines
+  // carry the top-ranked BusinessRule facts so store-policy answers stay exact.
+  const items = Array.isArray(inventory) ? inventory : (inventory?.items ?? []);
+  const policies = Array.isArray(inventory) ? [] : (inventory?.policies ?? []);
+  const policyContext = policies.length
+    ? `\n\nSTORE POLICIES (live BusinessRule facts — quote these for policy questions):\n${policies.map(p => `- ${p.key}: ${p.value}`).join('\n')}\n`
     : '';
-  const groundedSystem = `${AI_SYSTEM_PROMPT}${inventoryContext}`;
+  const inventoryContext = items.length
+    ? `\n\nREAL STORE INVENTORY (from the live database — the ONLY items you may recommend; never invent others):\n${items.map(i => `${i.onSale ? `[ON SALE] ` : ''}${i.name} — ${i.category} — ₱${i.salePrice ?? i.price}`).join('\n')}\n`
+    : '';
+  const groundedSystem = `${AI_SYSTEM_PROMPT}${policyContext}${inventoryContext}`;
 
   if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return {

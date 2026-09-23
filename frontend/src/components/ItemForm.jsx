@@ -5,6 +5,8 @@ import { useToast } from './Toast';
 import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { OCCASIONS, OCCASIONS_BY_CATEGORY, normalizeOccasions } from '../utils/occasions';
+import { COLORS, normalizeColors } from '../utils/colors';
+import ColorSelect from './ColorSelect';
 
 const FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1566162200445-98319fdb5515?auto=format&fit=crop&q=80&w=400';
@@ -33,7 +35,16 @@ export default function ItemForm({
   // categories staff added before appear as regular options, so the dropdown
   // grows the more the boutique uses it.
   knownCategories = [],
+  // Role-gated sale section: sale fields render ONLY when the caller both
+  // passes showSale AND role is Admin. Backend 403s non-admin sale writes,
+  // so the UI must never offer the fields to Staff even if a caller
+  // forgets the showSale gate.
+  role = '',
   showOccasions = false,
+  showColors = false,
+  // Distinct colors already saved in inventory (passed from App) — customs
+  // staff typed before appear as regular chips, like knownCategories.
+  knownColors = [],
   showPhoto = false,
   showSale = false,
   onSubmit,
@@ -66,6 +77,32 @@ export default function ItemForm({
   );
   const effectiveCategory = category === CUSTOM_OPTION ? customCategory.trim() : category;
   const [occasions, setOccasions] = useState(() => normalizeOccasions(initial.occasions));
+  const [colors, setColors] = useState(() => normalizeColors(initial.colors));
+  // Saved customs join the presets as chips. Custom entry is validated to
+  // letters/spaces/hyphens (matches backend max-30) and deduped
+  // case-insensitively so "sage" and "Sage" never become two tags.
+  const savedColorExtras = [...new Set(
+    (knownColors || [])
+      .map((c) => String(c ?? '').trim().replace(/\s+/g, ' '))
+      .filter((c) => c && !COLORS.some((p) => p.toLowerCase() === c.toLowerCase()))
+  )].sort((a, b) => a.localeCompare(b));
+  const colorOptions = [...COLORS, ...savedColorExtras];
+  const [customColor, setCustomColor] = useState('');
+  const [showCustomColor, setShowCustomColor] = useState(false);
+  const addCustomColor = () => {
+    const clean = String(customColor ?? '').trim().replace(/\s+/g, ' ').slice(0, 30);
+    if (!clean || !/^[A-Za-z][A-Za-z\s-]*$/.test(clean)) {
+      toastError('Use letters only for a custom color (e.g. Sage)');
+      return;
+    }
+    if ([...colors, ...colorOptions].some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      toastError(`"${clean}" is already in the list`);
+      return;
+    }
+    setColors((prev) => [...prev, clean]);
+    setCustomColor('');
+    setShowCustomColor(false);
+  };
   const [imagePath, setImagePath] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -200,13 +237,16 @@ export default function ItemForm({
     if (showOccasions) {
       values.occasions = occasions;
     }
+    if (showColors) {
+      values.colors = colors;
+    }
     if (showPhoto) {
       const img = imagePath && imagePath.startsWith('blob:') ? null : imagePath;
       // New upload wins; otherwise keep the item's current photo (or fall
       // back to the placeholder only when the item had no photo at all).
       values.image = img || initial.image || FALLBACK_IMAGE;
     }
-    if (showSale) {
+    if (showSale && role === 'Admin') {
       values.onSale = onSale;
       values.discountPct = discountPct === '' ? null : parseFloat(discountPct);
       values.salePrice = salePrice === '' ? null : parseFloat(salePrice);
@@ -362,6 +402,64 @@ export default function ItemForm({
             </div>
           )}
 
+          {showColors && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Colors</label>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomColor((v) => !v)}
+                    aria-expanded={showCustomColor}
+                    className={`text-[10px] font-bold transition-colors hover:underline ${
+                      showCustomColor ? 'text-[#bf4a53]' : 'text-gray-400 hover:text-[#bf4a53]'
+                    }`}
+                  >
+                    + Custom color…
+                  </button>
+                  {colors.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setColors([])}
+                      className="text-[10px] font-bold text-[#bf4a53] hover:underline"
+                    >
+                      Clear colors
+                    </button>
+                  )}
+                </div>
+              </div>
+              <ColorSelect
+                options={colorOptions}
+                selected={colors}
+                onToggle={(color) => setColors((prev) => prev.some((c) => c.toLowerCase() === color.toLowerCase()) ? prev.filter((c) => c.toLowerCase() !== color.toLowerCase()) : [...prev, color])}
+                onClear={() => setColors([])}
+              />
+              {showCustomColor && (
+                <div className="flex gap-2 animate-in fade-in slide-in-from-top-1 duration-150">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={customColor}
+                    onChange={(e) => setCustomColor(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomColor(); } }}
+                    maxLength={30}
+                    placeholder="e.g. Sage, Lilac"
+                    aria-label="Custom color name"
+                    className="flex-1 bg-white border border-gray-200/80 rounded-2xl px-4 py-2 text-[13px] font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15 transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCustomColor}
+                    className="px-4 py-2 text-[13px] font-bold text-white bg-[#bf4a53] hover:bg-red-700 rounded-2xl transition-colors shrink-0"
+                  >
+                    Add
+                  </button>
+                </div>
+              )}
+              <p className="text-[10px] text-gray-400">Tag the item's colors — powers the Colors filter, search, and AI stylist matching. Never shown on cards.</p>
+            </div>
+          )}
+
           {showPhoto && (
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
@@ -392,7 +490,7 @@ export default function ItemForm({
             </div>
           )}
 
-          {showSale && (
+          {showSale && role === 'Admin' && (
             <div className="space-y-3 rounded-2xl border border-amber-200/70 bg-amber-50/40 p-4">
               <label className="flex items-center justify-between cursor-pointer">
                 <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wide">On Sale (Admin)</span>

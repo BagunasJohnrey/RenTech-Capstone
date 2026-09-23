@@ -29,17 +29,31 @@ export const chatSchema = z.object({
 export async function chat(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const { message, history } = req.body;
-    // Ground the stylist in the live catalog so it only references real items.
-    const items = await inventoryService.listItems('Available');
-    const inventory = items.slice(0, 60).map(i => ({
-      name: i.name,
-      category: i.category,
-      price: i.price,
-      onSale: i.onSale,
-      salePrice: i.salePrice,
-    }));
-    const result = await geminiService.chatWithAi(message, history, inventory);
-    res.json(result);
+    // Offline-first order (§8): guardrail → FAQ short-circuit BEFORE any
+    // retrieval/LLM work, so refusals and policy answers cost zero queries.
+    const guard = geminiService.applyGuardrails(message);
+    if (guard) return res.json({ reply: guard, source: 'guardrail', groundedIn: 0, retrieval: 'keyword' });
+    const faq = geminiService.findFaqAnswerWithAi(message, geminiService.isAiAvailable());
+    if (faq) return res.json({ reply: faq, source: 'faq', groundedIn: 0, retrieval: 'keyword' });
+    // RAG grounding: retrieve only the top-k Available items relevant to the
+    // query (+ top-3 policy facts) instead of stuffing 60 rows into the
+    // prompt. Falls back to keyword Tier 1 internally; never throws.
+    const { retrieveStylistContext } = await import('../services/rag.service.js');
+    const { env } = await import('../config/env.js');
+    let preferences: string[] = [];
+    try {
+      if (req.user?.userId) {
+        const { prisma } = await import('../config/database.js');
+        const profile = await prisma.profile.findUnique({ where: { userId: req.user.userId } });
+        const raw = (profile as { preferences?: string | null } | null)?.preferences;
+        if (typeof raw === 'string' && raw.trim()) preferences = raw.split(',').map((p) => p.trim()).filter(Boolean);
+      }
+    } catch { /* preferences are a ranking hint only — never fail the chat */ }
+    const context = env.RAG_ENABLED
+      ? await retrieveStylistContext(message, { preferences })
+      : { items: (await inventoryService.listItems('Available')).slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 };
+    const result = await geminiService.chatWithAi(message, history, { items: context.items, policies: context.policies });
+    res.json({ ...result, groundedIn: context.groundedIn, retrieval: context.retrieval });
   } catch (err) {
     next(err);
   }
@@ -137,22 +151,15 @@ export const suggestPromosSchema = z.object({
 
 export async function suggestPromos(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const [items, activePromos, kpis, insights] = await Promise.all([
-      inventoryService.listItems(),
+    const { retrievePromoContext } = await import('../services/rag.service.js');
+    // Structured RAG: top-20 by rental-count signal (dead stock first) instead
+    // of an arbitrary slice(0, 80) of newest rows. Numbers stay exact — no vectors.
+    const [inventory, activePromos, kpis, insights] = await Promise.all([
+      retrievePromoContext(20),
       import('../services/promoCodes.service.js').then(m => m.listPromoCodes()),
       dashboardService.getKpis().catch(() => ({})),
       dashboardService.getInsights().catch(() => ({})),
     ]);
-
-    const inventory = items.slice(0, 80).map(i => ({
-      id: i.id,
-      name: i.name,
-      category: i.category,
-      price: i.price,
-      rentalCount: i.rentalCount ?? 0,
-      onSale: i.onSale,
-      status: i.status,
-    }));
 
     const promos = (Array.isArray(activePromos) ? activePromos : [])
       .filter((p: { isActive?: boolean }) => p.isActive !== false)
@@ -220,6 +227,38 @@ export async function deleteSavedSuggestion(req: AuthenticatedRequest, res: Resp
     const removed = await aiPromoSuggestionService.deletePromoSuggestion(String(req.params.id));
     if (!removed) throw new AppError(404, 'Suggestion not found');
     res.json({ message: 'Suggestion deleted' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin-only: report Tier 2 vector-index health (keyword vs hybrid mode).
+export async function ragHealth(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const { getRagHealth } = await import('../services/rag.service.js');
+    res.json(await getRagHealth());
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin-only: trigger a knowledge-index rebuild (offline ingestion —
+// re-embeds inventory + rules + templates into knowledge_chunks).
+// Best-effort: without an embedding key or the Tier 2 DDL it reports skipped.
+export async function reindex(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const { runReindex } = await import('../services/reindex.service.js');
+    const dryRun = String((req.query as Record<string, unknown>)?.dryRun ?? '') === 'true';
+    const result = await runReindex({ dryRun });
+    try {
+      const { createAuditLog } = await import('../utils/audit.js');
+      await createAuditLog({
+        action: 'ai.reindex', entity: 'ai', entityId: 'knowledge_chunks',
+        performedById: req.user?.id ?? null,
+        newValue: { ...result, dryRun },
+      });
+    } catch { /* audit is non-critical */ }
+    res.json({ ...result, dryRun });
   } catch (err) {
     next(err);
   }

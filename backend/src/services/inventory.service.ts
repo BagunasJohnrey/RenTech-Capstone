@@ -124,6 +124,7 @@ export async function createItem(data: {
   name: string;
   category: string;
   occasions?: string[];
+  colors?: string[];
   price: number;
   image?: string;
   description?: string;
@@ -144,6 +145,7 @@ export async function updateItem(id: number, data: {
   name?: string;
   category?: string;
   occasions?: string[];
+  colors?: string[];
   price?: number;
   status?: ItemStatus;
   outOfServiceReason?: string | null;
