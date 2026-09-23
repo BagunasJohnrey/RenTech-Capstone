@@ -67,10 +67,13 @@ export async function generateReport(req: AuthenticatedRequest, res: Response, n
     };
 
     const result = await geminiService.generateReport({ kpis, insights, forecast, rules });
-    // Best-effort history: successful/failed-but-readable reports are saved so
-    // the admin "last saved AI reports" list can reopen them. A save failure
-    // must never fail the generation itself.
-    if (result && typeof (result as { report?: unknown }).report === 'string') {
+    // Best-effort history: complete, readable reports are saved so
+    // the admin "last saved AI reports" list can reopen them. Error stubs
+    // (rate-limited / flagged / truncated) are NOT saved — they'd pollute
+    // the history with one-line "showing static insights" rows. A save
+    // failure must never fail the generation itself.
+    if (result && typeof (result as { report?: unknown }).report === 'string'
+      && (result as { source?: string }).source !== 'error') {
       try {
         const saved = await aiReportService.saveAiReport({
           report: (result as { report: string }).report,

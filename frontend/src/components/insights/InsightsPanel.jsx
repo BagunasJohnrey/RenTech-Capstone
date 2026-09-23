@@ -2,9 +2,10 @@
 // scrollable list. Pure presentational — generation lives in the parent.
 import { Lightbulb, Sparkles, Loader2 } from 'lucide-react';
 import { Skeleton } from '../Skeleton';
+import { formatCheckedAgo } from '../../utils/cache';
 
 export default function InsightsPanel({
-  role, aiSuggestions, suggestLoading, handleAiSuggest, insights,
+  role, aiSuggestions, suggestLoading, handleAiSuggest, insights, updatedAt,
 }) {
   return (
     <div className="bg-white rounded-3xl p-5 md:p-6 border border-gray-100/80 shadow-sm flex flex-col min-h-0">
@@ -16,6 +17,7 @@ export default function InsightsPanel({
           <h3 className="font-bold text-gray-900 text-base md:text-lg leading-tight">Insights</h3>
           <p className="text-[11px] text-gray-400 font-medium mt-0.5">
             {aiSuggestions?.length ? 'AI-generated promo & restock suggestions' : 'Rule-based highlights from live data'}
+            {updatedAt ? ` · Updated ${formatCheckedAgo(updatedAt)}` : ''}
           </p>
         </div>
         {(aiSuggestions?.length || insights.length) > 0 && (

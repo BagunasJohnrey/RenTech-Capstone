@@ -157,8 +157,9 @@ function isRateLimited(err: unknown): boolean {
   return (err as Error & { rateLimited?: boolean })?.rateLimited === true;
 }
 
-// Primary: Google Gemini
-async function callGemini(system: string, historyTurns: { role: string; text: string }[], latest: string) {
+// Primary: Google Gemini. maxTokens is 1024 for chat; structured outputs
+// (promo JSON) pass a larger budget so the response isn't cut off mid-object.
+async function callGemini(system: string, historyTurns: { role: string; text: string }[], latest: string, opts?: { maxTokens?: number }) {
   const transcript = historyTurns.map(h => `${h.role}: ${h.text}`).join('\n');
   const prompt = transcript
     ? `${system}\n\n${transcript}\nCustomer: ${latest}\nAssistant:`
@@ -171,7 +172,7 @@ async function callGemini(system: string, historyTurns: { role: string; text: st
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 1024, temperature: 0.6, thinkingConfig: { thinkingBudget: 0 } },
+        generationConfig: { maxOutputTokens: opts?.maxTokens ?? 1024, temperature: 0.6, thinkingConfig: { thinkingBudget: 0 } },
       }),
     }
   );
@@ -189,8 +190,11 @@ async function callGemini(system: string, historyTurns: { role: string; text: st
   return text;
 }
 
-// OpenAI-compat chat.completions shape used by OpenRouter.
-async function callOpenRouter(system: string, historyTurns: { role: string; text: string }[], latest: string) {
+// OpenAI-compat chat.completions shape used by OpenRouter. Reports need a much
+// larger budget than chat (a 7-section A4 report is ~1500+ tokens) — the old
+// hardcoded 512 truncated reports mid-sentence, which the frontend then
+// rejected as "unexpected format".
+async function callOpenRouter(system: string, historyTurns: { role: string; text: string }[], latest: string, opts?: { maxTokens?: number }) {
   const messages = [
     { role: 'system', content: system },
     ...historyTurns.map(h => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.text })),
@@ -217,7 +221,7 @@ async function callOpenRouter(system: string, historyTurns: { role: string; text
           'HTTP-Referer': env.FRONTEND_URL,
           'X-Title': "Mylene's Boutique",
         },
-        body: JSON.stringify({ model, messages, max_tokens: 512, temperature: 0.6 }),
+        body: JSON.stringify({ model, messages, max_tokens: opts?.maxTokens ?? 512, temperature: 0.6 }),
       });
       if (!response.ok) {
         // A 401/403 means the key itself is bad — every model would fail, so abort.
@@ -280,7 +284,8 @@ async function getGroqModels(): Promise<string[]> {
 }
 
 // Groq speaks the same OpenAI-compatible chat.completions shape as OpenRouter.
-async function callGroq(system: string, historyTurns: { role: string; text: string }[], latest: string) {
+// Same note as above: reports pass a larger maxTokens so they aren't cut off.
+async function callGroq(system: string, historyTurns: { role: string; text: string }[], latest: string, opts?: { maxTokens?: number }) {
   const messages = [
     { role: 'system', content: system },
     ...historyTurns.map(h => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.text })),
@@ -304,7 +309,7 @@ async function callGroq(system: string, historyTurns: { role: string; text: stri
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.GROQ_API_KEY}`,
         },
-        body: JSON.stringify({ model, messages, max_tokens: 512, temperature: 0.6 }),
+        body: JSON.stringify({ model, messages, max_tokens: opts?.maxTokens ?? 512, temperature: 0.6 }),
       });
       if (!response.ok) {
         // A 401/403 means the key itself is bad — every model would fail, so abort.
@@ -333,20 +338,23 @@ async function callGroq(system: string, historyTurns: { role: string; text: stri
 // Fetch a business-report draft from Gemini (plain text). Shared by the first
 // attempt and the correction retry in generateReport. Low temperature keeps
 // the analyst restating the supplied figures instead of free-styling new
-// ones, which keeps the amount-guard happy.
+// ones, which keeps the amount-guard happy. 30s timeout (reports are long
+// writes — the old 15s could abort Gemini and drop to the 512-token Groq
+// fallback, producing the truncated stubs) with an explicit 2048-token cap
+// (~1 A4 page, also bounds cost).
 async function callGeminiReport(prompt: string): Promise<string> {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
     {
       method: 'POST',
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(30000),
       headers: {
         'Content-Type': 'application/json',
         'x-goog-api-key': env.GEMINI_API_KEY,
       },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2 },
+        generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
       }),
     }
   );
@@ -636,19 +644,25 @@ ${topRented.length ? `Top rented items (demand leaders — prioritize restock): 
 ${ruleLines.length ? `Pre-computed rules (deterministic facts from the same Data): ${ruleLines.join(' | ')}` : 'Pre-computed rules: none — stock covers projected demand and nothing is idle.'}
 ${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''}`;
 
-  // Runs a provider call, then the anti-hallucination amount-guard. When the
-  // guard flags an invented figure, retry ONCE with a targeted correction
-  // instruction instead of killing the whole report — the model gets a chance
-  // to fix its draft while fabricated figures are still rejected.
+  // Runs a provider call, then the anti-hallucination amount-guard and the
+  // completeness guard. A truncated draft (e.g. a 512-token fallback cut off
+  // after "Executive Summary:") passes the amount-guard trivially — no ₱
+  // amounts — so structural validation is what catches it. When either guard
+  // flags the draft, retry ONCE with a targeted correction instruction
+  // instead of killing the whole report.
   const runValidatedReport = async (call: (p: string) => Promise<string>) => {
     const draft = await call(prompt);
-    const ok = validateReportAmounts(draft, data);
+    const ok = validateFullReport(draft, data);
     if (ok.source === 'ai') return ok;
 
     const correction = `${prompt}
 
-CORRECTION REQUIRED: The previous draft was rejected because it contained a ₱ amount that is NOT present in the Data JSON above. Rewrite the ENTIRE report. You may repeat ONLY the exact ₱ amounts from the Data (optionally with K/M rounding within 5%). Never write derived or computed amounts — no differences, sums, totals, averages, or percentage figures in pesos. Describe changes in words.`;
-    return validateReportAmounts(await call(correction), data);
+CORRECTION REQUIRED: The previous draft was rejected (${ok.reason}). Rewrite the ENTIRE report, complete with ALL seven section headers above and a numbered Recommendations list (1., 2., 3., ...) with at least two concrete actions. You may repeat ONLY the exact ₱ amounts from the Data (optionally with K/M rounding within 5%). Never write derived or computed amounts — no differences, sums, totals, averages, or percentage figures in pesos. Describe changes in words. Never truncate: finish every section.`;
+    const second = validateFullReport(await call(correction), data);
+    if (second.source === 'ai') return second;
+    // `reason` is an internal prompt detail — don't leak it to the client.
+    const { reason: _drop, ...clean } = second;
+    return clean;
   };
 
   // Try Gemini first, then Groq, then OpenRouter, so a report is produced even
@@ -672,7 +686,7 @@ CORRECTION REQUIRED: The previous draft was rejected because it contained a ₱ 
   if (env.GROQ_API_KEY) {
     try {
       return await runValidatedReport(async (p) => {
-        const { text } = await callGroq(p, [], 'Generate the report now.');
+        const { text } = await callGroq(p, [], 'Generate the report now.', { maxTokens: 2500 });
         return text;
       });
     } catch (err) {
@@ -690,7 +704,7 @@ CORRECTION REQUIRED: The previous draft was rejected because it contained a ₱ 
   if (env.OPENROUTER_API_KEY) {
     try {
       return await runValidatedReport(async (p) => {
-        const { text } = await callOpenRouter(p, [], 'Generate the report now.');
+        const { text } = await callOpenRouter(p, [], 'Generate the report now.', { maxTokens: 2500 });
         return text;
       });
     } catch (err) {
@@ -779,8 +793,7 @@ export interface PromoSuggestion {
 
 function parsePromoSuggestions(text: string): PromoSuggestion | null {
   try {
-    // Strip markdown fences if the model wraps the JSON
-    const cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+    const cleaned = extractJsonBlock(text);
     const parsed = JSON.parse(cleaned);
     if (parsed && typeof parsed === 'object' && Array.isArray(parsed.itemSuggestions) && Array.isArray(parsed.voucherSuggestions)) {
       return parsed as PromoSuggestion;
@@ -789,6 +802,38 @@ function parsePromoSuggestions(text: string): PromoSuggestion | null {
   } catch {
     return null;
   }
+}
+
+// Models often wrap the JSON in preamble ("Here are your suggestions:") or
+// trailing commentary despite the "output ONLY JSON" instruction, and a
+// token-truncated reply is cut off mid-object. Extract the first balanced
+// {...} block (brace scan respecting strings/escapes) so a wrapped-but-whole
+// object still parses; a genuinely truncated object stays unparseable and the
+// caller retries.
+function extractJsonBlock(text: string): string {
+  // Strip markdown fences if the model wraps the JSON
+  const cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+  const start = cleaned.indexOf('{');
+  if (start === -1) return cleaned;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < cleaned.length; i++) {
+    const c = cleaned[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') {
+      inStr = true;
+    } else if (c === '{') {
+      depth++;
+    } else if (c === '}') {
+      depth--;
+      if (depth === 0) return cleaned.slice(start, i + 1);
+    }
+  }
+  return cleaned;
 }
 
 // Rule-based fallback when all AI providers are unavailable.
@@ -912,17 +957,26 @@ SEASONAL CONTEXT for the Philippines:
 
 CRITICAL: You have ${zeroRentalItems.length} items with 0 rentals. Suggest putting MOST of them on sale. Return ONLY the JSON schema.`;
 
-  const callWithProvider = async (callFn: (system: string, history: { role: string; text: string }[], latest: string) => Promise<string | { text: string; model: string }>) => {
-    const result = await callFn(PROMO_SUGGEST_SYSTEM, [], userPrompt);
-    const text = typeof result === 'string' ? result : result.text;
-    const model = typeof result === 'string' ? undefined : result.model;
-    let parsed = parsePromoSuggestions(text);
+  const validIds = new Set(data.inventory.map(i => i.id));
+
+  const sanitize = (parsed: PromoSuggestion): PromoSuggestion => {
+    // Drop hallucinated items: the model may only suggest IDs from the
+    // inventory list it was given. Unknown IDs used to slip through and blow
+    // up later in the UI ("not found in inventory" on Apply).
+    const items = parsed.itemSuggestions
+      .filter(s => validIds.has(s.itemId))
+      // Clamp absurd discounts (a "90% off" hallucination must never reach Apply).
+      .map(s => ({
+        ...s,
+        discountPct: Math.min(50, Math.max(5, Math.round(Number(s.discountPct) || 15))),
+      }));
+    let out = { ...parsed, itemSuggestions: items };
 
     // Post-parse validation: if AI returned empty itemSuggestions but there are
     // zero-rental items, auto-generate suggestions so the feature is never empty.
-    if (parsed && parsed.itemSuggestions.length === 0 && zeroRentalItems.length > 0) {
-      parsed = {
-        ...parsed,
+    if (out.itemSuggestions.length === 0 && zeroRentalItems.length > 0) {
+      out = {
+        ...out,
         itemSuggestions: zeroRentalItems.slice(0, 8).map(item => ({
           itemId: item.id,
           itemName: item.name,
@@ -932,14 +986,34 @@ CRITICAL: You have ${zeroRentalItems.length} items with 0 rentals. Suggest putti
         })),
       };
     }
+    return out;
+  };
 
-    if (!parsed) throw new Error('Failed to parse AI promo suggestions');
-    return { suggestions: parsed, model };
+  // Parse-failure retry: a truncated or chatty first reply gets ONE correction
+  // retry demanding strict JSON (same pattern as the report correction retry).
+  // Only a twice-unparseable response throws to the rule-based error path.
+  const callWithProvider = async (callFn: (system: string, history: { role: string; text: string }[], latest: string) => Promise<string | { text: string; model: string }>) => {
+    const first = await callFn(PROMO_SUGGEST_SYSTEM, [], userPrompt);
+    const firstText = typeof first === 'string' ? first : first.text;
+    const firstModel = typeof first === 'string' ? undefined : first.model;
+    const firstParsed = parsePromoSuggestions(firstText);
+    if (firstParsed) return { suggestions: sanitize(firstParsed), model: firstModel };
+
+    const retry = await callFn(
+      PROMO_SUGGEST_SYSTEM,
+      [],
+      `${userPrompt}\n\nCORRECTION REQUIRED: your previous reply was not valid JSON (it was cut off or had extra text around it). Reply with ONLY the JSON object matching the schema — no preamble, no markdown fences, no trailing commentary — and suggest ONLY the numeric item IDs listed above.`,
+    );
+    const retryText = typeof retry === 'string' ? retry : retry.text;
+    const retryModel = typeof retry === 'string' ? undefined : retry.model;
+    const retryParsed = parsePromoSuggestions(retryText);
+    if (!retryParsed) throw new Error('Failed to parse AI promo suggestions');
+    return { suggestions: sanitize(retryParsed), model: retryModel };
   };
 
   if (env.GEMINI_API_KEY) {
     try {
-      const { suggestions, model } = await callWithProvider(async (sys, _h, latest) => callGemini(sys, [], latest));
+      const { suggestions, model } = await callWithProvider(async (sys, _h, latest) => callGemini(sys, [], latest, { maxTokens: 2000 }));
       return { suggestions, source: 'ai', provider: 'gemini', model: model ?? 'gemini-2.5-flash' };
     } catch (err) {
       if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
@@ -953,7 +1027,7 @@ CRITICAL: You have ${zeroRentalItems.length} items with 0 rentals. Suggest putti
   if (env.GROQ_API_KEY) {
     try {
       const { suggestions, model } = await callWithProvider(async (sys, _h, latest) => {
-        const r = await callGroq(sys, [], latest);
+        const r = await callGroq(sys, [], latest, { maxTokens: 2000 });
         return { text: r.text, model: r.model };
       });
       return { suggestions, source: 'ai', provider: 'groq', model };
@@ -969,7 +1043,7 @@ CRITICAL: You have ${zeroRentalItems.length} items with 0 rentals. Suggest putti
   if (env.OPENROUTER_API_KEY) {
     try {
       const { suggestions, model } = await callWithProvider(async (sys, _h, latest) => {
-        const r = await callOpenRouter(sys, [], latest);
+        const r = await callOpenRouter(sys, [], latest, { maxTokens: 2000 });
         return { text: r.text, model: r.model };
       });
       return { suggestions, source: 'ai', provider: 'openrouter', model };
@@ -981,6 +1055,55 @@ CRITICAL: You have ${zeroRentalItems.length} items with 0 rentals. Suggest putti
   }
 
   return { suggestions: generateRuleBasedSuggestions(data), source: 'error' };
+}
+
+// Completeness guard: a provider cut off by token limits or timeouts returns
+// a stub like "Executive Summary:\n\nThe data ... is as follows:" — no
+// Recommendations, no numbered actions. That stub sails through the
+// amount-guard (no ₱ amounts to check) and used to reach the client as
+// source:'ai', where the frontend extractor found zero recommendations and
+// showed the confusing "unexpected format" toast. Reject such stubs here so
+// they get the correction retry, then a clean source:'error' the UI can label.
+const REPORT_SECTIONS = [
+  'executive summary',
+  'key performance indicators',
+  'revenue analysis',
+  'inventory',
+  'operational health',
+  'demand forecast',
+  'recommendations',
+];
+
+function validateReportStructure(report: string): boolean {
+  if (!report || report.length < 500) return false;
+  const lower = report.toLowerCase();
+  const sectionsFound = REPORT_SECTIONS.filter(s => lower.includes(s)).length;
+  if (sectionsFound < 5) return false;
+  // The prompt forces Recommendations to be numbered 1..N — a complete report
+  // always has at least two numbered actionable lines.
+  const numbered = report
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => /^\d{1,2}[.)]\s+\S/.test(l) && l.length > 15);
+  return numbered.length >= 2;
+}
+
+// Runs both guards: invented-figure rejection first, then completeness.
+// Returns the failure reason alongside source:'error' so the correction retry
+// can tell the model exactly what to fix.
+function validateFullReport(report: string, data: unknown): { report: string; source: 'ai' } | { report: string; source: 'error'; reason: string } {
+  const amounts = validateReportAmounts(report, data);
+  if (amounts.source === 'error') {
+    return { ...amounts, reason: 'it contained a ₱ amount that is NOT present in the Data JSON' };
+  }
+  if (!validateReportStructure(report)) {
+    return {
+      report: 'AI report came back incomplete (truncated) and was rejected. Showing static insights instead.',
+      source: 'error',
+      reason: 'it was TRUNCATED — missing sections and/or the numbered Recommendations list',
+    };
+  }
+  return { report, source: 'ai' };
 }
 
 // Anti-hallucination guard: every ₱/Php amount in the generated report must

@@ -131,7 +131,7 @@ export default function PromotionsView({ inventory, onEditItem }) {
         if (result.retryable) {
           toastError('AI providers are rate-limited — try again in a moment.');
         } else {
-          setError('AI service is unavailable. Showing empty results.');
+          setError('AI service is unavailable. Showing rule-based suggestions instead.');
           toastError('AI service is currently unavailable. Please try again later.');
         }
       } else if (itemCount || voucherCount) {
