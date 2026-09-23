@@ -12,19 +12,19 @@ export default function ReportSection({
       <div className="relative overflow-hidden bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] p-4 sm:p-6">
         <div className="absolute -right-10 -top-14 w-44 h-44 rounded-full bg-white/10" />
         <div className="absolute right-16 -bottom-12 w-28 h-28 rounded-full bg-white/5" />
-        <div className="relative flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+        <div className="relative flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center text-white shadow-inner shrink-0">
               <Sparkles size={18} />
             </div>
-            <h3 className="font-bold text-white text-[15px] sm:text-base leading-tight flex-1">AI Business Report</h3>
+            <h3 className="font-bold text-white text-[15px] lg:text-base leading-tight flex-1">AI Business Report</h3>
           </div>
-          <p className="text-[11px] sm:text-xs text-white/75 leading-relaxed sm:flex-1 sm:min-w-0">
+          <p className="text-[11px] md:text-xs text-white/75 leading-relaxed lg:flex-1 lg:min-w-0">
             A full written breakdown of revenue, demand and inventory — ready in about 30 seconds.
           </p>
           <button onClick={onGenerate}
             disabled={reportLoading}
-            className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-6 py-2.5 sm:py-3 bg-white text-[#a63f47] text-sm font-bold rounded-2xl sm:rounded-full shadow-sm hover:bg-red-50 active:scale-[0.98] transition-all disabled:opacity-60"
+            className="w-full lg:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-6 py-2.5 lg:py-3 bg-white text-[#a63f47] text-sm font-bold rounded-2xl lg:rounded-full shadow-sm hover:bg-red-50 active:scale-[0.98] transition-all disabled:opacity-60"
           >
             {reportLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
             {reportLoading ? 'Generating…' : 'Generate Report'}
