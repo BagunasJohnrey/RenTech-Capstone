@@ -22,6 +22,7 @@ export interface StylistItem {
   price: number;
   onSale?: boolean | null;
   salePrice?: number | null;
+  discountPct?: number | null;
   occasions?: string[];
   // Staff-only color tags — never rendered on cards, but matched here so
   // "green theme gowns" ranks green-tagged items first.
@@ -88,8 +89,57 @@ export function targetCategoriesFor(query: string): Set<string> {
   return out;
 }
 
-// Score = 3×category hit + 2×occasion hit + 2×color hit + 1×word hit
-//        + 1×preference hit + 0.5×onSale boost (§5 of the RAG plan).
+// Garment categories the query explicitly names ("gown", "suits", …).
+// When present, retrieval is HARD-locked to them: asking for gowns must
+// never surface suits, no matter the color or occasion score.
+const CATEGORY_WORDS = ['gown', 'suit', 'barong', 'filipiniana', 'costume'];
+
+export function requestedCategories(query: string): Set<string> {
+  const lower = (query || '').toLowerCase();
+  const words = new Set(lower.split(/\W+/).filter(Boolean));
+  const out = new Set<string>();
+  for (const cat of CATEGORY_WORDS) {
+    if (words.has(cat) || words.has(`${cat}s`)) out.add(cat);
+  }
+  // "dress"/"dresses" mean gown in this boutique's vocabulary.
+  if (words.has('dress') || words.has('dresses')) out.add('gown');
+  return out;
+}
+
+// Near-color neighbors for the "only one white" case: an exact color hit
+// scores +2, a neighbor (silver for white, pink for red, …) scores +1, so a
+// thin exact set fills with visually adjacent items instead of unrelated ones.
+export const COLOR_NEIGHBORS: Record<string, string[]> = {
+  white: ['silver', 'cream', 'champagne', 'beige'],
+  silver: ['white', 'gray', 'champagne'],
+  cream: ['white', 'beige', 'champagne'],
+  champagne: ['gold', 'cream', 'beige', 'white'],
+  beige: ['cream', 'brown', 'white'],
+  black: ['gray'],
+  gray: ['silver', 'black'],
+  navy: ['blue'],
+  blue: ['navy', 'teal'],
+  teal: ['blue', 'green'],
+  green: ['emerald', 'teal'],
+  emerald: ['green', 'teal'],
+  red: ['pink', 'maroon'],
+  maroon: ['red', 'brown'],
+  pink: ['red', 'peach'],
+  peach: ['pink', 'orange', 'gold'],
+  gold: ['champagne', 'yellow'],
+  yellow: ['gold', 'orange'],
+  orange: ['peach', 'gold'],
+  purple: ['lavender'],
+  lavender: ['purple', 'pink'],
+  brown: ['beige', 'maroon'],
+};
+
+export function neighborColors(color: string): string[] {
+  return COLOR_NEIGHBORS[color.toLowerCase()] ?? [];
+}
+
+// Score = 3×category hit + 2×occasion hit + 2×exact-color / 1×neighbor-color
+//        + 1×word hit + 1×preference hit + 0.5×onSale boost (§5 of the RAG plan).
 export function scoreItem(
   item: StylistItem,
   words: string[],
@@ -108,10 +158,20 @@ export function scoreItem(
     if (targetCats.has(o)) { score += 2; break; }
   }
   // Color-tag hit: a query word matching a staff color tag ("green theme
-  // gowns" → green-tagged items). One bonus max, like occasions.
+  // gowns" → green-tagged items scores +2). A neighbor color (silver for
+  // white, pink for red) scores +1 so thin exact sets fill with adjacent
+  // shades instead of unrelated items. One bonus max per tier.
+  let colorHit = 0;
   for (const w of words) {
-    if (colors.some((c) => c === w || c.includes(w) || w.includes(c))) { score += 2; break; }
+    if (colors.some((c) => c === w || c.includes(w) || w.includes(c))) { colorHit = 2; break; }
   }
+  if (colorHit === 0) {
+    for (const w of words) {
+      const neighbors = COLOR_NEIGHBORS[w] ?? [];
+      if (neighbors.length && colors.some((c) => neighbors.includes(c))) { colorHit = 1; break; }
+    }
+  }
+  score += colorHit;
   for (const w of words) {
     if (name.includes(w) || category.includes(w) || desc.includes(w)) score += 1;
     else if (occasions.some((o) => o.includes(w))) score += 1;
@@ -254,8 +314,13 @@ export async function retrieveStylistContext(query: string, opts: RetrieveOpts =
     const from = opts.from ? new Date(opts.from).getTime() : NaN;
     const to = opts.to ? new Date(opts.to).getTime() : NaN;
     const hasWindow = !Number.isNaN(from) && !Number.isNaN(to);
+    // Category lock: a query naming garment(s) ("show me gowns", "green
+    // suit") restricts retrieval to exactly those — a gown query must never
+    // ground (or card) a suit. No category named → all categories eligible.
+    const lockedCats = requestedCategories(query);
     const bookable = (available as (StylistItem & { effectiveStatus?: string; status?: string; transactions?: { rentalDate: Date; dueDate: Date }[] })[])
       .filter((i) => (i.effectiveStatus ?? i.status) === 'Available')
+      .filter((i) => lockedCats.size === 0 || lockedCats.has((i.category || '').toLowerCase()))
       .filter((i) => {
         if (!hasWindow || !Array.isArray(i.transactions)) return true;
         return !i.transactions.some((t) => {
@@ -269,7 +334,18 @@ export async function retrieveStylistContext(query: string, opts: RetrieveOpts =
     const targetCats = targetCategoriesFor(query);
     const preferences = (opts.preferences ?? []).map((p) => String(p).toLowerCase());
 
-    const ranked = bookable
+    // Photo-first: named items render as picture cards and link to the
+    // catalog, so the stylist must only be grounded in items the customer
+    // can actually see. Imageless rows stay eligible only when NOTHING
+    // bookable has a photo (e.g. unit-test fixtures) — never mixed in
+    // alongside photo items.
+    const withPhotos = bookable.filter((i) => {
+      const img = (i as { image?: unknown }).image;
+      return typeof img === 'string' && img.trim() !== '' && !img.startsWith('data:');
+    });
+    const candidates = withPhotos.length > 0 ? withPhotos : bookable;
+
+    const ranked = candidates
       .map((i) => ({
         item: {
           id: (i as { id?: number }).id,
@@ -278,6 +354,7 @@ export async function retrieveStylistContext(query: string, opts: RetrieveOpts =
           price: i.price,
           onSale: i.onSale,
           salePrice: i.salePrice,
+          discountPct: (i as { discountPct?: number | null }).discountPct,
           occasions: (i as { occasions?: string[] }).occasions,
           colors: (i as { colors?: string[] }).colors,
           description: i.description,
@@ -292,7 +369,7 @@ export async function retrieveStylistContext(query: string, opts: RetrieveOpts =
     let picked = ranked.slice(0, topK);
     let retrieval: StylistContext['retrieval'] = 'keyword';
     if (picked.length === 0) {
-      picked = bookable
+      picked = candidates
         .map((i) => ({
           item: {
             id: (i as { id?: number }).id,
@@ -301,6 +378,7 @@ export async function retrieveStylistContext(query: string, opts: RetrieveOpts =
             price: i.price,
             onSale: i.onSale,
             salePrice: i.salePrice,
+            discountPct: (i as { discountPct?: number | null }).discountPct,
             occasions: (i as { occasions?: string[] }).occasions,
             colors: (i as { colors?: string[] }).colors,
             description: i.description,

@@ -51,7 +51,7 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
     } catch { /* preferences are a ranking hint only — never fail the chat */ }
     const context = env.RAG_ENABLED
       ? await retrieveStylistContext(message, { preferences })
-      : { items: (await inventoryService.listItems('Available')).slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 };
+      : { items: (await inventoryService.listItems('Available')).slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice, discountPct: i.discountPct })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 };
     const result = await geminiService.chatWithAi(message, history, { items: context.items, policies: context.policies });
     res.json({ ...result, groundedIn: context.groundedIn, retrieval: context.retrieval });
   } catch (err) {

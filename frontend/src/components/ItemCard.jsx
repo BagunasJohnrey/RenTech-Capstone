@@ -6,6 +6,8 @@ import { itemPill } from '../utils/statusColors';
 import { normalizeOccasions } from '../utils/occasions';
 
 // Determine whether a sale is currently active and the resulting price.
+// A 100%+ discount (free/negative price) is treated as corrupt data, not a
+// real sale — the card falls back to the regular price with no badge.
 export function getSaleInfo(item) {
   const now = Date.now();
   const active = !!item.onSale && (!item.saleEndsAt || new Date(item.saleEndsAt).getTime() > now);
@@ -14,10 +16,11 @@ export function getSaleInfo(item) {
   let pct = 0;
   if (item.salePrice != null && item.salePrice > 0) {
     price = item.salePrice;
-  } else if (item.discountPct != null && item.discountPct > 0) {
+  } else if (item.discountPct != null && item.discountPct > 0 && item.discountPct < 100) {
     pct = item.discountPct;
     price = Math.round(item.price * (1 - item.discountPct / 100));
   }
+  if (!(price > 0)) return { active: false, price: item.price, pct: 0 };
   return { active: true, price, pct };
 }
 

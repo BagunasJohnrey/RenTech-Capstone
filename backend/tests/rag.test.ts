@@ -89,6 +89,73 @@ describe('rag.service: occasion ranking', () => {
     expect(ctx.items[0].name).toBe('Emerald Debut Gown');
   });
 
+  it('locks retrieval to the requested garment: gowns never return suits', async () => {
+    const prisma = await mockPrisma();
+    prisma.inventoryItem.findMany.mockResolvedValue([
+      mockItem(1, 'Emerald Gown', 'Gown', { colors: ['Green'] }),
+      mockItem(2, 'Emerald Suit', 'Suit', { colors: ['Green'] }),
+    ]);
+    prisma.businessRule.findMany.mockResolvedValue([]);
+
+    const ctx = await retrieveStylistContext('show me green gowns please');
+    expect(ctx.items.length).toBeGreaterThan(0);
+    expect(ctx.items.every((i) => i.category === 'Gown')).toBe(true);
+  });
+
+  it('fills a thin exact-color set with neighbor shades (white → silver)', async () => {
+    const prisma = await mockPrisma();
+    prisma.inventoryItem.findMany.mockResolvedValue([
+      mockItem(1, 'Ivory Gown', 'Gown', { colors: ['White'] }),
+      mockItem(2, 'Silver Gown', 'Gown', { colors: ['Silver'] }),
+      mockItem(3, 'Red Gown', 'Gown', { colors: ['Red'] }),
+    ]);
+    prisma.businessRule.findMany.mockResolvedValue([]);
+
+    const ctx = await retrieveStylistContext('white gowns for a debut');
+    const names = ctx.items.map((i) => i.name);
+    expect(names[0]).toBe('Ivory Gown');
+    expect(names).toContain('Silver Gown');
+    expect(names.indexOf('Silver Gown')).toBeLessThan(names.indexOf('Red Gown'));
+  });
+
+  it('prefers photo items over imageless rows when photos exist', async () => {
+    const prisma = await mockPrisma();
+    prisma.inventoryItem.findMany.mockResolvedValue([
+      mockItem(1, 'No Photo Gown', 'Gown', { image: null }),
+      mockItem(2, 'Photo Gown', 'Gown', { image: 'seed/1.webp' }),
+    ]);
+    prisma.businessRule.findMany.mockResolvedValue([]);
+
+    const ctx = await retrieveStylistContext('gowns for a debut');
+    expect(ctx.items.map((i) => i.name)).toEqual(['Photo Gown']);
+  });
+
+  it('flags invented item names but allows real + generic shortenings', async () => {
+    const { findHallucinatedItems, buildDeterministicStylistReply } = await import('../src/services/gemini.service.js');
+    const names = ['Charcoal Three-Piece Suit', 'Blush Satin Debut Gown', 'Navy Double-Breasted Tuxedo'];
+
+    expect(findHallucinatedItems(
+      'I recommend our Charcoal Three-Piece Suit. The Charcoal Herringbone Suit is also nice.',
+      names,
+    )).toEqual(['Charcoal Herringbone Suit']);
+
+    expect(findHallucinatedItems(
+      'Try the Charcoal Prince of Wales Suit for a classic look.',
+      names,
+    ).length).toBeGreaterThan(0);
+
+    // Exact + generic shortening pass clean.
+    expect(findHallucinatedItems('Our Charcoal Three-Piece Suit is priced at P3800.', names)).toEqual([]);
+    expect(findHallucinatedItems('A blush debut gown would suit the occasion.', names)).toEqual([]);
+
+    // Deterministic fallback prints only grounded rows.
+    const fallback = buildDeterministicStylistReply([
+      { name: 'Charcoal Three-Piece Suit', category: 'Suit', price: 3800 },
+    ]);
+    expect(fallback).toContain('Charcoal Three-Piece Suit');
+    expect(fallback).not.toContain('Herringbone');
+  });
+
   it('scoreItem: preference + onSale boost a matching category', () => {
     const base = { name: 'Red Gown', category: 'Gown', price: 3000 };
     const plain = scoreItem(base, ['gown'], targetCategoriesFor('wedding gown'), []);

@@ -108,38 +108,6 @@ const EVENT_KEYWORDS = {
 // open for advance booking on other dates (the flow validates conflicts).
 const BOOKABLE_STATUSES = ['Available', 'Reserved', 'Rented', 'Overdue'];
 
-// Scores inventory items against the customer's prompt and returns the best matches.
-function findSuggestions(text, inventory) {
-  if (!text || !inventory?.length) return [];
-  const lower = text.toLowerCase();
-  const words = lower.split(/\W+/).filter((w) => w.length >= 3);
-
-  const targetCategories = new Set();
-  for (const [keyword, cats] of Object.entries(EVENT_KEYWORDS)) {
-    if (lower.includes(keyword)) cats.forEach((c) => targetCategories.add(c));
-  }
-
-  const scored = inventory
-    .filter((i) => BOOKABLE_STATUSES.includes(i.status))
-    .map((item) => {
-      const name = (item.name || '').toLowerCase();
-      const category = (item.category || '').toLowerCase();
-      let score = 0;
-      if (targetCategories.has(category)) score += 3;
-      for (const w of words) {
-        if (name.includes(w)) score += 2;
-        if (category.includes(w)) score += 2;
-      }
-      return { item, score };
-    })
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 4)
-    .map((s) => s.item);
-
-  return scored;
-}
-
 // Only surface product suggestions when the prompt is actually about finding
 // an outfit for an event — not for generic Q&A (hours, pricing, sizing…).
 const STYLIST_INTENT = ['outfit', 'wear', 'recommend', 'suggest', 'look', 'attire', 'dress', 'clothing', 'style', 'fit'];
@@ -153,27 +121,98 @@ function isOutfitQuery(text) {
   return triggers.some((w) => lower.includes(w));
 }
 
+// Fold lookalike punctuation so the model's typography ("Three‑Piece" with
+// U+2011, curly quotes, nbsp) still matches DB names ("Three-Piece").
+// Every replacement is 1:1 length-preserving, so match indices map back
+// onto the original text for link splicing.
+function foldForMatch(s) {
+  return String(s || '')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/\u00A0/g, ' ');
+}
+// All (item, span) mentions of inventory names in text — longest names
+// first, never overlapping, bookable items only — so links and cards agree
+// on exactly the same set.
+function matchItemNames(text, inventory) {
+  if (!text || !inventory?.length) return [];
+  const folded = foldForMatch(text).toLowerCase();
+  const items = [...inventory]
+    .filter((i) => (i.name || '').trim().length >= 3)
+    .sort((a, b) => (b.name || '').length - (a.name || '').length);
+  const taken = [];
+  const out = [];
+  for (const item of items) {
+    if (!BOOKABLE_STATUSES.includes(item.status)) continue;
+    const needle = foldForMatch(item.name.trim()).toLowerCase();
+    let from = 0;
+    while (true) {
+      const idx = folded.indexOf(needle, from);
+      if (idx === -1) break;
+      const end = idx + needle.length;
+      if (!taken.some(([s, e]) => idx < e && end > s)) {
+        taken.push([idx, end]);
+        out.push({ item, start: idx, end });
+      }
+      from = idx + 1;
+    }
+  }
+  out.sort((a, b) => a.start - b.start);
+  return out;
+}
+
 // The AI stylist is DB-grounded: when its reply names real pieces from the
 // live inventory, attach those exact items as picture cards so the customer
 // sees what it's talking about (not just text).
 function itemsMentionedInReply(reply, inventory) {
-  if (!reply || !inventory?.length) return [];
-  const lowerReply = reply.toLowerCase();
   const seen = new Set();
-  const out = [];
-  for (const item of inventory) {
-    if (!BOOKABLE_STATUSES.includes(item.status)) continue;
-    const name = (item.name || '').trim().toLowerCase();
-    if (name.length < 3 || !lowerReply.includes(name)) continue;
-    if (!seen.has(item.id)) {
-      seen.add(item.id);
-      out.push(item);
-    }
-  }
-  return out;
+  return matchItemNames(reply, inventory)
+    .map((m) => m.item)
+    .filter((it) => (seen.has(it.id) ? false : (seen.add(it.id), true)));
 }
 
-export default function ChatbotModal({ onClose, inventory = [], onBook }) {
+export default function ChatbotModal({ onClose, inventory = [], onBook, onSearchItem }) {
+
+  // Turns item names in a reply into catalog links: "Charcoal Three-Piece
+  // Suit" → [Charcoal Three-Piece Suit](#item-42), rendered by the custom
+  // `a` component below as a button that jumps to the catalog with the
+  // search bar pre-filled. Uses the same span matcher as the picture cards
+  // (fold-tolerant, non-overlapping) so links and cards always agree.
+  const linkifyItemNames = (text) => {
+    const matches = matchItemNames(text, inventory);
+    if (!matches.length) return text;
+    let out = '';
+    let cursor = 0;
+    for (const m of matches) {
+      out += text.slice(cursor, m.start);
+      const safe = m.item.name.trim().replace(/([[\]])/g, '\\$1');
+      out += `[${safe}](#item-${m.item.id})`;
+      cursor = m.end;
+    }
+    out += text.slice(cursor);
+    return out;
+  };
+
+  const renderLink = ({ href, children }) => {
+    const m = /^#item-(\d+)$/.exec(href || '');
+    if (m) {
+      const item = (inventory || []).find((i) => String(i.id) === m[1]);
+      if (item && onSearchItem) {
+        return (
+          <button
+            type="button"
+            onClick={() => onSearchItem(item)}
+            title={`Find ${item.name} in the catalog`}
+            className="font-bold text-[#bf4a53] hover:underline"
+          >
+            {children}
+          </button>
+        );
+      }
+    }
+    return <a href={href}>{children}</a>;
+  };
   useEscapeClose(onClose);
   const [messages, setMessages] = useState([
     {
@@ -236,42 +275,21 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
       const outfitIntent = isOutfitQuery(userText);
       const hasEventKeyword = Object.keys(EVENT_KEYWORDS).some((k) => userText.toLowerCase().includes(k));
 
-      // Build the product set and dedupe (in priority order):
-      // 1) keyword/category match against the prompt, 2) items the AI's reply
-      //    actually named (DB-grounded — must show pictures), 3) for outfit
-      //    queries only, fall back to bookable photo items so the chat always
-      //    surfaces something visual. Pure Q&A (pricing/hours/sizing) stays
-      //    text-only.
-      let products = [];
-      const seenIds = new Set();
-      const pushUnique = (list, limit = 4) => {
-        for (const it of list) {
-          if (seenIds.has(it.id)) continue;
-          seenIds.add(it.id);
-          products.push(it);
-          if (products.length >= limit) return;
-        }
-      };
-      if (outfitIntent) pushUnique(findSuggestions(userText, inventory));
-      pushUnique(itemsMentionedInReply(reply, inventory));
-      if (products.length === 0 && outfitIntent) {
-        // Photo-first favorites for a general outfit/show-me query.
-        const favorites = inventory.filter(
-          (i) => BOOKABLE_STATUSES.includes(i.status) && i.image && !String(i.image).startsWith('data:')
-        );
-        pushUnique(favorites);
-        if (favorites.length > 0 && hasEventKeyword) {
-          reply += "\n\nI couldn't find exact matches for that, so here are some favorites available right now!";
-        } else if (favorites.length === 0 && hasEventKeyword) {
-          reply += "\n\nI couldn't find any available items matching that right now. You're welcome to visit our physical store in Balayan, Batangas to check what's on hand, or try a different style or event!";
-        }
+      // Cards strictly mirror the reply: only items the AI actually named
+      // (full-name match against live inventory), dynamic count, hard cap of
+      // 6. Never pad with keyword/favorite fillers — unrelated cards erode
+      // trust. Pure Q&A (pricing/hours/sizing) stays text-only.
+      const MAX_CARDS = 6;
+      const products = itemsMentionedInReply(reply, inventory).slice(0, MAX_CARDS);
+      if (products.length === 0 && outfitIntent && hasEventKeyword) {
+        reply += "\n\nI couldn't find any available items matching that right now. You're welcome to visit our physical store in Balayan, Batangas to check what's on hand, or try a different style or event!";
       }
       const productsWithImages = await Promise.all(products.map(resolveImage));
       setMessages((prev) => [
         ...prev,
         {
           sender: 'bot',
-          text: reply,
+          text: linkifyItemNames(reply),
           products: productsWithImages,
           source: botResult.source,
           provider: botResult.provider,
@@ -357,11 +375,12 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
               >
                 {msg.sender === 'bot' ? (
                   <>
-                    <ReactMarkdown
+                      <ReactMarkdown
                       components={{
                         p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
                         ul: ({ children }) => <ul className="list-disc pl-4 mb-1">{children}</ul>,
                         ol: ({ children }) => <ol className="list-decimal pl-4 mb-1">{children}</ol>,
+                        a: renderLink,
                       }}
                     >
                       {msg.text}
@@ -395,7 +414,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook }) {
                       <div className="mt-3 grid grid-cols-2 gap-2.5">
                         {msg.products.map((item) => {
                           const sale = getSaleInfo(item);
-                          const displayPrice = sale.active ? sale.effectivePrice : item.price;
+                          const displayPrice = sale.active ? sale.price : item.price;
                           const originalPrice = sale.active ? item.price : null;
                           return (
                             <div

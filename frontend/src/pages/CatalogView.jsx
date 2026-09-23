@@ -40,6 +40,16 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
   const isStaff = role !== 'Customer';
   const STATUSES = role === 'Admin' ? ADMIN_STATUSES : isStaff ? STAFF_STATUSES : CUSTOMER_STATUSES;
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
+  // One-shot search prefill (e.g. jumping from the AI stylist's item links):
+  // apply it, then clear the source so later visits start unfiltered.
+  useEffect(() => {
+    if (initialSearch) {
+      setSearchQuery(initialSearch);
+      setShowSuggestions(false);
+      onConsumeSearch?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSearch]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchRef = useRef(null);
 

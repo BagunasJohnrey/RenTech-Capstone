@@ -129,6 +129,15 @@ export default function RentechApp() {
     setHistorySearch(item.name || '');
     goTab('History');
   };
+  // One-shot Catalog search prefill (AI stylist item-name links): the chat
+  // modal closes, the catalog opens with the search bar pre-filled.
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const handleChatSearchItem = (item) => {
+    if (!item) return;
+    setShowChatbot(false);
+    setCatalogSearch(item.name || '');
+    goTab('Catalog');
+  };
 
   const handleOAuthDetails = async (details) => {
     await completeOAuth(details);
@@ -948,6 +957,8 @@ export default function RentechApp() {
                 onStaffBookItem={(item) => setStaffBookingItem(item)}
                 onCheckAvailability={(item) => setCalendarItem(item)}
                 onRequestDelete={(item) => setDeleteConfirm(item)}
+                initialSearch={catalogSearch}
+                onConsumeSearch={() => setCatalogSearch('')}
               />
             )}
             {activeTab === 'History' && (
@@ -1066,6 +1077,7 @@ export default function RentechApp() {
               onClose={() => setShowChatbot(false)}
               inventory={inventory}
               onBook={(item) => setCustomerRental({ item })}
+              onSearchItem={handleChatSearchItem}
             />
           </Suspense>
         )}
