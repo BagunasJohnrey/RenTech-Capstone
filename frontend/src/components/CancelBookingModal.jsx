@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, XCircle, MessageCircle, Send, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { customerLabel, itemLabel } from '../utils/format';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 
 // Proper cancel-booking dialog (replaces window.confirm). Shows what will
 // happen, and — for customers whose booking can't be cancelled online
@@ -11,39 +12,35 @@ export default function CancelBookingModal({ tx, role, onClose, onCancel, onSend
   const isCustomer = role === 'Customer';
   const needsStaff = isCustomer && ['Active', 'Overdue'].includes(tx.status);
   const [message, setMessage] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
   const [msgError, setMsgError] = useState('');
-  const [cancelling, setCancelling] = useState(false);
+  // Ref guards: state alone can't block same-tick double-taps on
+  // Cancel/Send (duplicate cancel + duplicate message).
+  const { guarding: cancelling, guard: guardCancel } = useButtonGuard();
+  const { guarding: sending, guard: guardSend } = useButtonGuard();
+  const [sent, setSent] = useState(false);
 
-  const handleCancel = async () => {
-    if (cancelling) return;
-    setCancelling(true);
-    try {
+  const handleCancel = () => {
+    guardCancel(async () => {
       await onCancel(tx.id);
-    } finally {
-      setCancelling(false);
       onClose();
-    }
+    });
   };
 
-  const handleSend = async () => {
-    if (sending || sent) return;
+  const handleSend = () => {
     const clean = message.trim();
     if (clean.length < 10) {
       setMsgError('Please write at least 10 characters so the team knows what you need.');
       return;
     }
     setMsgError('');
-    setSending(true);
-    try {
-      await onSendMessage({ transactionId: tx.id, message: clean });
-      setSent(true);
-    } catch (err) {
-      setMsgError(err?.message || 'Could not send the message. Please try again.');
-    } finally {
-      setSending(false);
-    }
+    guardSend(async () => {
+      try {
+        await onSendMessage({ transactionId: tx.id, message: clean });
+        setSent(true);
+      } catch (err) {
+        setMsgError(err?.message || 'Could not send the message. Please try again.');
+      }
+    });
   };
 
   const code = tx.txNumber ?? tx.id;

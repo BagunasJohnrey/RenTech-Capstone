@@ -4,6 +4,7 @@ import { transactionsService } from '../services';
 import { useToast } from './Toast';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 
 const toYmd = (d) => {
   if (!d) return '';
@@ -21,26 +22,27 @@ export default function EditBookingModal({ transaction, onClose, onSaved }) {
   const [pickup, setPickup] = useState(toYmd(transaction.rentalDate));
   const [due, setDue] = useState(toYmd(transaction.dueDate));
   const [notes, setNotes] = useState(transaction.notes ?? '');
-  const [saving, setSaving] = useState(false);
+  // Ref guard: blocks double-tap Save (duplicate PATCH).
+  const { guarding: saving, guard: guardSave } = useButtonGuard();
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!pickup || !due) { toastError('Pickup and due dates are required'); return; }
     if (new Date(pickup) > new Date(due)) { toastError('Pickup must be on or before the due date'); return; }
-    setSaving(true);
-    try {
-      const updated = await transactionsService.update(transaction.id, {
-        rentalDate: pickup,
-        dueDate: due,
-        notes,
-      });
-      toastSuccess('Booking updated');
-      onSaved?.(updated);
-      onClose();
-    } catch (err) {
-      if (err?.status === 409) toastError(err.message || 'Those dates overlap another booking — pick different dates');
-      else toastError(err?.message || 'Failed to update booking');
-    }
-    setSaving(false);
+    guardSave(async () => {
+      try {
+        const updated = await transactionsService.update(transaction.id, {
+          rentalDate: pickup,
+          dueDate: due,
+          notes,
+        });
+        toastSuccess('Booking updated');
+        onSaved?.(updated);
+        onClose();
+      } catch (err) {
+        if (err?.status === 409) toastError(err.message || 'Those dates overlap another booking — pick different dates');
+        else toastError(err?.message || 'Failed to update booking');
+      }
+    });
   };
 
   const inputClass = 'w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]';

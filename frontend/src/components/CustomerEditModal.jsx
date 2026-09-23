@@ -4,6 +4,7 @@ import { customerService } from '../services';
 import { useToast } from './Toast';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 
 // Edit only contact/profile details — item + fee changes stay "cancel + re-book".
 export default function CustomerEditModal({ customer, onClose, onSaved }) {
@@ -15,11 +16,12 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
     address: customer.address ?? '',
     preferences: customer.preferences ?? '',
   });
-  const [saving, setSaving] = useState(false);
+  // Ref guard: blocks double-tap Save (duplicate customer updates).
+  const { guarding: saving, guard: guardSave } = useButtonGuard();
 
   const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.name || form.name.trim().length < 2) {
       toastError('Full name is required (min 2 characters)');
       return;
@@ -28,24 +30,24 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
       toastError('Phone must be exactly 11 digits');
       return;
     }
-    setSaving(true);
-    try {
-      const prefs = typeof form.preferences === 'string'
-        ? form.preferences.split(',').map(s => s.trim()).filter(Boolean)
-        : form.preferences;
-      const updated = await customerService.update(customer.id, {
-        name: form.name.trim(),
-        phone: form.phone || null,
-        address: form.address || null,
-        preferences: prefs,
-      });
-      toastSuccess('Customer updated');
-      onSaved?.(updated);
-      onClose();
-    } catch (err) {
-      toastError(err?.message || 'Failed to update customer');
-    }
-    setSaving(false);
+    guardSave(async () => {
+      try {
+        const prefs = typeof form.preferences === 'string'
+          ? form.preferences.split(',').map(s => s.trim()).filter(Boolean)
+          : form.preferences;
+        const updated = await customerService.update(customer.id, {
+          name: form.name.trim(),
+          phone: form.phone || null,
+          address: form.address || null,
+          preferences: prefs,
+        });
+        toastSuccess('Customer updated');
+        onSaved?.(updated);
+        onClose();
+      } catch (err) {
+        toastError(err?.message || 'Failed to update customer');
+      }
+    });
   };
 
   const inputClass = 'w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]';

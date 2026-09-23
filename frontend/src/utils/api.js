@@ -73,6 +73,14 @@ async function request(method, path, body = undefined, _retried = false, opts = 
 
   const headers = { 'Content-Type': 'application/json' };
 
+  // Idempotency keys on every mutation: a double-fired POST/PUT/PATCH/DELETE
+  // carries a unique key so future server-side dedup can collapse retries.
+  // Backend ignores unknown headers today (no breakage); the header is
+  // forward-compatible. GETs are side-effect-free and stay keyless.
+  if (method !== 'GET' && typeof crypto !== 'undefined' && crypto.randomUUID) {
+    headers['X-Idempotency-Key'] = crypto.randomUUID();
+  }
+
   const timeoutMs = opts.timeout || FETCH_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(TIMEOUT_REASON()), timeoutMs);

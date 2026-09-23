@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { CheckSquare, ChevronLeft, ChevronRight, Droplets, Square } from 'lucide-react';
 import { useToast } from './Toast';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 import ItemImage from './ItemImage';
 
 const CLEANING_PAGE_SIZE = 5;
@@ -15,6 +16,12 @@ export default function CleaningQueue({ items, onMarkClean, onBulkClean, onViewA
   const [multiSelect, setMultiSelect] = useState(false);
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
+  // Per-item in-flight set: same-tick double-taps on one item's button are
+  // blocked by the ref (state alone can't), while other items stay tappable.
+  const cleaningRef = useRef(new Set());
+  const [busyIds, setBusyIds] = useState([]);
+  // Bulk action guard (single action — shared guard is enough).
+  const { guarding: bulking, guard: guardBulk } = useButtonGuard();
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(items.length / CLEANING_PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -35,27 +42,35 @@ export default function CleaningQueue({ items, onMarkClean, onBulkClean, onViewA
   };
 
   const handleClean = async (id) => {
+    if (cleaningRef.current.has(id)) return;
+    cleaningRef.current.add(id);
+    setBusyIds((prev) => [...prev, id]);
     try {
       await onMarkClean(id);
       toastSuccess('Item marked as clean');
     } catch (err) {
       toastError(err?.message || 'Failed to update item');
+    } finally {
+      cleaningRef.current.delete(id);
+      setBusyIds((prev) => prev.filter((x) => x !== id));
     }
   };
 
-  const handleBulkClean = async () => {
+  const handleBulkClean = () => {
     if (selected.length === 0 || busy) return;
     setBusy(true);
-    try {
-      await onBulkClean(selected);
-      toastSuccess(`${selected.length} item${selected.length === 1 ? '' : 's'} marked as cleaned`);
-      setSelected([]);
-      setMultiSelect(false);
-    } catch (err) {
-      toastError(err?.message || 'Failed to update items');
-    } finally {
-      setBusy(false);
-    }
+    guardBulk(async () => {
+      try {
+        await onBulkClean(selected);
+        toastSuccess(`${selected.length} item${selected.length === 1 ? '' : 's'} marked as cleaned`);
+        setSelected([]);
+        setMultiSelect(false);
+      } catch (err) {
+        toastError(err?.message || 'Failed to update items');
+      } finally {
+        setBusy(false);
+      }
+    });
   };
 
   return (
@@ -147,9 +162,9 @@ export default function CleaningQueue({ items, onMarkClean, onBulkClean, onViewA
               {multiSelect ? (
                 checked && <CheckSquare size={18} className="text-emerald-600 shrink-0" />
               ) : (
-                <button onClick={() => handleClean(item.id)}
-                  className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-full transition-colors shadow-sm">
-                  Mark as Clean
+                <button onClick={() => handleClean(item.id)} disabled={bulking || busyIds.includes(item.id)}
+                  className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-full transition-colors shadow-sm disabled:opacity-50">
+                  {busyIds.includes(item.id) ? 'Cleaning…' : 'Mark as Clean'}
                 </button>
               )}
             </div>

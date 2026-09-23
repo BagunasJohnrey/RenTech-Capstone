@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, AlertTriangle, Wrench, HelpCircle } from 'lucide-react';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 import ItemImage from './ItemImage';
 
 const REASONS = [
@@ -16,10 +17,12 @@ export default function OutOfServiceModal({ item, onClose, onConfirm }) {
 
   const reasonText = reason === 'other' ? otherReason.trim() : reason;
   const canSubmit = !!reasonText;
+  // Button guard: blocks double-tap on Pull (duplicate status flips + audits).
+  const { guarding: submitting, guard: guardSubmit } = useButtonGuard();
 
   const handleSubmit = () => {
     if (!canSubmit) return;
-    onConfirm(item, reasonText);
+    guardSubmit(async () => { await onConfirm(item, reasonText); });
   };
 
   return (
@@ -90,14 +93,14 @@ export default function OutOfServiceModal({ item, onClose, onConfirm }) {
               className="px-4 py-2.5 rounded-full text-xs font-bold text-gray-600 hover:bg-gray-100 transition-colors">
               Cancel
             </button>
-            <button type="button" onClick={handleSubmit} disabled={!canSubmit}
+            <button type="button" onClick={handleSubmit} disabled={!canSubmit || submitting}
               className={`inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full text-xs font-bold transition-all ${
-                canSubmit
+                canSubmit && !submitting
                   ? 'bg-[#bf4a53] text-white hover:bg-red-700 shadow-sm shadow-red-500/20'
                   : 'bg-gray-200 text-gray-400 cursor-not-allowed'
               }`}>
               <AlertTriangle size={13} />
-              Pull from rental
+              {submitting ? 'Pulling…' : 'Pull from rental'}
             </button>
           </div>
         </div>

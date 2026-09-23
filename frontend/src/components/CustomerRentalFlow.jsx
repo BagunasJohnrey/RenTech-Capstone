@@ -9,6 +9,7 @@ import { inventoryService } from '../services/inventory';
 import BookingCalendar from './BookingCalendar';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
@@ -326,7 +327,7 @@ export default function CustomerRentalFlow({
     else onClose();
   };
 
-  const handleNext = async () => {
+  const handleNextInner = async () => {
     if (step === 0) {
       if (!selectedItem) { setFieldErrors({ item: 'Please select an item.' }); return; }
       setDownpaymentAmount(rentalDefaults.min_downpayment || 200);
@@ -410,6 +411,12 @@ export default function CustomerRentalFlow({
       }
     }
   };
+
+  // Button guard: blocks double-tap Continue (harmless re-nav on steps 0/1,
+  // but step 2 creates the booking + payment — a double-fire there duplicates
+  // the transaction). `navigating` also disables the button during step 2.
+  const { guarding: navigating, guard: guardNext } = useButtonGuard();
+  const handleNext = () => guardNext(handleNextInner);
 
   const handleConfirm = async () => {
     if (confirming) return;
@@ -1173,9 +1180,9 @@ export default function CustomerRentalFlow({
             </button>
             <button
               onClick={handleNext}
-              disabled={step === 1 && (availability.checking || availability.available === false || isCleaning)}
+              disabled={navigating || (step === 1 && (availability.checking || availability.available === false || isCleaning))}
               className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : 'Confirm Payment'} <ChevronRight size={16} />
+              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : (navigating ? 'Processing…' : 'Confirm Payment')} <ChevronRight size={16} />
             </button>
           </div>
         )}

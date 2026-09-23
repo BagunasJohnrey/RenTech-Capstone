@@ -4,6 +4,7 @@ import { transactionsService, customerService } from '../services';
 import { useToast } from './Toast';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 import { customerLabel, itemLabel } from '../utils/format';
 
 const toYmd = (d) => {
@@ -76,27 +77,28 @@ function BookingTab({ transaction, inputClass, onClose, onSaved }) {
   const [due, setDue] = useState(toYmd(transaction.dueDate));
   const [notes, setNotes] = useState(transaction.notes ?? '');
   const [alteration, setAlteration] = useState(transaction.alterationStatus || '');
-  const [saving, setSaving] = useState(false);
+  // Ref guard: blocks double-tap Save (duplicate PATCH).
+  const { guarding: saving, guard: guardSave } = useButtonGuard();
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!pickup || !due) { toastError('Pickup and due dates are required'); return; }
     if (new Date(pickup) > new Date(due)) { toastError('Pickup must be on or before the due date'); return; }
-    setSaving(true);
-    try {
-      const updated = await transactionsService.update(transaction.id, {
-        rentalDate: pickup,
-        dueDate: due,
-        notes,
-        alterationStatus: alteration === '' ? null : alteration,
-      });
-      toastSuccess('Booking updated');
-      onSaved?.({ type: 'booking', updated });
-      onClose();
-    } catch (err) {
-      if (err?.status === 409) toastError(err.message || 'Those dates overlap another booking — pick different dates');
-      else toastError(err?.message || 'Failed to update booking');
-    }
-    setSaving(false);
+    guardSave(async () => {
+      try {
+        const updated = await transactionsService.update(transaction.id, {
+          rentalDate: pickup,
+          dueDate: due,
+          notes,
+          alterationStatus: alteration === '' ? null : alteration,
+        });
+        toastSuccess('Booking updated');
+        onSaved?.({ type: 'booking', updated });
+        onClose();
+      } catch (err) {
+        if (err?.status === 409) toastError(err.message || 'Those dates overlap another booking — pick different dates');
+        else toastError(err?.message || 'Failed to update booking');
+      }
+    });
   };
 
   return (
@@ -139,13 +141,14 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
     phone: transaction.contact || transaction.customerProfile?.phone || '',
     address: transaction.address || transaction.customerProfile?.address || '',
   });
-  const [saving, setSaving] = useState(false);
+  // Ref guard: blocks double-tap Save (duplicate PUT).
+  const { guarding: saving, guard: guardSave } = useButtonGuard();
 
   const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const customerId = transaction.customerId || transaction.customer?.id;
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!customerId) { toastError('No linked customer record to edit'); return; }
     if (!form.name || form.name.trim().length < 2) {
       toastError('Full name is required (min 2 characters)');
@@ -155,20 +158,20 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
       toastError('Phone must be exactly 11 digits');
       return;
     }
-    setSaving(true);
-    try {
-      const updated = await customerService.update(customerId, {
-        name: form.name.trim(),
-        phone: form.phone || null,
-        address: form.address || null,
-      });
-      toastSuccess('Customer updated');
-      onSaved?.({ type: 'customer', updated });
-      onClose();
-    } catch (err) {
-      toastError(err?.message || 'Failed to update customer');
-    }
-    setSaving(false);
+    guardSave(async () => {
+      try {
+        const updated = await customerService.update(customerId, {
+          name: form.name.trim(),
+          phone: form.phone || null,
+          address: form.address || null,
+        });
+        toastSuccess('Customer updated');
+        onSaved?.({ type: 'customer', updated });
+        onClose();
+      } catch (err) {
+        toastError(err?.message || 'Failed to update customer');
+      }
+    });
   };
 
   return (

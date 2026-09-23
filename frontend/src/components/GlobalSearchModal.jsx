@@ -3,10 +3,14 @@ import { Search, X, ShoppingBag, Clock, User, ArrowRight } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { customerLabel, itemLabel } from '../utils/format';
 import { itemPill, txPill } from '../utils/statusColors';
+import { useDebounce } from '../hooks/useDebounce';
 
 export default function GlobalSearchModal({ transactions, inventory, onClose, onNavigate }) {
   const [query, setQuery] = useState('');
   const inputRef = useRef(null);
+  // Debounced query drives the filter so fast typing doesn't re-filter the
+  // full transaction/item lists on every keystroke (mobile jank).
+  const debouncedQuery = useDebounce(query, 200);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -16,8 +20,8 @@ export default function GlobalSearchModal({ transactions, inventory, onClose, on
   }, [onClose]);
 
   const results = useMemo(() => {
-    if (!query.trim()) return { customers: [], items: [], transactions: [] };
-    const q = query.toLowerCase();
+    if (!debouncedQuery.trim()) return { customers: [], items: [], transactions: [] };
+    const q = debouncedQuery.toLowerCase();
     const seenCustomers = new Set();
     const customers = [];
     const txs = [];
@@ -34,7 +38,7 @@ export default function GlobalSearchModal({ transactions, inventory, onClose, on
       }
     }
     return { customers, items, transactions: txs };
-  }, [query, transactions, inventory]);
+  }, [debouncedQuery, transactions, inventory]);
 
   const hasResults = results.customers.length > 0 || results.items.length > 0 || results.transactions.length > 0;
 
@@ -57,15 +61,15 @@ export default function GlobalSearchModal({ transactions, inventory, onClose, on
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          {!query.trim() && (
+          {!debouncedQuery.trim() && (
             <p className="text-xs text-gray-400 text-center py-8 font-medium">
               Start typing to search customers, inventory items, or transactions
             </p>
           )}
 
-          {query.trim() && !hasResults && (
+          {debouncedQuery.trim() && !hasResults && (
             <p className="text-xs text-gray-400 text-center py-8 font-medium">
-              No results found for "{query}"
+              No results found for "{debouncedQuery}"
             </p>
           )}
 

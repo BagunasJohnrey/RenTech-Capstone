@@ -2,9 +2,14 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
+import { useButtonGuard } from '../hooks/useButtonGuard';
+
 // Generic confirmation dialog. Replaces the previously duplicated
 // DeleteConfirmModal and LogoutModal — callers supply title/message/labels
 // and a variant ('danger' for destructive red actions, 'primary' otherwise).
+// Self-guarding: the confirm button blocks double-taps while the (possibly
+// async) onConfirm is in-flight, so every caller (delete item, remove staff,
+// …) gets duplicate protection without per-callsite wiring.
 export default function ConfirmModal({
   title,
   subtitle,
@@ -30,8 +35,8 @@ export default function ConfirmModal({
   // listener down mid-dispatch would make Escape close the parent's other
   // overlay while this modal stays open).
   const cancelRef = useRef(onCancel);
-  useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
-  useEffect(() => {
+  const { guarding: confirming, guard: guardConfirm } = useButtonGuard();
+  useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);  useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') cancelRef.current?.();
     };
@@ -85,10 +90,11 @@ export default function ConfirmModal({
             {cancelLabel}
           </button>
           <button
-            onClick={onConfirm}
-            className={`flex-1 py-2.5 font-bold text-sm text-white transition-colors ${confirmClass}`}
+            onClick={() => guardConfirm(async () => { await onConfirm?.(); })}
+            disabled={confirming}
+            className={`flex-1 py-2.5 font-bold text-sm text-white transition-colors disabled:opacity-60 ${confirmClass}`}
           >
-            {confirmLabel}
+            {confirming ? 'Working…' : confirmLabel}
           </button>
         </div>
       </div>

@@ -6,6 +6,7 @@ import { customerLabel, itemLabel } from '../utils/format';
 import { fileToBase64, downscaleToJpeg } from '../utils/file';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useLockScroll } from '../hooks/useLockScroll';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 
 export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
   // Freeze the page behind the sheet; the backdrop is tap-to-close only.
@@ -14,7 +15,9 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
   const [photoUrl, setPhotoUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [needsAlteration, setNeedsAlteration] = useState(false);
-  const [releasing, setReleasing] = useState(false);
+  // Ref guard: state alone can't block same-tick double-taps on Confirm
+  // Release (duplicate release + duplicate payment records).
+  const { guarding: releasing, guard: guardRelease } = useButtonGuard();
   const [error, setError] = useState('');
 
   // Timed exit + swipe-down-to-dismiss, mirroring the transaction sheet.
@@ -113,17 +116,17 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
     setPhotoUrl('');
   };
 
-  const handleRelease = async () => {
+  const handleRelease = () => {
     if (!photoFile) { setError('Please capture the pre-rental condition photo'); return; }
     if (recordPayment) {
       const amt = Number(payAmount);
       if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
       if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
     }
-    setReleasing(true);
-    setError('');
-    setPayError('');
-    try {
+    guardRelease(async () => {
+      setError('');
+      setPayError('');
+      try {
       const base64 = (await downscaleToJpeg(photoFile)) || (await fileToBase64(photoFile));
       const { path } = await storageService.upload(
         `rental/${transaction.id}/release-${Date.now()}.jpg`,
@@ -146,10 +149,10 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
       }
       onReleased(updated);
       onClose();
-    } catch (err) {
-      setError(err?.message || 'Failed to release item');
-    }
-    setReleasing(false);
+      } catch (err) {
+        setError(err?.message || 'Failed to release item');
+      }
+    });
   };
 
   return (

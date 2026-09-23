@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Camera, Shirt, Loader2 } from 'lucide-react';
 import { storageService } from '../services';
 import { useToast } from './Toast';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { OCCASIONS, OCCASIONS_BY_CATEGORY, normalizeOccasions } from '../utils/occasions';
 
@@ -41,6 +42,8 @@ export default function ItemForm({
 }) {
   const { error: toastError } = useToast();
   useEscapeClose(onClose);
+  // Button guard: blocks double-submit on Add/Edit (duplicate items).
+  const { guarding: submitting, guard: guardSubmit } = useButtonGuard();
   const [name, setName] = useState(initial.name ?? '');
   const [price, setPrice] = useState(initial.price ?? '');
   const [status, setStatus] = useState(initial.status ?? 'Available');
@@ -100,6 +103,12 @@ export default function ItemForm({
       reader.readAsDataURL(file);
     });
 
+  // Downscale large photos client-side so the base64 payload stays small and
+  // the upload clears the storage bucket size limit. Prefers WebP output: the
+  // server stores WebP and passes compliant WebP uploads through
+  // byte-identical, so one high-quality generation replaces the old
+  // JPEG-then-WebP double transcode (the main cause of soft-looking photos).
+  // Falls back to JPEG on browsers without WebP canvas encoding.
   const downscaleImage = (file) =>
     new Promise((resolve) => {
       const url = URL.createObjectURL(file);
@@ -121,8 +130,24 @@ export default function ItemForm({
         canvas.height = height;
         canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
         URL.revokeObjectURL(url);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        resolve(dataUrl.split(',')[1]);
+        let dataUrl = '';
+        try {
+          dataUrl = canvas.toDataURL('image/webp', 0.92);
+        } catch {
+          dataUrl = '';
+        }
+        // Browsers without WebP canvas encoding silently return PNG instead
+        // of WebP — detect and fall back to JPEG rather than a bloated PNG.
+        const webp = dataUrl.startsWith('data:image/webp');
+        if (!webp) {
+          try {
+            dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          } catch {
+            resolve(null);
+            return;
+          }
+        }
+        resolve({ base64: dataUrl.split(',')[1], webp });
       };
       img.onerror = () => {
         URL.revokeObjectURL(url);
@@ -137,8 +162,14 @@ export default function ItemForm({
     if (!file || file.type.startsWith('blob:')) return;
     setUploading(true);
     try {
-      const base64 = (await downscaleImage(file)) || (await fileToBase64(file));
-      const contentType = file.type.startsWith('image/') ? file.type : 'image/jpeg';
+      const downsized = await downscaleImage(file);
+      const base64 = downsized?.base64 || (await fileToBase64(file));
+      // Match the content type to what the canvas actually produced — a WebP
+      // payload labeled image/jpeg would be rejected server-side, and a WebP
+      // labeled correctly skips the server transcode (no second generation).
+      const contentType = downsized
+        ? (downsized.webp ? 'image/webp' : 'image/jpeg')
+        : (file.type.startsWith('image/') ? file.type : 'image/jpeg');
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
       const { path } = await storageService.upload(
         `${Date.now()}-${safeName}`,
@@ -154,9 +185,10 @@ export default function ItemForm({
     }
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name || !price) return;
+    guardSubmit(async () => {
+      if (!name || !price) return;
     const values = { name: name.trim(), price: parseFloat(price), status };
     if (showCategory) {
       if (!effectiveCategory) {
@@ -186,6 +218,7 @@ export default function ItemForm({
     } catch (err) {
       toastError(err?.message || 'Failed to save item');
     }
+    });
   };
 
   // Canonical modal input theme (mirrors SaleModal / CustomerEditModal):
@@ -419,9 +452,9 @@ export default function ItemForm({
               <button type="button" onClick={onClose} className="py-3 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
                 Cancel
               </button>
-              <button type="submit" disabled={uploading} className="py-3 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 active:scale-[0.98] rounded-2xl shadow-sm shadow-red-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50">
-                {uploading && <Loader2 size={15} className="animate-spin" />}
-                {uploading ? 'Uploading…' : submitLabel}
+              <button type="submit" disabled={uploading || submitting} className="py-3 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 active:scale-[0.98] rounded-2xl shadow-sm shadow-red-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                {(uploading || submitting) && <Loader2 size={15} className="animate-spin" />}
+                {uploading ? 'Uploading…' : submitting ? 'Saving…' : submitLabel}
               </button>
             </div>
           </div>
