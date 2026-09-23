@@ -190,6 +190,7 @@ export default function RentechApp() {
     cancel: cancelTransaction,
     remove: removeTransaction,
     release: releaseTransaction,
+    applyEdit: applyEditTransaction,
     getById,
     prefetchTx,
     loading: transactionsLoading,
@@ -544,6 +545,12 @@ export default function RentechApp() {
     releaseTransaction(updated);
     if (updated.itemId) markItemStatus(updated.itemId, 'Rented');
     toastSuccess('Item released');
+  };
+
+  // Edit-rental save (booking dates/notes or customer profile) — merges the
+  // modal's result into the list so History reflects it without a refresh.
+  const handleEditRental = (saved) => {
+    applyEditTransaction(saved);
   };
 
   // Customer booking handler
@@ -932,7 +939,7 @@ export default function RentechApp() {
               />
             )}
             {activeTab === 'History' && (
-              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
+              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} onEditRental={handleEditRental} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
             )}
             {activeTab === 'AI Insights' && (
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} />

@@ -9,7 +9,7 @@ import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
 import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
-import { isReleased, getReleasePhoto, invalidateTxCache } from '../hooks/useTransactions';
+import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import ItemImage from '../components/ItemImage';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
@@ -46,7 +46,7 @@ const SORT_LABELS = Object.fromEntries(SORT_OPTIONS.map((o) => [o.value, o.label
 // `components/DateRangePicker.jsx`. This page only deals in [from, to]
 // strings and a single popover-open flag.
 
-export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
+export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, onEditRental, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
   const isStaff = role !== 'Customer';
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
@@ -828,9 +828,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           transaction={editRental}
           onClose={() => setEditRental(null)}
           onSaved={(r) => {
-            // Edits save outside the transactions hook — drop the cached full
-            // record so the next open re-reads instead of serving stale data.
-            if (r?.updated?.id) invalidateTxCache(r.updated.id);
+            // Merge the save into the list (booking dates/notes by id,
+            // customer profile across that customer's rows) so the change
+            // shows immediately — no refresh needed. Cache invalidation
+            // happens inside the merge.
+            onEditRental?.(r);
             setEditRental(null);
           }}
         />

@@ -108,6 +108,37 @@ export function useTransactions() {
     setTransactions((prev) => prev.map((t) => (t.id === updated.id ? mergeUpdated(t, updated) : t)));
   }, []);
 
+  // Local merge for EditRentalModal saves — the API calls live in the modal,
+  // which reports back { type, updated }. Booking saves carry the updated
+  // transaction (merged by id, like release); customer saves carry the updated
+  // profile (applied to every row of that customer so the list shows the new
+  // name/phone/address without a refresh).
+  const applyEdit = useCallback((saved) => {
+    if (!saved) return;
+    if (saved.type === 'customer' && saved.updated) {
+      const u = saved.updated;
+      invalidateTxCache();
+      setTransactions((prev) => prev.map((t) => {
+        const sameCustomer = String(t.customerId ?? '') === String(u.id ?? '')
+          || t.customerProfile?.id === u.id;
+        if (!sameCustomer) return t;
+        const profile = { ...(t.customerProfile || {}), ...u };
+        return normalizeTx({
+          ...t,
+          customer: profile,
+          customerProfile: profile,
+          contact: u.phone ?? t.contact,
+          address: u.address ?? t.address,
+        });
+      }));
+      return;
+    }
+    const updated = saved.updated ?? saved;
+    if (!updated?.id) return;
+    invalidateTxCache(updated.id);
+    setTransactions((prev) => prev.map((t) => (t.id === updated.id ? mergeUpdated(t, updated) : t)));
+  }, []);
+
   // Full-record fetch through the short-lived cache (see above). Components
   // warming a record they are about to open should use prefetchTx instead.
   const getById = useCallback((id) => cachedGet(id), []);
@@ -129,6 +160,7 @@ export function useTransactions() {
     cancel,
     remove,
     release,
+    applyEdit,
     getById,
     prefetchTx,
     getUpcoming,
