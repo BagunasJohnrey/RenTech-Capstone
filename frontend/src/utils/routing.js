@@ -18,7 +18,6 @@ export const TAB_PATHS = {
     Dashboard: '/staff',
     Tasks: '/staff/tasks',
     Catalog: '/staff/catalog',
-    Promotions: '/staff/promotions',
     History: '/staff/logs',
     Notifications: '/staff/notifications',
     Settings: '/staff/settings',

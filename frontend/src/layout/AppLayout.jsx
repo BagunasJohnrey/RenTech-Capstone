@@ -167,8 +167,8 @@ export default function AppLayout({
                 </button>
               )}
 
-              {/* Promotions – Staff & Admin mobile */}
-              {(viewRole === 'Staff' || viewRole === 'Admin') && (
+              {/* Promotions – Admin only (mobile) */}
+              {viewRole === 'Admin' && (
                 <button
                   onClick={() => setActiveTab('Promotions')}
                   className={`md:hidden p-2 rounded-full transition-colors ${

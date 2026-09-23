@@ -77,7 +77,6 @@ const navItems = {
     { id: 'Dashboard', icon: LayoutGrid, label: 'Dashboard' },
     { id: 'Tasks', icon: ClipboardList, label: 'Tasks' },
     { id: 'Catalog', icon: ShoppingBag, label: 'Catalog' },
-    { id: 'Promotions', icon: Tag, label: 'Promotions' },
     { id: 'History', icon: Clock, label: 'Logs & Returns' },
     { id: 'Settings', icon: Settings, label: 'Settings' },
   ],
@@ -944,7 +943,7 @@ export default function RentechApp() {
             {activeTab === 'AI Insights' && (
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} />
             )}
-            {activeTab === 'Promotions' && (
+            {activeTab === 'Promotions' && viewRole === 'Admin' && (
               <PromotionsView inventory={inventory} onEditItem={setEditingItem} />
             )}
             {(activeTab === 'Profile' || activeTab === 'Settings') && (
