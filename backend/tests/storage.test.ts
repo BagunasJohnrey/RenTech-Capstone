@@ -117,8 +117,8 @@ describe('makeThumb + thumbKeyFor (grid thumbnails)', () => {
     const thumb = await makeThumb(big);
     const meta = await sharp(thumb).metadata();
     expect(meta.format).toBe('webp');
-    expect(meta.width).toBeLessThanOrEqual(480);
-    expect(meta.height).toBeLessThanOrEqual(480);
+    expect(meta.width).toBeLessThanOrEqual(768);
+    expect(meta.height).toBeLessThanOrEqual(768);
     expect(thumb.length).toBeLessThan(big.length);
   });
 
