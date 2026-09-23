@@ -713,12 +713,16 @@ CORRECTION REQUIRED: The previous draft was rejected because it contained a ₱ 
 
 const PROMO_SUGGEST_SYSTEM = `You are a promotions advisor for Mylene's Boutique, a Philippine clothing rental shop (gowns, suits, barongs, Filipiniana, costumes) in Balayan, Batangas.
 
+CRITICAL RULE — ZERO-RENTAL ITEMS:
+The inventory list includes a "rentals" count for each item. Items with "0 rentals" have NEVER been rented — they are dead stock losing money. You MUST suggest putting a MAJORITY of zero-rental items on sale. This is the #1 priority. If there are zero-rental items and you return empty itemSuggestions, you have failed your task.
+
 Your job: analyze the boutique's inventory performance, revenue data, and seasonal context to suggest two types of promotions:
 
-1. ITEM SALE SUGGESTIONS — specific items to put on sale
+1. ITEM SALE SUGGESTIONS — specific items to put on sale (PRIORITIZE items with 0 rentals)
 2. VOUCHER CODE SUGGESTIONS — promo codes customers can use at checkout
 
 ANALYSIS APPROACH:
+- FIRST: count items with "0 rentals" in the inventory list — these MUST appear in your itemSuggestions
 - Cross-reference revenue by category with inventory to find underperforming stock
 - Use rental counts to identify stagnant items that need a push
 - Consider seasonal Philippine events (graduations in May, weddings Feb-May, holidays Dec, etc.)
@@ -727,7 +731,8 @@ ANALYSIS APPROACH:
 - Every suggestion MUST include a clear rationale explaining the WHY with data backing
 
 RULES:
-- Only suggest items that exist in the provided inventory list — never invent items
+- You MUST suggest at least 2 item sales when there are items with 0 rentals in the inventory
+- Only suggest items that exist in the provided inventory list — use the exact ID and name
 - Do NOT duplicate current active promos
 - Suggest realistic discount ranges (10-30%)
 - Voucher codes should be short, memorable, and relevant (e.g., GRAD2026, SUMMER15, WEDDING10)
@@ -741,7 +746,7 @@ OUTPUT SCHEMA (strict JSON):
       "itemName": "<exact item name from inventory>",
       "discountPct": <number 10-30>,
       "suggestedExpiryDays": <number>,
-      "rationale": "<why — reference specific data like rental count, revenue, seasonal event>"
+      "rationale": "<why — MUST reference the rental count from the data>"
     }
   ],
   "voucherSuggestions": [
@@ -750,7 +755,7 @@ OUTPUT SCHEMA (strict JSON):
       "discountPct": <number 10-30>,
       "maxUses": <number>,
       "expiresInDays": <number>,
-      "rationale": "<why — reference specific data like seasonal event, retention need, volume goal>"
+      "rationale": "<why — reference seasonal event, retention need, volume goal>"
     }
   ]
 }`;
@@ -786,6 +791,73 @@ function parsePromoSuggestions(text: string): PromoSuggestion | null {
   }
 }
 
+// Rule-based fallback when all AI providers are unavailable.
+// Generates actionable suggestions from inventory data alone.
+function generateRuleBasedSuggestions(data: {
+  inventory: { id: number; name: string; category: string; price: number; rentalCount: number; onSale: boolean; status: string }[];
+  activePromos: { code: string; discountPct: number }[];
+  currentMonth: string;
+}): PromoSuggestion {
+  const active = data.inventory.filter(i => i.status === 'Available' || i.status === 'Rented');
+  const zeroRental = active.filter(i => i.rentalCount === 0);
+  const lowRental = active.filter(i => i.rentalCount > 0 && i.rentalCount <= 2 && !i.onSale);
+  const notOnSale = active.filter(i => !i.onSale);
+
+  // Seasonal voucher codes based on current month
+  const monthLower = data.currentMonth.toLowerCase();
+  const voucherSuggestions: PromoSuggestion['voucherSuggestions'] = [];
+  if (monthLower.includes('september') || monthLower.includes('october')) {
+    voucherSuggestions.push(
+      { code: 'BEREARLY20', discountPct: 20, maxUses: 50, expiresInDays: 30, rationale: 'BER months early-bird promo to drive early holiday bookings before the December rush.' },
+      { code: 'HOLIDAY15', discountPct: 15, maxUses: 100, expiresInDays: 60, rationale: 'Early holiday season discount to capture advance bookings for December parties and galas.' }
+    );
+  } else if (monthLower.includes('november') || monthLower.includes('december')) {
+    voucherSuggestions.push(
+      { code: 'PARTY20', discountPct: 20, maxUses: 80, expiresInDays: 31, rationale: 'Peak holiday party season — incentivize volume bookings for Christmas and year-end events.' },
+      { code: 'GALA15', discountPct: 15, maxUses: 40, expiresInDays: 21, rationale: 'Year-end gala and corporate event season — encourage premium gown/suit bookings.' }
+    );
+  } else if (monthLower.includes('may') || monthLower.includes('april')) {
+    voucherSuggestions.push(
+      { code: 'GRAD2026', discountPct: 15, maxUses: 60, expiresInDays: 45, rationale: 'Graduation and debut season — attract students and debutantes for ceremony rentals.' },
+      { code: 'SUMMER15', discountPct: 15, maxUses: 50, expiresInDays: 30, rationale: 'Summer peak — drive bookings for beach weddings and vacation events.' }
+    );
+  } else if (monthLower.includes('february')) {
+    voucherSuggestions.push(
+      { code: 'LOVE20', discountPct: 20, maxUses: 40, expiresInDays: 14, rationale: 'Valentine\'s Day rush — promote couples matching outfits and wedding-related bookings.' },
+      { code: 'WEDDING15', discountPct: 15, maxUses: 30, expiresInDays: 60, rationale: 'Peak wedding season (Feb-May) — incentivize bridal party and entourage rentals.' }
+    );
+  } else {
+    voucherSuggestions.push(
+      { code: 'WELCOME15', discountPct: 15, maxUses: 50, expiresInDays: 30, rationale: 'General customer acquisition code — attract first-time renters with an introductory offer.' },
+      { code: 'RENT2026', discountPct: 10, maxUses: 100, expiresInDays: 60, rationale: 'Standing discount code to maintain booking volume during off-peak months.' }
+    );
+  }
+
+  // Item sale suggestions: zero-rental first, then low-rental
+  const itemSuggestions: PromoSuggestion['itemSuggestions'] = [];
+  for (const item of zeroRental.slice(0, 8)) {
+    itemSuggestions.push({
+      itemId: item.id,
+      itemName: item.name,
+      discountPct: 25,
+      suggestedExpiryDays: 30,
+      rationale: `Dead stock with 0 rentals — needs aggressive pricing to attract first-time bookings and move stagnant inventory.`,
+    });
+  }
+  for (const item of lowRental.slice(0, 4)) {
+    if (itemSuggestions.length >= 10) break;
+    itemSuggestions.push({
+      itemId: item.id,
+      itemName: item.name,
+      discountPct: 15,
+      suggestedExpiryDays: 21,
+      rationale: `Low demand (${item.rentalCount} rental${item.rentalCount !== 1 ? 's' : ''}) — a modest discount can boost visibility and bookings.`,
+    });
+  }
+
+  return { itemSuggestions, voucherSuggestions };
+}
+
 export async function suggestPromos(data: {
   inventory: { id: number; name: string; category: string; price: number; rentalCount: number; onSale: boolean; status: string }[];
   activePromos: { code: string; discountPct: number }[];
@@ -797,14 +869,18 @@ export async function suggestPromos(data: {
 }): Promise<{ suggestions: PromoSuggestion; source: string; provider?: string; model?: string; retryable?: boolean }> {
   if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return {
-      suggestions: { itemSuggestions: [], voucherSuggestions: [] },
+      suggestions: generateRuleBasedSuggestions(data),
       source: 'fallback',
     };
   }
 
+  const zeroRentalItems = data.inventory.filter(i => i.rentalCount === 0 && (i.status === 'Available' || i.status === 'Rented'));
   const inventoryList = data.inventory
     .filter(i => i.status === 'Available' || i.status === 'Rented')
-    .map(i => `ID:${i.id} | ${i.name} | ${i.category} | ₱${i.price} | ${i.rentalCount} rentals | ${i.onSale ? 'ON SALE' : 'not on sale'}`)
+    .map(i => {
+      const rentalTag = i.rentalCount === 0 ? ' *** ZERO RENTALS — DEAD STOCK ***' : '';
+      return `ID:${i.id} | ${i.name} | ${i.category} | ₱${i.price} | ${i.rentalCount} rentals${rentalTag} | ${i.onSale ? 'ON SALE' : 'not on sale'}`;
+    })
     .join('\n');
   const activePromoList = data.activePromos.length
     ? data.activePromos.map(p => `${p.code} (${p.discountPct}% off)`).join(', ')
@@ -812,10 +888,12 @@ export async function suggestPromos(data: {
 
   const userPrompt = `Current month: ${data.currentMonth}
 
+*** PRIORITY: ${zeroRentalItems.length} ITEMS HAVE ZERO RENTALS (dead stock) — you MUST suggest sales for these items ***
+
 ACTIVE PROMOS (do NOT duplicate these):
 ${activePromoList}
 
-INVENTORY (only suggest items from this list):
+INVENTORY (only suggest items from this list — items marked "ZERO RENTALS" are the #1 priority):
 ${inventoryList}
 ${data.kpis && Object.keys(data.kpis).length ? `\nKEY PERFORMANCE INDICATORS:\n${JSON.stringify(data.kpis)}` : ''}
 ${data.revenueByCategory && Object.keys(data.revenueByCategory).length ? `\nREVENUE BY CATEGORY:\n${JSON.stringify(data.revenueByCategory)}` : ''}
@@ -832,13 +910,29 @@ SEASONAL CONTEXT for the Philippines:
 - November: Undas (All Saints'), early Christmas
 - December: Christmas parties, year-end galas, Simbang Gabi
 
-Based on all the data above, suggest item sales and voucher codes. Return ONLY the JSON schema.`;
+CRITICAL: You have ${zeroRentalItems.length} items with 0 rentals. Suggest putting MOST of them on sale. Return ONLY the JSON schema.`;
 
   const callWithProvider = async (callFn: (system: string, history: { role: string; text: string }[], latest: string) => Promise<string | { text: string; model: string }>) => {
     const result = await callFn(PROMO_SUGGEST_SYSTEM, [], userPrompt);
     const text = typeof result === 'string' ? result : result.text;
     const model = typeof result === 'string' ? undefined : result.model;
-    const parsed = parsePromoSuggestions(text);
+    let parsed = parsePromoSuggestions(text);
+
+    // Post-parse validation: if AI returned empty itemSuggestions but there are
+    // zero-rental items, auto-generate suggestions so the feature is never empty.
+    if (parsed && parsed.itemSuggestions.length === 0 && zeroRentalItems.length > 0) {
+      parsed = {
+        ...parsed,
+        itemSuggestions: zeroRentalItems.slice(0, 8).map(item => ({
+          itemId: item.id,
+          itemName: item.name,
+          discountPct: 20,
+          suggestedExpiryDays: 30,
+          rationale: `This item has 0 rentals (dead stock). A 20% discount can attract first-time bookings and move stagnant inventory.`,
+        })),
+      };
+    }
+
     if (!parsed) throw new Error('Failed to parse AI promo suggestions');
     return { suggestions: parsed, model };
   };
@@ -850,8 +944,8 @@ Based on all the data above, suggest item sales and voucher codes. Return ONLY t
     } catch (err) {
       if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
         return isRateLimited(err)
-          ? { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error', retryable: true as never }
-          : { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+          ? { suggestions: generateRuleBasedSuggestions(data), source: 'error', retryable: true as never }
+          : { suggestions: generateRuleBasedSuggestions(data), source: 'error' };
       }
     }
   }
@@ -866,8 +960,8 @@ Based on all the data above, suggest item sales and voucher codes. Return ONLY t
     } catch (err) {
       if (!env.OPENROUTER_API_KEY) {
         return isRateLimited(err)
-          ? { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error', retryable: true as never }
-          : { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+          ? { suggestions: generateRuleBasedSuggestions(data), source: 'error', retryable: true as never }
+          : { suggestions: generateRuleBasedSuggestions(data), source: 'error' };
       }
     }
   }
@@ -881,12 +975,12 @@ Based on all the data above, suggest item sales and voucher codes. Return ONLY t
       return { suggestions, source: 'ai', provider: 'openrouter', model };
     } catch (err) {
       return isRateLimited(err)
-        ? { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error', retryable: true as never }
-        : { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+        ? { suggestions: generateRuleBasedSuggestions(data), source: 'error', retryable: true as never }
+        : { suggestions: generateRuleBasedSuggestions(data), source: 'error' };
     }
   }
 
-  return { suggestions: { itemSuggestions: [], voucherSuggestions: [] }, source: 'error' };
+  return { suggestions: generateRuleBasedSuggestions(data), source: 'error' };
 }
 
 // Anti-hallucination guard: every ₱/Php amount in the generated report must

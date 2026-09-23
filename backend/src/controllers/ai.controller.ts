@@ -174,8 +174,8 @@ export async function suggestPromos(req: AuthenticatedRequest, res: Response, ne
       topRented,
     });
 
-    // Auto-save successful suggestions for history
-    if (result.source === 'ai' && (result.suggestions.itemSuggestions?.length || result.suggestions.voucherSuggestions?.length)) {
+    // Auto-save successful suggestions for history (AI or rule-based fallback)
+    if (result.source !== 'error' && (result.suggestions.itemSuggestions?.length || result.suggestions.voucherSuggestions?.length)) {
       try {
         const saved = await aiPromoSuggestionService.savePromoSuggestion({
           suggestions: result.suggestions,
