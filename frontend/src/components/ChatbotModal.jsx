@@ -8,29 +8,12 @@ import { api } from '../utils/api';
 import { resolveDisplayUrl } from '../utils/images';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { getSaleInfo } from './ItemCard';
-
-// Quick-start chips — real occasion prompts so the first tap actually
-// surfaces curated pieces (each contains an EVENT_KEYWORD).
-const WELCOME_SUGGESTIONS = [
-  'What fits a wedding guest?',
-  'Suit for a graduation',
-  'Gown for a debut party',
-  'How much is rental?',
-  'Store location & hours',
-];
-
-// Follow-up chips adapt to what the customer was just asking about.
-const GENERAL_FOLLOW_UPS = [
-  'Show me more options',
-  'What sizes do you have?',
-  'How do I book?',
-  'Store location & hours',
-];
+import { getWelcomeSuggestions, getNextSuggestions } from '../utils/stylistChips';
 
 // Picks an icon for a suggestion chip based on its topic.
 function chipIcon(label) {
   const l = (label || '').toLowerCase();
-  if (l.includes('wedding') || l.includes('gown') || l.includes('debut') || l.includes('event')) return Gem;
+  if (l.includes('wedding') || l.includes('gown') || l.includes('debut') || l.includes('event') || l.includes('party') || l.includes('costume') || l.includes('halloween') || l.includes('christmas')) return Gem;
   if (l.includes('graduation') || l.includes('suit') || l.includes('barong')) return Sparkles;
   if (l.includes('size')) return Ruler;
   if (l.includes('price') || l.includes('cost') || l.includes('rental')) return Tag;
@@ -56,14 +39,13 @@ function shortModelName(provider, model) {
 }
 
 // Contextual follow-up chips: after an event query, suggest drilling into the
-// same event; after product results, nudge toward booking/sizing.
+// same event; after product results, nudge toward booking/sizing. Ordering
+// is season-aware (see utils/stylistChips): the seasonal occasion first,
+// then FAQ shortcuts (booking/sizing/pricing/location).
 function nextSuggestions(userText, products, source) {
-  if (source === 'error') return GENERAL_FOLLOW_UPS;
   const lower = (userText || '').toLowerCase();
   const event = Object.keys(EVENT_KEYWORDS).find((k) => lower.includes(k));
-  if (event) return [`Show more ${event} options`, 'What sizes do you have?', 'How do I book?', 'Store location & hours'];
-  if (products.length > 0) return ['What sizes do you have?', 'How do I book?', 'Store location & hours', 'Show me more options'];
-  return GENERAL_FOLLOW_UPS;
+  return getNextSuggestions({ userEvent: event || null, source });
 }
 
 // Item images are stored as Supabase paths, not URLs. Catalog paths resolve
@@ -223,7 +205,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState(WELCOME_SUGGESTIONS);
+  const [suggestions, setSuggestions] = useState(() => getWelcomeSuggestions());
   const messagesEndRef = useRef(null);
 
   const chatHistoryRef = useRef([]);
@@ -285,7 +267,22 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
       // refusals, FAQ answers, fallbacks and errors must stay clean (a
       // refusal for "You are a corporate…" once got the note appended just
       // because "corporate" is an event keyword).
-      if (products.length === 0 && outfitIntent && hasEventKeyword && botResult.source === 'ai') {
+      //
+      // And the "no match" claim is verified against live inventory, not
+      // inferred from the reply: the stylist often asks clarifying questions
+      // first ("formal or garden wedding?") without naming items even when
+      // the catalog is full of matches. Appending "couldn't find any
+      // available items" to a clarifying question is both redundant and
+      // factually wrong — the note appears only when the event's categories
+      // genuinely have nothing bookable.
+      const eventKey = Object.keys(EVENT_KEYWORDS).find((k) => userText.toLowerCase().includes(k));
+      const eventCats = eventKey ? EVENT_KEYWORDS[eventKey] : [];
+      const hasBookableForEvent = eventCats.length === 0
+        ? true
+        : (inventory || []).some((i) =>
+          BOOKABLE_STATUSES.includes(i.status) &&
+          eventCats.some((c) => (i.category || '').toLowerCase().includes(c)));
+      if (products.length === 0 && outfitIntent && hasEventKeyword && botResult.source === 'ai' && !hasBookableForEvent) {
         reply += "\n\nI couldn't find any available items matching that right now. You're welcome to visit our physical store in Balayan, Batangas to check what's on hand, or try a different style or event!";
       }
       const productsWithImages = await Promise.all(products.map(resolveImage));
