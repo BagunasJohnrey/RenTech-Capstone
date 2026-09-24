@@ -16,7 +16,15 @@ const SECTION_TITLES = [
 ];
 
 export function parseReportSections(rawText) {
-  const lines = (rawText || '').split('\n');
+  // Provider models leak raw ASCII control characters (e.g. \x11) and
+  // stray \r line endings into the report text. Normalize before splitting
+  // so the modal, the recommendations extractor, and the PDF all see clean
+  // lines (a single control byte in a PDF string makes some viewers render
+  // the whole line letter-spaced).
+  const lines = (rawText || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .split('\n');
   const sections = [];
   let current = { title: '', bodyLines: [] };
 

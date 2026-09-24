@@ -287,7 +287,7 @@ describe('POST /api/ai/generate-report', () => {
     'Executive Summary',
     'The boutique recorded stable rental activity with no overdue returns this period.',
     'Key Performance Indicators',
-    'Active rentals are 10 per the KPI data with 0 overdue.',
+    'Active rentals are 10 with 0 overdue.',
     'Revenue Analysis',
     'No sales data available yet.',
     'Inventory & Utilization',

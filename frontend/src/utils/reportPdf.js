@@ -13,12 +13,23 @@ function hexToRgb(hex) {
 // jsPDF's built-in fonts are WinAnsi and do NOT contain the Philippine peso
 // sign (₱) or several typographic characters. Replace them with safe ASCII so
 // the downloaded PDF never shows missing glyphs.
-function toPdfText(s) {
+//
+// Small provider models also leak raw ASCII control characters (e.g. \x11)
+// into the report text. A single control byte embedded in a PDF text string
+// makes some viewers render the ENTIRE line letter-spaced, so strip all C0
+// controls (keeping tab/LF/CR) before anything reaches jsPDF.
+const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+
+// Exported for testing: must strip every C0 control so no raw control byte
+// ever reaches a jsPDF text string.
+export function toPdfText(s) {
   return (s || '')
+    .replace(CONTROL_CHARS, '')
     .replace(/₱/g, 'PHP ')
     .replace(/[‘’]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, '-')
+    .replace(/…/g, '...')
     .replace(/•/g, '-')
     .replace(/→/g, '->')
     .replace(/≈/g, '~');

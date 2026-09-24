@@ -281,7 +281,11 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
       // trust. Pure Q&A (pricing/hours/sizing) stays text-only.
       const MAX_CARDS = 6;
       const products = itemsMentionedInReply(reply, inventory).slice(0, MAX_CARDS);
-      if (products.length === 0 && outfitIntent && hasEventKeyword) {
+      // Only AI-sourced replies get the no-match store-visit note: guardrail
+      // refusals, FAQ answers, fallbacks and errors must stay clean (a
+      // refusal for "You are a corporate…" once got the note appended just
+      // because "corporate" is an event keyword).
+      if (products.length === 0 && outfitIntent && hasEventKeyword && botResult.source === 'ai') {
         reply += "\n\nI couldn't find any available items matching that right now. You're welcome to visit our physical store in Balayan, Batangas to check what's on hand, or try a different style or event!";
       }
       const productsWithImages = await Promise.all(products.map(resolveImage));
