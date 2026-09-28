@@ -512,6 +512,148 @@ describe('PUT /api/transactions/:id/cancel', () => {
   });
 });
 
+describe('PUT /api/transactions/:id/swap-item', () => {
+  const existingTx = () => ({
+    id: 'tx-swap', itemId: 1, customerId: 'customer-id-111',
+    rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
+    rentalFee: 5000, downpayment: 1000, totalPaid: 1000, balance: 4000,
+    promoCodeId: 'promo-1', size: 'L', measurements: { chest: 40 },
+    releasePhoto: null, releasedById: null, notes: 'Orig note',
+    status: 'Reserved', updatedAt: new Date('2026-01-01T00:00:00Z'),
+    item: { id: 1, name: 'Old Gown', status: 'Reserved', price: 5000 },
+    customer: { id: 'customer-id-111', name: 'Swap Customer', email: 'swap@test.local' },
+  });
+  const replacementItem = (overrides = {}) => ({
+    id: 2, name: 'New Gown', category: 'Gown', price: 6000, status: 'Available',
+    onSale: true, salePrice: 5500, saleEndsAt: null, ...overrides,
+  });
+  const setupSwap = async (existing: any, replacement: any, updated: any) => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(updated);
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce(replacement);
+    return prisma;
+  };
+
+  it('swaps the item: sale-aware reprice, promo voided, downpayment kept, audit written', async () => {
+    const existing = existingTx();
+    const updated = {
+      ...existing, itemId: 2, rentalFee: 5500, balance: 4500, promoCodeId: null,
+      size: null, releasePhoto: null, releasedById: null,
+      item: { id: 2, name: 'New Gown', category: 'Gown' },
+    };
+    const prisma = await setupSwap(existing, replacementItem(), updated);
+
+    const res = await request(app)
+      .put('/api/transactions/tx-swap/swap-item')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ newItemId: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      itemId: 2, rentalFee: 5500, balance: 4500, downpayment: 1000, promoCodeId: null,
+      swappedFrom: { id: 1, name: 'Old Gown' }, previousFee: 5000, promoVoided: true,
+    });
+    // Optimistic lock: the update only applies when the row is untouched.
+    expect(prisma.transaction.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'tx-swap', updatedAt: existing.updatedAt }),
+        data: expect.objectContaining({ itemId: 2, rentalFee: 5500, promoCodeId: null, size: null, releasePhoto: null }),
+      })
+    );
+    // Promo use handed back; old garment pooled; new one held (future pickup → Reserved).
+    expect(prisma.promoCode.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ currentUses: expect.objectContaining({ decrement: 1 }) }) })
+    );
+    expect(prisma.inventoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1 }, data: expect.objectContaining({ status: 'Available' }) })
+    );
+    expect(prisma.inventoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 2 }, data: expect.objectContaining({ status: 'Reserved' }) })
+    );
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ action: 'item_swap', entityId: 'tx-swap' }) })
+    );
+    expect(prisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'booking_updated', profileId: 'customer-id-111' }) })
+    );
+  });
+
+  it('floors balance at 0 on a cheaper swap and keeps the downpayment (no refund)', async () => {
+    const existing = existingTx();
+    const updated = {
+      ...existing, itemId: 2, rentalFee: 800, balance: 0, promoCodeId: null,
+      item: { id: 2, name: 'Cheap Barong', category: 'Barong' },
+    };
+    await setupSwap(existing, replacementItem({ id: 2, name: 'Cheap Barong', category: 'Barong', price: 800, onSale: false, salePrice: null }), updated);
+
+    const res = await request(app)
+      .put('/api/transactions/tx-swap/swap-item')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ newItemId: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ rentalFee: 800, balance: 0, downpayment: 1000 });
+  });
+
+  it('rejects the same item, finished/out rentals, and missing records', async () => {
+    const { prisma } = await import('../src/config/database.js');
+
+    // Same item — no-op.
+    prisma.transaction.findUnique.mockResolvedValueOnce(existingTx());
+    expect((await request(app).put('/api/transactions/tx-swap/swap-item')
+      .set('Authorization', 'Bearer admin-token').send({ newItemId: 1 })).status).toBe(400);
+
+    for (const status of ['Returned', 'Cancelled', 'Overdue']) {
+      prisma.transaction.findUnique.mockResolvedValueOnce({ ...existingTx(), status });
+      expect((await request(app).put('/api/transactions/tx-swap/swap-item')
+        .set('Authorization', 'Bearer admin-token').send({ newItemId: 2 })).status).toBe(400);
+    }
+
+    // Unknown transaction / replacement item.
+    prisma.transaction.findUnique.mockResolvedValueOnce(null);
+    expect((await request(app).put('/api/transactions/tx-nope/swap-item')
+      .set('Authorization', 'Bearer admin-token').send({ newItemId: 2 })).status).toBe(404);
+
+    prisma.transaction.findUnique.mockResolvedValueOnce(existingTx());
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce(null);
+    expect((await request(app).put('/api/transactions/tx-swap/swap-item')
+      .set('Authorization', 'Bearer admin-token').send({ newItemId: 999 })).status).toBe(404);
+  });
+
+  it('rejects unrentable replacements and date collisions', async () => {
+    const { prisma } = await import('../src/config/database.js');
+
+    for (const [status, expected] of [['OutOfService', 400], ['Cleaning', 409]] as const) {
+      prisma.transaction.findUnique.mockResolvedValueOnce(existingTx());
+      prisma.inventoryItem.findUnique.mockResolvedValueOnce(replacementItem({ status }));
+      expect((await request(app).put('/api/transactions/tx-swap/swap-item')
+        .set('Authorization', 'Bearer admin-token').send({ newItemId: 2 })).status).toBe(expected);
+    }
+
+    // Another booking holds the replacement for these dates.
+    prisma.transaction.findUnique.mockResolvedValueOnce(existingTx());
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce(replacementItem());
+    prisma.transaction.findFirst.mockResolvedValueOnce({ id: 'other-tx' } as any);
+    expect((await request(app).put('/api/transactions/tx-swap/swap-item')
+      .set('Authorization', 'Bearer admin-token').send({ newItemId: 2 })).status).toBe(409);
+  });
+
+  it('rejects customers, bad payloads, and unauthenticated callers', async () => {
+    const forbidden = await request(app).put('/api/transactions/tx-swap/swap-item')
+      .set('Authorization', 'Bearer customer-token').send({ newItemId: 2 });
+    expect(forbidden.status).toBe(403);
+
+    const badBody = await request(app).put('/api/transactions/tx-swap/swap-item')
+      .set('Authorization', 'Bearer admin-token').send({});
+    expect(badBody.status).toBe(400);
+
+    const noAuth = await request(app).put('/api/transactions/tx-swap/swap-item').send({ newItemId: 2 });
+    expect(noAuth.status).toBe(401);
+  });
+});
+
 describe('GET /api/transactions/upcoming', () => {
   it('should list upcoming returns for staff', async () => {
     const { prisma } = await import('../src/config/database.js');

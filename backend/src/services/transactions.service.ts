@@ -634,6 +634,176 @@ export async function updateTransaction(
   return updated;
 }
 
+// AT-PICKUP item swap (in-shop): the customer is at the counter, sees a
+// better garment, and staff moves the SAME booking record onto it — dates,
+// customer, and payment history stay put, only the garment (and its derived
+// price) changes. Agreed policy:
+//   - promo/coupon is VOIDED (it was validated against the old item's price;
+//     the consumed use is handed back);
+//   - downpayment stays exactly as paid — NO refunds, so balance floors at 0;
+//   - size/measurements are cleared (different garment, different fit);
+//   - any release photo is voided (it documented the wrong garment), so the
+//     new item must be released + photographed normally afterwards.
+export async function swapBookingItem(
+  transactionId: string,
+  performedById: string,
+  newItemId: number
+) {
+  const existing = await prisma.transaction.findUnique({
+    where: { id: transactionId },
+    include: {
+      item: true,
+      customer: { select: { id: true, name: true, email: true } },
+    },
+  });
+  if (!existing) throw new AppError(404, 'Transaction not found');
+  if (existing.status === 'Returned') throw new AppError(400, 'Cannot swap the item on a returned transaction');
+  if (existing.status === 'Cancelled') throw new AppError(400, 'Cannot swap the item on a cancelled transaction');
+  if (existing.status === 'Overdue') throw new AppError(400, 'Cannot swap the item — the rental is already out');
+  if (existing.itemId === newItemId) throw new AppError(400, 'This booking is already on the selected item');
+
+  const replacement = await prisma.inventoryItem.findUnique({ where: { id: newItemId } });
+  if (!replacement || replacement.status === ItemStatus.Deleted) throw new AppError(404, 'Replacement item not found');
+  if (replacement.status === ItemStatus.OutOfService) {
+    throw new AppError(400, 'Replacement item is out of service and cannot be rented');
+  }
+  if (replacement.status === ItemStatus.Cleaning) {
+    throw new AppError(409, 'Replacement item is unavailable for the selected dates (being cleaned)');
+  }
+
+  const newFee = effectiveItemPrice(replacement);
+  const oldNotes = existing.notes ?? null;
+  const swapNote =
+    `Item swapped at pickup: "${existing.item.name}" → "${replacement.name}" ` +
+    `(fee ₱${existing.rentalFee.toLocaleString()} → ₱${newFee.toLocaleString()}; promo voided, downpayment kept)`;
+
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      await assertItemAvailable(
+        {
+          itemId: newItemId,
+          rentalDate: existing.rentalDate,
+          dueDate: existing.dueDate,
+          excludeTxId: transactionId,
+          cleaningDelayDays: CLEANING_DELAY_DAYS,
+        },
+        tx
+      );
+
+      // Promo void: hand the consumed use back so global/per-customer caps
+      // stay honest (the swap itself never re-validates a coupon).
+      if (existing.promoCodeId) {
+        await tx.promoCode.updateMany({
+          where: { id: existing.promoCodeId, currentUses: { gt: 0 } },
+          data: { currentUses: { decrement: 1 } },
+        });
+      }
+
+      // Downpayment is historical (what was actually paid) — never touched.
+      // Balance recomputes against the new fee and floors at 0: swapping to a
+      // cheaper item forfeits the overpayment, per boutique policy (no refunds).
+      const balance = Math.max(0, newFee - existing.totalPaid);
+
+      // Optimistic lock on updatedAt: a concurrent release/return touching the
+      // same row makes this a 409 ("please retry") instead of silently
+      // half-applying the swap over a release.
+      const res = await tx.transaction.updateMany({
+        where: { id: transactionId, updatedAt: existing.updatedAt },
+        data: {
+          itemId: newItemId,
+          rentalFee: newFee,
+          balance,
+          promoCodeId: null,
+          size: null,
+          // DbNull clears the column (plain `null` is not assignable to the
+          // nullable-JSON update type and `undefined` would leave it untouched).
+          measurements: Prisma.DbNull,
+          releasePhoto: null,
+          releasedById: null,
+          notes: oldNotes ? `${oldNotes}\n${swapNote}` : swapNote,
+        },
+      });
+      if (res.count === 0) throw new AppError(409, 'Booking changed while swapping — please retry');
+
+      // Old garment back to the pool (same rule as cancellation); new one held
+      // exactly like a fresh booking (future pickup → Reserved, today → Rented).
+      if (existing.item.status !== ItemStatus.OutOfService) {
+        await tx.inventoryItem.update({
+          where: { id: existing.itemId },
+          data: { status: ItemStatus.Available, outOfServiceReason: null },
+        });
+      }
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const isFuture = existing.rentalDate.getTime() > todayStart.getTime();
+      await tx.inventoryItem.update({
+        where: { id: newItemId },
+        data: { status: isFuture ? ItemStatus.Reserved : ItemStatus.Rented },
+      });
+
+      return tx.transaction.findUnique({
+        where: { id: transactionId },
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          item: { select: { id: true, name: true, category: true } },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      throw new AppError(409, 'Replacement item is unavailable for the selected dates');
+    }
+    throw err;
+  }
+
+  await createAuditLog({
+    action: 'item_swap',
+    entity: 'transaction',
+    entityId: transactionId,
+    performedById,
+    oldValue: { itemId: existing.itemId, itemName: existing.item.name, rentalFee: existing.rentalFee, promoCodeId: existing.promoCodeId, balance: existing.balance },
+    newValue: { itemId: newItemId, itemName: replacement.name, rentalFee: newFee, promoCodeId: null, balance: updated!.balance },
+  });
+
+  // Tell the customer in-app + by email (best-effort, never blocks the swap).
+  const moneyLine = updated!.balance > 0
+    ? ` New balance: ₱${Number(updated!.balance).toLocaleString()} — please settle it at the counter.`
+    : ' Nothing more to pay.';
+  try {
+    await createNotification({
+      profileId: existing.customerId,
+      transactionId,
+      type: 'booking_updated',
+      title: 'Rental item changed',
+      message: `Your rental was changed from "${existing.item.name}" to "${replacement.name}".${moneyLine}`,
+    });
+  } catch { /* notification is non-critical */ }
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: existing.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail && isSendableEmail(customerProfile.email)) {
+      await sendEmail({
+        to: customerProfile.email,
+        subject: `Rental item changed: ${replacement.name} — RenTech`,
+        html: `<p>Hi ${customerProfile.name},</p><p>At pickup your rental was changed from "<strong>${existing.item.name}</strong>" to "<strong>${replacement.name}</strong>".${moneyLine}</p><p>RenTech · Balayan, Batangas</p>`,
+        text: `Hi ${customerProfile.name},\n\nAt pickup your rental was changed from "${existing.item.name}" to "${replacement.name}".${moneyLine}\n\nRenTech · Balayan, Batangas`,
+      });
+    }
+  } catch { /* email is non-critical */ }
+
+  clearDataCache();
+
+  return {
+    ...updated,
+    swappedFrom: { id: existing.itemId, name: existing.item.name },
+    previousFee: existing.rentalFee,
+    promoVoided: !!existing.promoCodeId,
+  };
+}
+
 export async function cancelTransaction(transactionId: string, performedById: string) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },

@@ -26,6 +26,7 @@ router.get('/:id', transactionController.getTransaction);
 router.post('/', requireRole(Role.Admin, Role.Staff), validate(transactionController.createRentalSchema), transactionController.createRental);
 router.post('/:id/payments', requireRole(Role.Admin, Role.Staff), validate(transactionController.recordPaymentSchema), transactionController.recordPayment);
 router.put('/:id/release', requireRole(Role.Admin, Role.Staff), validate(transactionController.releaseSchema), transactionController.releaseRental);
+router.put('/:id/swap-item', requireRole(Role.Admin, Role.Staff), validate(transactionController.swapItemSchema), transactionController.swapBookingItem);
 router.put('/:id/return', requireRole(Role.Admin, Role.Staff), validate(transactionController.returnSchema), transactionController.processReturn);
 router.put('/:id/cancel', requireRole(Role.Admin, Role.Customer), transactionController.cancelTransaction);
 router.patch('/:id', requireRole(Role.Admin, Role.Staff), validate(transactionController.updateTransactionSchema), transactionController.updateTransaction);

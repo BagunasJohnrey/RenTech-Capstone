@@ -472,6 +472,30 @@ function route(method, path, body) {
     if (t) t.status = 'Cancelled';
     return { value: clone(t ?? {}) };
   }
+  if (P(/^\/transactions\/[0-9a-f-]+\/swap-item$/) && method === 'PUT') {
+    const t = transactions.find((x) => path.includes(x.id));
+    if (!t) return { status: 404, error: 'Not found' };
+    const it = items.find((i) => i.id === body.newItemId);
+    if (!it) return { status: 404, error: 'Replacement item not found' };
+    if (t.itemId === it.id) return { status: 400, error: 'This booking is already on the selected item' };
+    if (['Returned', 'Cancelled', 'Overdue'].includes(t.status)) return { status: 400, error: 'Cannot swap the item on this transaction' };
+    if (it.status === 'OutOfService') return { status: 400, error: 'Replacement item is out of service and cannot be rented' };
+    if (it.status !== 'Available') return { status: 409, error: 'Replacement item is unavailable for the selected dates' };
+    const prev = { id: t.itemId, name: t.item?.name ?? '' };
+    const prevFee = t.rentalFee;
+    const fee = it.salePrice > 0 ? it.salePrice
+      : it.onSale && it.discountPct > 0 ? Math.round(it.price * (1 - it.discountPct / 100)) : it.price;
+    const oldItem = items.find((i) => i.id === t.itemId);
+    if (oldItem && oldItem.status !== 'OutOfService') { oldItem.status = 'Available'; oldItem.effectiveStatus = 'Available'; }
+    it.status = 'Rented'; it.effectiveStatus = 'Rented';
+    Object.assign(t, {
+      itemId: it.id, rentalFee: fee, balance: Math.max(0, fee - (t.totalPaid ?? 0)),
+      promoCodeId: null, size: null, releasePhoto: null, releasedById: null,
+      item: { id: it.id, name: it.name, category: it.category, image: it.image, price: it.price },
+      notes: (t.notes ? t.notes + '\n' : '') + `Item swapped at pickup: "${prev.name}" → "${it.name}" (demo)`,
+    });
+    return { value: { ...clone(t), swappedFrom: prev, previousFee: prevFee, promoVoided: true } };
+  }
   if (P(/^\/transactions\/[0-9a-f-]+$/) && method === 'PATCH') {
     const t = transactions.find((x) => path.includes(x.id));
     if (t) Object.assign(t, body);

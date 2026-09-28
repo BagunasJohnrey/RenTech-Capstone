@@ -245,6 +245,29 @@ export async function updateTransaction(req: AuthenticatedRequest, res: Response
   }
 }
 
+export const swapItemSchema = z.object({
+  body: z.object({
+    // SECURITY: only the replacement item is accepted — the fee is always
+    // re-derived server-side from the item (sale-aware), the promo is voided,
+    // and the downpayment is never touched (no refunds).
+    newItemId: z.number().int().positive(),
+  }),
+});
+
+export async function swapBookingItem(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const result = await transactionService.swapBookingItem(
+      String(req.params.id),
+      req.user.id,
+      req.body.newItemId
+    );
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function releaseRental(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');

@@ -25,6 +25,10 @@ export const transactionsService = {
 
   update: (id, patch) => api.patch(`/transactions/${id}`, patch),
 
+  // At-pickup item swap (staff only): moves the booking onto another item.
+  // Server re-derives the fee, voids the promo, and keeps the downpayment.
+  swapItem: (id, payload) => api.put(`/transactions/${id}/swap-item`, payload),
+
   cancel: (id) => api.put(`/transactions/${id}/cancel`),
 
   remove: (id) => api.delete(`/transactions/${id}`),

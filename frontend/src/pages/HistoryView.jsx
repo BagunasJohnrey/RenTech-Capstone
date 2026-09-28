@@ -1,7 +1,8 @@
 ﻿import { useState, useEffect, useRef } from 'react';
-import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
+import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone, Repeat } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import CancelBookingModal from '../components/CancelBookingModal';
+import SwapItemModal from '../components/SwapItemModal';
 import { customerService } from '../services/customer';
 import DateRangePicker, { formatDateRangeLabel } from '../components/DateRangePicker';
 import ReleaseItemModal from '../components/ReleaseItemModal';
@@ -46,7 +47,7 @@ const SORT_LABELS = Object.fromEntries(SORT_OPTIONS.map((o) => [o.value, o.label
 // `components/DateRangePicker.jsx`. This page only deals in [from, to]
 // strings and a single popover-open flag.
 
-export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, onEditRental, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
+export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, onEditRental, onSwapItem, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
   const isStaff = role !== 'Customer';
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
@@ -67,6 +68,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [detailTx, setDetailTx] = useState(null);
   const [cancelTx, setCancelTx] = useState(null);
   const [releaseTx, setReleaseTx] = useState(null);
+  const [swapTx, setSwapTx] = useState(null);
   const [editRental, setEditRental] = useState(null);       // tx staff is editing (booking dates/notes + customer)
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [smsMessage, setSmsMessage] = useState('');
@@ -153,6 +155,12 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     }
     if (isStaffRole) {
       items.push({ key: 'edit', icon: Pencil, label: 'Edit rental', tone: 'text-amber-600', onSelect: () => setEditRental(tx) });
+    }
+    // At-pickup swap (Case B): already released but the customer is still in
+    // the shop and wants another garment. Unreleased rows swap from inside the
+    // release sheet instead, so they don't need this entry.
+    if (isStaff && ['Active', 'Reserved'].includes(tx.status) && isReleased(tx)) {
+      items.push({ key: 'swap', icon: Repeat, label: 'Swap item', tone: 'text-blue-600', onSelect: () => setSwapTx(tx) });
     }
     const cancellable = isStaffRole
       ? ['Active', 'Reserved', 'Overdue'].includes(tx.status)
@@ -820,7 +828,16 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
       )}
 
       {releaseTx && (
-        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} />
+        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} onSwapItem={(updated, prevItemId) => onSwapItem?.(updated, prevItemId)} />
+      )}
+
+      {swapTx && (
+        <SwapItemModal
+          transaction={swapTx}
+          inventory={inventory}
+          onClose={() => setSwapTx(null)}
+          onSwapped={(updated, prevItemId) => { onSwapItem?.(updated, prevItemId); setSwapTx(null); }}
+        />
       )}
 
       {editRental && (

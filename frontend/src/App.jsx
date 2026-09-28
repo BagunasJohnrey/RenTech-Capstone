@@ -574,6 +574,22 @@ export default function RentechApp() {
     applyEditTransaction(saved);
   };
 
+  // At-pickup item swap — merges the swapped record (same tx id, new item +
+  // fee) and flips inventory statuses: old garment back to Available, new one
+  // held as Rented (picked up today) or Reserved (future pickup).
+  const handleSwapItem = (swapped, prevItemId) => {
+    if (!swapped) return;
+    applyEditTransaction(swapped);
+    if (prevItemId && swapped.itemId && prevItemId !== swapped.itemId) {
+      markItemStatus(prevItemId, 'Available');
+      const start = new Date(swapped.rentalDate || swapped.date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      markItemStatus(swapped.itemId, start.getTime() > today.getTime() ? 'Reserved' : 'Rented');
+    }
+    toastSuccess(`Booking moved to ${swapped.item?.name ?? 'new item'}`);
+  };
+
   // Customer booking handler
   const handleCustomerBooking = async (bookingData) => {
     const created = await api.post('/bookings', {
@@ -934,6 +950,7 @@ export default function RentechApp() {
                 onReturn={handleReturnClick}
                 onNavigate={goTab}
                 onRelease={handleReleaseRental}
+                onSwapItem={handleSwapItem}
                 onMarkClean={markItemClean}
                 onBulkClean={handleBulkClean}
                 onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))}
@@ -962,7 +979,7 @@ export default function RentechApp() {
               />
             )}
             {activeTab === 'History' && (
-              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} onEditRental={handleEditRental} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
+              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} onEditRental={handleEditRental} onSwapItem={handleSwapItem} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
             )}
             {activeTab === 'AI Insights' && (
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} />
@@ -1198,6 +1215,7 @@ export default function RentechApp() {
             transaction={scannedTx}
             onClose={() => { setScannedTx(null); setScannedAction(null); }}
             onReleased={(updated) => { handleReleaseRental(updated); setScannedTx(null); setScannedAction(null); }}
+            onSwapItem={(updated, prevItemId) => { handleSwapItem(updated, prevItemId); setScannedTx(normalizeTx({ ...scannedTx, ...updated })); }}
           />
         )}
 

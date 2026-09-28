@@ -13,9 +13,10 @@ const toYmd = (d) => {
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 };
 
-// Edit booking dates + internal notes only. Item and fee stay unchanged
-// (cancel + re-book for those). Re-runs the same availability overlap check
-// server-side; shows the friendly 409 when it collides.
+// Edit booking dates + internal notes only. Fee follows the item via the
+// at-pickup Swap flow (promo voided, downpayment kept — no cancel+rebook).
+// Re-runs the same availability overlap check server-side; shows the
+// friendly 409 when it collides.
 export default function EditBookingModal({ transaction, onClose, onSaved }) {
   useEscapeClose(onClose);
   const { success: toastSuccess, error: toastError } = useToast();
@@ -72,7 +73,7 @@ export default function EditBookingModal({ transaction, onClose, onSaved }) {
           <Field label="Return due date" type="date" required value={due} onChange={(e) => setDue(e.target.value)} className={inputClass} min={pickup} />
           <Field label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} placeholder="Add a note for staff" />
 
-          <p className="text-[10px] text-gray-400">Item and fee changes require cancel + re-book.</p>
+          <p className="text-[10px] text-gray-400">Need a different garment? Swap the item at pickup instead.</p>
 
           <div className="grid grid-cols-2 gap-3 pt-1">
             <button onClick={onClose} className="py-3 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl border border-gray-200 transition-colors">Cancel</button>

@@ -8,7 +8,7 @@ import { isReleased } from '../hooks/useTransactions';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
 
-export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease, onNavigateDetail, role: roleProp }) {
+export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
   const navigate = useNavigate();
   const role = roleProp || 'Staff';
   const goHistoryFiltered = (status) => {
@@ -691,7 +691,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
       )}
 
       {releaseTx && (
-        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} />
+        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} onSwapItem={(updated, prevItemId) => onSwapItem?.(updated, prevItemId)} />
       )}
     </div>
   );
