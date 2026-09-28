@@ -4,6 +4,7 @@
 ## Important Details
 - **Backend runs from `src` via `tsx watch src/index.ts`** (auto-reloads) — NOT `dist`. All backend edits go to `backend/src/`.
 - **Development environment**: Run both frontend and backend concurrently with `npm run dev` in the root directory. This will automatically restart the backend when files change.
+- **`.env` edits need a manual backend restart**: the file watcher only reloads on code changes and never re-reads `backend/.env`, so a long-lived dev server silently keeps stale env (seen live: `STORAGE_BUCKET` changed Sept 24, old process kept signing condition photos against the previous bucket → every `rental/…` signed URL 404'd until restart). Dev backend now logs a `[env] backend/.env changed since boot — RESTART` warning once per minute when this happens; failed signings also log the bucket they queried.
 - DB is PostgreSQL (Supabase). `prisma db push` works for additive columns. `prisma generate` fails with EPERM if backend is running (holds engine DLL) — must stop backend first, then regenerate, then restart.
 - **Store location is "Balayan, Batangas"** (not Metro Manila) — used in `gemini.service.ts` FAQ + `ChatbotModal.jsx`.
 - Item images are stored as **Supabase private-bucket paths** in `item.image`. They are NOT absolute URLs, so they must be resolved to signed URLs via `storageService.getDownloadUrl(path)`. **A reusable `components/ItemImage.jsx` now does this** (handles absolute/empty as passthrough/placeholder) and is used everywhere `item.image` is rendered.
