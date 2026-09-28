@@ -414,8 +414,13 @@ async function callGroq(system: string, historyTurns: { role: string; text: stri
 // the analyst restating the supplied figures instead of free-styling new
 // ones, which keeps the amount-guard happy. 30s timeout (reports are long
 // writes — the old 15s could abort Gemini and drop to the 512-token Groq
-// fallback, producing the truncated stubs) with an explicit 2048-token cap
-// (~1 A4 page, also bounds cost).
+// fallback, producing the truncated stubs) with an explicit 8192-token cap
+// (~4 A4 pages, also bounds cost).
+// thinkingBudget 0 is REQUIRED here, not optional: gemini-2.5-flash spends
+// ~2000 thought tokens by default and they count against maxOutputTokens, so
+// with thinking enabled a 2048 cap left ~78 tokens for the report itself
+// (finishReason MAX_TOKENS, draft cut off mid-sentence, validator rejected it
+// as truncated). Reports restate supplied figures — no reasoning trace needed.
 async function callGeminiReport(prompt: string): Promise<string> {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`,
@@ -428,7 +433,7 @@ async function callGeminiReport(prompt: string): Promise<string> {
       },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0.2, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 0 } },
       }),
     }
   );
