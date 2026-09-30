@@ -612,8 +612,12 @@ function route(method, path, body) {
   if (P(/^\/promo-codes\/public/)) return { value: [] };
   if (P(/^\/promo-codes\/validate/)) return { status: 404, error: 'Promo code not found (demo)' };
   if (P(/^\/promo-codes/)) return { value: [] };
-  if (P(/^\/payments\/create-intent/)) return { value: { simulated: true, id: 'demo-intent' } };
-  if (P(/^\/payments\/(.+)$/)) return { value: { id: P(/^\/payments\/(.+)$/)[1], status: 'succeeded', simulated: true } };
+    if (P(/^\/payments\/create-intent/)) return { value: { simulated: true, id: 'demo-intent' } };
+    if (P(/^\/payments\/transaction\/(.+)\/status$/)) {
+      const txId = P(/^\/payments\/transaction\/(.+)\/status$/)[1];
+      return { value: { status: 'succeeded', totalPaid: 2000, balance: 3000, gateway: 'maya', transactionId: txId } };
+    }
+    if (P(/^\/payments\/(.+)$/)) return { value: { id: P(/^\/payments\/(.+)$/)[1], status: 'succeeded', simulated: true } };
   if (path === '/ai/chat') {
     return {
       value: {

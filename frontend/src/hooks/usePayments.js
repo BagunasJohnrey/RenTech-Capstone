@@ -7,5 +7,6 @@ export function usePayments() {
     []
   );
   const get = useCallback((id) => paymentsService.get(id), []);
-  return { createIntent, get };
+  const getStatus = useCallback((transactionId) => paymentsService.getStatus(transactionId), []);
+  return { createIntent, get, getStatus };
 }

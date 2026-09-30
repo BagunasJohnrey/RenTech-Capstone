@@ -19,6 +19,7 @@ import LoginPage from './pages/LoginPage';
 import ForgotPasswordView from './pages/ForgotPasswordView';
 import VerifyEmailView from './pages/VerifyEmailView';
 import OAuthErrorView from './pages/OAuthErrorView';
+import PaymentReturnView from './pages/PaymentReturnView';
 import PrivacyPolicyView from './pages/PrivacyPolicyView';
 import TermsOfServiceView from './pages/TermsOfServiceView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
@@ -829,6 +830,12 @@ export default function RentechApp() {
   // a token_hash. Public: the user is not logged in yet (unconfirmed account).
   if (location.pathname === '/verify-email') {
     return <VerifyEmailView />;
+  }
+
+  // Landing page for a customer returning from a Maya QRPh payment. Renders
+  // above the isLoggedIn gate on purpose: they may land here in a new tab.
+  if (location.pathname === '/payment-return') {
+    return <PaymentReturnView />;
   }
 
   // OAuth error landing — the backend redirects failed Google sign-ins here

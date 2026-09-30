@@ -374,19 +374,27 @@ export default function CustomerRentalFlow({
             return;
           }
         }
-        // No real gateway configured yet: simulate a successful payment so the
-        // booking can complete end-to-end. When PAYMONGO_SECRET_KEY is set, the
-        // backend returns a real intent and we open the PayMongo drop-in instead.
+        // No gateway configured: simulate a success so the booking can complete
+        // end-to-end offline (existing dev path).
         if (intent.simulated) {
           toastInfo('Payment gateway not configured — simulating successful payment.');
           setPaymentSuccess(true);
           setConfirmedTx(created);
-          setTimeout(() => {
-            setPaymentSuccess(false);
-            setStep(3);
-          }, 1500);
+          setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
           return;
         }
+
+        // Maya: the customer leaves for Maya's hosted page and comes back at
+        // /payment-return. We CANNOT claim success here — only the webhook (or
+        // that page's polling) knows whether they actually paid, so the step
+        // ends by navigating away instead of showing a receipt.
+        if (intent.gateway === 'maya') {
+          setIsProcessingPayment(false);
+          window.location.assign(intent.redirectUrl);
+          return;
+        }
+
+        // PayMongo: hosted drop-in with a synchronous outcome.
         try {
           await openDropIn(intent.clientKey, {
             amount: Number(downpaymentAmount) * 100,
@@ -400,10 +408,7 @@ export default function CustomerRentalFlow({
         }
         setPaymentSuccess(true);
         setConfirmedTx(created);
-        setTimeout(() => {
-          setPaymentSuccess(false);
-          setStep(3);
-        }, 1500);
+        setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
       } catch (err) {
         setConfirmError(err?.message || 'Booking failed. Please try again.');
       } finally {
