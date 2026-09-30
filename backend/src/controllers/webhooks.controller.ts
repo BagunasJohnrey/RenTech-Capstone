@@ -2,8 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import * as paymongoService from '../services/paymongo.service.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { createAuditLog } from '../utils/audit.js';
-import { clearDataCache } from '../utils/ttlCache.js';
+import { applyPaymentToTransaction } from '../services/payments.ledger.js';
 
 export async function handlePayMongoWebhook(req: Request, res: Response, next: NextFunction) {
   try {
@@ -54,64 +53,28 @@ export async function handlePayMongoWebhook(req: Request, res: Response, next: N
       if (!transactionId) {
         throw new AppError(400, 'Missing transactionId in payment metadata');
       }
+      // The gatewayRef is the idempotency anchor, so an event without one can't
+      // be recorded safely — rejecting is the only way to avoid a double credit.
+      if (!piId) {
+        throw new AppError(400, 'Missing payment id in webhook payload');
+      }
       if (!(amount > 0)) {
         throw new AppError(400, 'Invalid payment amount');
       }
 
-      const tx = await prisma.transaction.findUnique({ where: { id: transactionId } });
-      if (!tx) throw new AppError(404, 'Transaction not found');
+      // No local existence check here — applyPaymentToTransaction performs the
+      // same lookup (and raises the same 404 when the transaction is gone).
+      const result = await applyPaymentToTransaction({
+        transactionId,
+        amount,
+        gateway: 'paymongo',
+        gatewayRef: piId,
+        method,
+      });
 
-      // Idempotency: PayMongo retries webhooks on transient failures. If this
-      // payment intent was already applied, acknowledge silently instead of
-      // double-recording the payment and corrupting the balance.
-      const existing = await prisma.payment.findUnique({ where: { paymongoPiId: piId } });
-      if (existing) {
+      if (result.duplicate) {
         return res.json({ received: true, duplicate: true });
       }
-
-      try {
-        await prisma.payment.create({
-          data: {
-            transactionId,
-            amount,
-            method,
-            type: amount >= tx.rentalFee ? 'full_payment' : 'downpayment',
-            paymongoPiId: piId,
-            status: 'succeeded',
-          },
-        });
-      } catch (err: any) {
-        // Concurrent duplicate deliveries both pass the findUnique above; the
-        // unique paymongoPiId constraint makes the loser throw P2002. Treat it
-        // as an already-applied duplicate instead of failing the webhook.
-        if (err?.code === 'P2002') {
-          return res.json({ received: true, duplicate: true });
-        }
-        throw err;
-      }
-
-      const newTotalPaid = tx.totalPaid + amount;
-      const newBalance = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - newTotalPaid);
-
-      await prisma.transaction.update({
-        where: { id: transactionId },
-        data: {
-          totalPaid: newTotalPaid,
-          balance: newBalance,
-          paymentIntentId: piId,
-        },
-      });
-
-      await createAuditLog({
-        action: 'update',
-        entity: 'transaction',
-        entityId: transactionId,
-        newValue: { paymentReceived: amount, totalPaid: newTotalPaid, balance: newBalance },
-      });
-
-      // A succeeded payment changes revenue figures — drop the cached dashboard
-      // data so the next load shows the new totals.
-      clearDataCache();
     }
 
     res.json({ received: true });

@@ -167,3 +167,84 @@ describe('checkMayaHealth', () => {
     expect(await checkMayaHealth()).toMatchObject({ configured: true, reachable: true });
   });
 });
+import { applyPaymentToTransaction } from '../src/services/payments.ledger.js';
+
+const openTx = {
+  id: 'tx-1', txNumber: 1001, status: 'Active',
+  rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 0, balance: 5000,
+};
+
+describe('applyPaymentToTransaction', () => {
+  it('credits the payment and recomputes the balance', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    const result = await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'pay-maya-1', method: 'maya',
+    });
+
+    expect(result).toMatchObject({ duplicate: false, totalPaid: 2000, balance: 3000 });
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ gateway: 'maya', gatewayRef: 'pay-maya-1', method: 'maya', type: 'downpayment' }),
+    }));
+    expect(prisma.transaction.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ totalPaid: 2000, balance: 3000, gatewayPaymentId: 'pay-maya-1' }),
+    }));
+  });
+
+  it('classifies a full payment', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    await applyPaymentToTransaction({ transactionId: 'tx-1', amount: 5000, gateway: 'maya', gatewayRef: 'p-full', method: 'maya' });
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: 'full_payment' }),
+    }));
+  });
+
+  it('is idempotent for an already-recorded gatewayRef', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce({ id: 'pay-existing', gatewayRef: 'pay-maya-1' });
+
+    const result = await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'pay-maya-1', method: 'maya',
+    });
+
+    expect(result.duplicate).toBe(true);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
+  });
+
+  it('treats a P2002 race as a duplicate', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    prisma.payment.create.mockRejectedValueOnce(Object.assign(new Error('unique'), { code: 'P2002' }));
+
+    const result = await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'pay-maya-1', method: 'maya',
+    });
+    expect(result.duplicate).toBe(true);
+  });
+
+  it('refuses a payment on a closed transaction', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...openTx, status: 'Returned' });
+    await expect(applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'pay-late', method: 'maya',
+    })).rejects.toThrow(/already closed/);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it('includes latePenalty and damageFee in the balance', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...openTx, latePenalty: 300, damageFee: 500 });
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    const result = await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 1000, gateway: 'maya', gatewayRef: 'p-3', method: 'maya',
+    });
+    expect(result).toMatchObject({ totalPaid: 1000, balance: 4800 });
+  });
+});
