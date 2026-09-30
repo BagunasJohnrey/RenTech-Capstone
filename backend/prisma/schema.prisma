@@ -148,7 +148,8 @@ model Transaction {
   alterationStatus String?          @map("alteration_status")
   size            String?           @map("size")
   measurements    Json?             @map("measurements")
-  paymentIntentId String?           @map("payment_intent_id")
+  gateway          String?          @map("gateway")
+  gatewayPaymentId String?          @map("gateway_payment_id")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
@@ -194,7 +195,8 @@ model Payment {
   amount        Float
   method        String
   type          String
-  paymongoPiId  String?  @unique @map("paymongo_pi_id")
+  gateway    String   @default("paymongo")
+  gatewayRef String?  @unique @map("gateway_ref")
   status        String   @default("pending")
   createdAt     DateTime @default(now()) @map("created_at")
 

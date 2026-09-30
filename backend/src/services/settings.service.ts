@@ -30,6 +30,13 @@ export async function getFeatureFlags() {
   };
 }
 
+// Which payment gateway new charges use. Unknown or absent values fall back to
+// 'paymongo' so a typo in the rule can't take the booking flow down.
+export async function getPaymentGateway(): Promise<'paymongo' | 'maya'> {
+  const rules = await getBusinessRules();
+  return rules.payment_gateway === 'maya' ? 'maya' : 'paymongo';
+}
+
 export async function updateBusinessRules(data: Record<string, string>) {
   const results: Record<string, string> = {};
   for (const [key, value] of Object.entries(data)) {
