@@ -8,6 +8,9 @@ import * as paymentsController from '../controllers/payments.controller.js';
 const router = Router();
 
 router.post('/create-intent', authMiddleware, requireRole(Role.Customer), validate(paymentsController.createIntentSchema), paymentsController.createPaymentIntent);
+// Registered before `/:id` so the literal 'transaction' segment can never be
+// read as a payment id. Three segments, so it cannot collide either way.
+router.get('/transaction/:transactionId/status', authMiddleware, paymentsController.getPaymentStatus);
 router.get('/:id', authMiddleware, paymentsController.getPayment);
 
 export default router;

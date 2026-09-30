@@ -200,6 +200,150 @@ function mockMayaRetrieve(over: Record<string, any> = {}) {
   });
 }
 
+describe('POST /api/payments/create-intent with gateway=maya', () => {
+  it('returns a Maya redirect URL and stores the payment ref', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // getBusinessRules() is read twice: once for min_downpayment, once for the
+    // gateway selection.
+    prisma.businessRule.findMany
+      .mockResolvedValueOnce([{ key: 'min_downpayment', value: '200' }])
+      .mockResolvedValueOnce([{ key: 'payment_gateway', value: 'maya' }]);
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, payments: [] });
+    prisma.transaction.update.mockResolvedValueOnce({});
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        paymentId: 'pay-maya-9',
+        redirectUrl: 'https://pg-sandbox.paymaya.com/pay/pay-maya-9',
+        qrCodeBody: 'https://paymaya.com/qr/pay-maya-9',
+        totalAmount: { currency: 'PHP', value: 200000 },
+      }),
+    });
+
+    const res = await request(app)
+      .post('/api/payments/create-intent')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'tx-1', amount: 2000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ gateway: 'maya', paymentId: 'pay-maya-9' });
+    expect(res.body.redirectUrl).toContain('pay-maya-9');
+    expect(res.body.simulated).toBe(false);
+    expect(prisma.transaction.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ gateway: 'maya', gatewayPaymentId: 'pay-maya-9' }),
+    }));
+  });
+
+  it('still enforces the [min, due] payment bounds under maya', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findMany
+      .mockResolvedValueOnce([{ key: 'min_downpayment', value: '200' }])
+      .mockResolvedValueOnce([{ key: 'payment_gateway', value: 'maya' }]);
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, payments: [] });
+    global.fetch = vi.fn();
+
+    const res = await request(app)
+      .post('/api/payments/create-intent')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'tx-1', amount: 100 });
+
+    expect(res.status).toBe(400);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/payments/transaction/:id/status', () => {
+  it('reports succeeded without calling Maya when a payment is already recorded', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, totalPaid: 2000, balance: 3000 });
+    global.fetch = vi.fn();
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'succeeded', totalPaid: 2000, balance: 3000 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('credits and reports succeeded when Maya confirms a payment the webhook missed', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // Read twice: once for the ownership/gateway check, once inside the ledger.
+    prisma.transaction.findUnique
+      .mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-7' })
+      .mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-7' });
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'pay-maya-7', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 } }),
+    });
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'succeeded', totalPaid: 2000, balance: 3000 });
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ gatewayRef: 'pay-maya-7', amount: 2000 }),
+    }));
+  });
+
+  it('reports pending while Maya is still pending', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-8' });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'pay-maya-8', paymentStatus: 'PENDING' }),
+    });
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.body).toMatchObject({ status: 'pending', totalPaid: 0 });
+  });
+
+  it('reports failed on PAYMENT_FAILED', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-x' });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'pay-maya-x', paymentStatus: 'PAYMENT_FAILED' }),
+    });
+
+    const res = await request(app).get('/api/payments/transaction/tx-1/status').set('Authorization', 'Bearer customer-token');
+    expect(res.body).toMatchObject({ status: 'failed' });
+  });
+
+  it('reports expired when the one-time QR has lapsed', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-y' });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'pay-maya-y', paymentStatus: 'PAYMENT_EXPIRED' }),
+    });
+
+    const res = await request(app).get('/api/payments/transaction/tx-1/status').set('Authorization', 'Bearer customer-token');
+    expect(res.body).toMatchObject({ status: 'expired' });
+  });
+
+  it('403s another customer\'s transaction', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, customerId: 'someone-else' });
+    const res = await request(app).get('/api/payments/transaction/tx-1/status').set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(403);
+  });
+
+  it('404s an unknown transaction', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(null);
+    const res = await request(app).get('/api/payments/transaction/nope/status').set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('POST /api/webhooks/maya', () => {
   it('credits a verified SUCCESS webhook', async () => {
     const { prisma } = await import('../src/config/database.js');

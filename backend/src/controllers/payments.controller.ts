@@ -2,7 +2,8 @@ import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as paymongoService from '../services/paymongo.service.js';
 import { prisma } from '../config/database.js';
-import { getBusinessRules } from '../services/settings.service.js';
+import { getBusinessRules, getPaymentGateway } from '../services/settings.service.js';
+import { env } from '../config/env.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 
@@ -45,18 +46,66 @@ export async function createPaymentIntent(req: AuthenticatedRequest, res: Respon
       );
     }
 
+    const gateway = await getPaymentGateway();
+
+    if (gateway === 'maya') {
+      const { createQrPayment } = await import('../services/maya.service.js');
+
+      // Maya needs our return URLs so the customer has somewhere to land after
+      // paying (or bailing). The transaction id rides along; the return page
+      // uses it to poll for the outcome.
+      const charge = await createQrPayment(
+        amount,
+        `Rental payment for transaction #${tx.txNumber}`,
+        {
+          transactionId: tx.id,
+          requestReferenceNumber: String(tx.txNumber),
+          redirectUrl: {
+            success: `${env.FRONTEND_URL}/payment-return?tx=${tx.id}`,
+            failure: `${env.FRONTEND_URL}/payment-return?tx=${tx.id}&status=failed`,
+            cancel: `${env.FRONTEND_URL}/payment-return?tx=${tx.id}&status=cancelled`,
+          },
+        }
+      );
+
+      // Only a real charge gets a stored ref — a simulated one must not leave a
+      // dangling payment id behind.
+      if (!charge.simulated) {
+        await prisma.transaction.update({
+          where: { id: transactionId },
+          data: { gateway: 'maya', gatewayPaymentId: charge.id },
+        });
+      }
+
+      res.json({
+        gateway: 'maya',
+        paymentId: charge.id,
+        amount: charge.amount,
+        currency: charge.currency,
+        status: charge.status,
+        redirectUrl: charge.redirectUrl,
+        qrCodeBody: charge.qrCodeBody,
+        expiresAt: charge.expiresAt,
+        simulated: charge.simulated ?? false,
+      });
+      return;
+    }
+
     const intent = await paymongoService.createPaymentIntent(
       amount,
       `Rental payment for transaction #${tx.txNumber}`,
       { transactionId, customerId: req.user.id }
     );
 
-    await prisma.transaction.update({
-      where: { id: transactionId },
-      data: { paymentIntentId: intent.id },
-    });
+    if (!intent.simulated) {
+      await prisma.transaction.update({
+        where: { id: transactionId },
+        data: { gateway: 'paymongo', gatewayPaymentId: intent.id },
+      });
+    }
 
     res.json({
+      gateway: 'paymongo',
       paymentIntentId: intent.id,
       clientKey: intent.clientKey,
       amount: intent.amount,
@@ -77,10 +126,10 @@ export async function getPayment(req: AuthenticatedRequest, res: Response, next:
       // Resolve local ownership before querying the gateway, so one customer
       // can't poll another customer's payment intent.
       const local = await prisma.payment.findUnique({
-        where: { paymongoPiId: paymentId },
+        where: { gatewayRef: paymentId },
         include: { transaction: { select: { customerId: true } } },
       });
-      if (req.user?.role === 'Customer' && local?.transaction.customerId !== req.user.id) {
+      if (req.user?.role === 'Customer' && local && local.transaction.customerId !== req.user.id) {
         throw new AppError(403, 'Not your payment');
       }
 
@@ -105,6 +154,91 @@ export async function getPayment(req: AuthenticatedRequest, res: Response, next:
     }
 
     res.json(payment);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// The safety net for the unsigned Maya webhook. The webhook is the source of
+// truth, but if it never arrives (blocked, lost, or rejected by a stale IP
+// list) the customer polling this endpoint from their own browser repairs it:
+// a Maya-confirmed payment is credited here through the same idempotent ledger
+// call. Returns a coarse status only — never gateway internals.
+export async function getPaymentStatus(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const transactionId = String(req.params.transactionId);
+
+    const tx = await prisma.transaction.findUnique({ where: { id: transactionId } });
+    if (!tx) throw new AppError(404, 'Transaction not found');
+    if (req.user.role === 'Customer' && tx.customerId !== req.user.id) {
+      throw new AppError(403, 'Not your transaction');
+    }
+
+    const gateway = tx.gateway ?? 'paymongo';
+
+    // Already credited (by the webhook or an earlier poll) — nothing to ask Maya.
+    if (tx.totalPaid > 0) {
+      return res.json({ status: 'succeeded', totalPaid: tx.totalPaid, balance: tx.balance, gateway });
+    }
+
+    // No live Maya charge to poll.
+    if (gateway !== 'maya' || !tx.gatewayPaymentId) {
+      return res.json({ status: 'pending', totalPaid: tx.totalPaid, balance: tx.balance, gateway });
+    }
+
+    const { retrievePayment, retrievePaymentStatus } = await import('../services/maya.service.js');
+    const { applyPaymentToTransaction } = await import('../services/payments.ledger.js');
+
+    // Prefer the authoritative retrieve (it carries the amount we must credit);
+    // fall back to the cheap status-only probe if it errors.
+    let status = 'PENDING';
+    let amount = 0;
+    try {
+      const verified = await retrievePayment(tx.gatewayPaymentId);
+      status = verified.status;
+      amount = verified.amount;
+    } catch {
+      status = (await retrievePaymentStatus(tx.gatewayPaymentId)).status;
+    }
+
+    if (status === 'SUCCESS' && amount > 0) {
+      try {
+        const result = await applyPaymentToTransaction({
+          transactionId: tx.id,
+          amount,
+          gateway: 'maya',
+          gatewayRef: tx.gatewayPaymentId,
+          method: 'maya',
+        });
+        return res.json({
+          status: 'succeeded',
+          totalPaid: result.totalPaid,
+          balance: result.balance,
+          gateway: 'maya',
+        });
+      } catch (err: any) {
+        // A closed/vanished transaction can't be credited — tell the client to
+        // stop polling rather than surfacing an error it can't act on.
+        if (err?.status === 400 || err?.status === 404) {
+          return res.json({ status: 'failed', totalPaid: tx.totalPaid, balance: tx.balance, gateway });
+        }
+        throw err;
+      }
+    }
+
+    const statusMap: Record<string, string> = {
+      SUCCESS: 'succeeded',
+      PAYMENT_FAILED: 'failed',
+      PAYMENT_CANCELLED: 'failed',
+      PAYMENT_EXPIRED: 'expired',
+    };
+    res.json({
+      status: statusMap[status] ?? 'pending',
+      totalPaid: tx.totalPaid,
+      balance: tx.balance,
+      gateway: 'maya',
+    });
   } catch (err) {
     next(err);
   }
