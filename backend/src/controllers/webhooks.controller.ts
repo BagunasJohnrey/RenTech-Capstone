@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as paymongoService from '../services/paymongo.service.js';
+import { isMayaWebhookIpAllowed, retrievePayment } from '../services/maya.service.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { applyPaymentToTransaction } from '../services/payments.ledger.js';
@@ -78,6 +79,87 @@ export async function handlePayMongoWebhook(req: Request, res: Response, next: N
     }
 
     res.json({ received: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Maya (QRPh). Maya webhooks carry NO HMAC signature, so this endpoint cannot
+// trust anything it is sent. Two defences, in order:
+//
+//   1. An optional IP allowlist (Maya publishes its webhook IPs).
+//   2. A mandatory re-check: ask Maya, with our secret key, what actually
+//      happened to this payment. Only a confirmed SUCCESS with a matching
+//      amount credits the booking.
+//
+// Every path returns 200 quickly because Maya retries only 4 times and then
+// gives up. A slow or failing re-check credits nothing — the polling endpoint
+// (GET /payments/transaction/:id/status) repairs it from the customer's own
+// browser, which is strictly better than a retry storm.
+export async function handleMayaWebhook(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!isMayaWebhookIpAllowed(req.ip)) {
+      throw new AppError(403, 'Webhook source not allowed');
+    }
+
+    const body = req.body as {
+      id?: string;
+      paymentStatus?: string;
+      metadata?: { transactionId?: string };
+      totalAmount?: { value?: number };
+    };
+
+    // Anything uninteresting (a FAILED/EXPIRED/CANCELLED event, a payload we
+    // can't correlate) is acknowledged without crediting.
+    const ack = () => res.json({ received: true, verified: false });
+
+    if (body.paymentStatus !== 'SUCCESS' || !body.id) return ack();
+
+    // Correlate to a transaction. Maya echoes the metadata we sent at charge
+    // time, so that is the cheap path; only fall back to a lookup when it is
+    // absent. The ledger re-reads the transaction anyway, so we never do a
+    // lookup we don't need.
+    let transactionId = body.metadata?.transactionId;
+    if (!transactionId) {
+      const tx = await prisma.transaction.findFirst({ where: { gatewayPaymentId: body.id } });
+      if (!tx) return ack();
+      transactionId = tx.id;
+    }
+
+    let verified;
+    try {
+      verified = await retrievePayment(body.id);
+    } catch {
+      // Maya is unreachable or erroring. Credit nothing, but still 200.
+      return ack();
+    }
+
+    if (verified.status !== 'SUCCESS') return ack();
+
+    // The re-check is the ONLY amount we trust — the unsigned payload's own
+    // figures are never read. A forged payload can neither inflate a credit
+    // (claiming more than Maya received) nor shrink one; whatever Maya says
+    // actually landed is what gets recorded, and the balance follows.
+    let result;
+    try {
+      result = await applyPaymentToTransaction({
+        transactionId,
+        amount: verified.amount,
+        gateway: 'maya',
+        gatewayRef: body.id,
+        method: 'maya',
+      });
+    } catch (err: any) {
+      // A closed or vanished transaction is a "nothing to do", not a failure to
+      // retry — Maya would just keep hitting us.
+      if (err?.status === 400 || err?.status === 404) return ack();
+      throw err;
+    }
+
+    if (result.duplicate) {
+      return res.json({ received: true, verified: true, duplicate: true });
+    }
+    res.json({ received: true, verified: true });
   } catch (err) {
     next(err);
   }
