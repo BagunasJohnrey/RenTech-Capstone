@@ -4,13 +4,14 @@ import { X, XCircle, MessageCircle, Send, CheckCircle2, AlertTriangle } from 'lu
 import { customerLabel, itemLabel } from '../utils/format';
 import { useButtonGuard } from '../hooks/useButtonGuard';
 
-// Proper cancel-booking dialog (replaces window.confirm). Shows what will
-// happen, and — for customers whose booking can't be cancelled online
-// (Active/Overdue = possibly picked up) — swaps the cancel button for a
-// "message the boutique" form instead of letting the request 400.
+// Cancel-booking dialog. Staff/admin cancel outright — they own the decision
+// and the refund call. A customer can only REQUEST a cancellation: they must
+// write a short explanation, which reaches the boutique's Messages inbox for a
+// human to action. No status is self-service, because a paid Reserved booking
+// must never be voidable unilaterally (server-side enforced too: the cancel
+// route is staff/admin only).
 export default function CancelBookingModal({ tx, role, onClose, onCancel, onSendMessage }) {
   const isCustomer = role === 'Customer';
-  const needsStaff = isCustomer && ['Active', 'Overdue'].includes(tx.status);
   const [message, setMessage] = useState('');
   const [msgError, setMsgError] = useState('');
   // Ref guards: state alone can't block same-tick double-taps on
@@ -79,12 +80,12 @@ export default function CancelBookingModal({ tx, role, onClose, onCancel, onSend
           </div>
         </div>
 
-        {needsStaff ? (
+        {isCustomer ? (
           <div className="flex gap-2.5 bg-amber-50 border border-amber-200/70 rounded-2xl p-4 text-sm text-amber-800 mb-4">
             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
             <p className="leading-snug">
-              This booking can't be cancelled online once the item may be picked up.
-              Send a message below and the boutique team will handle it for you.
+              Cancellations are handled by the boutique. Tell us why below and the team will
+              confirm — any refund follows our cancellation policy.
             </p>
           </div>
         ) : (
@@ -93,13 +94,11 @@ export default function CancelBookingModal({ tx, role, onClose, onCancel, onSend
           </p>
         )}
 
-        {/* No message box on Reserved — direct cancel is available, so the
-            optional field is just noise. Active/Overdue require it. */}
-        {isCustomer && tx.status !== 'Reserved' && (
+        {isCustomer && (
           <div className="border border-gray-100 rounded-2xl p-4 mb-4">
             <label htmlFor="cancel-admin-message" className="text-xs font-bold text-gray-700 flex items-center gap-1.5 mb-2">
               <MessageCircle size={14} className="text-[#bf4a53]" />
-              {needsStaff ? 'Message the boutique' : 'Message the boutique instead (optional)'}
+              Message the boutique
             </label>
             {sent ? (
               <p className="text-sm text-emerald-600 font-semibold flex items-center gap-1.5">
@@ -135,10 +134,8 @@ export default function CancelBookingModal({ tx, role, onClose, onCancel, onSend
             className="flex-1 py-3 font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 rounded-full transition-colors">
             Keep booking
           </button>
-          {/* Direct cancel: staff anytime (pre-pickup states), customers only
-              while Reserved (nothing released yet). Active/Overdue customers
-              must message first — the admin cancels after reading it. */}
-          {!needsStaff && (!isCustomer || tx.status === 'Reserved') && (
+          {/* Direct cancel is staff/admin only — a customer always requests instead. */}
+          {!isCustomer && (
             <button onClick={handleCancel} disabled={cancelling}
               className="flex-1 py-3 font-bold text-sm text-white bg-red-500 hover:bg-red-600 rounded-full transition-colors disabled:opacity-50">
               {cancelling ? 'Cancelling…' : 'Cancel booking'}
