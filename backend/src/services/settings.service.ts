@@ -12,12 +12,15 @@ export async function getBusinessRules() {
 
 // Public rental-suggestion defaults (never the full rules/templates) so
 // booking flows can prefill sensibly without leaking sensitive settings.
+// `payment_gateway` is included (not sensitive) so the booking form can render
+// the right payment-method UI before create-intent reports the gateway.
 export async function getRentalDefaults() {
   const rules = await getBusinessRules();
   return {
     rental_period_days: parseInt(rules.rental_period_days ?? '3', 10) || 3,
     return_days_after_event: parseInt(rules.return_days_after_event ?? '1', 10) || 1,
     min_downpayment: parseInt(rules.min_downpayment ?? '200', 10) || 0,
+    payment_gateway: rules.payment_gateway === 'maya' ? 'maya' : 'paymongo',
   };
 }
 

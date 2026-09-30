@@ -68,9 +68,10 @@ export default function CustomerRentalFlow({
     return toLocalYmd(d);
   });
   const eventDateTouched = useRef(false);
-  // Suggested rental period + minimum downpayment come from the admin's
-  // business rules (public endpoint) — fall back to the 3-day / ₱200 defaults.
-  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200 });
+  // Suggested rental period, minimum downpayment, and the active payment
+  // gateway come from the admin's business rules (public endpoint) — fall back
+  // to the 3-day / ₱200 / PayMongo defaults.
+  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'paymongo' });
   useEffect(() => {
     let cancelled = false;
     api.get('/settings/rental-defaults')
@@ -80,6 +81,7 @@ export default function CustomerRentalFlow({
           rental_period_days: d.rental_period_days,
           return_days_after_event: d.return_days_after_event || 1,
           min_downpayment: d.min_downpayment || 0,
+          payment_gateway: d.payment_gateway === 'maya' ? 'maya' : 'paymongo',
         });
         setDownpaymentAmount(d.min_downpayment || 200);
         if (!eventDateTouched.current) {
@@ -106,6 +108,9 @@ export default function CustomerRentalFlow({
     notes: '',
   });
   const [paymentMethod, setPaymentMethod] = useState('gcash');
+  // Drives the payment step's UI: Maya QRPh shows a single method (the customer
+  // picks their own app when scanning), PayMongo keeps the GCash/Card tiles.
+  const isMayaGateway = rentalDefaults.payment_gateway === 'maya';
   // Prefill size from the customer's saved "usual sizes" (Settings) when available.
   const savedSizes = useMemo(() => {
     try { const v = JSON.parse(localStorage.getItem(LS_SIZES)); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -1080,24 +1085,57 @@ export default function CustomerRentalFlow({
 
           {step === 2 && (
             <div className="space-y-5">
-              <div className="text-center pb-2">
-                <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
-                <p className="text-sm text-gray-500">Select how you'd like to pay the downpayment.</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button onClick={() => setPaymentMethod('gcash')}
-                  className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
-                    paymentMethod === 'gcash' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                  <Smartphone size={28} className={paymentMethod === 'gcash' ? 'text-[#bf4a53]' : 'text-gray-400'} />
-                  <span className="text-sm font-bold text-gray-900">GCash</span>
-                </button>
-                <button onClick={() => setPaymentMethod('card')}
-                  className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
-                    paymentMethod === 'card' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                  <CreditCard size={28} className={paymentMethod === 'card' ? 'text-[#bf4a53]' : 'text-gray-400'} />
-                  <span className="text-sm font-bold text-gray-900">Card</span>
-                </button>
-              </div>
+              {/* Maya QRPh is a single rail, not a menu: the customer scans one
+                  QR with whichever app they already use (Maya, GCash, or any
+                  QRPh bank). So we present ONE method and list the apps as
+                  supported-but-not-selectable — offering separate buttons would
+                  promise a routing choice we don't have (and QRPh has no card
+                  rail). PayMongo's drop-in does the choosing itself, so its
+                  tiles stay. */}
+              {isMayaGateway ? (
+                <>
+                  <div className="text-center pb-2">
+                    <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
+                    <p className="text-sm text-gray-500">Pay your downpayment securely with Maya.</p>
+                  </div>
+                  <div className="p-6 rounded-2xl border-2 border-[#bf4a53] bg-red-50 shadow-sm flex flex-col items-center gap-3 text-center">
+                    <ScanLine size={28} className="text-[#bf4a53]" />
+                    <span className="text-sm font-bold text-gray-900">Maya / QRPh</span>
+                    <p className="text-xs text-gray-600 leading-snug">
+                      You'll be redirected to Maya to scan and pay. Works with your Maya app, GCash,
+                      or any QRPh-enabled banking app.
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
+                      {['Maya', 'GCash', 'Bank apps'].map((app) => (
+                        <span key={app} className="px-2.5 py-1 rounded-full bg-white border border-gray-200 text-[11px] font-semibold text-gray-600">
+                          {app}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-center pb-2">
+                    <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
+                    <p className="text-sm text-gray-500">Select how you'd like to pay the downpayment.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button onClick={() => setPaymentMethod('gcash')}
+                      className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
+                        paymentMethod === 'gcash' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                      <Smartphone size={28} className={paymentMethod === 'gcash' ? 'text-[#bf4a53]' : 'text-gray-400'} />
+                      <span className="text-sm font-bold text-gray-900">GCash</span>
+                    </button>
+                    <button onClick={() => setPaymentMethod('card')}
+                      className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
+                        paymentMethod === 'card' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                      <CreditCard size={28} className={paymentMethod === 'card' ? 'text-[#bf4a53]' : 'text-gray-400'} />
+                      <span className="text-sm font-bold text-gray-900">Card</span>
+                    </button>
+                  </div>
+                </>
+              )}
                 <div className="bg-gray-50 p-5 rounded-2xl space-y-2 border border-gray-100/60">
                   <div className="flex justify-between text-sm"><span className="text-gray-600">Downpayment</span><span className="font-bold">₱{downpaymentAmount.toLocaleString()}</span></div>
                   {promoApplied && (

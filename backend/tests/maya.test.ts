@@ -211,6 +211,42 @@ describe('GET /api/settings/integrations-status', () => {
   });
 });
 
+describe('GET /api/settings/rental-defaults', () => {
+  // The booking flow needs to know the gateway BEFORE the payment step so it can
+  // render the right payment-method UI (Maya's single QRPh method vs PayMongo's
+  // GCash/Card tiles). create-intent only returns the gateway too late.
+  it('carries payment_gateway so the client can branch before checkout', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findMany.mockResolvedValueOnce([
+      { key: 'rental_period_days', value: '3' },
+      { key: 'return_days_after_event', value: '1' },
+      { key: 'min_downpayment', value: '200' },
+      { key: 'payment_gateway', value: 'maya' },
+    ]);
+
+    const res = await request(app).get('/api/settings/rental-defaults');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      rental_period_days: 3,
+      return_days_after_event: 1,
+      min_downpayment: 200,
+      payment_gateway: 'maya',
+    });
+  });
+
+  it('defaults payment_gateway to paymongo when the rule is unset', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findMany.mockResolvedValueOnce([
+      { key: 'min_downpayment', value: '200' },
+    ]);
+
+    const res = await request(app).get('/api/settings/rental-defaults');
+
+    expect(res.body.payment_gateway).toBe('paymongo');
+  });
+});
+
 describe('POST /api/payments/create-intent with gateway=maya', () => {
   it('returns a Maya redirect URL and stores the payment ref', async () => {
     const { prisma } = await import('../src/config/database.js');
