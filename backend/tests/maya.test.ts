@@ -426,6 +426,86 @@ describe('GET /api/payments/transaction/:id/status', () => {
     const res = await request(app).get('/api/payments/transaction/nope/status').set('Authorization', 'Bearer customer-token');
     expect(res.status).toBe(404);
   });
+
+  // I4: the poller must never report "succeeded" it did not actually cause.
+  it('does NOT report succeeded when the ledger declines (duplicate)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const tx = { ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-dup' };
+    // Read twice: controller, then the ledger inside its transaction.
+    prisma.transaction.findUnique
+      .mockResolvedValueOnce(tx)
+      .mockResolvedValueOnce(tx);
+    prisma.payment.findUnique.mockResolvedValueOnce({ id: 'pay-existing', gatewayRef: 'pay-maya-dup' });
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'pay-maya-dup', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 } }),
+    });
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.body.status).not.toBe('succeeded');
+    expect(res.body.totalPaid).toBe(0);
+  });
+
+  // I3: money received that does not meet the downpayment is NOT a settled booking.
+  it('reports partial when the credit is below the required downpayment', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const tx = { ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-part' };
+    // Read twice: controller, then the ledger inside its transaction.
+    prisma.transaction.findUnique.mockResolvedValueOnce(tx).mockResolvedValueOnce(tx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'pay-maya-part', paymentStatus: 'SUCCESS', totalAmount: { value: 200 } }),
+    });
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.body).toMatchObject({ status: 'partial', totalPaid: 2, balance: 4998 });
+  });
+
+  it('reports succeeded once the required downpayment is met', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      ...txOpen, downpayment: 2000, totalPaid: 2000, balance: 3000,
+    });
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.body.status).toBe('succeeded');
+  });
+});
+
+// I5: the webhook is unauthenticated AND mounted before the global limiter, so
+  // it needs its own budget or a flood exhausts Maya's API quota — the same
+  // quota the secret-key re-check depends on.
+describe('POST /api/webhooks/maya rate limit', () => {
+  it('429s once the per-IP budget is exhausted', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'x', paymentStatus: 'PENDING' }),
+    });
+
+    let sawLimit = false;
+    for (let i = 0; i < 80; i++) {
+      const res = await request(webhookApp)
+        .post('/api/webhooks/maya')
+        .send({ id: 'rl-test', paymentStatus: 'PENDING' });
+      if (res.status === 429) { sawLimit = true; break; }
+    }
+
+    expect(sawLimit).toBe(true);
+    // Crucially, the limiter must short-circuit BEFORE any authenticated
+    // outbound call to Maya.
+    expect(prisma.transaction.findFirst).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/webhooks/maya', () => {

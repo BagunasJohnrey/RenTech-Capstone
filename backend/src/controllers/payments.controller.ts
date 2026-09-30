@@ -180,14 +180,25 @@ export async function getPaymentStatus(req: AuthenticatedRequest, res: Response,
 
     const gateway = tx.gateway ?? 'paymongo';
 
-    // Already credited (by the webhook or an earlier poll) — nothing to ask Maya.
-    if (tx.totalPaid > 0) {
-      return res.json({ status: 'succeeded', totalPaid: tx.totalPaid, balance: tx.balance, gateway });
-    }
+    // "Succeeded" must mean the booking's required downpayment is actually
+    // covered — not merely that some money arrived. Reporting success for a
+    // PHP 2 partial against a PHP 5,000 rental is the bug this prevents.
+    const rules = await getBusinessRules();
+    const flatMin = parseInt(rules.min_downpayment ?? '200', 10) || 200;
+    const owed = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - tx.totalPaid);
+    const required = Math.min(tx.downpayment > 0 ? tx.downpayment : flatMin, owed || tx.downpayment);
+    const settled = tx.totalPaid >= required;
 
-    // No live Maya charge to poll.
-    if (gateway !== 'maya' || !tx.gatewayPaymentId) {
-      return res.json({ status: 'pending', totalPaid: tx.totalPaid, balance: tx.balance, gateway });
+    const stateFor = (totalPaid: number, balance: number) => ({
+      status: totalPaid >= required ? 'succeeded' : totalPaid > 0 ? 'partial' : 'pending',
+      totalPaid,
+      balance,
+      gateway,
+    });
+
+    // No live gateway charge to poll, or already settled by an earlier webhook.
+    if (settled || gateway !== 'maya' || !tx.gatewayPaymentId) {
+      return res.json(stateFor(tx.totalPaid, tx.balance));
     }
 
     const { retrievePayment, retrievePaymentStatus } = await import('../services/maya.service.js');
@@ -214,12 +225,13 @@ export async function getPaymentStatus(req: AuthenticatedRequest, res: Response,
           gatewayRef: tx.gatewayPaymentId,
           method: 'maya',
         });
-        return res.json({
-          status: 'succeeded',
-          totalPaid: result.totalPaid,
-          balance: result.balance,
-          gateway: 'maya',
-        });
+        // A duplicate means THIS call did not move the money (the webhook or an
+        // earlier poll already applied it, or the insert lost a race). Report
+        // the state we actually know rather than claiming a success we caused.
+        if (result.duplicate) {
+          return res.json(stateFor(tx.totalPaid, tx.balance));
+        }
+        return res.json(stateFor(result.totalPaid, result.balance));
       } catch (err: any) {
         // A closed/vanished transaction can't be credited — tell the client to
         // stop polling rather than surfacing an error it can't act on.

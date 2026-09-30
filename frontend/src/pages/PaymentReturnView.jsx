@@ -19,6 +19,7 @@ export default function PaymentReturnView() {
   const { getStatus } = usePayments();
   const { error: toastError } = useToast();
   const [status, setStatus] = useState('checking');
+  const [received, setReceived] = useState(null);
   const txId = new URLSearchParams(window.location.search).get('tx');
   // Guards against setting state after unmount (the user navigates away mid-poll).
   const alive = useRef(true);
@@ -40,9 +41,11 @@ export default function PaymentReturnView() {
         if (!alive.current) return;
         const next = result?.status ?? 'pending';
         setStatus(next);
+        if (result?.totalPaid != null) setReceived(result.totalPaid);
         // A settled outcome ends the loop; anything else keeps waiting until we
-        // hit the ceiling, so a wedged payment can't poll forever.
-        if (SETTLED.has(next) || polls >= MAX_POLLS) return;
+        // hit the ceiling, so a wedged payment can't poll forever. 'partial'
+        // already arrived, so it stops too.
+        if (SETTLED.has(next) || next === 'partial' || polls >= MAX_POLLS) return;
       } catch {
         if (!alive.current) return;
         // A transient network blip shouldn't look like a failure — keep trying.
@@ -67,6 +70,28 @@ export default function PaymentReturnView() {
       toastError('Payment not completed.');
     }
   }, [status, toastError]);
+
+  if (status === 'partial') {
+    // Money landed but it doesn't cover the required downpayment. Saying
+    // "confirmed" here would be a lie, so say exactly what happened instead.
+    return (
+      <Shell>
+        <TriangleAlert size={56} className="text-amber-500" />
+        <h1 className="text-2xl font-bold text-gray-900">Payment received</h1>
+        <p className="text-sm text-gray-500 text-center max-w-sm">
+          We received {received && `₱${Number(received).toLocaleString()} `}
+          but this is less than the downpayment required to secure your booking.
+          Please complete the remaining amount to confirm it.
+        </p>
+        <button
+          onClick={() => navigate(txId ? `/transactions/${txId}` : '/')}
+          className="mt-2 w-full max-w-xs py-3 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors"
+        >
+          Complete my booking
+        </button>
+      </Shell>
+    );
+  }
 
   if (status === 'succeeded') {
     return (
