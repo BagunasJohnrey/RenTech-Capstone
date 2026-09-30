@@ -626,7 +626,7 @@ describe('applyPaymentToTransaction', () => {
     expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ gateway: 'maya', gatewayRef: 'pay-maya-1', method: 'maya', type: 'downpayment' }),
     }));
-    expect(prisma.transaction.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(prisma.transaction.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ totalPaid: 2000, balance: 3000, gatewayPaymentId: 'pay-maya-1' }),
     }));
   });
@@ -684,5 +684,90 @@ describe('applyPaymentToTransaction', () => {
       transactionId: 'tx-1', amount: 1000, gateway: 'maya', gatewayRef: 'p-3', method: 'maya',
     });
     expect(result).toMatchObject({ totalPaid: 1000, balance: 4800 });
+  });
+  it('runs the credit inside a transaction', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'p-atomic', method: 'maya',
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('guards the update against a closed rental (status notIn)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'p-guard', method: 'maya',
+    });
+
+    expect(prisma.transaction.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'tx-1',
+        status: { notIn: ['Returned', 'Cancelled'] },
+      }),
+    }));
+  });
+
+  it('detects a lost update instead of clobbering a concurrent credit', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    // Conditional update matches nothing -> someone else moved totalPaid.
+    prisma.transaction.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'p-race', method: 'maya',
+    })).rejects.toThrow(/changed/i);
+  });
+
+  // I3: never credit more than is outstanding.
+  it('clamps a credit to the outstanding balance', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    const result = await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 999999, gateway: 'maya', gatewayRef: 'p-over', method: 'maya',
+    });
+
+    expect(result).toMatchObject({ totalPaid: 5000, balance: 0 });
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ amount: 5000 }),
+    }));
+  });
+
+  // I2: a late webhook must not rewind the stored ref to a superseded charge.
+  it('does not overwrite a newer gatewayPaymentId', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      ...openTx, gatewayPaymentId: 'pay-maya-NEWER',
+    });
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'pay-maya-OLD', method: 'maya',
+    });
+
+    const arg = (prisma.transaction.updateMany as any).mock.calls.at(-1)[0];
+    expect(arg.data.gatewayPaymentId).toBe('pay-maya-NEWER');
+  });
+
+  it('stores the ref when none is set yet', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...openTx, gatewayPaymentId: null });
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'pay-first', method: 'maya',
+    });
+
+    const arg = (prisma.transaction.updateMany as any).mock.calls.at(-1)[0];
+    expect(arg.data.gatewayPaymentId).toBe('pay-first');
   });
 });
