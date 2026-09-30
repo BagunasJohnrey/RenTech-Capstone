@@ -29,7 +29,7 @@ export const TERMS_SECTIONS = [
     id: 'booking',
     title: '4. Booking, Downpayment & Payment',
     paragraphs: [
-      'A booking is confirmed only when the required downpayment (minimum ₱200) is received and a confirmation is issued by the platform. The remaining balance is payable at pickup. Payments are processed through PayMongo (GCash and credit card) or in-store. Promotional codes, sale prices, and fees shown at checkout are final at the time of booking. In the event of a pricing error, the boutique reserves the right to correct it before the rental is handed over.',
+      'A booking is confirmed only when the required downpayment (minimum ₱200) is received and a confirmation is issued by the platform. The remaining balance is payable at pickup. Payments are processed through our payment partners (Maya or PayMongo) or in-store. Promotional codes, sale prices, and fees shown at checkout are final at the time of booking. In the event of a pricing error, the boutique reserves the right to correct it before the rental is handed over.',
     ],
   },
   {
@@ -107,7 +107,7 @@ export const TERMS_SECTIONS = [
       'Device and usage data: basic technical information used for security, performance, and troubleshooting of the platform.',
     ],
     closingParagraphs: [
-      'Your personal information is collected with your consent, used only for the purposes stated above, and is never sold to third parties. We share data with our payment processor (PayMongo) only to the extent needed to complete payments, and with SMS gateways only to send booking and reminder messages you have opted into.',
+      'Your personal information is collected with your consent, used only for the purposes stated above, and is never sold to third parties. We share data with our payment processors (Maya or PayMongo) only to the extent needed to complete payments, and with SMS gateways only to send booking and reminder messages you have opted into.',
       'We implement reasonable physical, organizational, and technical security measures — including encrypted storage and access controls — to protect your information. Data is retained only as long as necessary for the purposes stated or as required by law, after which it is securely disposed of.',
       'Under RA 10173, you have the right to be informed, to access, to object, to correct, to delete, and to file a complaint regarding your personal data. You may exercise these rights, or withdraw your consent at any time, by contacting us at the details below.',
     ],

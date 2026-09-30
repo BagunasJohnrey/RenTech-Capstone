@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, MessageSquare, CreditCard, RefreshCw, Sparkles, Mail } from 'lucide-react';
+import { ShieldCheck, MessageSquare, CreditCard, RefreshCw, Sparkles, Mail, QrCode } from 'lucide-react';
 import { settingsService } from '../../services/settings';
+import { useToast } from '../Toast';
 import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
 import SettingsCard from './SettingsCard';
 
@@ -10,7 +11,8 @@ const INTEGRATIONS = [
   { key: 'openrouter', name: 'OpenRouter AI', desc: 'Free-model AI fallback (tier 3) for stylist & reports.', icon: Sparkles, iconClass: 'bg-fuchsia-50 text-fuchsia-600' },
   { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Automated return reminders & booking confirmations.', icon: MessageSquare, iconClass: 'bg-blue-50 text-blue-600' },
   { key: 'brevo', name: 'Brevo Email', desc: 'Verification, password reset & booking/pickup/return emails.', icon: Mail, iconClass: 'bg-rose-50 text-[#bf4a53]' },
-  { key: 'paymongo', name: 'PayMongo Payments', desc: 'Secure GCash & Credit Card downpayments.', icon: CreditCard, iconClass: 'bg-emerald-50 text-emerald-600' },
+  { key: 'paymongo', name: 'PayMongo Payments', desc: 'GCash & credit card downpayments via hosted checkout.', icon: CreditCard, iconClass: 'bg-emerald-50 text-emerald-600' },
+  { key: 'maya', name: 'Maya QR / QRPh', desc: 'Maya wallet & QRPh downpayments via scan or redirect.', icon: QrCode, iconClass: 'bg-sky-50 text-sky-600' },
 ];
 
 // Admin Integrations tab: live connectivity status for AI, SMS and payments.
@@ -18,9 +20,15 @@ const INTEGRATIONS = [
 // "Status X ago" label, then refreshes silently in the background. Manual
 // Refresh forces a live re-probe (bypasses the 60s server cache).
 export default function IntegrationsTab() {
+  const { success: toastSuccess, error: toastError } = useToast();
   const [integrations, setIntegrations] = useState(() => readCache(CACHE_KEYS.INTEGRATIONS)?.data ?? null);
   const [checkedAt, setCheckedAt] = useState(() => readCache(CACHE_KEYS.INTEGRATIONS)?.at ?? null);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
+  // Which gateway new downpayments use. Backed by the `payment_gateway`
+  // business rule; defaults to PayMongo so a deploy of this feature is a no-op
+  // until an admin deliberately flips it.
+  const [gateway, setGateway] = useState('paymongo');
+  const [gatewaySaving, setGatewaySaving] = useState(false);
   // Re-render every 30s so the "Status X ago" label stays fresh.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -48,6 +56,32 @@ export default function IntegrationsTab() {
   useEffect(() => {
     loadIntegrations(false);
   }, [loadIntegrations]);
+
+  // Read the live rule so the selector shows the real setting, not a guess.
+  useEffect(() => {
+    let cancelled = false;
+    settingsService.getRules()
+      .then((rules) => {
+        if (!cancelled && rules?.payment_gateway) setGateway(rules.payment_gateway);
+      })
+      .catch(() => { /* keep the safe default */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleGatewayChange = async (value) => {
+    const previous = gateway;
+    setGateway(value);
+    setGatewaySaving(true);
+    try {
+      await settingsService.updateRules({ payment_gateway: value });
+      toastSuccess(`Downpayments now use ${value === 'maya' ? 'Maya QRPh' : 'PayMongo'}.`);
+    } catch (err) {
+      setGateway(previous);
+      toastError(err?.message || 'Could not change the payment gateway.');
+    } finally {
+      setGatewaySaving(false);
+    }
+  };
 
   // Prefer the server's probe time (survives its 60s cache); fall back to
   // when this client last received a response.
@@ -84,6 +118,24 @@ export default function IntegrationsTab() {
         <p className="sm:hidden text-[11px] font-semibold text-gray-400 tabular-nums -mt-1">{statusLabel}</p>
       )}
       <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 p-4 rounded-2xl bg-white border border-[#bf4a53]/20">
+          <div className="min-w-0">
+            <p className="font-bold text-sm text-gray-900">Payment Gateway</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Used for new booking downpayments. Takes effect immediately; existing bookings are unaffected.
+            </p>
+          </div>
+          <select
+            aria-label="Payment Gateway"
+            value={gateway}
+            onChange={(e) => handleGatewayChange(e.target.value)}
+            disabled={gatewaySaving}
+            className="shrink-0 text-xs font-bold px-3 py-2 rounded-full bg-gray-100 text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 disabled:opacity-50"
+          >
+            <option value="paymongo">PayMongo</option>
+            <option value="maya">Maya QRPh</option>
+          </select>
+        </div>
         {INTEGRATIONS.map(({ key, name, desc, icon: Icon, iconClass }) => {
           const coldLoading = integrationsLoading && !integrations;
           const status = integrations?.[key];

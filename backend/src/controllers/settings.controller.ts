@@ -7,6 +7,7 @@ import { createAuditLog } from '../utils/audit.js';
 import * as geminiService from '../services/gemini.service.js';
 import * as semaphoreService from '../services/semaphore.service.js';
 import * as paymongoService from '../services/paymongo.service.js';
+import * as mayaService from '../services/maya.service.js';
 import * as brevoService from '../services/brevo.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
@@ -278,12 +279,13 @@ export async function getIntegrationsStatus(req: AuthenticatedRequest, res: Resp
     ) {
       return res.json({ ...integrationsCache.body });
     }
-    const [ai, semaphore, paymongo, brevo] = await Promise.all([
-      geminiService.checkAiHealth(),
-      semaphoreService.checkSemaphoreHealth(),
-      paymongoService.checkPaymongoHealth(),
-      brevoService.checkBrevoHealth(),
-    ]);
+const [ai, semaphore, paymongo, maya, brevo] = await Promise.all([
+    geminiService.checkAiHealth(),
+    semaphoreService.checkSemaphoreHealth(),
+    paymongoService.checkPaymongoHealth(),
+    mayaService.checkMayaHealth(),
+    brevoService.checkBrevoHealth(),
+   ]);
     // The AI health probe covers all three model providers (gemini → groq →
     // openrouter); expose each under its own key so the UI can show one row
     // per provider.
@@ -292,8 +294,9 @@ export async function getIntegrationsStatus(req: AuthenticatedRequest, res: Resp
       groq: ai.providers?.groq,
       openrouter: ai.providers?.openrouter,
       semaphore,
-      paymongo,
-      brevo,
+   paymongo,
+   maya,
+   brevo,
       checkedAt: new Date().toISOString(),
     };
     integrationsCache = { at: Date.now(), body };

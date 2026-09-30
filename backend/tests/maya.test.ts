@@ -200,6 +200,17 @@ function mockMayaRetrieve(over: Record<string, any> = {}) {
   });
 }
 
+describe('GET /api/settings/integrations-status', () => {
+  it('exposes a maya row', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    const res = await request(app)
+      .get('/api/settings/integrations-status')
+      .set('Authorization', 'Bearer admin-token');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('maya');
+  });
+});
+
 describe('POST /api/payments/create-intent with gateway=maya', () => {
   it('returns a Maya redirect URL and stores the payment ref', async () => {
     const { prisma } = await import('../src/config/database.js');
