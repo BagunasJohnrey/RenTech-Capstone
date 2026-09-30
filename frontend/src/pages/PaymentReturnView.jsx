@@ -16,10 +16,12 @@ const SETTLED = new Set(['succeeded', 'failed', 'expired']);
 // self-heal: if the webhook was lost, the server credits the payment here.
 export default function PaymentReturnView() {
   const navigate = useNavigate();
-  const { getStatus } = usePayments();
+  const { getStatus, createIntent } = usePayments();
   const { error: toastError } = useToast();
   const [status, setStatus] = useState('checking');
   const [received, setReceived] = useState(null);
+  const [amountDue, setAmountDue] = useState(null);
+  const [retrying, setRetrying] = useState(false);
   const txId = new URLSearchParams(window.location.search).get('tx');
   // Guards against setting state after unmount (the user navigates away mid-poll).
   const alive = useRef(true);
@@ -42,6 +44,7 @@ export default function PaymentReturnView() {
         const next = result?.status ?? 'pending';
         setStatus(next);
         if (result?.totalPaid != null) setReceived(result.totalPaid);
+        if (result?.amountDue != null) setAmountDue(result.amountDue);
         // A settled outcome ends the loop; anything else keeps waiting until we
         // hit the ceiling, so a wedged payment can't poll forever. 'partial'
         // already arrived, so it stops too.
@@ -71,7 +74,35 @@ export default function PaymentReturnView() {
     }
   }, [status, toastError]);
 
-  if (status === 'partial') {
+  // A Maya QRPh is one-time use and expires after an hour. When that happens the
+// customer must be able to start a fresh charge themselves — otherwise an
+// expired code or a cancelled payment means an in-person visit. The new charge
+// supersedes the old one; the old paymentId's late webhook is absorbed by the
+// ledger's idempotency + closed-charge guards.
+const handlePayAgain = async () => {
+  const amount = Number(amountDue) > 0 ? Number(amountDue) : 0;
+  if (!txId || amount <= 0) return;
+  setRetrying(true);
+  try {
+    const intent = await createIntent({ transactionId: txId, amount });
+    if (intent?.simulated) {
+      // No gateway configured locally — nothing to redirect to.
+      setStatus('pending');
+      return;
+    }
+    if (intent?.redirectUrl) {
+      window.location.assign(intent.redirectUrl);
+      return;
+    }
+    toastError('Payment is not available right now. Please contact the boutique.');
+  } catch (err) {
+    toastError(err?.message || 'Could not start a new payment. Please try again.');
+  } finally {
+    setRetrying(false);
+  }
+};
+
+if (status === 'partial') {
     // Money landed but it doesn't cover the required downpayment. Saying
     // "confirmed" here would be a lie, so say exactly what happened instead.
     return (
@@ -122,9 +153,18 @@ export default function PaymentReturnView() {
             : 'We could not confirm a payment. Your booking is still saved — you can pay again from it.'}
         </p>
         <div className="flex flex-col gap-2 w-full max-w-xs">
+          {Number(amountDue) > 0 && (
+            <button
+              onClick={handlePayAgain}
+              disabled={retrying}
+              className="py-3 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors disabled:opacity-50"
+            >
+              {retrying ? 'Starting…' : `Pay the remaining ₱${Number(amountDue).toLocaleString()}`}
+            </button>
+          )}
           <button
             onClick={() => navigate(txId ? `/transactions/${txId}` : '/')}
-            className="py-3 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors"
+            className="py-3 rounded-full font-bold text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
           >
             View my booking
           </button>

@@ -193,6 +193,9 @@ export async function getPaymentStatus(req: AuthenticatedRequest, res: Response,
       status: totalPaid >= required ? 'succeeded' : totalPaid > 0 ? 'partial' : 'pending',
       totalPaid,
       balance,
+      // What a fresh charge must cover to settle the booking, so the client can
+      // offer "pay again" without the customer having to visit the boutique.
+      amountDue: Math.max(0, required - totalPaid),
       gateway,
     });
 

@@ -468,6 +468,21 @@ describe('GET /api/payments/transaction/:id/status', () => {
     expect(res.body).toMatchObject({ status: 'partial', totalPaid: 2, balance: 4998 });
   });
 
+  // I7: a customer whose QR lapsed needs to know what is still due, so they can
+  // start a fresh charge instead of having to visit the boutique.
+  it('reports how much is still required to settle the booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      ...txOpen, downpayment: 2000, totalPaid: 500, balance: 4500,
+    });
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.body.amountDue).toBe(1500);
+  });
+
   it('reports succeeded once the required downpayment is met', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
