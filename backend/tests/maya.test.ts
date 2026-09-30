@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { env as envMock } from '../src/config/env.js';
 import request from 'supertest';
 import express from 'express';
 import {
@@ -17,6 +18,7 @@ vi.mock('../src/config/env.js', () => ({
     MAYA_ENV: 'sandbox',
     MAYA_SIMULATE: false,
     MAYA_WEBHOOK_ALLOWED_IPS: [],
+    MAYA_BASE_URL: '',
     PAYMONGO_SECRET_KEY: '',
     PAYMONGO_SIMULATE: true,
     NODE_ENV: 'test',
@@ -48,6 +50,37 @@ describe('getPaymentGateway', () => {
 });
 
 const SANDBOX = 'https://pg-sandbox.paymaya.com';
+
+describe('MAYA_BASE_URL override', () => {
+  // Lets the integration be driven end-to-end against a local mock Maya (see
+  // backend/scripts/mock-maya.mts) without real merchant credentials.
+  afterEach(() => { (envMock as any).MAYA_BASE_URL = ''; });
+
+  it('uses MAYA_BASE_URL when set', async () => {
+    (envMock as any).MAYA_BASE_URL = 'http://127.0.0.1:4599';
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 'mock-1', redirectUrl: 'http://mock/pay', totalAmount: { value: 20000 } }),
+    });
+
+    // baseUrl() resolves per call, so no module re-import is needed.
+    await createQrPayment(200, 'd', { transactionId: 't', requestReferenceNumber: 'r' });
+
+    expect((global.fetch as any).mock.calls[0][0]).toBe('http://127.0.0.1:4599/payments/v1/qr/payments');
+  });
+
+  it('falls back to the sandbox host when the override is empty', async () => {
+    (envMock as any).MAYA_BASE_URL = '';
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ paymentId: 's-1', totalAmount: { value: 20000 } }),
+    });
+
+    await createQrPayment(200, 'd', { transactionId: 't', requestReferenceNumber: 'r' });
+
+    expect((global.fetch as any).mock.calls[0][0]).toBe(`${SANDBOX}/payments/v1/qr/payments`);
+  });
+});
 
 describe('createQrPayment', () => {
   beforeEach(() => { global.fetch = vi.fn(); });

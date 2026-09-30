@@ -3,10 +3,15 @@ import { env } from '../config/env.js';
 import { AppError } from '../middleware/errorHandler.js';
 
 // Pay with Maya (QRPh). The base URL is chosen by MAYA_ENV so the sandbox keys
-// can never be pointed at production (or the reverse).
-const BASE = env.MAYA_ENV === 'production'
-  ? 'https://pg.paymaya.com'
-  : 'https://pg-sandbox.paymaya.com';
+// can never be pointed at production (or the reverse). MAYA_BASE_URL overrides
+// it entirely — used by the local mock to exercise the integration without
+// merchant credentials. Resolved per call so the override is testable.
+function baseUrl(): string {
+  if (env.MAYA_BASE_URL) return env.MAYA_BASE_URL.replace(/\/+$/, '');
+  return env.MAYA_ENV === 'production'
+    ? 'https://pg.paymaya.com'
+    : 'https://pg-sandbox.paymaya.com';
+}
 
 // Maya amounts are integers in centavos at the API boundary; the client only
 // ever sees pesos. Every conversion happens here.
@@ -34,7 +39,7 @@ function auth(key: string): string {
 }
 
 async function mayaFetch(path: string, key: string, init?: RequestInit): Promise<any> {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await fetch(`${baseUrl()}${path}`, {
     ...init,
     signal: AbortSignal.timeout(10000), // don't hang on a dead upstream
     headers: {
@@ -178,7 +183,7 @@ export async function checkMayaHealth(): Promise<{
 
   const started = Date.now();
   try {
-    const response = await fetch(`${BASE}/payments/v1/payments/none`, {
+    const response = await fetch(`${baseUrl()}/payments/v1/payments/none`, {
       signal: AbortSignal.timeout(10000),
       headers: { Authorization: auth(env.MAYA_SECRET_KEY) },
     });

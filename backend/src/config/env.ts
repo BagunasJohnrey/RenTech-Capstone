@@ -47,6 +47,10 @@ export const env = {
   MAYA_SIMULATE: process.env.MAYA_SIMULATE === 'true',
   MAYA_WEBHOOK_ALLOWED_IPS: (process.env.MAYA_WEBHOOK_ALLOWED_IPS || '')
     .split(',').map((ip) => ip.trim()).filter(Boolean),
+  // Optional absolute override for the Maya API host. Empty in production.
+  // Exists so the integration can be driven end-to-end against the local mock
+  // (backend/scripts/mock-maya.mts) before real merchant credentials exist.
+  MAYA_BASE_URL: process.env.MAYA_BASE_URL || '',
 
   SEMAPHORE_API_KEY: process.env.SEMAPHORE_API_KEY || '',
 
