@@ -28,7 +28,10 @@ router.post('/:id/payments', requireRole(Role.Admin, Role.Staff), validate(trans
 router.put('/:id/release', requireRole(Role.Admin, Role.Staff), validate(transactionController.releaseSchema), transactionController.releaseRental);
 router.put('/:id/swap-item', requireRole(Role.Admin, Role.Staff), validate(transactionController.swapItemSchema), transactionController.swapBookingItem);
 router.put('/:id/return', requireRole(Role.Admin, Role.Staff), validate(transactionController.returnSchema), transactionController.processReturn);
-router.put('/:id/cancel', requireRole(Role.Admin, Role.Customer), transactionController.cancelTransaction);
+// SECURITY: staff/admin only. A customer may REQUEST a cancellation (with a
+// written explanation, via the messages inbox) but never performs one — a paid
+// Reserved booking must not be voidable unilaterally over the API.
+router.put('/:id/cancel', requireRole(Role.Admin, Role.Staff), transactionController.cancelTransaction);
 router.patch('/:id', requireRole(Role.Admin, Role.Staff), validate(transactionController.updateTransactionSchema), transactionController.updateTransaction);
 router.delete('/:id', requireRole(Role.Admin), transactionController.deleteTransaction);
 

@@ -487,12 +487,34 @@ describe('PUT /api/transactions/:id/cancel', () => {
     );
   });
 
-  it('should reject when staff', async () => {
+  it('should let staff cancel without seeking approval', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // Persistent: the controller looks up the tx, then the service re-fetches.
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Rented' },
+    });
+
     const res = await request(app)
       .put('/api/transactions/tx-1/cancel')
       .set('Authorization', 'Bearer staff-token');
 
+    expect(res.status).toBe(200);
+  });
+
+  // SECURITY: a customer may only REQUEST a cancellation (with a written
+  // explanation, via the messages inbox). Cancelling is staff/admin-only, so a
+  // paid Reserved booking can never be voided unilaterally over the API.
+  it('should reject a customer cancelling their own booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .put('/api/transactions/tx-1/cancel')
+      .set('Authorization', 'Bearer customer-token');
+
     expect(res.status).toBe(403);
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
   });
 
   it('should reject already cancelled', async () => {

@@ -288,22 +288,9 @@ export async function cancelTransaction(req: AuthenticatedRequest, res: Response
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
 
-    const tx = await transactionService.getTransaction(String(req.params.id));
-
-    if (req.user.role === Role.Customer && tx.customerId !== req.user.id) {
-      throw new AppError(403, 'You can only cancel your own transactions');
-    }
-
-    // SECURITY: a customer may not cancel a rental once the item has been
-    // picked up — that would free the item while it is still in their
-    // possession. Only staff/admin can cancel Active/Overdue rentals.
-    if (
-      req.user.role === Role.Customer &&
-      (tx.status === 'Active' || tx.status === 'Overdue')
-    ) {
-      throw new AppError(400, 'Item already picked up — contact the boutique to arrange a return');
-    }
-
+    // Customers never reach here — the route is staff/admin-only, because a
+    // customer cancellation is a REQUEST (message + staff decision), not an
+    // action. The service enforces the remaining state rules.
     const result = await transactionService.cancelTransaction(String(req.params.id), req.user.id);
     res.json(result);
   } catch (err) {
