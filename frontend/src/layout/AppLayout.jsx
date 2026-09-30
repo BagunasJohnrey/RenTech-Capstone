@@ -1,7 +1,10 @@
-import { Search } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { Search, MessageCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
 import MobileBottomNav from './MobileBottomNav';
+import InstallAppBanner from '../components/InstallAppBanner';
 import NotificationsDropdown from '../components/NotificationsDropdown';
+import { isDemoMode, getDemoRole, setDemoRole, DEMO_ROLES } from '../utils/demoMode';
 
 // Layout-level CSS (animations, scrollbars). Kept here so the composition
 // root (App.jsx) stays free of styling concerns.
@@ -15,6 +18,15 @@ const customStyles = `
   .custom-scrollbar:hover::-webkit-scrollbar-thumb { background-color: #e5e7eb; }
   .hide-scrollbar::-webkit-scrollbar { display: none; }
   .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Receipt printing — only .print-area content reaches the paper; the
+     app shell, modal chrome and .no-print buttons stay out. */
+  @media print {
+    body * { visibility: hidden; }
+    .print-area, .print-area * { visibility: visible; }
+    .print-area { position: absolute; left: 0; top: 0; width: 100%; }
+    .no-print { display: none !important; }
+  }
 
   /* Transition animations */
   .page-enter { animation: fadeSlideUp 0.4s ease-out; }
@@ -64,13 +76,52 @@ export default function AppLayout({
   onViewAllNotifications,
   taskBadge,
   onFabClick,
+  scrollKey,
+  animateKey,
   children,
   overlays,
 }) {
+  // Page content scrolls in THIS div (the window itself is fixed-height and
+  // doesn't scroll), so scrolling must target it — window.scrollTo() never
+  // works for the app shell.
+  const contentRef = useRef(null);
+
+  // Every tab change (and every re-click of the same tab, via scrollKey)
+  // glides the content back to the top.
+  useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [activeTab, scrollKey]);
+
   return (
     <>
       <style>{customStyles}</style>
-      <div className="w-full h-screen bg-[#fcfcfd] flex flex-col md:flex-row overflow-hidden relative text-gray-800">
+      {/* Demo-mode banner: makes it obvious the app runs on mock data (no
+          backend / Supabase) and lets you hop between the three roles. */}
+      {isDemoMode() && (
+        <div className="w-full bg-amber-400 text-amber-950 text-[11px] sm:text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-2 flex-wrap z-[60] relative">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-950 animate-pulse" />
+            DEMO MODE — mock data, no backend
+          </span>
+          <span className="flex items-center gap-1">
+            {DEMO_ROLES.map((r) => (
+              <button
+                key={r}
+                onClick={() => setDemoRole(r)}
+                className={`px-2 py-0.5 rounded-full transition-colors ${getDemoRole() === r ? 'bg-amber-950 text-amber-300' : 'hover:bg-amber-300/60'}`}
+              >
+                {r}
+              </button>
+            ))}
+          </span>
+        </div>
+      )}
+      {/* h-screen fallback first: browsers with dynamic viewport units track
+          the visible area (URL bar / keyboard) so fixed sheets and the shell
+          never size against the hidden large viewport on mobile Chrome. */}
+      <div className="w-full h-screen supports-[height:100dvh]:h-[100dvh] bg-[#fcfcfd] flex flex-col md:flex-row overflow-hidden relative text-gray-800">
 
         <Sidebar
           role={viewRole}
@@ -82,7 +133,9 @@ export default function AppLayout({
           taskBadge={taskBadge}
         />
 
-        <main className="grow flex flex-col h-screen overflow-hidden relative pb-24 md:pb-0">
+        <main className="grow flex flex-col min-w-0 h-screen supports-[height:100dvh]:h-[100dvh] overflow-hidden relative pb-24 md:pb-0">
+          {/* PWA install nudge — mobile only, after login, all roles. */}
+          <InstallAppBanner />
           <header className="bg-white/70 backdrop-blur-xl border-b border-gray-100/50 px-5 md:px-10 py-4 flex items-center justify-between z-20 shrink-0">
             <div className="flex items-center gap-2 md:hidden">
               <img
@@ -90,8 +143,9 @@ export default function AppLayout({
                 alt="Profile"
                 className="w-8 h-8 rounded-full object-cover border border-gray-200"
               />
-              {/* Mobile role / name display */}
-              <span className="text-sm font-bold text-gray-800 truncate max-w-[120px]">
+              {/* Mobile role / name display — full name always visible, wraps to
+                  a second line instead of cropping */}
+              <span className="text-sm font-bold text-gray-800 leading-tight break-words max-w-[45vw]">
                 {viewRole === 'Customer' ? (customerInfo?.name || 'Customer') : viewRole}
               </span>
             </div>
@@ -153,17 +207,42 @@ export default function AppLayout({
                 </button>
               )}
 
+              {/* Messages inbox shortcut — roles with a Messages tab (Admin),
+                  placed beside the notification bell */}
+              {navItems?.some((i) => i.id === 'Messages') && (
+                <button
+                  onClick={() => setActiveTab('Messages')}
+                  aria-label="Open customer messages"
+                  title="Messages"
+                  className={`md:hidden p-2.5 rounded-full relative transition-colors btn-press ${
+                    activeTab === 'Messages' ? 'bg-[#bf4a53]/10 text-[#bf4a53]' : 'bg-gray-50/80 text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <MessageCircle size={18} />
+                </button>
+              )}
+
               <NotificationsDropdown
                 role={role}
                 showNotifications={showNotifications}
                 toggle={onToggleNotifications}
                 onViewAll={onViewAllNotifications}
+                onNavigateTab={setActiveTab}
               />
             </div>
           </header>
 
-          <div className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-            {children}
+          <div
+            ref={contentRef}
+            id="app-scroll"
+            className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar"
+          >
+            {/* Keyed wrapper: the fade plays as the NEW page mounts, so the
+                swap doesn't dip the already-painted content back to opacity 0
+                (that flicker showed the previous page mid-transition). */}
+            <div key={animateKey ?? activeTab} className="page-enter min-h-full">
+              {children}
+            </div>
           </div>
         </main>
 

@@ -45,6 +45,7 @@ model Profile {
    mfaEnabled  Boolean  @default(false) @map("mfa_enabled")
    totpSecret  String?  @map("totp_secret")
    backupCodes Json?    @map("backup_codes")
+   mustChangePassword Boolean @default(false) @map("must_change_password")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -53,6 +54,7 @@ model Profile {
   notifications  Notification[]
   sentMessages   SentSms[]              @relation("SentMessages")
   sentByMessages SentSms[]              @relation("SentByMessages")
+  emailTokens    EmailToken[]
 
   @@map("profiles")
 }
@@ -107,6 +109,9 @@ model Transaction {
   overdueEscalationSent Boolean     @default(false) @map("overdue_escalation_sent")
   damageReason    String?           @map("damage_reason")
   notes           String?
+  // Garment alteration workflow: null = no alteration needed,
+  // 'pending' = with tailor, 'ready' = fitted, customer may pick up.
+  alterationStatus String?          @map("alteration_status")
   size            String?           @map("size")
   measurements    Json?             @map("measurements")
   paymentIntentId String?           @map("payment_intent_id")
@@ -234,4 +239,24 @@ model AuditLog {
   createdAt     DateTime @default(now()) @map("created_at")
 
   @@map("audit_logs")
+}
+
+// Single-use email tokens for Brevo-delivered flows (signup verification +
+// password reset). Supabase still owns the auth credential — this table only
+// proves "the holder of this inbox clicked the link" without routing email
+// through Supabase's own SMTP.
+model EmailToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  token     String    @unique
+  type      String
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  profile Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId, type])
+  @@map("email_tokens")
 }

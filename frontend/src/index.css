@@ -11,6 +11,25 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
 * { -ms-overflow-style: none; scrollbar-width: none; }
 
 /* ---------------------------------------------------------------------------
+   Skeleton shimmer — the .rt-shimmer blocks sweep a soft light band while
+   content loads (used by the default loading screen + page skeletons)
+   --------------------------------------------------------------------------- */
+.rt-shimmer {
+  position: relative;
+  overflow: hidden;
+  background-color: #eceef0;
+}
+.rt-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: rt-shimmer-sweep 1.5s infinite;
+}
+@keyframes rt-shimmer-sweep { 100% { transform: translateX(100%); } }
+
+/* ---------------------------------------------------------------------------
    QR scanner — animated scan line inside the viewfinder frame
    --------------------------------------------------------------------------- */
 @keyframes scanline {
@@ -88,4 +107,18 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
   font-size: 10px;
   color: #9ca3af;
   text-align: center;
+}
+
+/* Bottom-sheet height cap with a deterministic fallback chain (plain CSS —
+   class order here is guaranteed, unlike competing arbitrary utilities).
+   svh wins where supported: it tracks the SMALLEST viewport, so the sheet
+   always fits with a top gap even when dynamic chrome misreports. */
+.sheet-cap { max-height: 95vh; max-height: 92dvh; max-height: 92svh; }
+
+/* On-screen (non-print) tightening so the long report reads on phones.
+   Print/PDF output keeps the roomy desktop metrics above. */
+@media (max-width: 639px) {
+  .report-document-screen { padding: 24px 20px; }
+  .report-document-screen .report-company { font-size: 20px; }
+  .report-document-screen .report-section { margin-bottom: 18px; }
 }

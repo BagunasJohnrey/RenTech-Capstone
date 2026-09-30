@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Bell, ShoppingBag, CalendarClock, Clock, CheckCircle2,
-  AlertTriangle, Smartphone, X, Circle, Trash2, CheckCheck, Inbox,
+  AlertTriangle, Smartphone, MessageCircle, XCircle, X, Circle, Trash2, CheckCheck, Inbox,
 } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
@@ -11,11 +11,15 @@ import ConfirmModal from './ConfirmModal';
 export const TYPE_CONFIG = {
   new_booking: { icon: ShoppingBag, iconBg: 'bg-[#bf4a53]/10', iconColor: 'text-[#bf4a53]', chip: 'New Booking' },
   booking_confirmation: { icon: CheckCircle2, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500', chip: 'Confirmation' },
+  booking_updated: { icon: CalendarClock, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Updated' },
+  booking_cancelled: { icon: XCircle, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Cancelled' },
+  alteration_needed: { icon: AlertTriangle, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Alteration' },
   due_today: { icon: CalendarClock, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Due Today' },
   overdue: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Overdue' },
   late_return: { icon: Clock, iconBg: 'bg-orange-50', iconColor: 'text-orange-500', chip: 'Late Return' },
   no_show: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-600', chip: 'No-Show' },
   reminder: { icon: Smartphone, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Reminder' },
+  customer_message: { icon: MessageCircle, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Customer Message' },
   default: { icon: Bell, iconBg: 'bg-gray-100', iconColor: 'text-gray-500', chip: 'Notification' },
 };
 
@@ -28,6 +32,7 @@ export const mapNotification = (n) => {
     title: n.title || cfg.chip,
     text: n.message || n.text || '',
     time: n.createdAt,
+    transactionId: n.transactionId ?? null,
     cfg,
   };
 };
@@ -47,7 +52,23 @@ export const timeAgo = (iso) => {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-export default function NotificationsDropdown({ role, showNotifications, toggle, onViewAll }) {
+// Tab each notification type opens. Staff actionables go to Tasks; admin
+// customer messages go to the Messages inbox; everything record-related
+// goes to History; plain notices go home.
+export const targetTabForNotification = (type, role) => {
+  if (type === 'customer_message') {
+    if (role === 'Admin') return 'Messages';
+    if (role === 'Staff') return 'Tasks';
+    return 'History';
+  }
+  if (role === 'Staff' && ['new_booking', 'due_today', 'overdue', 'late_return', 'no_show', 'reminder'].includes(type)) {
+    return 'Tasks';
+  }
+  if (!type || type === 'default') return role === 'Customer' ? 'Home' : 'Dashboard';
+  return 'History';
+};
+
+export default function NotificationsDropdown({ role, showNotifications, toggle, onViewAll, onNavigateTab }) {
   useEscapeClose(toggle, showNotifications);
   const rootRef = useRef(null);
   const [notifications, setNotifications] = useState([]);
@@ -130,6 +151,13 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
     } catch {
       setNotifications(prev);
     }
+  };
+
+  // Tapping a notification marks it read and jumps to its page.
+  const handleOpen = (n) => {
+    if (!n.isRead) handleMarkRead(n.id);
+    toggle();
+    if (onNavigateTab) onNavigateTab(targetTabForNotification(n.type, role));
   };
 
   // Optimistic per-item delete, reverted on failure.
@@ -263,9 +291,9 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
           </div>
 
           {/* List */}
-          <div className="max-h-80 overflow-y-auto hide-scrollbar p-3 space-y-1.5">
+          <div className="max-h-80 overflow-y-auto hide-scrollbar p-4 space-y-3">
             {loading ? (
-              <div className="space-y-1.5 py-2">
+              <div className="space-y-3 py-3">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <div key={i} className="flex items-center gap-3 p-2.5">
                     <Skeleton className="w-9 h-9 rounded-xl shrink-0" />
@@ -289,28 +317,28 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
                 </p>
               </div>
             ) : (
-              <div className="stagger">
+              <div className="stagger space-y-2">
                 {visible.map((n) => {
                   const Icon = n.cfg.icon;
                   return (
                     <div
                       key={n.id}
-                      className={`group relative w-full text-left flex items-start gap-3 p-3 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
+                      className={`group relative w-full text-left flex items-start gap-4 p-4 rounded-2xl transition-colors duration-150 hover:bg-[#bf4a53]/5 hover:ring-1 hover:ring-[#bf4a53]/10 ${
                         n.isRead ? '' : 'bg-gradient-to-r from-[#bf4a53]/[0.06] to-transparent'
                       }`}
                     >
                       {!n.isRead && (
-                        <span className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-[#bf4a53]" />
+                        <span className="absolute left-0 top-4 bottom-4 w-[3px] rounded-r-full bg-[#bf4a53]" />
                       )}
                       <button
-                        onClick={() => !n.isRead && handleMarkRead(n.id)}
-                        className="flex-1 min-w-0 flex items-start gap-3 text-left"
-                        aria-label={n.isRead ? n.title : `Mark ${n.title} as read`}
+                        onClick={() => handleOpen(n)}
+                        className="flex-1 min-w-0 flex items-start gap-4 text-left"
+                        aria-label={`Open ${n.title}`}
                       >
                         <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${n.cfg.iconBg}`}>
                           <Icon size={16} className={n.cfg.iconColor} />
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 py-0.5">
                           <div className="flex items-center gap-1.5">
                             <p className="text-[13px] font-bold text-gray-900 truncate">{n.title}</p>
                             <span className={`text-[10px] font-bold px-1.5 py-px rounded-full bg-gray-100 text-gray-400 shrink-0 ${n.cfg.iconColor}`}>
@@ -336,7 +364,7 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
             )}
           </div>
 
-          <div className="px-3 py-2 border-t border-gray-100/70">
+          <div className="px-4 py-3 border-t border-gray-100/70">
             <button
               onClick={onViewAll}
               className="w-full py-2.5 rounded-xl text-[12px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 active:bg-[#bf4a53]/10 transition-colors"

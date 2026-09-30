@@ -1,4 +1,4 @@
-import { Edit3, Trash2, Calendar, Eye, CheckCircle2, Wrench, Lock } from 'lucide-react';
+import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { itemPill } from '../utils/statusColors';
 
@@ -21,9 +21,9 @@ export function getSaleInfo(item) {
 function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, showBook }) {
   const sale = getSaleInfo(item);
   return (
-    <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group">
-      <div className="relative aspect-[9/16] bg-gray-50 overflow-hidden">
-        <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+    <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
+      <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
+        <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
           <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] sm:text-[10px] font-bold shadow-sm text-[#bf4a53]">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
@@ -57,11 +57,10 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
         </div>
       </div>
 
-      <div className="p-2.5 sm:p-3 space-y-2">
+      <div className="p-3 sm:p-4 space-y-2 flex flex-col flex-1">
         <div className="min-w-0">
           <div className="flex items-center gap-1">
             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</span>
-            {item.size && <><span className="text-gray-300 text-[9px]">·</span><span className="text-[9px] font-medium text-gray-400">{item.size}</span></>}
           </div>
           <h3 className="font-bold text-gray-900 text-[13px] leading-tight truncate">{item.name}</h3>
           <p className="font-bold text-[13px]">
@@ -171,7 +170,7 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
       className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
       <button type="button" onClick={() => onViewDetail?.(item)} aria-label={`View ${item.name}`}
         className="relative aspect-[4/5] bg-gray-50 overflow-hidden w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60">
-        <ItemImage image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+        <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
           <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] font-bold shadow-sm text-[#bf4a53]">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
@@ -194,18 +193,10 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
         {(() => {
           const disabled = !guest && (item.status === 'OutOfService' || item.status === 'Deleted');
           const sizingCls = 'w-full font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-1.5 whitespace-nowrap';
+          // Guests tap the photo itself to open details (same modal) — no
+          // separate button needed on the card.
           if (guest) {
-            return (
-              <div className="mt-auto pt-3">
-                <button data-tour="book" type="button"
-                  onClick={(e) => { e.stopPropagation(); onViewDetail?.(item); }}
-                  className={`${sizingCls} bg-white border border-[#bf4a53]/60 text-[#bf4a53] hover:bg-[#bf4a53] hover:text-white hover:shadow-lg hover:shadow-[#bf4a53]/25 active:scale-[0.98]`}
-                >
-                  <Eye size={15} />
-                  View Details
-                </button>
-              </div>
-            );
+            return null;
           }
           if (disabled) {
             return (

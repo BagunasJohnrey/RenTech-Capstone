@@ -13,6 +13,8 @@ import webhookRoutes from './routes/webhooks.routes.js';
 import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNotify } from './services/sms.service.js';
 import { purgeOldData } from './services/retention.service.js';
 import { ensureBucket } from './services/storage.service.js';
+import { ensureBackupBucket, runAutoBackup } from './services/backup.service.js';
+import { ensureAiReportsBucket } from './services/aiReport.service.js';
 import { getKpis, getForecast, getInsights, getTodayTasks } from './services/dashboard.service.js';
 import { getInventoryAnalytics } from './services/inventoryAnalytics.service.js';
 
@@ -81,10 +83,35 @@ app.use(errorHandler);
 
 app.listen(env.PORT, () => {
   console.log(`Server running on port ${env.PORT} [${env.NODE_ENV}]`);
+  console.log(`[storage] Supabase URL: ${env.SUPABASE_URL}`);
+  // The service key MUST carry role=service_role: with an anon key every
+  // service-role path (storage uploads, auth.admin.*) fails confusingly
+  // (e.g. RLS violations on backup uploads). Claims only, never the secret.
+  import('./config/supabase.js').then(
+    ({ supabaseKeyRole }) => console.log(`[supabase] service key role: ${supabaseKeyRole()}`),
+    () => {}
+  );
 
   // Ensure the private image bucket exists so item-photo uploads can mint
   // signed URLs (otherwise generateUploadUrl throws "Failed to generate upload URL").
-  ensureBucket().catch((err) => console.error('Storage bucket init failed:', err));
+  ensureBucket()
+    .then(async () => {
+      // Quick startup sanity: verify the bucket has files and signed URLs work.
+      const { supabaseAdmin } = await import('./config/supabase.js');
+      const { data: files } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').list('', { limit: 3 });
+      console.log(`[storage] bucket check (${process.env.STORAGE_BUCKET || 'rentech-images'}): ${files?.length ?? 0} sample files found`);
+      if (files?.[0]) {
+        const { data, error } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').createSignedUrl(files[0].name, 60);
+        console.log(`[storage] signed URL test for "${files[0].name}":`, error ? `FAIL (${error.message})` : 'OK');
+      }
+    })
+    .catch((err) => console.error('Storage bucket init failed:', err));
+
+  // Ensure the private backup/report buckets right away (not only on the
+  // delayed auto-backup tick) so manual backups upload from the first minute
+  // instead of failing with "Bucket not found" after a fresh restart.
+  ensureBackupBucket().catch((err) => console.error('Backup bucket init failed:', err));
+  ensureAiReportsBucket().catch((err) => console.error('Reports bucket init failed:', err));
 
   // Pre-warm the dashboard cache so the first page load (AI Insights, KPIs,
   // revenue charts) is a cache hit instead of paying the cold-connection +
@@ -172,6 +199,45 @@ app.listen(env.PORT, () => {
     daily.unref?.();
   }, 5 * 60 * 1000);
   retentionStart.unref?.();
+
+  // Automatic daily backup to the private `rentech-backups` bucket (the copy
+  // that survives ephemeral disks). Same overlap guard + daily cadence as the
+  // retention purge; runAutoBackup itself skips when the last successful run
+  // (persisted in BusinessRule) was within 24h, so restarts never double-run.
+  // The buckets are ensured here so a fresh Supabase project self-provisions.
+  let autoBackupRunning = false;
+  const runAutoBackupTick = async () => {
+    if (autoBackupRunning) return;
+    autoBackupRunning = true;
+    try {
+      await ensureBackupBucket();
+      await ensureAiReportsBucket();
+      await runAutoBackup();
+    } catch (err) {
+      console.error('[AutoBackup] tick failed:', err);
+    } finally {
+      autoBackupRunning = false;
+    }
+  };
+  const autoBackupStart = setTimeout(() => {
+    runAutoBackupTick();
+    const daily = setInterval(runAutoBackupTick, 24 * 60 * 60 * 1000);
+    daily.unref?.();
+  }, 10 * 60 * 1000);
+  autoBackupStart.unref?.();
+
+  // Keep Render free tier alive: ping the health endpoint every 8 minutes so
+  // the server never sleeps. Only needed in production (dev is always warm).
+  if (env.NODE_ENV === 'production') {
+    const keepAlive = setInterval(async () => {
+      try {
+        const host = process.env.RENDER_INTERNAL_HOSTNAME || '127.0.0.1';
+        const port = env.PORT;
+        await fetch(`http://${host}:${port}/api/health`);
+      } catch { /* self-ping — best effort */ }
+    }, 8 * 60 * 1000);
+    keepAlive.unref?.();
+  }
 });
 
 export default app;

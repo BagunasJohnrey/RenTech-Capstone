@@ -16,6 +16,8 @@ vi.mock('../src/config/env.js', () => ({
     DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
     SEMAPHORE_API_KEY: '',
     GEMINI_API_KEY: '',
+    GROQ_API_KEY: '',
+    OPENROUTER_API_KEY: '',
   },
 }));
 
@@ -95,8 +97,8 @@ describe('POST /api/payments/create-intent', () => {
     const res = await request(app)
       .post('/api/payments/create-intent')
       .set('Authorization', 'Bearer customer-token')
-      // 2500 = the 50% minimum downpayment of the 5000 fee (security rule:
-      // payments must be within [50% of fee, outstanding balance]).
+      // 2500 satisfies the flat minimum payment (default ₱200 floor; payments
+      // must be within [flat floor, outstanding balance]).
       .send({ transactionId: 'tx-1', amount: 2500 });
 
     expect(res.status).toBe(200);
@@ -104,7 +106,7 @@ describe('POST /api/payments/create-intent', () => {
     expect(res.body).toHaveProperty('clientKey');
   });
 
-  it('should reject a payment below the 50% minimum downpayment', async () => {
+  it('should reject a payment below the flat minimum payment', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-1', txNumber: 1001, customerId: 'customer-id-111',
@@ -115,7 +117,7 @@ describe('POST /api/payments/create-intent', () => {
     const res = await request(app)
       .post('/api/payments/create-intent')
       .set('Authorization', 'Bearer customer-token')
-      .send({ transactionId: 'tx-1', amount: 1000 });
+      .send({ transactionId: 'tx-1', amount: 100 });
 
     expect(res.status).toBe(400);
   });

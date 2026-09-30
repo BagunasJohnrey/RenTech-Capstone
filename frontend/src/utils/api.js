@@ -1,4 +1,6 @@
 import { isAuthed } from './authSession';
+import { isDemoMode } from './demoMode';
+import { demoRequest } from './demoInterceptor';
 
 // Phase 1: auth is cookie-backed (httpOnly). All fetch calls include
 // credentials so the browser sends the rt_access / rt_refresh cookies.
@@ -6,6 +8,10 @@ import { isAuthed } from './authSession';
 // Bearer fallback for backward-compat / scripts).
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+// Full-page navigations (OAuth redirects) don't go through `request`, so expose
+// the same resolved base for window.location.href calls.
+export const API_ORIGIN = API_BASE.replace(/\/api\/?$/, '');
 
 const FETCH_TIMEOUT_MS = 20000; // abort requests the server never answers
 
@@ -59,6 +65,12 @@ async function refreshOnce() {
 }
 
 async function request(method, path, body = undefined, _retried = false, opts = {}) {
+  // Demo mode: answer from the in-memory mock — the request never leaves
+  // the browser (no backend / Supabase needed for frontend-only viewing).
+  if (isDemoMode()) {
+    return demoRequest(method, path, body);
+  }
+
   const headers = { 'Content-Type': 'application/json' };
 
   const timeoutMs = opts.timeout || FETCH_TIMEOUT_MS;
@@ -98,6 +110,20 @@ async function request(method, path, body = undefined, _retried = false, opts = 
 }
 
 async function downloadBlob(path, filename, _retried = false) {
+  // Demo mode: synthesize the file in-browser — no backend to stream from.
+  if (isDemoMode()) {
+    const data = await demoRequest('GET', path, {});
+    const blob = new Blob([JSON.stringify(data ?? { demo: true }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
   const headers = {};
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);

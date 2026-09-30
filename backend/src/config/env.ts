@@ -31,10 +31,26 @@ export const env = {
   PAYMONGO_SECRET_KEY: process.env.PAYMONGO_SECRET_KEY || '',
   PAYMONGO_PUBLIC_KEY: process.env.PAYMONGO_PUBLIC_KEY || '',
   PAYMONGO_WEBHOOK_SECRET: process.env.PAYMONGO_WEBHOOK_SECRET || '',
+  // Pre-integration escape hatch: PAYMONGO_SIMULATE=true lets the booking flow
+  // complete end-to-end (fake succeeded intents, `simulated: true`) even in
+  // production. NO real money moves — set the real key and remove this flag
+  // the moment PayMongo is integrated.
+  PAYMONGO_SIMULATE: process.env.PAYMONGO_SIMULATE === 'true',
 
   SEMAPHORE_API_KEY: process.env.SEMAPHORE_API_KEY || '',
 
+  // Brevo (formerly Sendinblue) transactional email — verification, password
+  // reset, booking/pickup/return/cancellation + reminder emails. Empty in dev
+  // (sends are simulated) — must be set in any deployment that emails users.
+  BREVO_API_KEY: process.env.BREVO_API_KEY || '',
+  BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || '',
+  BREVO_SENDER_NAME: process.env.BREVO_SENDER_NAME || 'RenTech',
+
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+
+  // Groq fallback (second tier: Gemini → Groq → OpenRouter). Low-latency
+  // free-tier models keep the stylist + reports online when Gemini is down.
+  GROQ_API_KEY: process.env.GROQ_API_KEY || '',
 
   // OpenRouter fallback so the AI stylist still answers when Gemini is down /
   // unconfigured. Key is optional; only free-capable models are tried.
@@ -45,4 +61,17 @@ export const env = {
   // confirmation email and the account can't log in until verified. Set
   // AUTH_EMAIL_CONFIRM=true to auto-confirm (frictionless demo).
   AUTH_EMAIL_CONFIRM: process.env.AUTH_EMAIL_CONFIRM === 'true',
+
+  // Server-side image compression (sharp): every uploaded image is
+  // auto-rotated via its EXIF orientation tag, EXIF-stripped, downscaled to
+  // at most IMAGE_MAX_DIM px on its longest edge, and re-encoded as WebP at
+  // IMAGE_WEBP_QUALITY before it reaches the storage bucket. A small
+  // IMAGE_THUMB_DIM px WebP derivative (IMAGE_THUMB_QUALITY) is stored
+  // alongside under `thumbs/` for grid thumbnails. Mirrors the client-side
+  // canvas downscale (utils/file.js) so direct API uploads (curl/Postman)
+  // can't land full-size images in the bucket.
+  IMAGE_MAX_DIM: parseInt(process.env.IMAGE_MAX_DIM || '1280', 10),
+  IMAGE_WEBP_QUALITY: parseInt(process.env.IMAGE_WEBP_QUALITY || '78', 10),
+  IMAGE_THUMB_DIM: parseInt(process.env.IMAGE_THUMB_DIM || '480', 10),
+  IMAGE_THUMB_QUALITY: parseInt(process.env.IMAGE_THUMB_QUALITY || '70', 10),
 };

@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
-  ClipboardList, AlertTriangle
+  ClipboardList, AlertTriangle, MessageCircle
 } from 'lucide-react';
 
 import { useAuth } from './hooks/useAuth';
@@ -11,37 +11,34 @@ import { useInventory } from './hooks/useInventory';
 import { useTransactions, normalizeTx } from './hooks/useTransactions';
 import { useStaff } from './hooks/useStaff';
 import { useCustomerProfile } from './hooks/useCustomerProfile';
-import { api } from './utils/api';
+import { api, API_ORIGIN } from './utils/api';
 import { useToast } from './components/Toast';
 
 import LoginPage from './pages/LoginPage';
 import ForgotPasswordView from './pages/ForgotPasswordView';
 import VerifyEmailView from './pages/VerifyEmailView';
 import OAuthErrorView from './pages/OAuthErrorView';
+import PrivacyPolicyView from './pages/PrivacyPolicyView';
+import TermsOfServiceView from './pages/TermsOfServiceView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
-import LandingPage from './pages/LandingPage';
+import ForcedPasswordChange from './components/ForcedPasswordChange';
 import InventoryPage from './pages/InventoryPage';
-import HistoryPage from './pages/HistoryPage';
 import TasksPage from './pages/TasksPage';
 import HelpGuide from './pages/HelpGuide';
 import ConfirmModal from './components/ConfirmModal';
 import ItemForm from './components/ItemForm';
 import AppLayout from './layout/AppLayout';
-import CustomerRentalFlow from './components/CustomerRentalFlow';
 import NotFoundPage from './pages/NotFoundPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 import { SkeletonScreen } from './components/Skeleton';
 import { PageSkeleton } from './components/PageSkeletons';
 import ProcessReturnModal from './components/ProcessReturnModal';
 import ReleaseItemModal from './components/ReleaseItemModal';
-import TransactionDetailModal from './components/TransactionDetailModal';
 import OutOfServiceModal from './components/OutOfServiceModal';
-import ChatbotModal from './components/ChatbotModal';
 import AvailabilityCalendar from './components/AvailabilityCalendar';
 import OnboardingTutorial from './components/OnboardingTutorial';
 import GlobalSearchModal from './components/GlobalSearchModal';
 import ItemDetailModal from './components/ItemDetailModal';
-import QrScannerModal from './components/QrScannerModal';
 
 // Route-level screens are code-split so the heavy recharts bundle (dashboard /
 // analytics) is only fetched when those tabs are actually opened.
@@ -51,13 +48,23 @@ const InventoryAnalyticsView = lazy(() => import('./pages/InventoryAnalyticsView
 const ProfileSettingsView = lazy(() => import('./pages/ProfileSettingsView'));
 const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
 const NotificationsView = lazy(() => import('./pages/NotificationsView'));
+const MessagesView = lazy(() => import('./pages/MessagesView'));
+const HistoryPage = lazy(() => import('./pages/HistoryPage'));
+// Modal/large components that drag heavy deps (framer-motion, qrcode,
+// html5-qrcode, react-markdown) into the boot bundle — deferred until opened.
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const CustomerRentalFlow = lazy(() => import('./components/CustomerRentalFlow'));
+const ChatbotModal = lazy(() => import('./components/ChatbotModal'));
+const QrScannerModal = lazy(() => import('./components/QrScannerModal'));
+const TransactionDetailModal = lazy(() => import('./components/TransactionDetailModal'));
 
 const navItems = {
   Admin: [
     { id: 'Dashboard', icon: LayoutGrid, label: 'Dashboard' },
     { id: 'Catalog', icon: ShoppingBag, label: 'Inventory' },
     { id: 'History', icon: Clock, label: 'Transactions' },
-    { id: 'AI Insights', icon: Sparkles, label: 'AI Intelligence', special: true },
+    { id: 'AI Insights', icon: Sparkles, label: 'Reports', special: true },
+    { id: 'Messages', icon: MessageCircle, label: 'Messages' },
     { id: 'Settings', icon: Settings, label: 'Settings' },
   ],
   Staff: [
@@ -77,7 +84,7 @@ const navItems = {
 };
 
 export default function RentechApp() {
-  const { isLoggedIn, role, profile, loading, logout, updateProfile, completeOAuth, cancelOAuth } = useAuth();
+  const { isLoggedIn, role, profile, loading, logout, updateProfile, fetchProfile, completeOAuth, cancelOAuth, completeForcedPasswordChange } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -91,7 +98,6 @@ export default function RentechApp() {
   // Strip a trailing detail id (numeric item id OR a transaction UUID) so the
   // underlying tab resolves for detail URLs like /staff/logs/<uuid>.
   const basePath = location.pathname.replace(/\/(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\d+)$/, '');
-  const goTab = (tabId) => navigate(tabPath(viewRole, tabId));
   // '/' is the app entry: customers get their Home, staff/admin get their
   // dashboard (otherwise they'd hit the Unauthorized page right after login).
   const activeTab = (location.pathname === '/' && viewRole)
@@ -100,6 +106,23 @@ export default function RentechApp() {
   // Paths that belong to another role (for the Unauthorized page).
   const roleOwnsPath = pathRequiresRole(location.pathname);
   const [showOAuthDetails, setShowOAuthDetails] = useState(false);
+
+  // Incremented on every nav click (even the same tab) so AppLayout knows to
+  // jump the content scroller to the top — the window doesn't scroll in this
+  // app shell, only the inner content div does.
+  const [navTick, setNavTick] = useState(0);
+  const goTab = (tabId) => {
+    setNavTick((t) => t + 1);
+    navigate(tabPath(viewRole, tabId));
+  };
+  // One-shot History search prefill (Item Performance row click): consumed +
+  // cleared by HistoryView on arrival so later visits start unfiltered.
+  const [historySearch, setHistorySearch] = useState('');
+  const viewItemTransactions = (item) => {
+    if (!item) return;
+    setHistorySearch(item.name || '');
+    goTab('History');
+  };
 
   const handleOAuthDetails = async (details) => {
     await completeOAuth(details);
@@ -135,7 +158,7 @@ export default function RentechApp() {
     if (oauthError) {
       navigate('/', { replace: true });
     } else if (code) {
-      window.location.href = `/api/auth/oauth/callback?code=${encodeURIComponent(code)}`;
+      window.location.href = `${API_ORIGIN}/api/auth/oauth/callback?code=${encodeURIComponent(code)}`;
     } else {
       navigate('/', { replace: true });
     }
@@ -161,10 +184,11 @@ export default function RentechApp() {
     remove: removeTransaction,
     release: releaseTransaction,
     getById,
+    prefetchTx,
     loading: transactionsLoading,
   } = useTransactions();
   // Staff accounts (Admin) — encapsulated in useStaff (SoC).
-  const { staffAccounts, loadStaff, addStaff, removeStaff } = useStaff();
+  const { staffAccounts, staffLoadError, loadStaff, addStaff, removeStaff, updateStaff } = useStaff();
   // Editable customer profile + sync with auth profile — useCustomerProfile (SoC).
   const { customerInfo, syncFromProfile, updateCustomer } = useCustomerProfile(updateProfile);
 
@@ -196,6 +220,13 @@ export default function RentechApp() {
     if (guestView) loadInventory().catch(() => {});
   }, [guestView, loadInventory]);
 
+  // Entering/exiting the guest collection swaps the whole page (landing ⇄
+  // catalog) without a route change, so the window keeps its old scroll
+  // position — reset it so the new view starts at the top.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [guestView]);
+
   // Availability calendar
   const [calendarItem, setCalendarItem] = useState(null);
 
@@ -214,7 +245,9 @@ export default function RentechApp() {
   // Global search
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
-  const [routedTx, setRoutedTx] = useState(null);
+  // Fetch fallback for a routed transaction id missing from the loaded list
+  // (deep link / fresh reload). The list hit below resolves synchronously.
+  const [fetchedTx, setFetchedTx] = useState(null);
 
   // Staff QR scanner — the staff member first picks RELEASE or RETURN, then
   // the scanned transaction opens straight into the matching modal.
@@ -260,7 +293,9 @@ export default function RentechApp() {
       if (pathRef.current === '/' && role && role !== 'Customer' && !loggingOutRef.current) {
         navigate(HOME_PATH[role], { replace: true });
       }
-      const onboardingKey = profile.role === 'Customer' ? 'onboardingDone_Customer' : 'onboardingDone';
+      const onboardingKey = profile.role === 'Customer' ? 'onboardingDone_Customer'
+        : profile.role === 'Admin' ? 'onboardingDone_Admin'
+        : 'onboardingDone_Staff';
       if (!localStorage.getItem(onboardingKey)) {
         setShowOnboarding(true);
       }
@@ -274,6 +309,11 @@ export default function RentechApp() {
     if (role === 'Admin') {
       loadStaff().catch(() => {});
     }
+    // Preload the transaction detail chunk while idle so the first popup
+    // open never pays the lazy-chunk download on top of mount + data.
+    const preload = () => import('./components/TransactionDetailModal').catch(() => {});
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(preload);
+    else setTimeout(preload, 2000);
   }, [isLoggedIn, role, loadInventory, loadTransactions, loadStaff]);
 
   // Routed detail modals: resolve the URL id into a full record. Rendering is
@@ -293,13 +333,70 @@ export default function RentechApp() {
   // RegExp match object on every render, which would retrigger this effect in
   // an infinite loop (React "Maximum update depth exceeded").
   const txDetailId = txDetailMatch ? String(txDetailMatch[1]) : null;
+  useEffect(() => { setFetchedTx(null); }, [txDetailId]);
   useEffect(() => {
     if (!isLoggedIn || !txDetailId) return;
-    const id = txDetailId;
-    const found = transactions.find((t) => String(t.id) === id);
-    if (found) { setRoutedTx(normalizeTx(found)); return; }
-    getById(id).then((full) => setRoutedTx(normalizeTx(full))).catch(() => {});
+    // List covers it — the memo below resolves it synchronously, no fetch.
+    if (transactions.some((t) => String(t.id) === txDetailId)) return;
+    let cancelled = false;
+    getById(txDetailId)
+      .then((full) => { if (!cancelled) setFetchedTx(normalizeTx(full)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [isLoggedIn, txDetailId, transactions, getById]);
+  // Resolve during render (not in an effect) so the modal mounts with its
+  // record on the same frame as the navigation — previously the effect's
+  // setState cost a full extra render cycle before anything appeared.
+  const routedTx = useMemo(() => {
+    if (!txDetailId) return null;
+    const found = transactions.find((t) => String(t.id) === txDetailId);
+    return found ? normalizeTx(found) : fetchedTx;
+  }, [txDetailId, transactions, fetchedTx]);
+
+  // Mobile system back button: keep navigation inside the app instead of
+  // leaving it. A guard history entry is pushed while logged in; each back
+  // press with an open overlay closes the topmost one (re-arming the guard).
+  // Plain tab switches push real URLs already, so with nothing open the
+  // browser navigates normally. Routed detail modals are URL-driven too, so
+  // they need no handling here.
+  const overlayCloserRef = useRef(() => false);
+  useEffect(() => {
+    overlayCloserRef.current = () => {
+      if (deleteConfirm) { setDeleteConfirm(null); return true; }
+      if (staffToRemove) { setStaffToRemove(null); return true; }
+      if (showLogoutModal) { setShowLogoutModal(false); return true; }
+      if (showOnboarding) { setShowOnboarding(false); return true; }
+      if (returnTransaction) { setReturnTransaction(null); return true; }
+      if (editingItem) { setEditingItem(null); return true; }
+      if (showAddItemModal) { setShowAddItemModal(false); return true; }
+      if (outOfServiceItem) { setOutOfServiceItem(null); return true; }
+      if (scannedTx) { setScannedTx(null); setScannedAction(null); return true; }
+      if (customerRental) { setCustomerRental(null); return true; }
+      if (showStaffRental || staffBookingItem) {
+        // StaffNewRental runs its own discard-confirm guard for dirty forms.
+        window.dispatchEvent(new Event('rentech:request-close'));
+        return true;
+      }
+      if (showChatbot) { setShowChatbot(false); return true; }
+      if (calendarItem) { setCalendarItem(null); return true; }
+      if (showGlobalSearch) { setShowGlobalSearch(false); return true; }
+      if (showScanner) { setShowScanner(false); return true; }
+      if (showNotifications) { setShowNotifications(false); return true; }
+      return false;
+    };
+  });
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const arm = () => { try { window.history.pushState({ rentechGuard: true }, ''); } catch { /* ignore */ } };
+    arm();
+    const onPopState = () => {
+      const closer = overlayCloserRef.current;
+      if (closer && closer()) arm();
+      // else: nothing open — let the browser navigate (tabs are URL-driven).
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [isLoggedIn]);
 
   const handleLogout = async () => {
     // Leave the portal URL first — otherwise the signed-out render (which
@@ -448,9 +545,10 @@ export default function RentechApp() {
     return created;
   };
 
-  const handleAddStaff = (newStaff) => {
-    addStaff(newStaff);
-    toastSuccess('Staff account added');
+  const handleAddStaff = async (newStaff) => {
+    const created = await addStaff(newStaff);
+    toastSuccess('Staff account created — share the one-time password');
+    return created;
   };
   const handleRemoveStaff = (staff) => {
     setStaffToRemove(staff);
@@ -540,9 +638,28 @@ export default function RentechApp() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center">
-        <SkeletonScreen />
+      <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center px-5 md:px-10">
+        <div className="w-full max-w-7xl">
+          <PageSkeleton tab={activeTab} />
+        </div>
       </div>
+    );
+  }
+
+  // First-login staff gate: a freshly created staff account (one-time
+  // password) locks the whole app to the change-password screen. Must come
+  // before every other authed branch so a mustChangePassword session can't
+  // reach the dashboard (the backend also 403s non-auth endpoints).
+  if (isLoggedIn && profile?.mustChangePassword) {
+    return (
+      <ForcedPasswordChange
+        email={profile.email}
+        onComplete={async (args) => {
+          await completeForcedPasswordChange(args);
+          toastSuccess('Password set — welcome!');
+        }}
+        onLogout={logout}
+      />
     );
   }
 
@@ -560,6 +677,18 @@ export default function RentechApp() {
   }
 
   // Google OAuth sign-up: collect missing details before completing the account.
+
+  // Public privacy policy (/privacy) — must be reachable signed-out (Google
+  // OAuth branding verification + landing footer link directly here).
+  if (location.pathname === '/privacy') {
+    return <PrivacyPolicyView />;
+  }
+
+  // Public terms of service (/terms) — standalone signed-out page reusing the
+  // same TERMS_SECTIONS text as the signup modal and Help Guide.
+  if (location.pathname === '/terms') {
+    return <TermsOfServiceView />;
+  }
 
   // Fallback + role guard: unknown URL -> 404 page; URL owned by another role
   // -> Unauthorized page (no silent redirect). Runs after the auth gates so
@@ -651,12 +780,6 @@ export default function RentechApp() {
 
               <div className="flex items-center gap-2 md:gap-3 shrink-0">
                 <button
-                  onClick={() => setGuestView(false)}
-                  className="text-xs md:text-sm font-semibold text-gray-600 px-3 py-2 hover:text-gray-950 transition-colors"
-                >
-                  ← Home
-                </button>
-                <button
                   onClick={() => { setGuestView(false); setShowLoginPage(true); }}
                   className="bg-[#bf4a53] text-white px-5 py-2.5 md:px-7 md:py-3 rounded-full font-bold text-xs md:text-sm shadow-lg shadow-[#bf4a53]/20 hover:bg-[#a63f47] transition-colors whitespace-nowrap"
                 >
@@ -700,11 +823,13 @@ export default function RentechApp() {
       );
     }
     return (
-      <LandingPage
-        onLogin={() => setShowLoginPage(true)}
-        onBrowse={() => setGuestView(true)}
-        onViewFeatured={handleViewFeatured}
-      />
+      <Suspense fallback={<SkeletonScreen />}>
+        <LandingPage
+          onLogin={() => setShowLoginPage(true)}
+          onBrowse={() => setGuestView(true)}
+          onViewFeatured={handleViewFeatured}
+        />
+      </Suspense>
     );
   }
 
@@ -757,10 +882,10 @@ export default function RentechApp() {
               />
             )}
             {activeTab === 'History' && (
-              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} />
+              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
             )}
             {activeTab === 'AI Insights' && (
-              <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} />
+              <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} />
             )}
             {(activeTab === 'Profile' || activeTab === 'Settings') && (
               <ProfileSettingsView
@@ -769,8 +894,11 @@ export default function RentechApp() {
                 staffList={staffAccounts}
                 onAddStaff={handleAddStaff}
                 onRemoveStaff={handleRemoveStaff}
+                onUpdateStaff={updateStaff}
+                staffLoadError={staffLoadError}
                 customerInfo={customerInfo}
                 onUpdateCustomer={updateCustomer}
+                onProfileUpdated={fetchProfile}
                 onRequestLogout={() => setShowLogoutModal(true)}
               />
             )}
@@ -778,7 +906,10 @@ export default function RentechApp() {
               <HelpGuide role={viewRole} onStartTutorial={() => setShowOnboarding(true)} />
             )}
             {activeTab === 'Notifications' && (
-              <NotificationsView />
+              <NotificationsView role={viewRole} onNavigateTab={goTab} />
+            )}
+            {activeTab === 'Messages' && (
+              <MessagesView onOpenBooking={(txId) => navigate(txDetailPath(viewRole, txId))} />
             )}
     </>
   );
@@ -798,6 +929,7 @@ export default function RentechApp() {
               return manual.includes(editingItem.status) ? manual : [...manual, editingItem.status];
             })()}
             submitLabel="Save Changes"
+            showPhoto
             showSale={role === 'Admin'}
             onSubmit={(values) => handleUpdateItem(values)}
             onClose={() => setEditingItem(null)}
@@ -832,23 +964,27 @@ export default function RentechApp() {
         )}
 
         {customerRental && (
-        <CustomerRentalFlow
-          item={customerRental.item}
-          selectedDate={customerRental.date}
-          inventory={inventory}
-          customerInfo={customerInfo}
-          onClose={() => setCustomerRental(null)}
-          onSubmitBooking={handleSubmitBooking}
-          onCancelBooking={handleCancelBooking}
-        />
+        <Suspense fallback={null}>
+          <CustomerRentalFlow
+            item={customerRental.item}
+            selectedDate={customerRental.date}
+            inventory={inventory}
+            customerInfo={customerInfo}
+            onClose={() => setCustomerRental(null)}
+            onSubmitBooking={handleSubmitBooking}
+            onCancelBooking={handleCancelBooking}
+          />
+        </Suspense>
         )}
 
         {showChatbot && (
-          <ChatbotModal
-            onClose={() => setShowChatbot(false)}
-            inventory={inventory}
-            onBook={(item) => setCustomerRental({ item })}
-          />
+          <Suspense fallback={null}>
+            <ChatbotModal
+              onClose={() => setShowChatbot(false)}
+              inventory={inventory}
+              onBook={(item) => setCustomerRental({ item })}
+            />
+          </Suspense>
         )}
 
         {calendarItem && (
@@ -913,11 +1049,15 @@ export default function RentechApp() {
         {/* Routed transaction detail — URL like /transactions/12,
             /admin/transactions/12 or /staff/logs/12. */}
         {isLoggedIn && txDetailMatch && routedTx && (
-          <TransactionDetailModal
-            transaction={routedTx}
-            fetchFull={getById}
-            onClose={() => navigate(basePath, { replace: true })}
-          />
+          <Suspense fallback={null}>
+            <TransactionDetailModal
+              transaction={routedTx}
+              fetchFull={getById}
+              role={role}
+              onClose={() => navigate(basePath, { replace: true })}
+              onReturn={handleReturnClick}
+            />
+          </Suspense>
         )}
 
         {/* Global Search Modal */}
@@ -932,14 +1072,16 @@ export default function RentechApp() {
 
         {/* QR Scanner – staff picks RELEASE/RETURN, then scans the booking QR */}
         {showScanner && viewRole === 'Staff' && (
-          <QrScannerModal
-            onClose={() => setShowScanner(false)}
-            onFound={(tx, action) => {
-              setShowScanner(false);
-              setScannedAction(action);
-              setScannedTx(normalizeTx(tx));
-            }}
-          />
+          <Suspense fallback={null}>
+            <QrScannerModal
+              onClose={() => setShowScanner(false)}
+              onFound={(tx, action) => {
+                setShowScanner(false);
+                setScannedAction(action);
+                setScannedTx(normalizeTx(tx));
+              }}
+            />
+          </Suspense>
         )}
 
         {/* Scanned booking → the release (pickup) modal */}
@@ -995,6 +1137,9 @@ export default function RentechApp() {
         goTab('Notifications');
       }}
       taskBadge={taskBadge}
+      scrollKey={`${location.pathname}#${navTick}`}
+      animateKey={`${activeTab}#${navTick}`}
+      overlays={overlays}
       onFabClick={() => {
         if (viewRole === 'Admin') goTab('AI Insights');
         else if (viewRole === 'Staff') setShowStaffRental(true);
@@ -1004,7 +1149,6 @@ export default function RentechApp() {
       <Suspense fallback={<PageSkeleton tab={activeTab} />}>
         {page}
       </Suspense>
-      {overlays}
     </AppLayout>
   );
 }

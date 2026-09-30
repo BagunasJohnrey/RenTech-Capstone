@@ -10,6 +10,16 @@ export async function getBusinessRules() {
   return map;
 }
 
+// Public rental-suggestion defaults (never the full rules/templates) so
+// booking flows can prefill sensibly without leaking sensitive settings.
+export async function getRentalDefaults() {
+  const rules = await getBusinessRules();
+  return {
+    rental_period_days: parseInt(rules.rental_period_days ?? '3', 10) || 3,
+    min_downpayment: parseInt(rules.min_downpayment ?? '200', 10) || 0,
+  };
+}
+
 // Non-sensitive feature flags derived from business rules. Booleans default
 // to `true` (feature on) when the key has never been set.
 export async function getFeatureFlags() {

@@ -12,5 +12,6 @@ router.get('/kpis', requireRole(Role.Admin, Role.Staff), dashboardController.get
 router.get('/today', requireRole(Role.Admin, Role.Staff), dashboardController.getTodayTasks);
 router.get('/forecast', requireRole(Role.Admin), dashboardController.getForecast);
 router.get('/insights', requireRole(Role.Admin), dashboardController.getInsights);
+router.get('/bundle', requireRole(Role.Admin), dashboardController.getBundle);
 
 export default router;

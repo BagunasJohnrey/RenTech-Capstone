@@ -198,6 +198,7 @@ export const releaseSchema = z.object({
     conditionPhoto: z.string().optional(),
     releasePhoto: z.string().optional(),
     notes: z.string().optional(),
+    needsAlteration: z.boolean().optional(),
   }),
 });
 
@@ -206,8 +207,9 @@ export const updateTransactionSchema = z.object({
     rentalDate: z.string().optional(),
     dueDate: z.string().optional(),
     notes: z.string().optional(),
-  }).refine((d) => d.rentalDate || d.dueDate || d.notes !== undefined, {
-    message: 'At least one of rentalDate, dueDate, or notes must be provided',
+    alterationStatus: z.enum(['pending', 'ready']).nullable().optional(),
+  }).refine((d) => d.rentalDate || d.dueDate || d.notes !== undefined || d.alterationStatus !== undefined, {
+    message: 'At least one of rentalDate, dueDate, notes, or alterationStatus must be provided',
   }),
 });
 
@@ -217,7 +219,7 @@ export async function updateTransaction(req: AuthenticatedRequest, res: Response
     const updated = await transactionService.updateTransaction(
       String(req.params.id),
       req.user.id,
-      { rentalDate: req.body.rentalDate, dueDate: req.body.dueDate, notes: req.body.notes }
+      { rentalDate: req.body.rentalDate, dueDate: req.body.dueDate, notes: req.body.notes, alterationStatus: req.body.alterationStatus }
     );
     res.json(updated);
   } catch (err) {
@@ -232,7 +234,8 @@ export async function releaseRental(req: AuthenticatedRequest, res: Response, ne
       String(req.params.id),
       req.user.id,
       req.body.releasePhoto ?? req.body.conditionPhoto,
-      req.body.notes
+      req.body.notes,
+      req.body.needsAlteration
     );
     res.json(result);
   } catch (err) {
@@ -280,6 +283,30 @@ export async function getUpcomingReturns(req: AuthenticatedRequest, res: Respons
   try {
     const result = await transactionService.getUpcomingReturns();
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export const recordPaymentSchema = z.object({
+  body: z.object({
+    amount: z.number().positive(),
+    method: z.enum(['cash', 'gcash', 'card']),
+    notes: z.string().optional(),
+  }),
+});
+
+export async function recordPayment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const result = await transactionService.recordPayment(
+      String(req.params.id),
+      req.user.id,
+      req.body.amount,
+      req.body.method,
+      req.body.notes,
+    );
+    res.status(201).json(result);
   } catch (err) {
     next(err);
   }

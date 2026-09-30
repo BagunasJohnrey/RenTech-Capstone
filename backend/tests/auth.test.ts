@@ -5,6 +5,8 @@ import cookieParser from 'cookie-parser';
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import { supabaseAdmin } from '../src/config/supabase.js';
+import { prisma } from '../src/config/database.js';
+import * as authService from '../src/services/auth.service.js';
 import { buildMfaVerifiedValue, buildMfaTrustedValue, isMfaTrustedCookie } from '../src/middleware/cookies.js';
 
 // Phase 5: Mock the MFA service before imports so the controller picks it up.
@@ -344,10 +346,9 @@ describe('CSRF Guard', () => {
   });
 });
 
-// Phase 2: password reset
+// Phase 2: password reset (Brevo delivery — always 200, no enumeration)
 describe('POST /api/auth/forgot-password', () => {
   it('should return 200 with generic message (no enumeration)', async () => {
-    const { supabaseAdmin } = await import('../src/config/supabase.js');
     const res = await request(app)
       .post('/api/auth/forgot-password')
       .set('Origin', 'http://localhost:5173')
@@ -355,11 +356,128 @@ describe('POST /api/auth/forgot-password', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.message).toContain('reset link');
-    expect(supabaseAdmin.auth.resetPasswordForEmail).toHaveBeenCalled();
+  });
+
+  it('should create a single-use reset token for a registered email', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/auth/forgot-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'test@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset link');
+    expect(prisma.emailToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'password_reset' }) }),
+    );
+  });
+
+  it('should not create a token for an unknown email (no enumeration)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/auth/forgot-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'nobody-here@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset link');
+    expect(prisma.emailToken.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/auth/resend-verification', () => {
+  it('should return 200 with generic message (no enumeration)', async () => {
+    const res = await request(app)
+      .post('/api/auth/resend-verification')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'any@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('verification link');
+  });
+
+  it('should create a fresh verification token for an unconfirmed email', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/auth/resend-verification')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'test@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(prisma.emailToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'verification' }) }),
+    );
+  });
+
+  it('should reject an invalid email shape', async () => {
+    const res = await request(app)
+      .post('/api/auth/resend-verification')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'not-an-email' });
+
+    expect(res.status).toBe(400);
   });
 });
 
 describe('POST /api/auth/reset-password', () => {
+  const BREVO_TOKEN = 'a'.repeat(64);
+
+  it('should reset password with a Brevo token and mint session cookies', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-1', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'newPassword123!' },
+    );
+    expect(prisma.emailToken.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'etok-1' } }),
+    );
+    // Fresh sign-in mints cookies (auto-login after reset).
+    expect(res.headers['set-cookie']).toBeDefined();
+    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_access='))).toBe(true);
+  });
+
+  it('should reject a Brevo token that was already used', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-used', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: new Date(),
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('already been used');
+  });
+
+  it('should reject an expired Brevo token', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-old', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() - 1000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('expired');
+  });
+
   it('should reset password with valid token', async () => {
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     const res = await request(app)
@@ -391,9 +509,183 @@ describe('POST /api/auth/reset-password', () => {
 
     expect(res.status).toBe(401);
   });
+
+  it('should reset password with a ?code= credential (default email template)', async () => {
+    const { supabaseSignUp } = await import('../src/config/supabase.js');
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: 'pkce-code-123', password: 'newPassword123!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset');
+    expect(supabaseSignUp.auth.exchangeCodeForSession).toHaveBeenCalledWith('pkce-code-123');
+    // Exchanged session mints cookies (auto-login after reset).
+    expect(res.headers['set-cookie']).toBeDefined();
+    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_access='))).toBe(true);
+  });
+
+  it('should reset password with an #access_token credential (implicit flow)', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ access_token: 'recovery-access-token', password: 'newPassword123!' });
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledWith('recovery-access-token');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'newPassword123!' }
+    );
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  it('should return 400 when no credential is supplied', async () => {
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ password: 'newPassword123!' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('should return an expiry-specific message for expired tokens', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.verifyOtp).mockResolvedValueOnce({
+      data: { user: null, session: null }, error: { message: 'Token has expired or is invalid' },
+    });
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token_hash: 'stale-hash', password: 'newPassword123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('expired');
+  });
+
+  it('should accept a correct current password (Brevo path) and consume the link', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-ok', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!', currentPassword: 'oldPassword123!' });
+
+    expect(res.status).toBe(200);
+    // Old password verified against Supabase before anything was written…
+    expect(supabaseAdmin.auth.signInWithPassword).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'test@example.com', password: 'oldPassword123!' }),
+    );
+    // …then the link was consumed and the new password saved.
+    expect(prisma.emailToken.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'etok-ok' } }),
+    );
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'newPassword123!' },
+    );
+  });
+
+  it('should reject a wrong current password WITHOUT consuming the link', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-typo', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null }, error: { message: 'Invalid login credentials' },
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN, password: 'newPassword123!', currentPassword: 'wrongOld123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('Current password is incorrect');
+    // A typo must never burn the single-use link or touch the credential.
+    expect(prisma.emailToken.update).not.toHaveBeenCalled();
+    expect(supabaseAdmin.auth.admin.updateUserById).not.toHaveBeenCalledWith(
+      'auth-user-id-123',
+      expect.anything(),
+    );
+  });
+
+  it('should verify the old password on the legacy token_hash path too', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null }, error: { message: 'Invalid login credentials' },
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token_hash: 'valid-hash', password: 'newPassword123!', currentPassword: 'wrongOld123!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('Current password is incorrect');
+    expect(supabaseAdmin.auth.admin.updateUserById).not.toHaveBeenCalledWith(
+      'auth-user-id-123',
+      expect.anything(),
+    );
+  });
+
+  it('should mint reset tokens for STAFF emails too (forgot flow is role-agnostic)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/auth/forgot-password')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'staff@example.com' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('reset link');
+    expect(prisma.emailToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'password_reset' }) }),
+    );
+  });
 });
 
 describe('POST /api/auth/verify-email', () => {
+  const BREVO_TOKEN = 'b'.repeat(64);
+
+  it('should confirm the email with a Brevo token', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
+      id: 'etok-v1', userId: 'profile-id-123', token: BREVO_TOKEN,
+      type: 'verification', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
+    } as never);
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: BREVO_TOKEN });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('verified');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { email_confirm: true },
+    );
+    expect(prisma.emailToken.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'etok-v1' } }),
+    );
+  });
+
+  it('should reject an unknown Brevo token', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce(null);
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ token: 'c'.repeat(64) });
+
+    expect(res.status).toBe(401);
+  });
+
   it('should confirm the email and log the user in with a valid token', async () => {
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     vi.mocked(supabaseAdmin.auth.verifyOtp).mockResolvedValueOnce({
@@ -437,6 +729,28 @@ describe('POST /api/auth/verify-email', () => {
 
     expect(res.status).toBe(401);
   });
+
+  it('should confirm the email with a ?code= credential (default template)', async () => {
+    const { supabaseSignUp } = await import('../src/config/supabase.js');
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: 'signup-code-123' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('verified');
+    expect(supabaseSignUp.auth.exchangeCodeForSession).toHaveBeenCalledWith('signup-code-123');
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  it('should return 400 when no credential is supplied', async () => {
+    const res = await request(app)
+      .post('/api/auth/verify-email')
+      .set('Origin', 'http://localhost:5173')
+      .send({});
+
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('POST /api/auth/login with unconfirmed email', () => {
@@ -458,19 +772,73 @@ describe('POST /api/auth/login with unconfirmed email', () => {
   });
 });
 
+// Session verification hardening (middleware/auth.ts getUserWithRetry):
+// definitive rejections 401 without retry; transient failures retried once,
+// then 503 instead of a misleading 'invalid token'.
+describe('GET /api/auth/me session verification', () => {
+  it('returns 401 session-expired (no retry) when Supabase rejects the token', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: null }, error: { message: 'invalid JWT', status: 401 },
+    } as never);
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Origin', 'http://localhost:5173')
+      .set('Authorization', 'Bearer dead-token');
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('session has expired');
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries once and succeeds after a transient verification failure', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: null }, error: { message: 'fetch failed' },
+    } as never);
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Origin', 'http://localhost:5173')
+      .set('Authorization', 'Bearer flaky-token');
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns 503 when verification stays unreachable after the retry', async () => {
+    const { supabaseAdmin } = await import('../src/config/supabase.js');
+    vi.mocked(supabaseAdmin.auth.getUser)
+      .mockResolvedValueOnce({ data: { user: null }, error: { message: 'fetch failed' } } as never)
+      .mockResolvedValueOnce({ data: { user: null }, error: { message: 'fetch failed', status: 500 } } as never);
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Origin', 'http://localhost:5173')
+      .set('Authorization', 'Bearer flaky-token');
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain('authentication server');
+    expect(supabaseAdmin.auth.getUser).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('Admin: Staff Management', () => {
   const adminAuth = { Authorization: 'Bearer admin-token' };
 
   describe('POST /api/auth/staff', () => {
-    it('should create staff account when admin', async () => {
+    it('should create staff account with a one-time password when admin', async () => {
       const res = await request(app)
         .post('/api/auth/staff')
         .set(adminAuth)
         .set('Origin', 'http://localhost:5173')
-        .send({ email: 'staff@test.com', password: 'Staffpass123!', name: 'Staff User' });
+        .send({ email: 'staff@test.com', name: 'Staff User' });
 
       expect(res.status).toBe(201);
       expect(res.body).toHaveProperty('role', 'Staff');
+      // OTP flow: backend mints a policy-compliant one-time password and
+      // returns it exactly once; the profile is flagged for first-login change.
+      expect(typeof res.body.oneTimePassword).toBe('string');
+      expect(res.body.oneTimePassword.length).toBeGreaterThanOrEqual(12);
+      expect(res.body.mustChangePassword).toBe(true);
     });
 
     it('should reject without admin role', async () => {
@@ -478,7 +846,7 @@ describe('Admin: Staff Management', () => {
         .post('/api/auth/staff')
         .set('Authorization', 'Bearer customer-token')
         .set('Origin', 'http://localhost:5173')
-        .send({ email: 'staff@test.com', password: 'Staffpass123!', name: 'Staff User' });
+        .send({ email: 'staff@test.com', name: 'Staff User' });
 
       expect(res.status).toBe(403);
     });
@@ -487,7 +855,7 @@ describe('Admin: Staff Management', () => {
       const res = await request(app)
         .post('/api/auth/staff')
         .set('Origin', 'http://localhost:5173')
-        .send({ email: 'staff@test.com', password: 'Staffpass123!', name: 'Staff User' });
+        .send({ email: 'staff@test.com', name: 'Staff User' });
 
       expect(res.status).toBe(401);
     });
@@ -924,5 +1292,352 @@ describe('rt_mfa_trusted (trust-this-device) cookie helpers', () => {
     const trusted = buildMfaTrustedValue('admin@example.com');
     const marker = buildMfaVerifiedValue('admin@example.com');
     expect(trusted).not.toBe(marker);
+  });
+});
+
+// Staff first-login flow: admin-created accounts get a one-time password and
+// a mustChangePassword flag. Login surfaces the flag; every non-auth endpoint
+// is locked until the password is replaced via /auth/change-password.
+describe('Staff one-time password + forced first-login change', () => {
+  const staffAuth = { Authorization: 'Bearer staff-token' };
+
+  it('login returns mustChangePassword for a flagged staff account', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    // signInWithPassword resolves the STAFF auth user; the follow-up profile
+    // lookup by userId then hits the flagged staff profile below.
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockImplementationOnce((async ({ email }: any) => ({
+      data: {
+        user: { id: 'auth-staff-id-456', email },
+        session: { access_token: 'staff-access-token', refresh_token: 'staff-refresh-token', token_type: 'bearer', expires_in: 3600 },
+      },
+      error: null,
+    })) as never);
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      const target = args.where.email || args.where.userId;
+      if (target === 'staff@example.com' || target === 'auth-staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', 'http://localhost:5173')
+      .send({ email: 'staff@example.com', password: 'Onetimepass123!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.mustChangePassword).toBe(true);
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+
+  it('locks non-auth endpoints for a mustChangePassword session (403)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    // The auth middleware resolves the staff profile (token: auth-staff-id-456)
+    // with mustChangePassword — any endpoint other than /me or
+    // /change-password must 403.
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    // /auth/me stays reachable (the gate screen needs it)
+    const meRes = await request(app).get('/api/auth/me').set(staffAuth);
+    expect(meRes.status).toBe(200);
+
+    // Everything else is locked…
+    const txRes = await request(app).get('/api/transactions').set(staffAuth);
+    expect(txRes.status).toBe(403);
+    expect(txRes.body.error).toContain('change your password');
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+
+  it('POST /auth/change-password verifies current password and clears the flag', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalFindUnique = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalFindUnique ? originalFindUnique(args) : Promise.resolve(null)) as any;
+    });
+
+    // Correct one-time password → 200, Supabase credential updated, flag cleared.
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Onetimepass123!', newPassword: 'Newstaffpass456!' });
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-staff-id-456',
+      { password: 'Newstaffpass456!' },
+    );
+    expect(prisma.profile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { mustChangePassword: false } }),
+    );
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalFindUnique!);
+  });
+
+  it('POST /auth/change-password rejects the wrong current password', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    // signInWithPassword fails for the wrong current password.
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null },
+      error: { message: 'Invalid login credentials' },
+    } as never);
+
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Wrongpass123!', newPassword: 'Newstaffpass456!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('incorrect');
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+
+  it('POST /auth/change-password is a no-op for accounts not flagged', async () => {
+    // staff-token resolves the default (unflagged) staff profile in setup.ts.
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Onetimepass123!', newPassword: 'Newstaffpass456!' });
+
+    // The voluntary path now succeeds (Settings change-password) — it is no
+    // longer a 400 no-op. The current password is verified against Supabase.
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('Password updated');
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-staff-id-456',
+      { password: 'Newstaffpass456!' },
+    );
+  });
+});
+
+// Voluntary password change from Settings: any logged-in account (Staff,
+// Admin, Customer) can rotate its own password. The current password must be
+// re-verified first — a stolen session can't lock the real user out.
+describe('Voluntary change-password (Settings)', () => {
+  it('verifies the current password and updates it for a regular account', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer valid-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'OldPassword123!', newPassword: 'NewPassword456!' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('Password updated');
+    // Supabase credential updated for the resolved auth user…
+    expect(supabaseAdmin.auth.admin.updateUserById).toHaveBeenCalledWith(
+      'auth-user-id-123',
+      { password: 'NewPassword456!' },
+    );
+    // …and the old password was verified against Supabase FIRST.
+    expect(supabaseAdmin.auth.signInWithPassword).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'test@example.com', password: 'OldPassword123!' }),
+    );
+  });
+
+  it('rejects the wrong current password', async () => {
+    vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
+      data: { user: null, session: null },
+      error: { message: 'Invalid login credentials' },
+    } as never);
+
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer valid-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'WrongPassword123!', newPassword: 'NewPassword456!' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('incorrect');
+    // Nothing was written.
+    expect(supabaseAdmin.auth.admin.updateUserById).not.toHaveBeenCalledWith(
+      'auth-user-id-123',
+      expect.anything(),
+    );
+  });
+
+  it('rejects reusing the same password', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer valid-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'SamePassword123!', newPassword: 'SamePassword123!' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('different');
+  });
+
+  it('still honors the forced first-login flag path (clears mustChangePassword)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const originalImpl = vi.mocked(prisma.profile.findUnique).getMockImplementation();
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation((args: any) => {
+      if (args.where.userId === 'auth-staff-id-456' || args.where.id === 'staff-id-456') {
+        return Promise.resolve({
+          id: 'staff-id-456',
+          userId: 'auth-staff-id-456',
+          email: 'staff@example.com',
+          role: 'Staff',
+          name: 'Staff User',
+          mustChangePassword: true,
+        });
+      }
+      return (originalImpl ? originalImpl(args) : Promise.resolve(null)) as any;
+    });
+
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', 'Bearer staff-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ currentPassword: 'Onetimepass123!', newPassword: 'Newstaffpass456!' });
+
+    expect(res.status).toBe(200);
+    expect(prisma.profile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { mustChangePassword: false } }),
+    );
+
+    vi.mocked(prisma.profile.findUnique).mockImplementation(originalImpl!);
+  });
+});
+
+// Staff profile editing: admins edit any staff account from the Team tab;
+// staff edit their own from Settings. Email is immutable.
+describe('PUT /api/auth/staff/:id (edit staff profile)', () => {
+  const adminAuth = { Authorization: 'Bearer admin-token' };
+  const staffAuth = { Authorization: 'Bearer staff-token' };
+
+  // Reads the most recent prisma.profile.update call's data payload.
+  const lastProfileUpdateData = () => {
+    const calls = vi.mocked(prisma.profile.update).mock.calls;
+    return (calls[calls.length - 1] as any)?.[0]?.data ?? {};
+  };
+
+  it('admin edits a staff account name and phone', async () => {
+    const res = await request(app)
+      .put('/api/auth/staff/staff-id-456')
+      .set(adminAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ name: 'Renamed Staff', phone: '09179999999' });
+
+    expect(res.status).toBe(200);
+    expect(lastProfileUpdateData()).toMatchObject({
+      name: 'Renamed Staff',
+      phone: '09179999999',
+    });
+  });
+
+  it('staff edits their own profile', async () => {
+    const res = await request(app)
+      .put('/api/auth/staff/staff-id-456')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ phone: '09178888888' });
+
+    expect(res.status).toBe(200);
+    expect(lastProfileUpdateData()).toMatchObject({ phone: '09178888888' });
+  });
+
+  it('staff cannot edit ANOTHER staff account (only self or admin)', async () => {
+    // staff-token resolves staff-id-456; target a different staff profile id.
+    const res = await request(app)
+      .put('/api/auth/staff/some-other-staff-profile')
+      .set(staffAuth)
+      .set('Origin', 'http://localhost:5173')
+      .send({ name: 'Nope' });
+
+    expect(res.status).toBe(404); // unknown profile id → 404 before the self-check
+  });
+
+  it('customer cannot edit staff accounts', async () => {
+    const res = await request(app)
+      .put('/api/auth/staff/staff-id-456')
+      .set('Authorization', 'Bearer customer-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ name: 'Nope' });
+
+    expect(res.status).toBe(403);
+  });
+});
+
+// Google sign-in for staff: a Staff/Admin profile resolves as complete on
+// OAuth (no customer-details detour, no role demotion) — this is what lets
+// staff sign in with Google using their staff email.
+describe('OAuth staff sign-in (email match)', () => {
+  it('treats an existing Staff profile as complete (no details form, role kept)', async () => {
+    // Simulate Google returning the staff auth user (Supabase linked the
+    // Google identity to the same account by email).
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'auth-staff-id-456', email: 'staff@example.com' } },
+      error: null,
+    } as never);
+
+    const result = await authService.oauthGetOrCreateProfile('staff-token');
+    expect(result.needsDetails).toBe(false);
+    expect(result.user.role).toBe('Staff');
+  });
+
+  it('still sends new customer emails to the details form', async () => {
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'brand-new-oauth-user', email: 'brand.new@example.com' } },
+      error: null,
+    } as never);
+
+    const result = await authService.oauthGetOrCreateProfile('any-token');
+    expect(result.needsDetails).toBe(true);
   });
 });

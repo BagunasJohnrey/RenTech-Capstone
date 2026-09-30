@@ -38,6 +38,11 @@ const REFRESH_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
 // True in production — cookies must ride HTTPS only.
 const isProd = env.NODE_ENV === 'production';
 
+// Split-domain deploy (Vercel frontend + Render backend) is cross-site:
+// Lax cookies are withheld on fetch, so prod uses None+Secure (dev stays
+// Lax so plain-HTTP localhost still works — None requires Secure).
+const cookieSameSite: 'none' | 'lax' = isProd ? 'none' : 'lax';
+
 export interface RtSession {
   access_token: string | null;
   refresh_token: string | null;
@@ -60,7 +65,7 @@ export function setSessionCookies(res: Response, session: RtSession): void {
 
   res.cookie(ACCESS_COOKIE, session.access_token, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     maxAge: accessMaxAge,
     path: '/api',
@@ -70,7 +75,7 @@ export function setSessionCookies(res: Response, session: RtSession): void {
   // refresh before the access token expires. Not sensitive on its own.
   res.cookie(EXPIRES_AT_COOKIE, String(Date.now() + accessMaxAge), {
     httpOnly: false,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     maxAge: accessMaxAge,
     path: '/',
@@ -79,7 +84,7 @@ export function setSessionCookies(res: Response, session: RtSession): void {
   if (session.refresh_token) {
     res.cookie(REFRESH_COOKIE, session.refresh_token, {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: cookieSameSite,
       secure: isProd,
       maxAge: REFRESH_MAX_AGE_MS,
       path: '/api',
@@ -91,7 +96,7 @@ export function setSessionCookies(res: Response, session: RtSession): void {
 export function clearSessionCookies(res: Response): void {
   const opts = {
     httpOnly: true,
-    sameSite: 'lax' as const,
+    sameSite: cookieSameSite,
     secure: isProd,
     path: '/api',
   };
@@ -99,7 +104,7 @@ export function clearSessionCookies(res: Response): void {
   res.clearCookie(REFRESH_COOKIE, opts);
   res.clearCookie(MFA_VERIFIED_COOKIE, opts);
   // Also clear the non-httpOnly expiry cookie (scoped to /).
-  res.clearCookie(EXPIRES_AT_COOKIE, { sameSite: 'lax' as const, secure: isProd, path: '/' });
+  res.clearCookie(EXPIRES_AT_COOKIE, { sameSite: cookieSameSite, secure: isProd, path: '/' });
 }/** Read the access-token cookie. Returns undefined when absent. */
 export function getAccessTokenFromCookie(req: Request): string | undefined {
   const val = req.cookies?.[ACCESS_COOKIE];
@@ -125,7 +130,7 @@ export function getExpiresAtFromCookie(req: Request): number | null {
 export function setPkceCookie(res: Response, codeVerifier: string): void {
   res.cookie(OAUTH_PKCE_COOKIE, codeVerifier, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     maxAge: 5 * 60 * 1000, // 5 minutes — enough for the OAuth round-trip
     path: '/api',
@@ -142,7 +147,7 @@ export function getPkceCookie(req: Request): string | undefined {
 export function clearPkceCookie(res: Response): void {
   res.clearCookie(OAUTH_PKCE_COOKIE, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     path: '/api',
   });
@@ -154,7 +159,7 @@ export function clearPkceCookie(res: Response): void {
 export function setOauthPendingCookie(res: Response): void {
   res.cookie(OAUTH_PENDING_COOKIE, '1', {
     httpOnly: false,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     maxAge: 10 * 60 * 1000, // 10 minutes — matches the access token lifetime
     path: '/',
@@ -164,7 +169,7 @@ export function setOauthPendingCookie(res: Response): void {
 export function clearOauthPendingCookie(res: Response): void {
   res.clearCookie(OAUTH_PENDING_COOKIE, {
     httpOnly: false,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     path: '/',
   });
@@ -179,7 +184,7 @@ const MFA_PENDING_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes
 export function setMfaPendingCookie(res: Response, accessToken: string, refreshToken: string): void {
   res.cookie(MFA_PENDING_COOKIE, `${accessToken}|||${refreshToken}`, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     maxAge: MFA_PENDING_MAX_AGE_MS,
     path: '/api',
@@ -199,7 +204,7 @@ export function getMfaPendingCookie(req: Request): { accessToken: string; refres
 export function clearMfaPendingCookie(res: Response): void {
   res.clearCookie(MFA_PENDING_COOKIE, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     path: '/api',
   });
@@ -241,7 +246,7 @@ export function setMfaVerifiedCookie(res: Response, accessToken: string): void {
   }
   res.cookie(MFA_VERIFIED_COOKIE, value, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     // Bound to the access token (max 1h); generous margin for pre-expiry
     // refreshes which re-mint the marker. A stale marker is rejected because
@@ -272,7 +277,7 @@ export function isMfaVerifiedCookie(req: Request, accessToken: string): boolean 
 export function clearMfaVerifiedCookie(res: Response): void {
   res.clearCookie(MFA_VERIFIED_COOKIE, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     path: '/api',
   });
@@ -308,7 +313,7 @@ export function setMfaTrustedCookie(res: Response, identity: string): void {
   if (!value) return;
   res.cookie(MFA_TRUSTED_COOKIE, value, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: cookieSameSite,
     secure: isProd,
     maxAge: MFA_TRUSTED_MAX_AGE_MS,
     path: '/api',

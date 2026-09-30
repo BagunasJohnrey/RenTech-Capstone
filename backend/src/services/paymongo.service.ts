@@ -15,9 +15,12 @@ export async function createPaymentIntent(
 ) {
   if (!env.PAYMONGO_SECRET_KEY) {
     // Simulation mode: no real gateway configured yet. Return a fake succeeded
-    // intent so the client can complete the booking flow end-to-end. NEVER
-    // allowed in production — this would "confirm" payments that were never made.
-    if (env.NODE_ENV === 'production') {
+    // intent so the client can complete the booking flow end-to-end (the
+    // response carries `simulated: true` and the client NEVER treats it as a
+    // real payment). Allowed in production ONLY behind the explicit
+    // PAYMONGO_SIMULATE=true escape hatch — a silent simulation in prod would
+    // "confirm" payments that were never made.
+    if (env.NODE_ENV === 'production' && !env.PAYMONGO_SIMULATE) {
       throw new AppError(503, 'Payments are not configured. Please contact the boutique.');
     }
     return {
@@ -141,6 +144,14 @@ export function verifyWebhookSignature(payload: string, signature: string): bool
 // key the payment path simulates success, so we report that explicitly.
 export async function checkPaymongoHealth() {
   if (!env.PAYMONGO_SECRET_KEY) {
+    if (env.PAYMONGO_SIMULATE) {
+      return {
+        configured: false,
+        reachable: true,
+        detail: 'PAYMONGO_SIMULATE=true — test checkout, NO real money moves',
+        simulated: true,
+      };
+    }
     return {
       configured: false,
       reachable: false,

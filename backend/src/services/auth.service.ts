@@ -1,9 +1,26 @@
 import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { createAuditLog } from '../utils/audit.js';
 import { env } from '../config/env.js';
-import type { Role } from '@prisma/client';
+import * as brevoService from './brevo.service.js';
+import { Role, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
+
+// Brevo email-token lifetimes: verification links last 24h, reset links 1h.
+export const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+export const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+// Our own tokens are 64-char hex (crypto.randomBytes(32)). Anything else on
+// the verify/reset endpoints is a legacy Supabase credential (token_hash /
+// code / access_token) and takes the Supabase fallback path in the controller.
+export function isBrevoTokenFormat(token: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(String(token || '').trim());
+}
+
+function frontendUrl(): string {
+  return env.FRONTEND_URL.replace(/\/$/, '');
+}
 
 export async function signupCustomer(data: {
   email: string;
@@ -14,17 +31,14 @@ export async function signupCustomer(data: {
   preferences?: string[];
 }) {
   if (!env.AUTH_EMAIL_CONFIRM) {
-    // Email verification path: create the user via the PUBLIC signup endpoint
-    // (anon key). Only this endpoint makes Supabase send the confirmation
-    // email (service-role admin.createUser never does). The user is created
-    // unconfirmed and CANNOT log in until they click the emailed link, which
-    // lands on /verify-email and completes the account via POST /auth/verify-email.
-    const { data: authData, error } = await supabaseSignUp.auth.signUp({
+    // Email verification path (Brevo): create the user UNCONFIRMED via the
+    // service role (admin.createUser never sends email — delivery is ours),
+    // store a single-use token, and send the branded link via Brevo. The
+    // user cannot log in until they click it (/verify-email?token=...).
+    const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
       email: data.email,
       password: data.password,
-      options: {
-        emailRedirectTo: `${env.FRONTEND_URL.replace(/\/$/, '')}/verify-email`,
-      },
+      email_confirm: false,
     });
 
     if (error || !authData.user) {
@@ -47,6 +61,28 @@ export async function signupCustomer(data: {
           : null,
       },
     });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    await prisma.emailToken.create({
+      data: {
+        userId: profile.id,
+        token,
+        type: 'verification',
+        expiresAt: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+      },
+    });
+
+    // Best-effort delivery: if Brevo fails the account still exists and the
+    // user can request a fresh link via POST /auth/resend-verification.
+    try {
+      await brevoService.sendVerificationEmail(
+        data.email,
+        data.name,
+        `${frontendUrl()}/verify-email?token=${token}`,
+      );
+    } catch (err) {
+      console.error('[auth] verification email failed:', (err as Error)?.message);
+    }
 
     // No session — the user must verify their email first. The controller
     // skips setSessionCookies when session is null, so the frontend shows
@@ -154,6 +190,11 @@ export async function loginUser(email: string, password: string, trustedDevice =
     };
   }
 
+  // Staff first-login flow: the admin created this account with a one-time
+  // password; the staff member must choose their own password before the
+  // account can be used. The flag rides along on the login response so the
+  // frontend can route to the change-password screen (session is still
+  // minted — the change-password endpoint is the only thing they can reach).
   return {
     session: {
       access_token: data.session.access_token,
@@ -163,6 +204,7 @@ export async function loginUser(email: string, password: string, trustedDevice =
     },
     user: profile,
     requiresMfa: false,
+    mustChangePassword: profile.mustChangePassword === true,
   };
 }
 
@@ -184,8 +226,16 @@ export async function oauthGetOrCreateProfile(
   // A profile may already exist (e.g., auto-created by a Supabase trigger or a
   // previous abandoned OAuth). Only treat it as "complete" if it has the
   // required fields; otherwise keep asking for details instead of logging in.
+  // Staff/Admin profiles are exempt from the customer details form — the
+  // customer signup fields (address, preferences) don't apply to them, and
+  // forcing a staff member through it would overwrite their role with
+  // 'Customer'. This is what lets a staff member sign in with Google using
+  // their staff email: Supabase links the Google identity to the same auth
+  // user (email match), and the profile resolves here without the customer
+  // onboarding detour.
   const existing = await prisma.profile.findUnique({ where: { userId: user.id } });
-  const isComplete = !!(existing && existing.name && existing.phone && existing.address);
+  const isStaffLike = !!(existing && (existing.role === 'Staff' || existing.role === 'Admin'));
+  const isComplete = isStaffLike || !!(existing && existing.name && existing.phone && existing.address);
   if (existing && isComplete) {
     return { user: existing, needsDetails: false };
   }
@@ -206,7 +256,9 @@ export async function oauthGetOrCreateProfile(
   const profileData = {
     userId: user.id,
     email,
-    role: 'Customer' as Role,
+    // Preserve the existing role (a Staff member finishing an old incomplete
+    // profile must not be silently demoted to Customer).
+    role: existing?.role ?? ('Customer' as Role),
     name: details!.name!,
     phone: details!.phone,
     address: details!.address,
@@ -284,9 +336,93 @@ export async function updateProfile(userId: string, data: {
   return profile;
 }
 
+// First-login staff flow: replace the admin-issued one-time password with the
+// staff member's own password. Requires the old password (the one-time
+// password) to be re-presented — a second factor proof that the person at the
+// keyboard is the intended recipient, not someone riding a stolen session.
+// After updating the Supabase credential, the flag is cleared so the account
+// becomes fully usable.
+//
+// The same proof powers the voluntary Settings change for any logged-in
+// account (staff/admin/customer): currentPassword is verified against Supabase
+// before anything is written, and other sessions are revoked so a changed
+// password invalidates every device except this one.
+export async function changeOwnPassword(
+  userId: string,
+  oldPassword: string,
+  newPassword: string,
+  opts: { voluntary?: boolean; accessToken?: string } = {}
+) {
+  const profile = await prisma.profile.findUnique({ where: { id: userId } });
+  if (!profile) throw new AppError(401, 'Not authenticated');
+
+  // Verify the current password before allowing the change.
+  const { error: verifyError } = await supabaseAdmin.auth.signInWithPassword({
+    email: profile.email,
+    password: oldPassword,
+  });
+  if (verifyError) {
+    throw new AppError(401, 'Current password is incorrect');
+  }
+
+  if (oldPassword === newPassword) {
+    throw new AppError(400, 'Choose a different password from your current one');
+  }
+
+  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+    profile.userId,
+    { password: newPassword },
+  );
+  if (updateError) {
+    throw new AppError(400, 'Unable to change password. Please try again.');
+  }
+
+  const patch: Prisma.ProfileUpdateInput = {};
+  if (profile.mustChangePassword) patch.mustChangePassword = false;
+  if (Object.keys(patch).length > 0) {
+    await prisma.profile.update({ where: { id: userId }, data: patch });
+  }
+
+  // Voluntary change (Settings): the password just rotated, so revoke every
+  // OTHER session — the current one (opts.accessToken) stays alive so the user
+  // isn't logged out mid-save. Supabase's `signOut(jwt, 'others')` invalidates
+  // all refresh tokens for this user except the session the token belongs to.
+  if (opts.voluntary && opts.accessToken) {
+    try {
+      await supabaseAdmin.auth.admin.signOut(opts.accessToken, 'others');
+    } catch {
+      // Best-effort: other sessions expire naturally when their access tokens
+      // lapse (refresh tokens rotate on password change).
+    }
+  }
+
+  return { success: true };
+}
+
+// One-time password minted for admin-created staff accounts. Long enough to
+// satisfy the app's password policy (12+ chars, upper/lower/digit/symbol) so
+// Supabase accepts it at createUser time; the staff member must change it on
+// first login (Profile.mustChangePassword) before the account is usable.
+function generateOneTimePassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%&*?';
+  const all = upper + lower + digits + symbols;
+  const pick = (set: string) => set[crypto.randomInt(set.length)];
+  // Guarantee at least one char from each required class, then fill to 16.
+  const chars = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+  for (let i = chars.length; i < 16; i++) chars.push(pick(all));
+  // Fisher-Yates shuffle so the guaranteed classes aren't predictably first.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
 export async function createStaffAccount(adminId: string, data: {
   email: string;
-  password: string;
   name: string;
   phone?: string;
 }) {
@@ -295,12 +431,14 @@ export async function createStaffAccount(adminId: string, data: {
     throw new AppError(403, 'Only admins can create staff accounts');
   }
 
+  const tempPassword = generateOneTimePassword();
+
   // Staff are created by an admin, so they're trusted by default — always
   // auto-confirm (admin.createUser wouldn't send a verification email anyway,
   // so an unconfirmed staff account would be locked out with no way in).
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
     email: data.email,
-    password: data.password,
+    password: tempPassword,
     email_confirm: true,
   });
 
@@ -317,10 +455,30 @@ export async function createStaffAccount(adminId: string, data: {
       role: 'Staff',
       name: data.name,
       phone: data.phone ?? null,
+      mustChangePassword: true,
     },
   });
 
-  return profile;
+  // Best-effort welcome email carrying the one-time password (the admin still
+  // sees it once in the response for out-of-band sharing). Never blocks.
+  try {
+    await brevoService.sendStaffWelcomeEmail(data.email, data.name, tempPassword);
+  } catch {
+    // best-effort
+  }
+
+  // The one-time password is returned exactly once — never stored in the
+  // database or logged. The admin shares it with the staff member out of band
+  // (in person / SMS), and the first login forces a change.
+  // Audit: a new login-capable account exists (email only — never the OTP).
+  try {
+    await createAuditLog({
+      action: 'staff.create', entity: 'staff', entityId: profile.id,
+      performedById: adminId,
+      newValue: { email: profile.email, name: profile.name },
+    });
+  } catch { /* audit is non-critical */ }
+  return { profile, oneTimePassword: tempPassword };
 }
 
 export async function listStaffAccounts() {
@@ -329,6 +487,62 @@ export async function listStaffAccounts() {
     select: { id: true, email: true, name: true, phone: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
   });
+}
+
+// Edit a staff account's display details (name/phone). Two allowed callers:
+//  - an Admin editing any staff account from the Team tab
+//  - the staff member editing their own profile from Settings
+// Email is intentionally NOT editable here — it is the login identity shared
+// with the Supabase auth user, and changing it would desync auth from the
+// profile (and break the Google sign-in email match).
+export async function updateStaffAccount(callerId: string, staffId: string, data: {
+  name?: string;
+  phone?: string | null;
+}) {
+  const caller = await prisma.profile.findUnique({ where: { id: callerId } });
+  if (!caller) throw new AppError(401, 'Not authenticated');
+
+  const staff = await prisma.profile.findUnique({ where: { id: staffId } });
+  if (!staff || staff.role !== 'Staff') {
+    throw new AppError(404, 'Staff account not found');
+  }
+
+  const isSelf = caller.id === staff.id;
+  const isAdmin = caller.role === 'Admin';
+  if (!isSelf && !isAdmin) {
+    throw new AppError(403, 'Only admins can edit staff accounts');
+  }
+
+  const patch: { name?: string; phone?: string | null } = {};
+  if (data.name !== undefined) patch.name = data.name;
+  if (data.phone !== undefined) patch.phone = data.phone?.trim() || null;
+  if (Object.keys(patch).length === 0) {
+    throw new AppError(400, 'Nothing to update');
+  }
+
+  const updated = await prisma.profile.update({
+    where: { id: staffId },
+    data: patch,
+  });
+
+  // Audit: which display fields changed and their old→new values. Self-edits
+  // and admin edits share this path; performedById distinguishes them.
+  // Non-critical: never blocks the update.
+  try {
+    const oldValue: Record<string, unknown> = {};
+    const newValue: Record<string, unknown> = {};
+    for (const k of Object.keys(patch) as (keyof typeof patch)[]) {
+      oldValue[k] = (staff as Record<string, unknown>)[k] ?? null;
+      newValue[k] = patch[k] ?? null;
+    }
+    await createAuditLog({
+      action: 'staff.update', entity: 'staff', entityId: staffId,
+      performedById: callerId,
+      oldValue, newValue,
+    });
+  } catch { /* audit is non-critical */ }
+
+  return updated;
 }
 
 export async function removeStaffAccount(adminId: string, staffId: string) {
@@ -354,6 +568,16 @@ export async function removeStaffAccount(adminId: string, staffId: string) {
   await prisma.sentSms.deleteMany({ where: { profileId: staffId } });
   await prisma.sentSms.deleteMany({ where: { sentById: staffId } });
   await prisma.profile.delete({ where: { id: staffId } });
+
+  // Audit after deletion: identity snapshot (no row left to reference).
+  // Non-critical: never throws past this point.
+  try {
+    await createAuditLog({
+      action: 'staff.remove', entity: 'staff', entityId: staffId,
+      performedById: adminId,
+      oldValue: { email: staff.email, name: staff.name },
+    });
+  } catch { /* audit is non-critical */ }
 }
 
 // Exchange a refresh token for a fresh access+refresh token pair via the
@@ -418,6 +642,201 @@ export function toRtSession(session: {
     token_type: session.token_type ?? 'bearer',
     expires_in: session.expires_in ?? null,
   };
+}
+
+// ---- Brevo email-token flows (verification + password reset) ----
+
+function brevoTokenError(used: boolean, expired: boolean): AppError {
+  if (used) {
+    return new AppError(401, 'This link has already been used. Please request a new one.');
+  }
+  return new AppError(
+    401,
+    expired
+      ? 'This link has expired. Please request a new one.'
+      : 'This link is invalid or has already been used. Please request a new one.',
+  );
+}
+
+// Resend the signup verification email. Always resolves with the generic
+// message (no account enumeration): unknown emails, walk-ins, and already-
+// confirmed accounts are indistinguishable from a fresh send.
+export async function requestVerificationEmail(email: string) {
+  const profile = await prisma.profile.findUnique({ where: { email } });
+  if (profile && brevoService.isSendableEmail(profile.email)) {
+    try {
+      const { data } = await supabaseAdmin.auth.admin.getUserById(profile.userId);
+      const confirmed = Boolean(
+        (data?.user as { email_confirmed_at?: string | null } | undefined)?.email_confirmed_at,
+      );
+      if (!confirmed) {
+        // Invalidate older unused verification links so only the newest works.
+        await prisma.emailToken.deleteMany({
+          where: { userId: profile.id, type: 'verification', usedAt: null },
+        });
+        const token = crypto.randomBytes(32).toString('hex');
+        await prisma.emailToken.create({
+          data: {
+            userId: profile.id,
+            token,
+            type: 'verification',
+            expiresAt: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+          },
+        });
+        await brevoService.sendVerificationEmail(
+          profile.email,
+          profile.name,
+          `${frontendUrl()}/verify-email?token=${token}`,
+        );
+      }
+    } catch (err) {
+      console.error('[auth] resend verification failed:', (err as Error)?.message);
+    }
+  }
+  return { message: 'If that email is registered, a verification link has been sent.' };
+}
+
+// Consume a Brevo verification token: confirm the Supabase user, then
+// best-effort mint a session (magiclink) so the user lands logged in. Falls
+// back to session:null (manual login) when the magiclink exchange fails.
+export async function verifyEmailToken(token: string) {
+  const row = await prisma.emailToken.findUnique({ where: { token } });
+  if (!row || row.type !== 'verification') {
+    throw brevoTokenError(false, false);
+  }
+  if (row.usedAt) throw brevoTokenError(true, false);
+  if (row.expiresAt.getTime() < Date.now()) throw brevoTokenError(false, true);
+
+  const profile = await prisma.profile.findUnique({ where: { id: row.userId } });
+  if (!profile) throw brevoTokenError(false, false);
+
+  await prisma.emailToken.update({ where: { id: row.id }, data: { usedAt: new Date() } });
+
+  const { error: confirmError } = await supabaseAdmin.auth.admin.updateUserById(
+    profile.userId,
+    { email_confirm: true },
+  );
+  if (confirmError) {
+    console.error('[auth] email confirm failed:', confirmError.message);
+    throw new AppError(500, 'Could not verify your email. Please try again later.');
+  }
+
+  let session: { access_token: string | null; refresh_token: string | null } | null = null;
+  try {
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email: profile.email,
+    });
+    const hashed = (linkData as { properties?: { hashed_token?: string } } | null)?.properties?.hashed_token;
+    if (!linkError && hashed) {
+      const { data: otpData, error: otpError } = await supabaseAdmin.auth.verifyOtp({
+        token_hash: hashed,
+        type: 'magiclink',
+      });
+      if (!otpError && otpData?.session) session = toRtSession(otpData.session);
+    }
+  } catch {
+    // best-effort: the account IS verified; the user can always sign in manually.
+  }
+
+  const fresh = await prisma.profile.findUnique({ where: { id: profile.id } });
+  return { profile: fresh ?? profile, session };
+}
+
+// Request a password-reset email (Brevo). Always resolves with the generic
+// message — unknown emails and undeliverable sends are indistinguishable, so
+// the endpoint can never be used to enumerate accounts. (The route itself is
+// rate-limited per-IP, which bounds retry abuse.)
+export async function requestPasswordReset(email: string) {
+  const profile = await prisma.profile.findUnique({ where: { email } });
+  if (profile && brevoService.isSendableEmail(profile.email)) {
+    try {
+      await prisma.emailToken.deleteMany({
+        where: { userId: profile.id, type: 'password_reset', usedAt: null },
+      });
+      const token = crypto.randomBytes(32).toString('hex');
+      await prisma.emailToken.create({
+        data: {
+          userId: profile.id,
+          token,
+          type: 'password_reset',
+          expiresAt: new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS),
+        },
+      });
+      await brevoService.sendPasswordResetEmail(
+        profile.email,
+        profile.name,
+        `${frontendUrl()}/reset-password?token=${token}`,
+      );
+    } catch (err) {
+      console.error('[auth] password-reset email failed:', (err as Error)?.message);
+    }
+  }
+  return { message: 'If that email is registered, a reset link has been sent.' };
+}
+
+// Consume a Brevo reset token: set the new password, then sign in fresh so
+// the user lands logged in with clean cookies.
+//
+// currentPassword is an OPTIONAL old-password confirmation: when the user
+// still remembers their current password they type it on the reset page and
+// it is verified against Supabase BEFORE the single-use link is consumed — a
+// typo never burns the token, the link stays valid for a retry. Blank/absent
+// is the "I forgot it too" case (customer AND staff): the email link itself
+// (inbox possession) is the authorization. Note this check is a confirmation
+// aid, not a security boundary — the link alone authorizes the change; the
+// route's 10/min rate limiter bounds old-password guessing through it.
+export async function resetPasswordWithToken(
+  token: string,
+  newPassword: string,
+  currentPassword?: string,
+) {
+  const row = await prisma.emailToken.findUnique({ where: { token } });
+  if (!row || row.type !== 'password_reset') {
+    throw brevoTokenError(false, false);
+  }
+  if (row.usedAt) throw brevoTokenError(true, false);
+  if (row.expiresAt.getTime() < Date.now()) throw brevoTokenError(false, true);
+
+  const profile = await prisma.profile.findUnique({ where: { id: row.userId } });
+  if (!profile) throw brevoTokenError(false, false);
+
+  // Optional old-password gate — verified BEFORE the token is consumed.
+  if (currentPassword) {
+    const { error: verifyError } = await supabaseAdmin.auth.signInWithPassword({
+      email: profile.email,
+      password: currentPassword,
+    });
+    if (verifyError) {
+      throw new AppError(401, 'Current password is incorrect');
+    }
+  }
+
+  await prisma.emailToken.update({ where: { id: row.id }, data: { usedAt: new Date() } });
+
+  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+    profile.userId,
+    { password: newPassword },
+  );
+  if (updateError) {
+    console.error('[auth] password update failed:', updateError.message);
+    throw new AppError(500, 'Could not reset your password. Please request a new link.');
+  }
+
+  // Fresh sign-in with the just-set password (clean access + refresh pair).
+  // If it fails the password WAS changed — return session:null and let the
+  // user sign in manually instead of reporting a misleading link error.
+  let session: { access_token: string | null; refresh_token: string | null } | null = null;
+  try {
+    const { data: signIn, error: signInError } = await supabaseSignUp.auth.signInWithPassword({
+      email: profile.email,
+      password: newPassword,
+    });
+    if (!signInError && signIn?.session) session = toRtSession(signIn.session);
+  } catch {
+    // best-effort
+  }
+  return { session };
 }
 
 // Phase 3: Server-side OAuth redirect URL.
@@ -492,4 +911,87 @@ export async function exchangeOauthCode(
   const data: OauthTokenData = await res.json() as OauthTokenData;
   // data = { access_token, refresh_token, expires_in, token_type, user }
   return data;
+}
+
+// ---- Discount authorization PIN (admin-set, staff-presented) ----
+// The 4-digit PIN is scrypt-hashed with a per-user salt and stored in the
+// admin's Supabase `user_metadata` (no schema change needed). Only a hash ever
+// leaves the server. The verify endpoint is rate-limited per-IP (see
+// auth.routes.ts) because a 4-digit space is trivially brute-forceable.
+export function hashAdminPin(pin: string): { salt: string; hash: string } {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(pin, salt, 64).toString('hex');
+  return { salt, hash };
+}
+
+function verifyAdminPin(pin: string, salt: string, hash: string): boolean {
+  try {
+    const candidate = crypto.scryptSync(pin, salt, 64);
+    const stored = Buffer.from(hash, 'hex');
+    return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
+  } catch {
+    return false;
+  }
+}
+
+// Whether this admin already has a discount PIN configured.
+export async function getAdminPinConfigured(userId: string): Promise<boolean> {
+  const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
+  const meta = data?.user?.user_metadata as { adminPin?: { salt?: string; hash?: string } } | undefined;
+  return Boolean(meta?.adminPin?.salt && meta.adminPin.hash);
+}
+
+// Setting/resetting the PIN requires the admin's own Supabase password when a
+// PIN already exists (the PIN is only 4 digits, so changing it must be
+// protected by the full credential, not just the session), plus the current
+// PIN itself — the admin must know both to mint a new one. First-time setup
+// takes neither — the endpoint is already Admin-only + MFA-gated.
+export async function setAdminPin(userId: string, pin: string, password?: string, oldPin?: string) {
+  const configured = await getAdminPinConfigured(userId);
+
+  if (configured) {
+    if (!oldPin) throw new AppError(400, 'Current PIN is required to reset');
+    const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
+    const meta = data?.user?.user_metadata as { adminPin?: { salt?: string; hash?: string } } | undefined;
+    if (!meta?.adminPin?.salt || !meta.adminPin.hash || !verifyAdminPin(oldPin, meta.adminPin.salt, meta.adminPin.hash)) {
+      throw new AppError(401, 'Current PIN is incorrect');
+    }
+
+    if (!password) {
+      throw new AppError(400, 'Password is required to reset the PIN');
+    }
+    const profile = await prisma.profile.findUnique({
+      where: { userId },
+      select: { email: true },
+    });
+    if (!profile?.email) throw new AppError(401, 'Invalid password');
+
+    const { data: authData, error } = await supabaseAdmin.auth.signInWithPassword({ email: profile.email, password });
+    if (error || !authData.user || authData.user.id !== userId) {
+      throw new AppError(401, 'Invalid password');
+    }
+  }
+
+  const { salt, hash } = hashAdminPin(pin);
+  const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    user_metadata: { adminPin: { salt, hash } },
+  });
+  if (updateError) throw new AppError(500, 'Failed to save discount PIN');
+}
+
+// Finds the admin whose stored PIN hash matches, so any Admin can be the
+// discount approver. Returns the admin's display info or null on mismatch.
+export async function verifyDiscountPin(pin: string): Promise<{ name: string; email: string } | null> {
+  const admins = await prisma.profile.findMany({
+    where: { role: 'Admin' },
+    select: { userId: true, name: true, email: true },
+  });
+  for (const admin of admins) {
+    const { data } = await supabaseAdmin.auth.admin.getUserById(admin.userId);
+    const meta = data?.user?.user_metadata as { adminPin?: { salt?: string; hash?: string } } | undefined;
+    if (meta?.adminPin?.salt && meta.adminPin.hash && verifyAdminPin(pin, meta.adminPin.salt, meta.adminPin.hash)) {
+      return { name: admin.name, email: admin.email };
+    }
+  }
+  return null;
 }

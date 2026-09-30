@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api } from '../utils/api';
-import { setAuthed, clearImageCache } from '../utils/authSession';
+import { setAuthed, clearImageCache, isAuthed, hasSessionCookie } from '../utils/authSession';
+import { isDemoMode } from '../utils/demoMode';
 
 const AuthContext = createContext(null);
 
@@ -9,9 +10,34 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async () => {
+    // Demo mode: skip the cookie/flag guest-guard — the interceptor answers
+    // /auth/me with the demo profile for the active role.
+    if (isDemoMode()) {
+      try {
+        const prof = await api.get('/auth/me');
+        setProfile(prof);
+        setAuthed(true);
+      } catch {
+        setProfile(null);
+        setAuthed(false);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     // Cookies are sent automatically (credentials: 'include' in api.js).
     // If the session is expired and the refresh cookie is valid, the 401
     // retry in api.js refreshes first and then retries /auth/me.
+    //
+    // Guests (no authed flag AND no session cookie) skip the call entirely —
+    // otherwise every anonymous page load fires a doomed /auth/me and logs a
+    // 401 in the console.
+    if (!isAuthed() && !hasSessionCookie()) {
+      setProfile(null);
+      setAuthed(false);
+      setLoading(false);
+      return;
+    }
     try {
       const prof = await api.get('/auth/me');
       setProfile(prof);
@@ -54,6 +80,14 @@ export function AuthProvider({ children }) {
     // (rt_mfa_pending); the verifyMfa call only needs the 6-digit code.
     if (result.requiresMfa) {
       return { requiresMfa: true, email: result.user.email };
+    }
+    // Staff first login: the account was created with a one-time password —
+    // cookies are already set, but the app locks to the change-password
+    // screen until the staff member sets their own password.
+    if (result.mustChangePassword) {
+      setProfile(result.user);
+      setAuthed(true);
+      return { mustChangePassword: true, user: result.user };
     }
     // Normal login — cookies are set by the backend (Set-Cookie headers).
     setProfile(result.user);
@@ -121,6 +155,27 @@ export function AuthProvider({ children }) {
     return updated;
   }, []);
 
+  // First-login staff flow: swap the admin-issued one-time password for the
+  // staff member's own password, then re-fetch the profile (mustChangePassword
+  // is cleared server-side; /auth/me becomes fully usable again).
+  // Durability: once the POST succeeds the change is committed — a flaky
+  // profile refetch must not masquerade as a failed change (which strands the
+  // user on the gate with a session error for a change that already landed).
+  // On refetch failure, go home and reboot from '/' (a plain reload would
+  // keep a deep-link path, which renders the signed-out 404 when the session
+  // is also unusable — exactly the dead end we're avoiding).
+  const completeForcedPasswordChange = useCallback(async ({ currentPassword, newPassword }) => {
+    await api.post('/auth/change-password', { currentPassword, newPassword });
+    try {
+      const prof = await api.get('/auth/me');
+      setProfile(prof);
+      return prof;
+    } catch {
+      window.location.href = '/';
+      return null;
+    }
+  }, []);
+
   const value = {
     profile,
     loading,
@@ -134,6 +189,7 @@ export function AuthProvider({ children }) {
      completeOAuth,
      cancelOAuth,
      verifyMfa,
+     completeForcedPasswordChange,
   };
 
   return (

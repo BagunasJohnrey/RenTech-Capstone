@@ -8,7 +8,8 @@ export async function listNotifications(req: AuthenticatedRequest, res: Response
     if (!req.user) throw new AppError(401, 'Not authenticated');
     const limit = Number(req.query.limit);
     const take = Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), 500) : 50;
-    const notifications = await notificationService.listNotifications(req.user.id, take);
+    const rawType = String(req.query.type ?? '').trim().slice(0, 40);
+    const notifications = await notificationService.listNotifications(req.user.id, take, rawType || undefined);
     res.json(notifications);
   } catch (err) {
     next(err);

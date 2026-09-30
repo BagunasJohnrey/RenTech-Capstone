@@ -18,11 +18,13 @@ const SORT_OPTIONS = [
   { key: 'category', label: 'Category' },
 ];
 
-export default function InventoryAnalyticsView({ noHeader, period, initialData }) {
+export default function InventoryAnalyticsView({ noHeader, period, initialData, onViewItemTransactions }) {
   const [data, setData] = useState(initialData ?? null);
   const [sortKey, setSortKey] = useState('revenueGenerated');
   const [sortDesc, setSortDesc] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [txStatusFilter, setTxStatusFilter] = useState('All');
   const [page, setPage] = useState(0);
   const { error: toastError } = useToast();
 
@@ -56,7 +58,22 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
   const { items, topByRevenue, topByUtilization, topByFrequency } = data;
 
   const categories = [...new Set(items.map(i => i.category))].sort();
-  const filteredItems = categoryFilter === 'All' ? items : items.filter(i => i.category === categoryFilter);
+  // Canonical lifecycle order; only statuses present in the data get a pill.
+  const STATUS_ORDER = ['Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
+  const statuses = STATUS_ORDER.filter(s => items.some(i => i.status === s));
+  // Transaction-status order mirrors the History tabs (Released = any handover
+  // with photo proof). Counts items ever involved in such a transaction.
+  // Older backends omit txStatuses — guard so the row hides until redeployed.
+  const TX_STATUS_ORDER = ['Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved', 'Released'];
+  const matchesTx = (item, st) => st === 'Released' ? !!item.hasReleased : (item.txStatuses ?? []).includes(st);
+  const txStatuses = TX_STATUS_ORDER.filter(s => items.some(i => matchesTx(i, s)));
+  const filteredItems = items.filter(i =>
+    (categoryFilter === 'All' || i.category === categoryFilter) &&
+    (statusFilter === 'All' || i.status === statusFilter) &&
+    (txStatusFilter === 'All' || matchesTx(i, txStatusFilter))
+  );
+  const resetFilters = () => { setCategoryFilter('All'); setStatusFilter('All'); setTxStatusFilter('All'); setPage(0); };
+  const filtersActive = categoryFilter !== 'All' || statusFilter !== 'All' || txStatusFilter !== 'All';
 
   const sortedItems = [...filteredItems].sort((a, b) => {
     const va = a[sortKey], vb = b[sortKey];
@@ -87,6 +104,11 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
     setPage(0);
   };
 
+  // Tied values share the same rank (competition ranking:
+  // rank = 1 + number of items strictly ahead). Lists arrive sorted desc
+  // by their metric, so the first index holding the value is the rank.
+  const rankOf = (list, item, key) => list.findIndex((t) => t[key] === item[key]) + 1;
+
   const SortHeader = ({ label, sort, className }) => (
     <th className={`px-4 py-3 text-[11px] font-bold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700 ${className || ''}`}
       onClick={() => toggleSort(sort)}>
@@ -106,21 +128,24 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
         </div>
       )}
 
-      {/* Top Performers */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {/* Top Performers — 1-up on phones, 2-up on tablet (3rd spans full),
+          3-up on desktop */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
           <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
             <DollarSign size={16} className="text-emerald-500" /> Top by Revenue
           </h3>
           <div className="space-y-2">
-            {topByRevenue.map((item, i) => (
-              <div key={item.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-xl">
+            {topByRevenue.map((item) => (
+              <button key={item.id} type="button" onClick={() => onViewItemTransactions?.(item)}
+                title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+                className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{i + 1}.</span>
+                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(topByRevenue, item, 'revenueGenerated')}.</span>
                   <span className="text-xs font-semibold text-gray-900 truncate">{item.name}</span>
                 </div>
                 <span className="text-xs font-bold text-emerald-600 shrink-0">₱{item.revenueGenerated.toLocaleString()}</span>
-              </div>
+              </button>
             ))}
             {topByRevenue.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
           </div>
@@ -130,31 +155,35 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
             <TrendingUp size={16} className="text-blue-500" /> Top by Utilization
           </h3>
           <div className="space-y-2">
-            {topByUtilization.map((item, i) => (
-              <div key={item.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-xl">
+            {topByUtilization.map((item) => (
+              <button key={item.id} type="button" onClick={() => onViewItemTransactions?.(item)}
+                title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+                className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{i + 1}.</span>
+                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(topByUtilization, item, 'utilizationPct')}.</span>
                   <span className="text-xs font-semibold text-gray-900 truncate">{item.name}</span>
                 </div>
                 <span className="text-xs font-bold text-blue-600 shrink-0">{item.utilizationPct}%</span>
-              </div>
+              </button>
             ))}
             {topByUtilization.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
           </div>
         </div>
-        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
+        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm md:col-span-2 xl:col-span-1">
           <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
             <RotateCcw size={16} className="text-orange-500" /> Top by Frequency
           </h3>
           <div className="space-y-2">
-            {topByFrequency.map((item, i) => (
-              <div key={item.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-xl">
+            {topByFrequency.map((item) => (
+              <button key={item.id} type="button" onClick={() => onViewItemTransactions?.(item)}
+                title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+                className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{i + 1}.</span>
+                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(topByFrequency, item, 'totalRentals')}.</span>
                   <span className="text-xs font-semibold text-gray-900 truncate">{item.name}</span>
                 </div>
                 <span className="text-xs font-bold text-orange-600 shrink-0">{item.totalRentals}x</span>
-              </div>
+              </button>
             ))}
             {topByFrequency.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
           </div>
@@ -164,36 +193,72 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
       {/* Item list: sortable cards on mobile/tablet, full table on desktop (lg+) */}
       <div className="bg-white border border-gray-100/80 shadow-sm rounded-3xl overflow-hidden">
 
-        {/* Section title + category filter + result count */}
-        <div className="px-4 md:px-5 pt-4 md:pt-5 pb-3 border-b border-gray-100/80 space-y-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <div>
+        {/* Section title + filters + result count */}
+        <div className="px-4 md:px-5 pt-4 md:pt-5 pb-4 border-b border-gray-100/80 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <h3 className="font-bold text-gray-900 text-base md:text-lg">Item Performance</h3>
               <p className="text-xs text-gray-400 mt-0.5">Revenue, rentals and utilization per piece</p>
             </div>
-            <span className="shrink-0 text-xs font-semibold text-gray-500 tabular-nums">
-              {categoryFilter === 'All'
-                ? `${items.length} items`
-                : `${filteredItems.length} of ${items.length}`}
-            </span>
-          </div>
-          {/* Category pills — one-tap single select, wraps on desktop / scrolls on mobile */}
-          <div className="flex items-center gap-1.5 overflow-x-auto lg:flex-wrap hide-scrollbar -mx-1 px-1 pb-0.5">
-            {['All', ...categories].map(cat => {
-              const active = categoryFilter === cat;
-              return (
-                <button key={cat} type="button"
-                  onClick={() => { setCategoryFilter(cat); setPage(0); }}
-                  aria-pressed={active}
-                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap capitalize ${
-                    active
-                      ? 'bg-gray-900 text-white shadow-sm'
-                      : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
-                  }`}>
-                  {cat}
+            <div className="flex items-center gap-2 shrink-0">
+              {filtersActive && (
+                <button type="button"
+                  onClick={resetFilters}
+                  className="text-[11px] font-bold text-[#bf4a53] hover:text-red-700 transition-colors">
+                  Reset
                 </button>
-              );
-            })}
+              )}
+              <span className="text-xs font-semibold text-gray-500 tabular-nums">
+                {!filtersActive
+                  ? `${items.length} items`
+                  : `${filteredItems.length} of ${items.length}`}
+              </span>
+            </div>
+          </div>
+          {/* Filters — three compact dropdowns in one row */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <label className="block min-w-0">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Category</span>
+              <select
+                value={categoryFilter}
+                onChange={e => { setCategoryFilter(e.target.value); setPage(0); }}
+                className="w-full min-w-0 bg-gray-50 border border-gray-200/70 rounded-xl px-2 py-1.5 text-[11px] font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-900/10 capitalize truncate"
+              >
+                {['All', ...categories].map(cat => (
+                  <option key={cat} value={cat}>
+                    {cat === 'All' ? `All (${items.length})` : `${cat} (${items.filter(i => i.category === cat).length})`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block min-w-0">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Status</span>
+              <select
+                value={statusFilter}
+                onChange={e => { setStatusFilter(e.target.value); setPage(0); }}
+                className="w-full min-w-0 bg-gray-50 border border-gray-200/70 rounded-xl px-2 py-1.5 text-[11px] font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/20 truncate"
+              >
+                {['All', ...statuses].map(st => (
+                  <option key={st} value={st}>
+                    {st === 'All' ? `All (${items.length})` : `${st} (${items.filter(i => i.status === st).length})`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block min-w-0">
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Transact.</span>
+              <select
+                value={txStatusFilter}
+                onChange={e => { setTxStatusFilter(e.target.value); setPage(0); }}
+                className="w-full min-w-0 bg-gray-50 border border-gray-200/70 rounded-xl px-2 py-1.5 text-[11px] font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-sky-600/20 truncate"
+              >
+                {['All', ...txStatuses].map(st => (
+                  <option key={st} value={st}>
+                    {st === 'All' ? `All (${items.length})` : `${st} (${items.filter(i => matchesTx(i, st)).length})`}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
 
@@ -220,7 +285,9 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
         {/* Mobile / tablet cards */}
         <div className="lg:hidden">
           {paginatedItems.map(item => (
-            <div key={item.id} className="p-4 border-b border-gray-100/60 last:border-0 space-y-3">
+            <button key={item.id} type="button" onClick={() => onViewItemTransactions?.(item)}
+              title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+              className="w-full text-left p-4 border-b border-gray-100/60 last:border-0 space-y-3 hover:bg-gray-50/60 active:bg-gray-50 transition-colors">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="font-bold text-gray-900 truncate">{item.name}</p>
@@ -254,11 +321,13 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
                 </div>
                 <span className="text-[11px] font-semibold text-gray-600 shrink-0">{item.utilizationPct}%</span>
               </div>
-            </div>
+            </button>
           ))}
           {paginatedItems.length === 0 && (
             <p className="text-sm text-gray-400 text-center py-10">
-              {items.length === 0 ? 'No items yet.' : `No ${categoryFilter} items.`}
+              {items.length === 0
+                ? 'No items yet.'
+                : `No ${[categoryFilter !== 'All' ? categoryFilter : null, statusFilter !== 'All' ? statusFilter : null, txStatusFilter !== 'All' ? txStatusFilter : null].filter(Boolean).join(' · ') || 'matching'} items.`}
             </p>
           )}
         </div>
@@ -282,7 +351,13 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData }
             <tbody className="divide-y divide-gray-100/50">
               {paginatedItems.map(item => (
                 <tr key={item.id} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="px-4 py-3 font-semibold text-gray-900">{item.name}</td>
+                  <td className="px-4 py-3 font-semibold text-gray-900">
+                    <button type="button" onClick={() => onViewItemTransactions?.(item)}
+                      title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+                      className="hover:text-[#bf4a53] hover:underline text-left transition-colors">
+                      {item.name}
+                    </button>
+                  </td>
                   <td className="px-4 py-3 text-gray-500">{item.category}</td>
                   <td className="px-4 py-3 text-gray-700">₱{item.price.toLocaleString()}</td>
                   <td className="px-4 py-3 font-semibold">{item.totalRentals}</td>

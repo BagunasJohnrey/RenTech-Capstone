@@ -1,56 +1,24 @@
-import { useState, useEffect, cloneElement } from 'react';
-import {
-  BarChart3, TrendingUp, DollarSign,
-  AlertTriangle, Lightbulb, FileText, Loader2, Clock, RotateCcw, XCircle, Download, Sparkles
-} from 'lucide-react';
-import {
-  ComposedChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, ReferenceLine,
-  PieChart, Pie, Sector
-} from 'recharts';
+import { useState, useEffect, useCallback, cloneElement } from 'react';
 import AIReportModal from '../components/AIReportModal';
+import SaleModal from '../components/SaleModal';
+import CleaningQueueModal from '../components/CleaningQueueModal';
+import InsightsHeader from '../components/insights/InsightsHeader';
+import KpiCards from '../components/insights/KpiCards';
+import RevenueChart from '../components/insights/RevenueChart';
+import StatusDistribution from '../components/insights/StatusDistribution';
+import DemandForecast from '../components/insights/DemandForecast';
+import TopRented from '../components/insights/TopRented';
+import SmartActions from '../components/insights/SmartActions';
+import CategoryPerformance from '../components/insights/CategoryPerformance';
+import InsightsPanel from '../components/insights/InsightsPanel';
+import ReportSection from '../components/insights/ReportSection';
+import SmartListModal from '../components/insights/SmartListModal';
+import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS } from '../components/insights/shared';
 import { api } from '../utils/api';
+import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
 import { useToast } from '../components/Toast';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import { AIInsightsSkeleton } from '../components/PageSkeletons';
-import { Skeleton } from '../components/Skeleton';
-import { TX_STATUS_HEX } from '../utils/statusColors';
-
-const fmt = (n) => `₱${Number(n).toLocaleString()}`;
-const shortMonth = (l) => l?.split(' ')[0] || '';
-
-const CustomTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
-      <p className="font-bold text-gray-900 mb-1">{label}</p>
-      {payload.map((p, i) => (
-        <p key={i} className="text-gray-600" style={{ color: p.color }}>
-          {p.name}: {p.name.includes('Revenue') ? fmt(p.value) : p.value}
-        </p>
-      ))}
-    </div>
-  );
-};
-
-// Revenue-chart tooltip: shows the full "Mar 2026" label and clearly marks the
-// projection bar so it isn't mistaken for actual revenue.
-const RevenueTooltip = ({ active, payload }) => {
-  if (!active || !payload?.length) return null;
-  const p = payload[0].payload;
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
-      <p className="font-bold text-gray-900">{p.full}{p.forecast ? ' (projected)' : ''}</p>
-      <p className="text-gray-600">{p.rev <= 0 && !p.forecast ? 'No revenue' : fmt(p.rev)}</p>
-    </div>
-  );
-};
-
-const STATUS_COLORS = { Active: TX_STATUS_HEX.Active, Overdue: TX_STATUS_HEX.Overdue, Returned: TX_STATUS_HEX.Returned, Cancelled: TX_STATUS_HEX.Cancelled };
-const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCcw, Cancelled: XCircle };
-
-const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];
-
-const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // Pickers clamp to now* so users can look BACK at any past month/year but not
 // into the future. (* milliseconds-since-epoch comparison.)
@@ -105,48 +73,35 @@ function writeAiSuggestCache(data) {
   }
 }
 
-// Pulls the numbered recommendations out of the AI report text. Provider models
-// format loosely (markdown **bold** headers, "Recommendations:", trailing
-// colons), so this accepts a header with optional markdown framing and falls
-// back to any numbered lines — the prompt forces recommendations to be numbered
-// 1..N with no gaps, so numbered lines are almost always the recommendation list.
-function extractRecommendations(report) {
-  if (!report) return [];
-  const lines = String(report)
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  const strip = (l) =>
-    l
-      .replace(/^[#*_>-\s]+/, '')
-      .replace(/\s*[#*_>]+$/, '')
-      .trim()
-      .replace(/^\d{1,2}[.)]\s*\*{0,2}\s*/, '')
-      .trim();
-
-  const isHeader = (l) => /^[\s#*_>]*recommendations\s*:?[\s#*_]*$/i.test(l);
-
-  const isMeta = (l) =>
-    /^([-#\d.]*)?\s*(executive summary|key performance indicators?|revenue analysis|inventory\s*&?\s*utilization|operational health|demand forecast|data:|kpis?:|insights?:|forecast:|underperforming items)/i.test(l);
-
-  const idx = lines.findIndex(isHeader);
-  if (idx !== -1) {
-    const recs = lines.slice(idx + 1).map(strip).filter((l) => l.length > 10 && !isMeta(l));
-    if (recs.length) return recs;
-  }
-
-  const numbered = lines
-    .filter((l) => /^\d{1,2}[.)]\s+\S/.test(l))
-    .map(strip)
-    .filter((l) => l.length > 10);
-  return numbered;
-}
-
-export default function AIInsightsView({ analyticsData, role }) {
+export default function AIInsightsView({ analyticsData, role, onViewItemTransactions, onNavigateTab, cleaningItems = [], onBulkClean }) {
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const { error: toastError } = useToast();
+  // Last saved AI reports (server history, admin-only) — reopenable from here
+  // and from Settings → Data & Backups.
+  const [recentReports, setRecentReports] = useState([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportsPage, setReportsPage] = useState(0);
+  const REPORTS_PAGE_SIZE = 3;
+  const [openingReportId, setOpeningReportId] = useState(null);
+  const loadRecentReports = () => {
+    if (role !== 'Admin') return;
+    setReportsLoading(true);
+    api.get('/ai/reports')
+      .then((r) => { setRecentReports(Array.isArray(r) ? r.slice(0, 5) : []); setReportsPage(0); })
+      .catch(() => {})
+      .finally(() => setReportsLoading(false));
+  };
+  useEffect(() => { loadRecentReports(); }, [role]);
+  const openSavedReport = (id) => {
+    if (openingReportId) return;
+    setOpeningReportId(id);
+    api.get(`/ai/reports/${id}`)
+      .then((r) => { setAiReport(r?.report || ''); setShowReportModal(true); })
+      .catch(() => toastError('Could not open that report.'))
+      .finally(() => setOpeningReportId(null));
+  };
   const [activePie, setActivePie] = useState(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const now0 = new Date();
@@ -178,9 +133,47 @@ export default function AIInsightsView({ analyticsData, role }) {
   // the remaining sections fill in as their own requests resolve — no full-page
   // skeleton waiting on all 4 endpoints.
   const [loaded, setLoaded] = useState(!!cached);
+  // Once the page has painted real content, never drop back to the full-page
+  // skeleton — range/period switches would otherwise flash skeleton→content
+  // on every cache miss. The sections just stay put until the new data lands.
+  const [everRendered, setEverRendered] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState(() => readAiSuggestCache());
   const [suggestLoading, setSuggestLoading] = useState(false);
-  const { error: toastError } = useToast();
+  // Forecast granularity: monthly comes with the bundle; weekly is fetched
+  // on demand from /dashboard/forecast?granularity=weekly (admin-only).
+  const [granularity, setGranularity] = useState('monthly');
+  const [weeklyForecast, setWeeklyForecast] = useState(null);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  // Full-list modal for the smart-action cards: 'restock' | 'clearance' | 'cleaning' | 'never' | null
+  const [smartModal, setSmartModal] = useState(null);
+  // Inline sale editor target (opened from clearance / never-rented rows).
+  const [saleTarget, setSaleTarget] = useState(null);
+  // Cleaning queue modal (opened from clean-next rows, tapped item preselected).
+  const [cleanQueue, setCleanQueue] = useState(null);
+  const openCleanQueue = (item) => {
+    setSmartModal(null);
+    setCleanQueue({ preselect: item?.id ?? null });
+  };
+  // Queue rows: live inventory when provided, else the analytics snapshot.
+  const cleanQueueItems = cleaningItems.length > 0
+    ? cleaningItems
+    : (inventoryAnalytics?.items || []).filter((i) => i.status === 'Cleaning');
+  // Timed exit like the transaction sheet: play the fade/slide-out, then unmount.
+  const [smartClosing, setSmartClosing] = useState(false);  const openSmartModal = (type) => { setSmartClosing(false); setSmartModal(type); };
+  const closeSmartModal = useCallback(() => {
+    if (smartClosing) return;
+    setSmartClosing(true);
+    setTimeout(() => { setSmartModal(null); setSmartClosing(false); }, 150);
+  }, [smartClosing]);
+  useEscapeClose(closeSmartModal, smartModal !== null);
+  const loadWeeklyForecast = () => {
+    if (weeklyForecast || weeklyLoading) return;
+    setWeeklyLoading(true);
+    api.get('/dashboard/forecast?granularity=weekly&period=3')
+      .then((r) => setWeeklyForecast(r ?? null))
+      .catch(() => {})
+      .finally(() => setWeeklyLoading(false));
+  };
 
   useEffect(() => {
     const range = timeRange;
@@ -208,42 +201,46 @@ export default function AIInsightsView({ analyticsData, role }) {
       setInventoryAnalytics(hit.analytics);
       setAnalyticsSummary(hit.analytics?.summary);
       setLoaded(true);
-    } else {
-      setLoaded(false);
+      setEverRendered(true);
     }
     let settled = false;
-    const settle = () => { if (!settled) { settled = true; if (active) setLoaded(true); } };
+    const settle = () => { if (!settled) { settled = true; if (active) { setLoaded(true); setEverRendered(true); } } };
     const fail = (err) => {
       if (!active) return;
       toastError(err?.message || 'Failed to load dashboard data');
       settle();
     };
 
-    // Each request updates its own section the moment it lands (progressive
-    // render — the page paints as soon as the fastest source arrives), and the
-    // allSettled hook writes one coherent snapshot to the 60s cache.
-    const pKpis = api.get(`/dashboard/kpis?${periodParam}${monthParam}${yearParam}`)
-      .then(r => { if (active) { setKpis(r); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
-    const pForecast = api.get('/dashboard/forecast?period=3')
-      .then(r => { if (active) { setForecast(r); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
-    const pInsights = api.get(`/dashboard/insights?${periodParam}${monthParam}${yearParam}`)
-      .then(r => { if (active) { setInsightsData(r); setRevenueChartData(r?.revenueByMonth || []); setRevenueWeeklyData(r?.revenueByWeek || null); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
-    const pAnalytics = api.get(`/inventory/analytics?${periodParam}`)
-      .then(r => { if (active) { setInventoryAnalytics(r); setAnalyticsSummary(r?.summary); settle(); } return r; })
-      .catch(e => { fail(e); throw e; });
+    // One request for the whole page. The old four-call fan-out (kpis /
+    // insights / forecast / inventory-analytics) each paid its own remote
+    // pooler round trip on a cold cache and could warm independently — one
+    // fresh, one stale. The bundle returns everything under one key so the
+    // page paints once, consistently, from a single fetch.
+    const params = [`fp=3`, periodParam, monthParam ? monthParam.replace(/^&/, '') : '', yearParam ? yearParam.replace(/^&/, '') : '']
+      .filter(Boolean).join('&');
+    const pBundle = api.get(`/dashboard/bundle?${params}`)
+      .then(r => {
+        if (!active) return r;
+        setKpis(r?.kpis ?? null);
+        setForecast(r?.forecast ?? null);
+        setInsightsData(r?.insights ?? null);
+        setRevenueChartData(r?.insights?.revenueByMonth || []);
+        setRevenueWeeklyData(r?.insights?.revenueByWeek || null);
+        setInventoryAnalytics(r?.analytics ?? null);
+        setAnalyticsSummary(r?.analytics?.summary ?? null);
+        settle();
+        return r;
+      });
 
-    Promise.allSettled([pKpis, pForecast, pInsights, pAnalytics]).then(([k, f, i, a]) => {
-      if (!active) return;
-      if (k.status === 'fulfilled' && f.status === 'fulfilled' && i.status === 'fulfilled' && a.status === 'fulfilled') {
-        aiCache.set(cacheKey, {
-          data: { kpis: k.value, forecast: f.value, insights: i.value, analytics: a.value },
-          at: Date.now(),
-        });
-      }
+    pBundle.then(r => {
+      if (!active || !r) return;
+      aiCache.set(cacheKey, {
+        data: { kpis: r.kpis, forecast: r.forecast, insights: r.insights, analytics: r.analytics },
+        at: Date.now(),
+      });
       settle();
+    }).catch(() => {
+      if (active) fail(new Error('Failed to load dashboard data'));
     });
 
     return () => { active = false; };
@@ -257,6 +254,35 @@ export default function AIInsightsView({ analyticsData, role }) {
     } catch (err) {
       alert(err?.message || 'Export failed. Please try again.');
     }
+  };
+
+  // One workbook download (Transactions + Revenue + Inventory sheets) scoped
+  // to the selected Overall / Yearly / Monthly window.
+  const workbookScopeLabel = timeRange === 'Monthly'
+    ? `${SHORT_MONTHS[appliedMonth - 1]} ${appliedYear}`
+    : timeRange === 'Yearly' ? `${appliedYear}` : 'Overall';
+  const handleWorkbookExport = () => {
+    const params = timeRange === 'Overall'
+      ? 'period=overall'
+      : timeRange === 'Yearly'
+        ? `period=yearly&year=${appliedYear}`
+        : `period=monthly&year=${appliedYear}&month=${appliedMonth}`;
+    const filename = timeRange === 'Monthly'
+      ? `rentech-report-${appliedYear}-${String(appliedMonth).padStart(2, '0')}.xlsx`
+      : timeRange === 'Yearly'
+        ? `rentech-report-${appliedYear}.xlsx`
+        : 'rentech-report-overall.xlsx';
+    handleExport(`/export/workbook?${params}`, filename);
+  };
+
+  // Full AI business report for the modal (same endpoint as suggestions,
+  // longer timeout — the old 20s abort is what used to kill it mid-write).
+  const handleGenerateReport = () => {
+    setReportLoading(true);
+    api.post('/ai/generate-report', undefined, { timeout: 60000 })
+      .then(r => { setAiReport(r.report || r); setShowReportModal(true); loadRecentReports(); })
+      .catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); })
+      .finally(() => setReportLoading(false));
   };
 
   // On-demand AI suggestions (promo/restock recommendations) — reuses the
@@ -301,14 +327,18 @@ export default function AIInsightsView({ analyticsData, role }) {
     }
   };
 
-  if (!loaded) {
+  // Full-page skeleton only on the very first paint. After that the page stays
+  // mounted and refreshes in place — no skeleton flash on range switches.
+  if (!loaded && !everRendered) {
     return <AIInsightsSkeleton />;
   }
 
-  // -- Raw data --
-  const fLabels = forecast?.labels || [];
-  const fCounts = forecast?.counts || [];
-  const fSma = forecast?.sma || [];
+  // -- Raw data (forecast follows the Monthly/Weekly toggle; revenue +
+  // smart-action rules stay on the monthly series) --
+  const activeForecast = granularity === 'weekly' ? (weeklyForecast || forecast) : forecast;
+  const fLabels = activeForecast?.labels || [];
+  const fCounts = activeForecast?.counts || [];
+  const fSma = activeForecast?.sma || [];
 
 
   const isMonthlyView = timeRange === 'Monthly';
@@ -333,7 +363,10 @@ export default function AIInsightsView({ analyticsData, role }) {
 
   const underperforming = insightsData?.underperforming || [];
   const topRented = insightsData?.topRented || [];
-  const popularItems = topRented.slice(0, 5);
+  // Never-rented items (0x) are NOT "most rented" — filter them out so the
+  // static insights and Top Rented card fall back gracefully when there are no
+  // rentals yet instead of claiming a 0x item is the store's leader.
+  const popularItems = topRented.filter(i => i.rentals > 0).slice(0, 5);
 
   // -- Status distribution --
   const statusDist = [
@@ -344,41 +377,57 @@ export default function AIInsightsView({ analyticsData, role }) {
   ].filter(d => d.value > 0);
   const totalTx = statusDist.reduce((s, d) => s + d.value, 0);
 
-  // -- SMA data --
+  // -- SMA data (follows the card toggle) --
   const smaVals = fSma.filter(v => v !== null && v !== undefined);
   const latestSmaVal = smaVals.length > 0 ? smaVals[smaVals.length - 1] : 0;
   const prevSmaVal = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
   const smaTrend = latestSmaVal > prevSmaVal ? 'up' : latestSmaVal < prevSmaVal ? 'down' : 'stable';
+  const showingWeekly = granularity === 'weekly';
+  const smaName = showingWeekly ? 'SMA (3wk)' : 'SMA (3mo)';
 
-  const avgPriceKnown = fCounts.length > 0 && fCounts[fCounts.length - 1] > 0;
+  // -- Revenue projection math stays monthly no matter the toggle: weekly
+  // rental counts must never divide a full month's revenue.
+  const mCounts = forecast?.counts || [];
+  const mSmaVals = (forecast?.sma || []).filter(v => v !== null && v !== undefined);
+  const mLatestSma = mSmaVals.length > 0 ? mSmaVals[mSmaVals.length - 1] : 0;
+  const mPrevSma = mSmaVals.length >= 2 ? mSmaVals[mSmaVals.length - 2] : 0;
+  const avgPriceKnown = mCounts.length > 0 && mCounts[mCounts.length - 1] > 0;
   const avgPrice = avgPriceKnown
-    ? (revByMonth[revByMonth.length - 1]?.revenue || 0) / fCounts[fCounts.length - 1]
+    ? (revByMonth[revByMonth.length - 1]?.revenue || 0) / mCounts[mCounts.length - 1]
     : 1500;
-  const forecastRev = latestSmaVal * avgPrice;
+  const forecastRev = mLatestSma * avgPrice;
   // With < 2 real months of revenue, a peso projection is a guess (avg price falls
   // back to a hard-coded 1500), so show the SMA direction rather than an inflated bar.
-  const forecastRevValue = avgPriceKnown ? forecastRev : latestSmaVal;
+  const forecastRevValue = avgPriceKnown ? forecastRev : mLatestSma;
 
-  const nextLabel = fLabels.length > 0
-    ? (() => {
-        const p = fLabels[fLabels.length - 1].split(' ');
-        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const idx = months.indexOf(p[0]);
-        if (idx === -1) return 'Next';
-        const nextIdx = (idx + 1) % 12;
-        return `${months[nextIdx]} ${nextIdx === 0 ? +p[1] + 1 : p[1]}`;
-      })()
-    : 'Next';
+  // Next-period label: prefer the server projection label (works for both
+  // monthly "Mar 2026" and weekly "Mar 9" labels); fall back to month math.
+  const nextLabelFrom = (labels) => {
+    const proj = (granularity === 'weekly' ? weeklyForecast : forecast)?.projections || [];
+    if (proj.length > 0 && proj[0]?.label) return proj[0].label;
+    if (!labels.length) return 'Next';
+    const p = labels[labels.length - 1].split(' ');
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const idx = months.indexOf(p[0]);
+    if (idx === -1 || p.length < 2) return 'Next';
+    const nextIdx = (idx + 1) % 12;
+    return `${months[nextIdx]} ${nextIdx === 0 ? +p[1] + 1 : p[1]}`;
+  };
+  const nextLabel = nextLabelFrom(fLabels);
+  // Revenue chart's projection bar always talks months — pin it to the
+  // monthly series even while the forecast card shows weeks.
+  const monthlyNextLabel = nextLabelFrom(forecast?.labels || []);
 
-  // -- Chart data --
+  // -- Chart data (weekly labels shown in full — shortMonth would
+  // collapse every week of a month onto one tick) --
   const forecastData = fLabels.map((l, i) => ({
-    label: shortMonth(l),
+    label: showingWeekly ? l : shortMonth(l),
     full: l,
     count: fCounts[i] || 0,
     sma: fSma[i] ?? null,
   }));
   forecastData.push({
-    label: shortMonth(nextLabel),
+    label: showingWeekly ? nextLabel : shortMonth(nextLabel),
     full: nextLabel,
     count: null,
     sma: latestSmaVal,
@@ -387,6 +436,24 @@ export default function AIInsightsView({ analyticsData, role }) {
   const validSmaCount = forecastData.filter(d => d.sma !== null && !d.forecast).length;
   const hasSma = validSmaCount >= 2;
   const countChart = fLabels.map(l => ({ label: shortMonth(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
+
+  // Season markers on observed monthly points only (never on projections,
+  // never on weekly view).
+  const seasonDots = !showingWeekly
+    ? forecastData.filter((d) => !d.forecast && d.count !== null && SEASON_MARKERS[SHORT_MONTHS.indexOf(d.full.split(' ')[0])])
+    : [];
+
+  // -- Multi-period outlook (server SMA projections) + deterministic rules --
+  // The outlook table follows the card's Monthly/Weekly toggle; the smart
+  // rules always use the monthly per-category series.
+  const projections = activeForecast?.projections || [];
+  const forecastCats = forecast?.byCategory || [];
+  const analyticsItems = inventoryAnalytics?.items || [];
+  // Insights rows (top/underperforming) carry no image — resolve via analytics.
+  const imgById = new Map(analyticsItems.map(i => [i.id, i.image]));
+  const restockRules = reorderSuggestions(forecastCats, catBreakdown);
+  const clearanceRules = clearanceSuggestions(analyticsItems);
+  const cleaningRules = cleaningPriority(analyticsItems, forecastCats);
 
   // Keep every bucket (even ₱0) so the trend reads as a continuous timeline
   // and each bar sits under its correct label. Key on the full label ("Mar 2026")
@@ -403,6 +470,17 @@ export default function AIInsightsView({ analyticsData, role }) {
     revChartEmptyLabel = isCurrentMonth(appliedYear, appliedMonth)
       ? 'No revenue this month yet.'
       : `No revenue in ${monthName} ${appliedYear}.`;
+    if (viewingCurrentMonth) {
+      // Only elapsed weeks are real — weeks that haven't started yet would
+      // render as misleading zero bars ahead of the current week (and push
+      // the Next Wk projection to the far end), so trim them.
+      const weekIdx = Math.min(4, Math.floor((new Date().getDate() - 1) / 7));
+      revChart = revChart.slice(0, weekIdx + 1);
+    } else if (appliedMonth) {
+      // A 28-day February has no days 29–31, so Wk 5 can never exist there.
+      const daysInMonth = new Date(appliedYear, appliedMonth, 0).getDate();
+      if (daysInMonth < 29) revChart = revChart.slice(0, 4);
+    }
   } else {
     revChart = (revByMonth || [])
       .map(d => ({ label: d.label || shortMonth(d.label), full: d.label, rev: d.revenue }));
@@ -424,7 +502,7 @@ export default function AIInsightsView({ analyticsData, role }) {
         revChart = [...revChart, { label: 'Next Wk', full: 'Projected · next week', rev: projectedNextWeek, forecast: true }];
     }
   } else if (forecastRevValue > 0 && revChart.length > 0) {
-    revChart = [...revChart, { label: nextLabel, full: nextLabel, rev: forecastRevValue, forecast: true }];
+    revChart = [...revChart, { label: monthlyNextLabel, full: monthlyNextLabel, rev: forecastRevValue, forecast: true }];
   }
 
   // -- Insights --
@@ -433,11 +511,11 @@ export default function AIInsightsView({ analyticsData, role }) {
     insights.push(`"${popularItems[0].name}" is the most rented item (${popularItems[0].rentals}x).`);
   const highUtil = utilData.find(u => u.rate >= 80);
   if (highUtil) insights.push(`High utilisation in ${highUtil.category} (${highUtil.rate}%).`);
-  if (underperforming.length > 0)
-    insights.push(`${underperforming.length} item(s) have never been rented – consider promotions or clearance.`);
-  const prevSma = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
-  if (latestSmaVal > prevSma)
-    insights.push(`Next month demand forecast is ${Math.round(latestSmaVal - prevSma)} rental(s) higher than this month.`);
+  if (underperforming.length > 0 && popularItems.length > 0)
+    insights.push(`${underperforming.length} item(s) haven't been rented this period – consider promotions or clearance.`);
+  const prevSma = mPrevSma;
+  if (mLatestSma > prevSma)
+    insights.push(`Next month demand forecast is ${Math.round(mLatestSma - prevSma)} rental(s) higher than this month.`);
   if (kpis?.overdueReturns > 0)
     insights.push(`${kpis.overdueReturns} overdue rental(s) need immediate attention.`);
   if (revChange > 0)
@@ -447,440 +525,126 @@ export default function AIInsightsView({ analyticsData, role }) {
 
 
 
+  // Month stepper for the revenue card (Monthly view): walk back through
+  // past months or jump back to the current one. Clamped to now and 2000.
+  const stepMonth = (dir) => {
+    const d = new Date(appliedYear, appliedMonth - 1 + dir, 1);
+    const now = new Date(now0.getFullYear(), now0.getMonth(), 1);
+    if (d > now || d.getFullYear() < 2000) return;
+    setSelYear(d.getFullYear());
+    setSelMonth(d.getMonth() + 1);
+  };
+  const goCurrentMonth = () => {
+    setSelYear(now0.getFullYear());
+    setSelMonth(now0.getMonth() + 1);
+  };
+
   // -- Render --
-  return (
-    <>
-      <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl mx-auto">
+  return (    <>
+      <div className="space-y-8 max-w-lg mx-auto md:max-w-3xl lg:max-w-[1200px]">
 
-        {/* Header */}
-        <div className="space-y-3">
-          <div>
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Business Intelligence</h2>
-            <p className="text-sm text-gray-500 mt-1">Real-time analytics powered by your transaction and inventory data.</p>
-          </div>
+        <InsightsHeader
+          timeRange={timeRange} setTimeRange={setTimeRange}
+          appliedMonth={appliedMonth} appliedYear={appliedYear}
+          setSelMonth={setSelMonth} setSelYear={setSelYear} now0={now0}
+          workbookScopeLabel={workbookScopeLabel} handleWorkbookExport={handleWorkbookExport}
+        />
 
-          {/* Controls — mobile/tablet stack the rows, desktop keeps a single
-              right-aligned row exactly as before. Order below md: range pills,
-              optional month/year, exports; md+: same as desktop. */}
-          <div className="flex flex-wrap items-center gap-2">
-
-            {/* Range pills — tags look and behave like segmented control */}
-            <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
-              {TIME_OPTIONS.map(t => (
-                <button key={t} onClick={() => setTimeRange(t)}
-                  className={`px-3 py-1.5 text-[11px] sm:text-xs font-bold rounded-full transition-colors ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                  {t}
-                </button>
-              ))}
-            </div>
-
-            {/* Month + Year — own pill so they optically pair with the range
-                pills. Hidden on Overall; on small screens they drop onto the
-                next line instead of squishing. */}
-            {timeRange !== 'Overall' && (
-              <div className="flex items-center gap-1.5 bg-gray-100 rounded-full px-1.5 py-1 shrink-0 order-last md:order-none">
-                {timeRange === 'Monthly' && (
-                  <select
-                    aria-label="Month"
-                    value={appliedMonth}
-                    onChange={e => setSelMonth(Number(e.target.value))}
-                    className="bg-transparent text-xs font-bold text-gray-700 focus:outline-none cursor-pointer pl-1"
-                  >
-                    {SHORT_MONTHS.map((name, i) => {
-                      const m = i + 1;
-                      const disabledFuture = appliedYear === now0.getFullYear() && m > now0.getMonth() + 1;
-                      return <option key={m} value={m} disabled={disabledFuture}>{name}</option>;
-                    })}
-                  </select>
-                )}
-                <select
-                  aria-label="Year"
-                  value={appliedYear}
-                  onChange={e => setSelYear(Number(e.target.value))}
-                  className="bg-transparent text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
-                >
-                  {Array.from({ length: now0.getFullYear() - 2000 + 1 }, (_, i) => 2000 + i).map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Divider + exports collapse into a right-aligned cluster on
-                md+; on small screens the divider is hidden and exports align
-                flush-right on the same row as the pills. */}
-            <div className="ml-auto md:ml-0 flex items-center gap-2">
-              <div className="w-px h-6 bg-gray-200 hidden md:block" />
-              <button onClick={() => handleExport('/export/transactions', 'transactions.csv')}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Transactions">
-                <Download size={16} />
-              </button>
-              <button onClick={() => handleExport('/export/revenue', 'revenue.csv')}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Revenue">
-                <DollarSign size={16} />
-              </button>
-              <button onClick={() => handleExport('/export/inventory', 'inventory.csv')}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors" title="Export Inventory">
-                <BarChart3 size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-            <div className="p-2 bg-emerald-50 rounded-xl inline-block text-emerald-500 mb-2">
-              <DollarSign size={16} />
-            </div>
-            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Monthly Revenue</p>
-            <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{fmt(thisMonthRev)}</h4>
-            {prevMonthRev > 0 && (
-              <span className={`text-[10px] md:text-xs font-semibold ${revChange >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                {revChange >= 0 ? '+' : ''}{Math.abs(revChange).toFixed(0)}%
-              </span>
-            )}
-          </div>
-          <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-            <div className="p-2 bg-orange-50 rounded-xl inline-block text-orange-500 mb-2">
-              <BarChart3 size={16} />
-            </div>
-            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Pieces Rented</p>
-            <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{rentedCount}<span className="text-xs md:text-sm font-medium text-gray-400">/{totalItems}</span></h4>
-            <span className="text-[10px] md:text-xs font-semibold text-gray-500">{totalItems > 0 ? Math.round((rentedCount / totalItems) * 100) : 0}%</span>
-          </div>
-          <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-            <div className="p-2 bg-purple-50 rounded-xl inline-block text-purple-500 mb-2">
-              <TrendingUp size={16} />
-            </div>
-            <p className="text-[10px] md:text-xs text-gray-500 font-medium">Forecast</p>
-            <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">
-              {smaVals.length >= 2 ? `${Math.round(latestSmaVal)}` : '—'}
-            </h4>
-            {smaVals.length >= 2 && <span className="text-[10px] md:text-xs font-semibold text-gray-500">{fmt(forecastRev)}</span>}
-          </div>
-          {analyticsSummary && (
-            <>
-              <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-                <div className="p-2 bg-emerald-50 rounded-xl inline-block text-emerald-500 mb-2">
-                  <DollarSign size={16} />
-                </div>
-                <p className="text-[10px] md:text-xs text-gray-500 font-medium">Inventory Revenue</p>
-                <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">₱{analyticsSummary.totalRevenue.toLocaleString()}</h4>
-              </div>
-              <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-                <div className="p-2 bg-orange-50 rounded-xl inline-block text-orange-500 mb-2">
-                  <RotateCcw size={16} />
-                </div>
-                <p className="text-[10px] md:text-xs text-gray-500 font-medium">Total Rentals</p>
-                <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{analyticsSummary.totalRentals}</h4>
-              </div>
-              <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm">
-                <div className="p-2 bg-purple-50 rounded-xl inline-block text-purple-500 mb-2">
-                  <TrendingUp size={16} />
-                </div>
-                <p className="text-[10px] md:text-xs text-gray-500 font-medium">Avg Utilization</p>
-                <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{analyticsSummary.avgUtilization}%</h4>
-              </div>
-            </>
-          )}
-        </div>
+        {/* KPI Cards — 2-up on phones, 3-up on tablets/iPads, 6-up on desktop */}
+        <div key={cacheKey} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+        <KpiCards
+          thisMonthRev={thisMonthRev} prevMonthRev={prevMonthRev} revChange={revChange}
+          rentedCount={rentedCount} totalItems={totalItems}
+          smaVals={smaVals} latestSmaVal={latestSmaVal} forecastRev={forecastRev}
+          analyticsSummary={analyticsSummary}
+        />
 
         {analyticsData && (
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
-            {cloneElement(analyticsData, { period: timeRange, initialData: inventoryAnalytics })}
+            {cloneElement(analyticsData, { period: timeRange, initialData: inventoryAnalytics, onViewItemTransactions })}
           </div>
         )}
 
         {/* Row 1: Revenue Chart + Status Distribution */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
-            <h3 className="font-bold text-gray-900 text-base md:text-lg px-5 md:px-7 pt-5 md:pt-7 pb-2">
-              {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : 'Monthly Revenue'}
-            </h3>
-            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">
-              {isMonthlyView
-                ? (viewingCurrentMonth ? 'Week-by-week revenue with next week projection' : 'Week-by-week revenue for the selected month')
-                : 'Revenue trend with next month projection'}
-            </p>
-            {revChart.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-12">{revChartEmptyLabel}</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={revChart} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={revChart.length > 7 ? -35 : 0} textAnchor={revChart.length > 7 ? 'end' : 'middle'} height={revChart.length > 7 ? 56 : 30} />
-                  <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} />
-                  <Tooltip content={<RevenueTooltip />} cursor={{ fill: '#f9fafb' }} />
-                  <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56} minPointSize={4}>
-                    {revChart.map((e, i) => (
-                      <Cell key={i}
-                        fill={e.rev <= 0 ? '#e5e7eb' : e.forecast ? '#bf4a53' : '#1f2937'}
-                        fillOpacity={e.forecast ? 0.22 : e.rev <= 0 ? 0.5 : 1}
-                        stroke={e.forecast ? '#bf4a53' : 'none'}
-                        strokeWidth={e.forecast ? 2 : 0}
-                        strokeDasharray={e.forecast ? '4 3' : 'none'}
-                      />
-                    ))}
-                  </Bar>
-                  <ReferenceLine y={0} stroke="#e5e7eb" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
-            <h3 className="font-bold text-gray-900 text-lg">Status Distribution</h3>
-            {totalTx === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">No transactions yet.</p>
-            ) : (
-              <>
-                <ResponsiveContainer width="100%" height={220}>
-                  <PieChart>
-                    <Pie
-                      data={statusDist}
-                      cx="50%" cy="50%"
-                      innerRadius={58} outerRadius={82}
-                      dataKey="value"
-                      activeIndex={activePie}
-                      activeShape={(props) => { const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props; return <g><Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 6} startAngle={startAngle} endAngle={endAngle} fill={fill} /><Sector cx={cx} cy={cy} innerRadius={innerRadius - 4} outerRadius={innerRadius - 2} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.3} /></g>; }}
-                      onMouseEnter={(_, i) => setActivePie(i)}
-                      onMouseLeave={() => setActivePie(null)}
-                    >
-                      {statusDist.map((e, i) => <Cell key={i} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="grid grid-cols-2 gap-2">
-                  {statusDist.map(d => {
-                    const Icon = STATUS_ICONS[d.name];
-                    return (
-                      <div key={d.name} className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl">
-                        <Icon size={14} style={{ color: d.color }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-600">{d.name}</p>
-                          <p className="text-sm font-bold text-gray-900">{d.value} <span className="text-xs font-normal text-gray-400">({Math.round((d.value / totalTx) * 100)}%)</span></p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
+          <RevenueChart
+            isMonthlyView={isMonthlyView} monthName={monthName}
+            appliedYear={appliedYear} appliedMonth={appliedMonth}
+            viewingCurrentMonth={viewingCurrentMonth}
+            revChart={revChart} revChartEmptyLabel={revChartEmptyLabel}
+            stepMonth={stepMonth} goCurrentMonth={goCurrentMonth}
+          />
+          <StatusDistribution
+            totalTx={totalTx} statusDist={statusDist}
+            activePie={activePie} setActivePie={setActivePie}
+          />
         </div>
 
         {/* Row 2: Demand Forecast + Top Items */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2">
-            <h3 className="font-bold text-gray-900 text-base md:text-lg px-5 md:px-7 pt-5 md:pt-7 pb-2">Demand Forecast</h3>
-            <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">3‑month moving average with rental counts</p>
-            {!hasSma ? (
-              <div>
-                <ResponsiveContainer width="100%" height={230}>
-                  <ComposedChart data={countChart} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} angle={countChart.length > 7 ? -35 : 0} textAnchor={countChart.length > 7 ? 'end' : 'middle'} height={countChart.length > 7 ? 52 : 30} interval={0} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#1f2937" />
-                  </ComposedChart>
-                </ResponsiveContainer>
-                <p className="text-xs text-gray-400 text-center pb-4 px-7">At least {3 - validSmaCount} more months of data needed for SMA trend.</p>
-              </div>
-            ) : (
-              <div>
-                <ResponsiveContainer width="100%" height={270}>
-                  <ComposedChart data={forecastData} margin={{ top: 16, right: 16, bottom: 8, left: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} angle={forecastData.length > 8 ? -35 : 0} textAnchor={forecastData.length > 8 ? 'end' : 'middle'} height={forecastData.length > 8 ? 52 : 30} interval={0} />
-                    <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} />
-                    <Tooltip
-                      content={({ active, payload, label }) => {
-                        if (!active || !payload?.length) return null;
-                        const month = forecastData.find(d => d.label === label);
-                        return (
-                          <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm space-y-1">
-                            <p className="font-bold text-gray-900">{month?.full || label}</p>
-                            {payload.map((p, i) => (
-                              p.value !== null && <p key={i} className="text-gray-600" style={{ color: p.color }}>
-                                {p.name}: {p.name === 'SMA (3mo)' ? Number(p.value).toFixed(1) : p.value}
-                              </p>
-                            ))}
-                            {month?.forecast && <p className="text-[11px] text-gray-400 italic">Projected</p>}
-                          </div>
-                        );
-                      }}
-                    />
-                    <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={48} fill="#1f2937" fillOpacity={0.35} />
-                    <Line type="monotone" dataKey="sma" name="SMA (3mo)" stroke="#bf4a53" strokeWidth={3}
-                      dot={{ r: 5, fill: '#bf4a53', strokeWidth: 0 }}
-                      activeDot={{ r: 8, fill: '#bf4a53', stroke: '#fff', strokeWidth: 2 }}
-                      connectNulls={false}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-
-                {/* SMA Summary */}
-                <div className="grid grid-cols-3 gap-2 md:gap-3 px-5 md:px-7 pb-5 md:pb-6">
-                  <div className="bg-gray-50 rounded-xl p-3 text-center">
-                    <p className="text-[11px] text-gray-500 font-medium">Current SMA</p>
-                    <p className="text-lg font-bold text-gray-900">{latestSmaVal.toFixed(1)}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3 text-center">
-                    <p className="text-[11px] text-gray-500 font-medium">Previous</p>
-                    <p className="text-lg font-bold text-gray-900">{prevSmaVal.toFixed(1)}</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3 text-center">
-                    <p className="text-[11px] text-gray-500 font-medium">Trend</p>
-                    <p className={`text-lg font-bold flex items-center justify-center gap-1 ${smaTrend === 'up' ? 'text-emerald-600' : smaTrend === 'down' ? 'text-red-500' : 'text-gray-500'}`}>
-                      {smaTrend === 'stable' ? 'Flat' : `${Math.abs(latestSmaVal - prevSmaVal).toFixed(1)}`}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
-            <h3 className="font-bold text-gray-900 text-lg">Top Rented Items</h3>
-            {popularItems.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">No rentals yet.</p>
-            ) : (
-              <div className="space-y-4">
-                {popularItems.map((item, i) => {
-                  const pct = Math.min((item.rentals / Math.max(...popularItems.map(t => t.rentals), 1)) * 100, 100);
-                  return (
-                    <div key={item.id}>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-gray-700 truncate flex-1">{i + 1}. {item.name}</span>
-                        <span className="font-bold text-gray-900 ml-2">{item.rentals}x</span>
-                      </div>
-                      <div className="w-full bg-gray-100 rounded-full h-1.5">
-                        <div className="h-1.5 rounded-full bg-[#bf4a53]" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {underperforming.length > 0 && (
-              <div className="pt-2 border-t border-gray-100">
-                <p className="text-xs font-semibold text-orange-500 mb-2">{underperforming.length} item(s) never rented</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {underperforming.slice(0, 4).map(item => (
-                    <span key={item.id} className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-[11px] font-medium max-w-full truncate">{item.name}</span>
-                  ))}
-                  {underperforming.length > 4 && <span className="px-2 py-1 bg-gray-50 text-gray-400 rounded-lg text-[11px]">+{underperforming.length - 4}</span>}
-                </div>
-              </div>
-            )}
-          </div>
+          <DemandForecast
+            granularity={granularity} setGranularity={setGranularity}
+            loadWeeklyForecast={loadWeeklyForecast} weeklyLoading={weeklyLoading}
+            showingWeekly={showingWeekly} activeForecast={activeForecast}
+            hasSma={hasSma} countChart={countChart} validSmaCount={validSmaCount}
+            forecastData={forecastData} latestSmaVal={latestSmaVal} prevSmaVal={prevSmaVal}
+            smaTrend={smaTrend} smaName={smaName} seasonDots={seasonDots}
+            projections={projections} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice}
+          />
+          <TopRented
+            popularItems={popularItems} underperforming={underperforming}
+            imgById={imgById} openSmartModal={openSmartModal}
+          />
         </div>
+
+        {/* Row 2b: Smart actions — deterministic rules (no AI): restock what
+            demand outruns, clear what's idle, clean what's wanted next */}
+        {(restockRules.length > 0 || clearanceRules.length > 0 || cleaningRules.length > 0) && (
+          <SmartActions
+            restockRules={restockRules} clearanceRules={clearanceRules} cleaningRules={cleaningRules}
+            openSmartModal={openSmartModal} openCleanQueue={openCleanQueue}
+          />
+        )}
 
         {/* Row 3: Category Performance */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm lg:col-span-2">
-            <h3 className="font-bold text-gray-900 text-lg mb-5">Category Performance</h3>
-            {utilData.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">No category data.</p>
-            ) : (
-              <div className="space-y-5">
-                {utilData.map(u => {
-                  const maxCatRev = Math.max(...utilData.map(x => x.revenue), 1);
-                  const revPct = (u.revenue / maxCatRev) * 100;
-                  return (
-                    <div key={u.category}>
-                      <div className="flex justify-between items-center mb-1.5">
-                        <span className="text-sm font-semibold text-gray-700 capitalize">{u.category}</span>
-                        <div className="flex items-center gap-3 text-xs">
-                          <span className="text-gray-500">{u.rate}% utilised</span>
-                          <span className="font-bold text-gray-900">{u.revenue > 0 ? fmt(u.revenue) : '—'}</span>
-                        </div>
-                      </div>
-                      <div className="flex gap-1.5 h-2">
-                        <div className="flex-1 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-[#bf4a53]" style={{ width: `${u.rate}%` }} />
-                        </div>
-                        <div className="flex-1 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-gray-900" style={{ width: `${revPct}%` }} />
-                        </div>
-                      </div>
-                      <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
-                        <span>Utilisation</span>
-                        <span>Revenue share</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Lightbulb size={18} className="text-[#bf4a53]" />
-              <h3 className="font-bold text-gray-900 text-lg flex-1">Insights</h3>
-              {role === 'Admin' && (
-                <button onClick={() => handleAiSuggest(Boolean(aiSuggestions))} disabled={suggestLoading}
-                  className={`flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full transition-colors disabled:opacity-50 ${
-                    aiSuggestions
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                      : 'bg-[#bf4a53] text-white shadow-sm hover:bg-red-700'
-                  }`}>
-                  {suggestLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  {suggestLoading ? 'Generating...' : aiSuggestions ? 'Refresh AI' : 'AI Suggestions'}
-                </button>
-              )}
-            </div>
-            {suggestLoading ? (
-              <div className="space-y-3 py-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-11/12" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-4/5" />
-              </div>
-            ) : aiSuggestions?.length ? (
-              <>
-                <p className="text-[11px] text-gray-400 font-medium">AI-generated promo &amp; restock suggestions</p>
-                <ul className="space-y-2">
-                  {aiSuggestions.map((text, i) => (
-                    <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
-                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                      {text}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : insights.length === 0 ? (
-              <p className="text-sm text-gray-400">Not enough data for insights yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {insights.map((text, i) => (
-                  <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
-                    <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#bf4a53] shrink-0" />
-                    {text}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <CategoryPerformance utilData={utilData} />
+          <InsightsPanel
+            role={role} aiSuggestions={aiSuggestions} suggestLoading={suggestLoading}
+            handleAiSuggest={handleAiSuggest} insights={insights}
+          />
         </div>
 
-        {/* AI Report button */}
-        <div className="flex justify-end">
-          <button onClick={() => { setReportLoading(true); api.post('/ai/generate-report', undefined, { timeout: 60000 }).then(r => { setAiReport(r.report || r); setShowReportModal(true); }).catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); }).finally(() => setReportLoading(false)); }}
-            disabled={reportLoading}
-            className="flex items-center gap-2 px-6 py-3 bg-[#bf4a53] text-white font-semibold rounded-full shadow-md shadow-red-500/20 hover:bg-red-700 transition-colors disabled:opacity-50"
-          >
-            {reportLoading ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
-            {reportLoading ? 'Generating...' : 'Generate AI Report'}
-          </button>
         </div>
+
+        <ReportSection
+          role={role} reportLoading={reportLoading} onGenerate={handleGenerateReport}
+          recentReports={recentReports} reportsLoading={reportsLoading}
+          reportsPage={reportsPage} REPORTS_PAGE_SIZE={REPORTS_PAGE_SIZE} setReportsPage={setReportsPage}
+          openSavedReport={openSavedReport} openingReportId={openingReportId}
+        />
+
+        <SmartListModal
+          smartModal={smartModal} smartClosing={smartClosing} closeSmartModal={closeSmartModal}
+          restockRules={restockRules} clearanceRules={clearanceRules} cleaningRules={cleaningRules}
+          underperforming={underperforming} imgById={imgById}
+          onSaleItem={(it) => setSaleTarget({ id: it.id, name: it.name })}
+          openCleanQueue={openCleanQueue}
+        />
       </div>
 
       {showReportModal && <AIReportModal geminiReport={aiReport} onClose={() => { setShowReportModal(false); setAiReport(null); }} />}
+      {saleTarget && (
+        <SaleModal itemId={saleTarget.id} onClose={() => setSaleTarget(null)} />
+      )}
+      {cleanQueue && onBulkClean && (
+        <CleaningQueueModal
+          items={cleanQueueItems}
+          initialSelected={cleanQueue.preselect ? [cleanQueue.preselect] : []}
+          onClose={() => setCleanQueue(null)}
+          onBulkClean={onBulkClean}
+        />
+      )}
     </>
   );
 }

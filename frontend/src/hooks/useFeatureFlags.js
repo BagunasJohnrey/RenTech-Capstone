@@ -10,6 +10,11 @@ const DEFAULTS = { qr_codes: true };
 // mounted consumer re-fetches, so toggles apply app-wide without a reload.
 export function useFeatureFlags() {
   const [flags, setFlags] = useState(() => window.__featureFlags || DEFAULTS);
+  // True once the server value (or its failure) has resolved this session.
+  // Consumers with show/hide sections (e.g. Booking QR) should gate on this
+  // instead of the optimistic default — otherwise the section flashes on
+  // first open whenever the server value differs from DEFAULTS.
+  const [loaded, setLoaded] = useState(() => !!window.__featureFlags);
 
   const refreshFlags = useCallback(async () => {
     try {
@@ -28,18 +33,26 @@ export function useFeatureFlags() {
     const apply = (data) => {
       const next = { ...DEFAULTS, qr_codes: data?.qr_booking_codes !== false };
       window.__featureFlags = next;
-      if (active) setFlags(next);
+      if (active) {
+        setFlags(next);
+        setLoaded(true);
+      }
     };
     const onFlagsChanged = () => {
       api.get('/settings/flags').then(apply).catch(() => {});
     };
     window.addEventListener('rentech:flags-changed', onFlagsChanged);
-    api.get('/settings/flags').then(apply).catch(() => {});
+    // Already resolved earlier this session — nothing to wait for.
+    if (window.__featureFlags) {
+      setLoaded(true);
+    } else {
+      api.get('/settings/flags').then(apply).catch(() => { if (active) setLoaded(true); });
+    }
     return () => {
       active = false;
       window.removeEventListener('rentech:flags-changed', onFlagsChanged);
     };
   }, []);
 
-  return { ...flags, refreshFlags };
+  return { ...flags, flagsLoaded: loaded, refreshFlags };
 }

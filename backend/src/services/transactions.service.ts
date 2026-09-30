@@ -8,8 +8,9 @@ import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
+import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
-import { getFeatureFlags } from './settings.service.js';
+import { getBusinessRules, getFeatureFlags } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -52,7 +53,7 @@ interface CreateRentalInput {
   promoCodeId?: string;          // legacy: only honored when it matches a real promo
   size?: string;
   measurements?: unknown;
-  requireMinimumDownpayment?: boolean; // customers must put down >= 50% of the fee
+  requireMinimumDownpayment?: boolean; // customers must put down the flat min_downpayment floor (default ₱200)
 }
 
 export async function createRental(data: CreateRentalInput, processedById?: string) {
@@ -106,7 +107,11 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     throw new AppError(400, `Downpayment must be between ₱0 and ₱${fee.toLocaleString()}`);
   }
   if (data.requireMinimumDownpayment) {
-    const min = Math.min(Math.round(fee * 0.5), fee);
+    // Flat minimum downpayment from admin business rules (default ₱200),
+    // never more than the full fee.
+    const rules = await getBusinessRules();
+    const flatMin = parseInt(rules.min_downpayment ?? '200', 10) || 200;
+    const min = Math.min(flatMin, fee);
     if (downpayment < min) {
       throw new AppError(400, `Downpayment must be at least ₱${min.toLocaleString()}`);
     }
@@ -200,6 +205,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           measurements: data.measurements as Prisma.InputJsonValue | undefined,
           notes: data.notes ?? null,
           conditionPhoto: data.conditionPhoto ?? null,
+          // Auto-flag alteration when the customer provides custom measurements
+          // (body sizes that differ from the garment's base size). Staff can
+          // override later; manual-size bookings skip this entirely.
+          alterationStatus: data.measurements && Object.keys(data.measurements).length > 0 ? 'pending' : null,
         },
         include: {
           customer: { select: { id: true, name: true, email: true } },
@@ -294,6 +303,27 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
         })
       ).catch(() => {});
     }
+
+    // Order-confirmation email (Brevo, best-effort — never blocks the booking).
+    // Skipped for walk-in synthetic addresses (isSendableEmail) and for
+    // customers who opted out of email (notifyPrefs.email === false).
+    try {
+      const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+      const wantsEmail = !prefs || prefs.email !== false;
+      if (customerProfile?.email && wantsEmail) {
+        await sendBookingConfirmationEmail(customerProfile.email, {
+          customerName: customerProfile.name,
+          itemName: transaction.item.name,
+          pickupDate: start.toLocaleDateString('en-PH'),
+          dueDate: end.toLocaleDateString('en-PH'),
+          rentalFee: fee,
+          downpayment,
+          balance: fee - downpayment,
+          bookingCode: `RT-${String(transaction.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+          qrCodeDataUri,
+        });
+      }
+    } catch { /* email is non-critical */ }
   } catch { /* SMS is non-critical */ }
 
   // New booking changes revenue/rental counts — drop the dashboard cache so
@@ -447,24 +477,39 @@ export async function processReturn(
     } catch { /* notification is non-critical */ }
   }
 
+  // Order-return email (Brevo receipt + thank-you, best-effort).
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail) {
+      await sendReturnEmail(customerProfile.email, customerProfile.name, tx.item.name, {
+        latePenalty: fees.latePenalty,
+        damageFee: fees.damageFee,
+        damageReason: isDamaged ? (damageReason ?? null) : null,
+      });
+    }
+  } catch { /* email is non-critical */ }
+
   clearDataCache();
 
   return { ...updated, fees };
 }
 
-// EDIT booking details (dates + notes only) without cancel+re-book. Reuses the
-// same overlap check as createRental so an edit can't collide with another
-// booking, and runs read+check+update in one Serializable transaction.
+// EDIT booking details (dates + notes + alteration status) without
+// cancel+re-book. Reuses the same overlap check as createRental so an edit
+// can't collide with another booking, and runs read+check+update in one
+// Serializable transaction.
 export async function updateTransaction(
   transactionId: string,
   performedById: string,
-  patch: { rentalDate?: string; dueDate?: string; notes?: string }
+  patch: { rentalDate?: string; dueDate?: string; notes?: string; alterationStatus?: 'pending' | 'ready' | null }
 ) {
   const existing = await prisma.transaction.findUnique({
     where: { id: transactionId },
     select: {
       id: true, itemId: true, status: true, rentalDate: true, dueDate: true, notes: true,
-      customerId: true, item: { select: { id: true, name: true } },
+      alterationStatus: true, customerId: true, item: { select: { id: true, name: true } },
     },
   });
   if (!existing) throw new AppError(404, 'Transaction not found');
@@ -479,6 +524,13 @@ export async function updateTransaction(
   if (nextRental.getTime() > nextDue.getTime()) {
     throw new AppError(400, 'Pickup date must be on or before the due date');
   }
+  if (patch.alterationStatus !== undefined && patch.alterationStatus !== null &&
+      patch.alterationStatus !== 'pending' && patch.alterationStatus !== 'ready') {
+    throw new AppError(400, 'Invalid alteration status');
+  }
+  const datesChanged =
+    nextRental.getTime() !== existing.rentalDate.getTime() ||
+    nextDue.getTime() !== existing.dueDate.getTime();
 
   let updated;
   try {
@@ -500,6 +552,7 @@ export async function updateTransaction(
           rentalDate: nextRental,
           dueDate: nextDue,
           notes: patch.notes !== undefined ? patch.notes : existing.notes,
+          ...(patch.alterationStatus !== undefined ? { alterationStatus: patch.alterationStatus } : {}),
         },
         include: {
           customer: { select: { id: true, name: true, email: true } },
@@ -520,9 +573,40 @@ export async function updateTransaction(
     entity: 'transaction',
     entityId: transactionId,
     performedById,
-    oldValue: { rentalDate: existing.rentalDate, dueDate: existing.dueDate, notes: existing.notes },
-    newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes },
+    oldValue: { rentalDate: existing.rentalDate, dueDate: existing.dueDate, notes: existing.notes, alterationStatus: existing.alterationStatus ?? null },
+    newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes, alterationStatus: (updated as { alterationStatus?: string | null }).alterationStatus ?? null },
   });
+
+  // Staff moved the dates (e.g. alteration running late) — tell the customer
+  // in-app + by email (best-effort, never blocks the edit). Alteration-only
+  // flips stay silent to avoid spamming for tailor progress.
+  if (datesChanged) {
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    try {
+      await createNotification({
+        profileId: existing.customerId,
+        transactionId,
+        type: 'booking_updated',
+        title: 'Booking dates updated',
+        message: `Your rental of "${existing.item.name}" moved to pickup ${fmt(nextRental)}, return by ${fmt(nextDue)}.`,
+      });
+    } catch { /* notification is non-critical */ }
+    try {
+      const customerProfile = await prisma.profile.findUnique({ where: { id: existing.customerId } });
+      const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+      const wantsEmail = !prefs || prefs.email !== false;
+      if (customerProfile?.email && wantsEmail) {
+        if (isSendableEmail(customerProfile.email)) {
+          await sendEmail({
+            to: customerProfile.email,
+            subject: `Booking dates updated: ${existing.item.name} — RenTech`,
+            html: `<p>Hi ${customerProfile.name},</p><p>Your rental of "<strong>${existing.item.name}</strong>" was moved to <strong>pickup ${fmt(nextRental)}</strong>, <strong>return by ${fmt(nextDue)}</strong>.</p><p>RenTech · Balayan, Batangas</p>`,
+            text: `Hi ${customerProfile.name},\n\nYour rental of "${existing.item.name}" was moved to pickup ${fmt(nextRental)}, return by ${fmt(nextDue)}.\n\nRenTech · Balayan, Batangas`,
+          });
+        }
+      }
+    } catch { /* email is non-critical */ }
+  }
 
   clearDataCache();
 
@@ -549,6 +633,21 @@ export async function cancelTransaction(transactionId: string, performedById: st
     data: { status: ItemStatus.Available, outOfServiceReason: null },
   });
 
+  // Tell the customer in-app (their bell + History tab). Best-effort so a
+  // notification write can never break the cancellation itself; the email
+  // below is best-effort too.
+  try {
+    await createNotification({
+      profileId: tx.customerId,
+      transactionId,
+      type: 'booking_cancelled',
+      title: 'Booking cancelled',
+      message: `Your booking for ${tx.item.name} was cancelled and the item is back in the collection.`,
+    });
+  } catch (err) {
+    console.error('[cancel] customer notification skipped:', (err as Error)?.message);
+  }
+
   await createAuditLog({
     action: 'update',
     entity: 'transaction',
@@ -557,6 +656,16 @@ export async function cancelTransaction(transactionId: string, performedById: st
     newValue: { status: 'Cancelled' },
     oldValue: { status: tx.status },
   });
+
+  // Booking-cancelled email (Brevo, best-effort).
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail) {
+      await sendCancellationEmail(customerProfile.email, customerProfile.name, tx.item.name);
+    }
+  } catch { /* email is non-critical */ }
 
   clearDataCache();
 
@@ -595,7 +704,8 @@ export async function releaseRental(
   transactionId: string,
   processedById: string,
   releasePhoto?: string,
-  notes?: string
+  notes?: string,
+  needsAlteration?: boolean
 ) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -606,6 +716,14 @@ export async function releaseRental(
   if (tx.status === TransactionStatus.Returned) throw new AppError(400, 'Transaction already returned');
   if (tx.status === TransactionStatus.Cancelled) throw new AppError(400, 'Transaction was cancelled');
 
+  // Staff discovered the garment doesn't fit during release — flag it
+  // immediately so the customer sees the pill and gets notified.
+  const alterationPatch = needsAlteration === true
+    ? { alterationStatus: 'pending' as string | null }
+    : needsAlteration === false
+      ? { alterationStatus: null as string | null }
+      : {};
+
   const updated = await prisma.transaction.update({
     where: { id: transactionId },
     data: {
@@ -615,6 +733,7 @@ export async function releaseRental(
       releasePhoto: releasePhoto ?? null,
       notes: notes ?? undefined,
       processedById,
+      ...alterationPatch,
     },
   });
 
@@ -631,6 +750,35 @@ export async function releaseRental(
     newValue: { status: 'Active', released: true },
     oldValue: { status: tx.status },
   });
+
+  // Order-pickup email (Brevo, best-effort — the item is in the customer's hands).
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail) {
+      await sendPickupEmail(
+        customerProfile.email,
+        customerProfile.name,
+        tx.item.name,
+        updated.dueDate.toLocaleDateString('en-PH'),
+      );
+    }
+  } catch { /* email is non-critical */ }
+
+  // Staff flagged an alteration during release — notify the customer in-app
+  // so they know to come back for fitting before using the garment.
+  if (needsAlteration === true) {
+    try {
+      await createNotification({
+        profileId: tx.customerId,
+        transactionId,
+        type: 'alteration_needed',
+        title: 'Alteration needed',
+        message: `Your "${tx.item.name}" needs fitting before pickup. The boutique will let you know when it's ready.`,
+      });
+    } catch { /* notification is non-critical */ }
+  }
 
   clearDataCache();
 
@@ -656,4 +804,67 @@ export async function getUpcomingReturns() {
   });
 
   return transactions;
+}
+
+export async function recordPayment(
+  transactionId: string,
+  staffId: string,
+  amount: number,
+  method: string,
+  notes?: string,
+) {
+  const tx = await prisma.transaction.findUnique({
+    where: { id: transactionId },
+    include: { payments: true },
+  });
+  if (!tx) throw new AppError(404, 'Transaction not found');
+  if (tx.status === 'Returned' || tx.status === 'Cancelled') {
+    throw new AppError(400, 'Transaction is already closed');
+  }
+
+  const validMethods = ['cash', 'gcash', 'card'];
+  const normalizedMethod = method.toLowerCase().trim();
+  if (!validMethods.includes(normalizedMethod)) {
+    throw new AppError(400, `Invalid payment method. Must be one of: ${validMethods.join(', ')}`);
+  }
+
+  const due = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - tx.totalPaid);
+  if (due <= 0) throw new AppError(400, 'Transaction is already fully paid');
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new AppError(400, 'Payment amount must be greater than 0');
+  }
+  if (amount > due) {
+    throw new AppError(400, `Payment amount exceeds outstanding balance of ₱${due.toLocaleString()}`);
+  }
+
+  const newTotalPaid = tx.totalPaid + amount;
+  const newBalance = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - newTotalPaid);
+
+  const [payment] = await prisma.$transaction([
+    prisma.payment.create({
+      data: {
+        transactionId,
+        amount,
+        method: normalizedMethod,
+        type: newBalance <= 0 ? 'full' : 'partial',
+        status: 'completed',
+      },
+    }),
+    prisma.transaction.update({
+      where: { id: transactionId },
+      data: { totalPaid: newTotalPaid, balance: newBalance },
+    }),
+  ]);
+
+  await createAuditLog({
+    action: 'create',
+    entity: 'payment',
+    entityId: payment.id,
+    performedById: staffId,
+    newValue: { transactionId, amount, method: normalizedMethod },
+  });
+
+  clearDataCache();
+
+  return { payment, totalPaid: newTotalPaid, balance: newBalance };
 }

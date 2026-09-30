@@ -18,4 +18,16 @@ export const settingsService = {
 
   // Admin-only: live connectivity/health for Gemini, Semaphore, PayMongo.
   getIntegrationsStatus: () => api.get('/settings/integrations-status'),
+
+  // Admin-only one-click JSON backups (Data & Backups tab).
+  listBackups: () => api.get('/settings/backups'),
+  createBackup: () => api.post('/settings/backups'),
+  downloadBackup: (id, filename) =>
+    api.download(`/settings/backups/${id}/download`, filename || `${id}.json`),
+  // Restore from a previously downloaded backup file (Admin + MFA).
+  // Payloads can be several MB — allow 2 minutes for the upserts.
+  importBackup: (payload) =>
+    api.post('/settings/backups/import', { payload }, { timeout: 120000 }),
+  // Retry pushing a "server only" backup to the cloud (Admin + MFA).
+  retryBackupUpload: (id) => api.post(`/settings/backups/${id}/upload`),
 };

@@ -29,6 +29,32 @@ export const canReturn = (tx, inventory = []) =>
 // client-side display fields when the server response omits them.
 const mergeUpdated = (t, updated) => normalizeTx({ ...t, ...updated });
 
+// Short-lived full-record cache (module-level = shared across hook users).
+// The detail modal enriches via getById on every open (~500ms round-trip on
+// a slow connection — the visible "settle" after opening). Warming this on
+// row hover/tap means the enrichment usually resolves synchronously.
+// TTL is deliberately tiny (30s) and every mutation below invalidates, so
+// no screen can serve materially stale data.
+const fullCache = new Map(); // id -> { promise, at }
+const FULL_TTL = 30_000;
+
+export function invalidateTxCache(id) {
+  if (id == null) fullCache.clear();
+  else fullCache.delete(String(id));
+}
+
+function cachedGet(id) {
+  const key = String(id);
+  const hit = fullCache.get(key);
+  if (hit && Date.now() - hit.at < FULL_TTL) return hit.promise;
+  const job = transactionsService.get(id).then(
+    (full) => full,
+    (err) => { fullCache.delete(key); throw err; }
+  );
+  fullCache.set(key, { promise: job, at: Date.now() });
+  return job;
+}
+
 export function useTransactions() {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -52,33 +78,44 @@ export function useTransactions() {
 
   const create = useCallback(async (payload) => {
     const created = await transactionsService.create(payload);
+    invalidateTxCache();
     setTransactions((prev) => [normalizeTx(created), ...prev]);
     return created;
   }, []);
 
   const processReturn = useCallback(async (txId, patch) => {
     const updated = await transactionsService.processReturn(txId, patch);
+    invalidateTxCache(txId);
     setTransactions((prev) => prev.map((t) => (t.id === txId ? mergeUpdated(t, updated) : t)));
     return updated;
   }, []);
 
   const cancel = useCallback(async (txId) => {
     await transactionsService.cancel(txId);
+    invalidateTxCache(txId);
     setTransactions((prev) => prev.map((t) => (t.id === txId ? { ...t, status: 'Cancelled' } : t)));
   }, []);
 
   const remove = useCallback(async (txId) => {
     await transactionsService.remove(txId);
+    invalidateTxCache(txId);
     setTransactions((prev) => prev.filter((t) => t.id !== txId));
   }, []);
 
   // Local merge only — the actual release API call lives in ReleaseItemModal.
   const release = useCallback((updated) => {
+    invalidateTxCache(updated?.id);
     setTransactions((prev) => prev.map((t) => (t.id === updated.id ? mergeUpdated(t, updated) : t)));
   }, []);
 
-  // FIX G: orphaned endpoints, now available for components to consume.
-  const getById = useCallback((id) => transactionsService.get(id), []);
+  // Full-record fetch through the short-lived cache (see above). Components
+  // warming a record they are about to open should use prefetchTx instead.
+  const getById = useCallback((id) => cachedGet(id), []);
+  const prefetchTx = useCallback((id) => {
+    if (id == null) return;
+    // Warming is best-effort; swallow rejections so hover never logs noise.
+    cachedGet(id).catch(() => {});
+  }, []);
   const getUpcoming = useCallback(() => transactionsService.upcoming(), []);
 
   return {
@@ -93,6 +130,7 @@ export function useTransactions() {
     remove,
     release,
     getById,
+    prefetchTx,
     getUpcoming,
   };
 }

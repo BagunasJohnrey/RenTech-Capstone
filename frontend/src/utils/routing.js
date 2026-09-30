@@ -9,6 +9,7 @@ export const TAB_PATHS = {
     Catalog: '/admin/inventory',
     History: '/admin/transactions',
     'AI Insights': '/admin/ai-insights',
+    Messages: '/admin/messages',
     Notifications: '/admin/notifications',
     Settings: '/admin/settings',
   },

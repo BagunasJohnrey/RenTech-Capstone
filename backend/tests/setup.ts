@@ -22,11 +22,16 @@ process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
 process.env.FRONTEND_URL = 'http://localhost:5173';
 process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
+// Brevo: blank key forces the simulated (no-network) send path in tests.
+process.env.BREVO_API_KEY = '';
+process.env.BREVO_SENDER_EMAIL = 'noreply@test.local';
+process.env.BREVO_SENDER_NAME = 'RenTech Test';
 
 // Unit tests must never hit live AI providers: backend/.env contains real
-// Gemini/OpenRouter keys, and dotenv only fills vars that aren't already set —
-// blanking them here forces the deterministic in-app fallback paths.
+// Gemini/Groq/OpenRouter keys, and dotenv only fills vars that aren't already
+// set — blanking them here forces the deterministic in-app fallback paths.
 process.env.GEMINI_API_KEY = '';
+process.env.GROQ_API_KEY = '';
 process.env.OPENROUTER_API_KEY = '';
 // Tests verify JWTs locally with this secret — must be set BEFORE jwtVerify.ts loads.
 process.env.SUPABASE_JWT_SECRET = 'test-jwt-secret';
@@ -67,6 +72,15 @@ vi.mock('@supabase/supabase-js', () => {
           data: { user: { id: 'auth-user-id-123', email: 'test@example.com' } },
           error: null,
         }),
+        // Brevo flows: confirmation status check + magiclink session minting.
+        getUserById: vi.fn().mockResolvedValue({
+          data: { user: { id: 'auth-user-id-123', email: 'test@example.com', email_confirmed_at: null } },
+          error: null,
+        }),
+        generateLink: vi.fn().mockResolvedValue({
+          data: { properties: { hashed_token: 'mock-hashed-token' } },
+          error: null,
+        }),
       },
       // Public signup endpoint (anon key) — the email-verification path.
       // Returns a user with NO session (unconfirmed) by default; the signup
@@ -104,6 +118,19 @@ vi.mock('@supabase/supabase-js', () => {
       resetPasswordForEmail: vi.fn().mockResolvedValue({ data: {}, error: null }),
       verifyOtp: vi.fn().mockResolvedValue({
         data: { user: { id: 'auth-user-id-123', email: 'test@example.com' }, session: null },
+        error: null,
+      }),
+      // PKCE-style email links (?code= after the /verify redirect)
+      exchangeCodeForSession: vi.fn().mockResolvedValue({
+        data: {
+          user: { id: 'auth-user-id-123', email: 'test@example.com' },
+          session: {
+            access_token: 'exchanged-access-token',
+            refresh_token: 'exchanged-refresh-token',
+            token_type: 'bearer',
+            expires_in: 3600,
+          },
+        },
         error: null,
       }),
       signOut: vi.fn().mockResolvedValue({ error: null }),
@@ -218,6 +245,7 @@ vi.mock('../src/config/database.js', () => {
       name: 'Staff User',
       phone: null,
       address: null,
+      mustChangePassword: false,
       createdAt: now,
       updatedAt: now,
     },
@@ -288,6 +316,8 @@ vi.mock('../src/config/database.js', () => {
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: 'log-1' }),
+      findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     payment: {
@@ -295,6 +325,7 @@ vi.mock('../src/config/database.js', () => {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'pay-new', ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
     },
     notification: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -308,12 +339,25 @@ vi.mock('../src/config/database.js', () => {
     sentSms: {
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'sms-new', ...args.data })),
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       delete: vi.fn().mockResolvedValue({ id: 'sms-deleted' }),
     },
     businessRule: {
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ ...args.data })),
       upsert: vi.fn().mockImplementation((args) => Promise.resolve({ key: args.where.key, value: args.create.value })),
+    },
+    promoCode: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'promo-new', ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
     },
     smsTemplate: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -323,6 +367,13 @@ vi.mock('../src/config/database.js', () => {
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       delete: vi.fn().mockResolvedValue({ id: 'tmpl-deleted' }),
+    },
+    emailToken: {
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'etok-new', usedAt: null, ...args.data })),
+      findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     $transaction: (fn: any) => Promise.resolve(fn(mockPrisma)),
     $disconnect: vi.fn(),

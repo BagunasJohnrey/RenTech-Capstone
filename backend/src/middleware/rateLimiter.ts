@@ -9,7 +9,12 @@ interface RateLimitEntry {
 const store = new Map<string, RateLimitEntry>();
 
 const WINDOW_MS = 60_000;
-const MAX_REQUESTS = 100;
+const MAX_REQUESTS = 160;
+// Asset GETs (public signed-URL issuance at /api/storage/*) get their own
+// separate budget — much higher than the global one (one catalog page fires
+// dozens of signed-URL mints in parallel), but still bounded so a single IP
+// can't hammer Supabase storage with unbounded minting.
+const ASSET_MAX_REQUESTS = 600;
 
 // Derive the real client IP without trusting a spoofable X-Forwarded-For.
 // `trust proxy` (set in index.ts) makes Express resolve req.ip from the first
@@ -43,7 +48,23 @@ type Limiter = { sweep: (now: number) => void };
 
 const localLimiters: Limiter[] = [];
 
-export function rateLimiter(req: Request, _res: Response, next: NextFunction) {
+// Dedicated per-IP limiter for storage asset GETs (created after localLimiters
+// so it registers itself for sweeping/clearing like the other keyed limiters).
+const storageAssetLimiter = createRateLimiter(ASSET_MAX_REQUESTS, WINDOW_MS);
+
+export function rateLimiter(req: Request, res: Response, next: NextFunction) {
+  // Asset GETs (public item-photo signed-URL issuance at /api/storage/*) are
+  // exempt from the GLOBAL budget: one catalog page fires dozens of them in
+  // parallel, which used to exhaust the per-IP budget in seconds and 429 the
+  // whole UI (login, KPIs, inventory, settings — everything behind /api).
+  // They still go through their own generous per-IP limiter above so the
+  // route can't be used to hammer Supabase storage unboundedly. The signed
+  // URL itself is the access control — minting only yields short-lived links
+  // to a private bucket. Every other API request stays on the global budget.
+  if (req.method === 'GET' && req.path.startsWith('/storage/')) {
+    return storageAssetLimiter(req, res, next);
+  }
+
   const ip = clientIp(req);
   const now = Date.now();
 

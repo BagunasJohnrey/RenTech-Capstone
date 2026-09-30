@@ -1,6 +1,8 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { createAuditLog } from '../utils/audit.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
+import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
 import { getBusinessRules } from './settings.service.js';
 import { clearDataCache } from '../utils/ttlCache.js';
@@ -52,6 +54,23 @@ export async function sendManualSms(params: {
     },
   });
 
+  // Manual sends cost real money and contact customers: audit who sent what to
+  // whom. The message body is excluded (PII); only the masked phone, template
+  // and transaction refs are logged. Non-critical: never blocks the send.
+  try {
+    const digits = String(profile.phone ?? '').replace(/\D/g, '');
+    const maskedPhone = digits.length > 4 ? `***${digits.slice(-4)}` : '***';
+    await createAuditLog({
+      action: 'sms.send', entity: 'sms', entityId: sentSms.id,
+      performedById: params.sentById,
+      newValue: {
+        profileId: params.profileId, phone: maskedPhone,
+        templateId: params.templateId ?? null, transactionId: params.transactionId ?? null,
+        status: sentSms.status,
+      },
+    });
+  } catch { /* audit is non-critical */ }
+
   return sentSms;
 }
 
@@ -77,7 +96,7 @@ export async function autoNotifyOverdue() {
       overdueSmsSent: false,
     },
     include: {
-      customer: { select: { id: true, name: true, phone: true, notifyPrefs: true } },
+      customer: { select: { id: true, name: true, email: true, phone: true, notifyPrefs: true } },
       item: { select: { id: true, name: true } },
     },
   });
@@ -98,6 +117,16 @@ export async function autoNotifyOverdue() {
     // still notify staff). A null/undefined pref means "on" (default).
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
     const wantsSms = !prefs || prefs.lateReturn !== false;
+    // Email follows the same late-alert opt-out plus the master email switch.
+    const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
+
+    // Overdue email (Brevo, best-effort) — sent alongside the SMS path so the
+    // customer gets the notice on both channels unless opted out.
+    if (tx.customer.email && wantsEmail) {
+      try {
+        await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
+      } catch { /* email is non-critical */ }
+    }
 
     if (!tx.customer.phone || !wantsSms) {
       // Nothing to send (no phone or opted out) — flag as done so we don't retry.
@@ -172,7 +201,7 @@ export async function notifyOverdue3Days() {
       dueDate: { lt: new Date(now.getTime() - (escalationDays - 1) * 24 * 60 * 60 * 1000) },
     },
     include: {
-      customer: { select: { id: true, name: true, phone: true, notifyPrefs: true } },
+      customer: { select: { id: true, name: true, email: true, phone: true, notifyPrefs: true } },
       item: { select: { id: true, name: true } },
     },
   });
@@ -185,6 +214,14 @@ export async function notifyOverdue3Days() {
     const daysOverdue = Math.max(escalationDays, Math.ceil((now.getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)));
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
     const wantsSms = !prefs || prefs.lateReturn !== false;
+    const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
+
+    // Escalation email (Brevo, best-effort) alongside the SMS path.
+    if (tx.customer.email && wantsEmail) {
+      try {
+        await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
+      } catch { /* email is non-critical */ }
+    }
 
     let sent = false;
     if (tx.customer.phone && wantsSms) {
@@ -222,7 +259,7 @@ export async function notifyDueToday() {
       dueReminderSent: false,
     },
     include: {
-      customer: { select: { id: true, name: true, phone: true, notifyPrefs: true } },
+      customer: { select: { id: true, name: true, email: true, phone: true, notifyPrefs: true } },
       item: { select: { id: true, name: true } },
     },
   });
@@ -239,6 +276,19 @@ export async function notifyDueToday() {
     let sent = false;
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
     const wantsSms = !prefs || prefs.reminder !== false;
+    const wantsEmail = !prefs || (prefs.email !== false && prefs.reminder !== false);
+
+    // Due-today email (Brevo, best-effort) alongside the SMS path.
+    if (tx.customer.email && wantsEmail) {
+      try {
+        await sendDueReminderEmail(
+          tx.customer.email,
+          tx.customer.name,
+          tx.item.name,
+          tx.dueDate.toLocaleDateString('en-PH'),
+        );
+      } catch { /* email is non-critical */ }
+    }
     if (tx.customer.phone && wantsSms) {
       const message = template?.content
         ? applyTemplate(template.content, {

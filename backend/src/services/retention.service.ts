@@ -30,10 +30,16 @@ export async function purgeOldData(now: Date = new Date()) {
   // purge, and (c) running them in parallel is faster than serializing inside
   // a transaction over pooled connections. Promise.all fails fast if any of
   // them reject, which surfaces the real error to the scheduler log.
-  const [notifications, sentSms, auditLogs] = await Promise.all([
+  const [notifications, sentSms, auditLogs, emailTokens] = await Promise.all([
     prisma.notification.deleteMany({ where: { createdAt: { lt: cutoff } } }),
     prisma.sentSms.deleteMany({ where: { createdAt: { lt: cutoff } } }),
     prisma.auditLog.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    // Single-use email tokens are short-lived by design (24h verification /
+    // 1h reset): anything used or expired is dead weight — purge it daily so
+    // the table stays tiny regardless of the month-scale retention window.
+    prisma.emailToken.deleteMany({
+      where: { OR: [{ usedAt: { not: null } }, { expiresAt: { lt: now } }] },
+    }),
   ]);
 
   return {
@@ -42,6 +48,7 @@ export async function purgeOldData(now: Date = new Date()) {
     notifications: notifications.count,
     sentSms: sentSms.count,
     auditLogs: auditLogs.count,
+    emailTokens: emailTokens.count,
   };
 }
 

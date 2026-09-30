@@ -25,13 +25,13 @@ export const authService = {
   forgotPassword: (email) =>
     api.post('/auth/forgot-password', { email }),
 
-  resetPassword: (token_hash, password) =>
-    api.post('/auth/reset-password', { token_hash, password }),
+  resetPassword: (credential, password) =>
+    api.post('/auth/reset-password', { ...credential, password }),
 
   listStaff: () => api.get('/auth/staff'),
 
-  createStaff: ({ email, password, name, phone }) =>
-    api.post('/auth/staff', { email, password, name, phone }),
+  createStaff: ({ email, name, phone }) =>
+    api.post('/auth/staff', { email, name, phone }),
 
   deleteStaff: (id) => api.delete(`/auth/staff/${id}`),
 };

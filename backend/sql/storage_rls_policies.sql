@@ -34,6 +34,21 @@ create policy "Item images readable by authenticated users"
   on storage.objects for select
   using ( bucket_id = 'rentech-images' and auth.role() = 'authenticated' );
 
+-- 3b) PUBLIC CATALOG SLICE (Sept 2026 optimization): anonymous (signed-out)
+--    browsers may read catalog photos directly via public object URLs — no
+--    backend signing round-trip, and the stable URLs are browser/service-
+--    worker cacheable. Covers everything EXCEPT `rental/%` condition shots
+--    (release/return evidence), which stay signed-URL-only. Thumbnails under
+--    `thumbs/` inherit the same rule via the NOT LIKE guard.
+--    Applied to the live bucket below; repeat per bucket if STORAGE_BUCKET
+--    ever changes. Verify: anon GET on a seed/ object -> 200, on a
+--    rental/ object -> 403.
+drop policy if exists "Catalog images publicly readable" on storage.objects;
+create policy "Catalog images publicly readable"
+  on storage.objects for select
+  to anon
+  using ( bucket_id = 'rentech-items' and name not like 'rental/%' );
+
 -- 4) Only Staff / Admin may UPLOAD (INSERT) item photos.
 drop policy if exists "Staff/Admin can upload item images" on storage.objects;
 create policy "Staff/Admin can upload item images"

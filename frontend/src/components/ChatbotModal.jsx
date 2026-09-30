@@ -5,8 +5,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../utils/api';
-import { storageService } from '../services';
-import { imageCache } from '../utils/imageCache';
+import { resolveDisplayUrl } from '../utils/images';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { getSaleInfo } from './ItemCard';
 
@@ -45,6 +44,7 @@ function chipIcon(label) {
 // Short human-readable name for the model behind an AI reply.
 function shortModelName(provider, model) {
   if (provider === 'gemini') return 'Gemini';
+  if (provider === 'groq') return 'Groq';
   if (provider === 'openrouter' && model) {
     const slug = String(model).split('/').pop()?.replace(':free', '') || 'AI';
     return slug
@@ -66,18 +66,13 @@ function nextSuggestions(userText, products, source) {
   return GENERAL_FOLLOW_UPS;
 }
 
-// Item images are stored as Supabase paths (private bucket), not URLs. Resolve
-// a path to a short-lived signed URL; already-absolute URLs are used as-is.
-const isAbsoluteUrl = (v) =>
-  typeof v === 'string' && (v.startsWith('http://') || v.startsWith('https://') || v.startsWith('data:'));
-
+// Item images are stored as Supabase paths, not URLs. Catalog paths resolve
+// to stable public URLs (no fetch); rental/ condition shots resolve to
+// short-lived signed URLs. Already-absolute URLs are used as-is.
 async function resolveImage(item) {
-  if (!item?.image || isAbsoluteUrl(item.image)) return item;
+  if (!item?.image) return item;
   try {
-    const url = await imageCache.resolve(item.image, async () => {
-      const res = await storageService.getDownloadUrl(item.image);
-      return res?.url || null;
-    });
+    const url = await resolveDisplayUrl(item.image);
     return url ? { ...item, image: url } : item;
   } catch {
     return item;

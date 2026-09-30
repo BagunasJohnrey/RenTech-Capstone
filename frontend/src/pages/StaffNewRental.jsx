@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Loader2, Search, Calendar, User, Check, Percent, ShieldCheck, CheckCircle2, Printer } from 'lucide-react';
+import { X, Loader2, Search, Calendar, User, Check, Percent, ShieldCheck, CheckCircle2, Printer, SlidersHorizontal, ChevronDown } from 'lucide-react';
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
@@ -7,7 +7,6 @@ import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
 import { inventoryService } from '../services/inventory';
 import { useEscapeClose } from '../hooks/useEscapeClose';
-import { useToast } from '../components/Toast';
 
 const ITEMS_PER_LOAD = 6;
 
@@ -17,13 +16,30 @@ const toLocalYmd = (d) => {
 };
 
 export default function StaffNewRental({ inventory, transactions = [], onAddTransaction, onClose, initialItem }) {
-  useEscapeClose(onClose);
+  // Discard-confirmation for Back / close: shown when the form has unsaved
+  // entries so an accidental tap doesn't wipe the whole rental.
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [confirmNav, setConfirmNav] = useState(null); // 'back' | 'close'
 
   // Steps
   const [step, setStep] = useState(initialItem ? 2 : 1);
 
-  // Catalog search & filter
-  const [activeCategory, setActiveCategory] = useState('all');
+  // Catalog search & filter (multi-select: empty = All)
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const toggleCategory = (key) => {
+    setSelectedCategories(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+  // Collapsible category dropdown (compact single row when closed)
+  const [catOpen, setCatOpen] = useState(false);
+  const catFilterRef = useRef(null);
+  useEffect(() => {
+    if (!catOpen) return;
+    const onPointerDown = (e) => { if (catFilterRef.current && !catFilterRef.current.contains(e.target)) setCatOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setCatOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKey); };
+  }, [catOpen]);
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_LOAD);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -133,8 +149,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const [discountPct, setDiscountPct] = useState(0);
   const [discountAuthorized, setDiscountAuthorized] = useState(null);
   const [showAdminAuth, setShowAdminAuth] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
+  const [adminPin, setAdminPin] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
 
@@ -170,7 +185,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   // Created transaction — shown on the post-booking receipt step (with QR).
   const [createdTx, setCreatedTx] = useState(null);
-  const { info: toastInfo } = useToast();
 
   // Live availability check (same backend overlap logic as createRental) so
   // staff can't confirm dates that clash with an existing booking.
@@ -273,29 +287,36 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     return v;
   }, [customer, todayStr, size, measurementsExpanded, measurements, measurementFields, includeDownpayment, downpaymentAmount, totals.baseRate]);
 
+  // Category tabs (with live counts) built from the actual inventory so every
+  // category (Gown, Barong, Filipiniana, Suit, Costume, …) always appears —
+  // no hardcoded list to go stale.
+  const catalogCategories = useMemo(() => {
+    const seen = [];
+    for (const item of inventory) {
+      if (item.status === 'Deleted') continue;
+      const label = item.category || 'Other';
+      if (!seen.some(c => c.key === label.toLowerCase())) seen.push({ key: label.toLowerCase(), label });
+    }
+    return seen;
+  }, [inventory]);
+
   // Filtered catalog (staff can pick any bookable item, including ones that are
   // currently Rented/Reserved — so they can reserve a future-free date). Deleted
   // items are excluded since they're removed from the catalog.
   const filteredCatalog = useMemo(() => {
-    const cats = {
-      all: () => true,
-      gown: i => i.category?.toLowerCase() === 'gown',
-      suit: i => i.category?.toLowerCase() === 'suit',
-      formal: i => i.category?.toLowerCase() === 'formal',
-    };
     return inventory.filter(item => {
       if (item.status === 'Deleted') return false;
-      const matchesCat = cats[activeCategory] ? cats[activeCategory](item) : true;
+      const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesCat && matchesSearch;
     });
-  }, [inventory, activeCategory, searchQuery]);
+  }, [inventory, selectedCategories, searchQuery]);
 
   // Reset visibleCount when filters change
   useEffect(() => {
     setVisibleCount(ITEMS_PER_LOAD);
     setLoadingMore(false);
-  }, [activeCategory, searchQuery]);
+  }, [selectedCategories, searchQuery]);
 
   // Slice the items for display
   const displayedItems = filteredCatalog.slice(0, visibleCount);
@@ -319,6 +340,84 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const handleBack = () => {
     if (step > 1) setStep(s => s - 1);
     else onClose();
+  };
+
+  // Pristine form snapshot (mount time) for the unsaved-changes check below.
+  const initialCustomerRef = useRef(null);
+  if (initialCustomerRef.current === null) {
+    initialCustomerRef.current = { ...customer };
+  }
+
+  // True when the user typed/changed anything worth keeping: a selected item,
+  // customer details, dates, size/measurements, downpayment or a discount.
+  // The receipt step (booking committed) is always safe to leave. Pure filter
+  // UI (search text, category pills) never triggers the guard.
+  const hasUnsavedChanges = useMemo(() => {
+    if (step === 4 || createdTx) return false;
+    if (selectedItem) return true;
+    const init = initialCustomerRef.current || {};
+    if ((customer.name || '').trim() || (customer.contact || '').trim() ||
+        (customer.address || '').trim() || (customer.notes || '').trim()) return true;
+    if (customer.rentalDate !== init.rentalDate || customer.eventDate !== init.eventDate ||
+        customer.returnDate !== init.returnDate) return true;
+    if (size || Object.keys(measurements || {}).some(k => String(measurements[k] ?? '').trim() !== '')) return true;
+    if (includeDownpayment && String(downpaymentAmount ?? '').trim() !== '') return true;
+    if ((Number(discountPct) || 0) > 0 || discountAuthorized) return true;
+    return false;
+  }, [step, createdTx, selectedItem, customer, size, measurements, includeDownpayment, downpaymentAmount, discountPct, discountAuthorized]);
+
+  // Back / close go through here: with unsaved entries the user gets a
+  // "Discard changes?" confirm instead of silently losing the rental.
+  const requestNavigate = useCallback((target) => {
+    if (target === 'close' && (step === 4 || createdTx)) { onClose(); return; }
+    // Step-back keeps every field (nothing is lost), so it never asks.
+    // Only LEAVING the modal confirms — and the exit-confirm only fires
+    // from step 1's Back (steps 2/3 always return to a previous step).
+    if (target === 'back' && step > 1) { handleBack(); return; }
+    if (hasUnsavedChanges) {
+      setConfirmNav('close');
+      setShowDiscardConfirm(true);
+      return;
+    }
+    onClose();
+  }, [hasUnsavedChanges, step, createdTx, onClose]);
+
+  const confirmDiscard = useCallback(() => {
+    setShowDiscardConfirm(false);
+    setConfirmNav(null);
+    onClose();
+  }, [onClose]);
+
+  // Escape closes the page — but stays off while any modal is up so one
+  // keypress can't skip a level; the discard confirm gets its own Escape.
+  useEscapeClose(() => requestNavigate('close'), !showDiscardConfirm && !showAdminAuth);
+  useEscapeClose(() => { setShowDiscardConfirm(false); setConfirmNav(null); }, showDiscardConfirm);
+
+  // Mobile system back button (dispatched by App as rentech:request-close).
+  // Routes through the same discard-confirm guard as the Back button; an
+  // open discard/admin modal is dismissed first instead of the page.
+  useEffect(() => {
+    const onRequestClose = () => {
+      if (showDiscardConfirm) { setShowDiscardConfirm(false); setConfirmNav(null); return; }
+      if (showAdminAuth) { setShowAdminAuth(false); return; }
+      requestNavigate('close');
+    };
+    window.addEventListener('rentech:request-close', onRequestClose);
+    return () => window.removeEventListener('rentech:request-close', onRequestClose);
+  }, [requestNavigate, showDiscardConfirm, showAdminAuth]);
+
+  // Admin authorization via the admin's 4-digit discount PIN
+  const handleAuthorize = async () => {
+    if (adminPin.length !== 4) { setAuthError('Enter the 4-digit PIN'); return; }
+    setAuthLoading(true); setAuthError('');
+    try {
+      const res = await api.post('/auth/verify-admin', { pin: adminPin });
+      setDiscountAuthorized(res.admin);
+      setShowAdminAuth(false);
+      setAdminPin('');
+    } catch (err) {
+      setAuthError(err?.body?.error || err?.message || 'Authorization failed');
+    } finally { setAuthLoading(false); }
   };
 
   const handleNext = async () => {
@@ -377,13 +476,13 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const progressSteps = ['Items', 'Details', 'Confirm', 'Receipt'];
 
   return (
-    <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-sm" onClick={() => requestNavigate('close')}>
       <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
       <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-new-rental" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
           <h2 id="dialog-title-new-rental" className="text-xl font-bold text-gray-900">New Rental</h2>
-          <button onClick={onClose} aria-label="Close new rental" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50">
+          <button onClick={() => requestNavigate('close')} aria-label="Close new rental" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50">
             <X size={20} />
           </button>
         </div>
@@ -392,7 +491,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         <div className="flex items-center justify-center py-4 px-6 bg-gray-50/50">
           {progressSteps.map((label, idx) => (
             <div key={label} className="flex-1 flex flex-col items-center relative">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border-2 ${
+              <div className={`relative z-10 w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border-2 ${
                 step >= idx + 1 ? 'bg-[#bf4a53] border-[#bf4a53] text-white' : 'bg-white border-gray-200 text-gray-400'
               }`}>
                 {idx + 1}
@@ -421,22 +520,83 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     type="text" placeholder="Search..."
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-full text-xs font-medium focus:outline-none focus:border-[#bf4a53]"
+                    className="w-full pl-8 pr-8 py-2 bg-white border border-gray-200 rounded-full text-xs font-medium focus:outline-none focus:border-[#bf4a53]"
                   />
+                  {searchQuery !== '' && (
+                    <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
+                      <X size={13} />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Category tabs */}
-              <div className="flex gap-2 flex-wrap mb-4">
-                {['all','gown','suit','formal'].map(cat => (
-                  <button key={cat} onClick={() => setActiveCategory(cat)}
-                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border ${
-                      activeCategory === cat ? 'bg-[#bf4a53] text-white border-[#bf4a53]' : 'bg-white border-gray-200 text-gray-600'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
+              {/* Category filter — compact collapsible multi-select. Closed it is
+                  a single row; options open in a dropdown with checkboxes. */}
+              <div ref={catFilterRef} className="relative mb-3">
+                {(() => {
+                  const total = inventory.filter(i => i.status !== 'Deleted').length;
+                  const names = selectedCategories.map(k => catalogCategories.find(c => c.key === k)?.label || k);
+                  const summary = names.length === 0 ? 'All' : names.length <= 2 ? names.join(', ') : `${names[0]}, +${names.length - 1}`;
+                  return (
+                    <>
+                      <button type="button" aria-expanded={catOpen} aria-controls="staff-cat-panel"
+                        aria-label={`Filter by category, ${names.length === 0 ? 'showing all categories' : `${names.length} selected: ${names.join(', ')}`}. Activate to change.`}
+                        onClick={() => setCatOpen(o => !o)}
+                        className={`w-full min-h-[44px] inline-flex items-center gap-2 rounded-2xl border px-3.5 py-2 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53] focus-visible:ring-offset-2 ${
+                          selectedCategories.length > 0 ? 'border-[#bf4a53] bg-red-50/60' : 'border-gray-200 bg-white hover:border-gray-300'
+                        }`}
+                      >
+                        <SlidersHorizontal size={15} aria-hidden="true" className="shrink-0 text-gray-400" />
+                        <span className="text-xs font-bold text-gray-500 uppercase tracking-wide shrink-0">Category</span>
+                        <span className="flex-1 min-w-0 truncate text-sm font-semibold text-gray-900">{summary}</span>
+                        {selectedCategories.length > 0 && (
+                          <span aria-hidden="true" className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-[#bf4a53] text-white text-[11px] font-bold inline-flex items-center justify-center tabular-nums">
+                            {selectedCategories.length}
+                          </span>
+                        )}
+                        <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-gray-400 transition-transform ${catOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                      {catOpen && (
+                        <div id="staff-cat-panel" role="group" aria-label="Choose categories"
+                          className="absolute z-30 top-full mt-2 left-0 right-0 bg-white border border-gray-100 rounded-2xl shadow-xl p-1.5 max-h-64 overflow-y-auto">
+                          <label className="flex min-h-[44px] items-center gap-3 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-[#bf4a53]/50">
+                            <input type="checkbox" checked={selectedCategories.length === 0} onChange={() => setSelectedCategories([])}
+                              aria-label={`All categories, ${total} items`} className="h-5 w-5 shrink-0 accent-[#bf4a53]" />
+                            <span className="flex-1 text-sm font-semibold text-gray-900">All</span>
+                            <span aria-hidden="true" className="text-[11px] font-bold text-gray-400 tabular-nums">{total}</span>
+                          </label>
+                          {catalogCategories.map(({ key, label }) => {
+                            const count = inventory.filter(i => (i.category || '').toLowerCase() === key && i.status !== 'Deleted').length;
+                            const checked = selectedCategories.includes(key);
+                            return (
+                              <label key={key} className="flex min-h-[44px] items-center gap-3 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-[#bf4a53]/50">
+                                <input type="checkbox" checked={checked} onChange={() => toggleCategory(key)}
+                                  aria-label={`${label}, ${count} items`} className="h-5 w-5 shrink-0 accent-[#bf4a53]" />
+                                <span className="flex-1 text-sm font-medium text-gray-800">{label}</span>
+                                {checked && <Check size={15} strokeWidth={3} aria-hidden="true" className="shrink-0 text-[#bf4a53]" />}
+                                <span aria-hidden="true" className="text-[11px] font-bold text-gray-400 tabular-nums">{count}</span>
+                              </label>
+                            );
+                          })}
+                          <div className="flex items-center gap-2 p-1.5 pt-2 border-t border-gray-100 mt-1">
+                            <button type="button" onClick={() => setSelectedCategories([])} disabled={selectedCategories.length === 0}
+                              className="flex-1 min-h-[40px] rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]">
+                              Clear
+                            </button>
+                            <button type="button" onClick={() => setCatOpen(false)}
+                              className="flex-1 min-h-[40px] rounded-xl text-xs font-bold bg-gray-900 text-white hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53] focus-visible:ring-offset-2">
+                              Done
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <p aria-live="polite" className="sr-only">
+                        Showing {filteredCatalog.length} of {total} items{names.length > 0 ? ` in ${names.join(', ')}` : ''}
+                      </p>
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Scrollable catalog grid */}
@@ -448,8 +608,25 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               <div
                 ref={catalogRef}
                 onScroll={handleCatalogScroll}
-                className="flex-1 overflow-y-auto pr-1 hide-scrollbar"
+                className="flex-1 overflow-y-auto pr-1 hide-scrollbar min-h-[240px]"
               >
+                {filteredCatalog.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center text-center px-6 py-10 min-h-[220px]">
+                    <Search size={28} className="text-gray-300 mb-2" />
+                    <p className="text-sm font-bold text-gray-700">No items found</p>
+                    <p className="text-xs text-gray-400 mt-1">Try a different search term or category.</p>
+                    {(searchQuery.trim() !== '' || selectedCategories.length > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => { setSearchQuery(''); setSelectedCategories([]); }}
+                        className="mt-3 px-4 py-2 rounded-full text-xs font-bold bg-gray-900 text-white hover:bg-gray-700 transition-colors"
+                      >
+                        Clear search &amp; filters
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {displayedItems.map(item => (
                   <button
@@ -461,7 +638,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'
                     }`}
                   >
-                    <ItemImage image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
+                    <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-gray-900 line-clamp-1">{item.name}</p>
                       <p className="text-[10px] text-gray-500">₱{item.price.toLocaleString()}</p>
@@ -482,6 +659,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   ))}
                 </div>
 
+
                 {/* Loader / end indicator */}
                 <div className="py-3 flex justify-center">
                   {loadingMore && <Loader2 size={18} className="text-gray-400 animate-spin" />}
@@ -489,6 +667,8 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     <p className="text-xs text-gray-400">All items loaded</p>
                   )}
                 </div>
+                </>
+                )}
               </div>
             </div>
           )}
@@ -744,12 +924,12 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 <h3 className="text-lg font-bold text-gray-900">Rental Created</h3>
                 <p className="text-sm text-gray-500">Show this receipt to the customer. They can show the QR at pickup.</p>
               </div>
-              <BookingReceipt tx={createdTx} />
+              <div className="print-area">
+                <BookingReceipt tx={createdTx} />
+              </div>
               <button
-                onClick={() => {
-                  toastInfo('Press Ctrl+P (Cmd+P on Mac) to print this receipt.');
-                }}
-                className="w-full py-3 rounded-full font-bold text-sm bg-white border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 text-gray-700"
+                onClick={() => window.print()}
+                className="w-full py-3 rounded-full font-bold text-sm bg-white border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 text-gray-700 no-print"
               >
                 <Printer size={16} /> Print
               </button>
@@ -771,7 +951,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
             </button>
           ) : (
             <>
-              <button onClick={handleBack} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
+              <button onClick={() => requestNavigate('back')} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
                 Back
               </button>
               <button
@@ -788,36 +968,49 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       </div>
       </div>
 
+      {/* Discard-changes confirm — Back / X / backdrop / Escape with unsaved entries */}
+      {showDiscardConfirm && (
+        <div className="fixed inset-0 z-[260] bg-gray-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { setShowDiscardConfirm(false); setConfirmNav(null); }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-discard-rental" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h4 id="dialog-title-discard-rental" className="font-bold text-lg text-gray-900">Discard changes?</h4>
+            <p className="text-sm text-gray-500">You have unsaved entries in this rental. Leaving now will lose them.</p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => { setShowDiscardConfirm(false); setConfirmNav(null); }}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+              >
+                Keep Editing
+              </button>
+              <button
+                onClick={confirmDiscard}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Admin Auth Modal (at top level to avoid transform breaking fixed) */}
       {showAdminAuth && (
         <div className="fixed inset-0 z-[250] bg-gray-900/40 backdrop-blur-sm" onClick={() => setShowAdminAuth(false)}>
           <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
           <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-admin-auth" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
             <h4 id="dialog-title-admin-auth" className="font-bold text-gray-900">Admin Authorization</h4>
-            <p className="text-xs text-gray-500">Enter admin credentials to apply a discount.</p>
+            <p className="text-xs text-gray-500">Enter the admin's 4-digit PIN to apply a discount.</p>
             {authError && <p className="text-xs text-red-500 font-medium bg-red-50 p-3 rounded-xl">{authError}</p>}
-            <input type="email" placeholder="Admin Email" value={adminEmail}
-              onChange={e => setAdminEmail(e.target.value)}
-              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
-            <input type="password" placeholder="Password" value={adminPassword}
-              onChange={e => setAdminPassword(e.target.value)}
-              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
+            <input type="password" inputMode="numeric" placeholder="••••" maxLength={4}
+              value={adminPin}
+              onChange={e => setAdminPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              onKeyDown={e => { if (e.key === 'Enter') handleAuthorize(); }}
+              className="w-full p-3 bg-gray-50 rounded-xl border text-center text-2xl font-bold tracking-[0.5em] text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15" />
             <div className="flex gap-3 pt-2">
-              <button onClick={() => { setShowAdminAuth(false); setAuthError(''); setAdminEmail(''); setAdminPassword(''); }}
+              <button onClick={() => { setShowAdminAuth(false); setAuthError(''); setAdminPin(''); }}
                 className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={async () => {
-                setAuthLoading(true); setAuthError('');
-                try {
-                  const res = await api.post('/auth/verify-admin', { email: adminEmail, password: adminPassword });
-                  setDiscountAuthorized(res.admin);
-                  setShowAdminAuth(false);
-                  setAdminEmail(''); setAdminPassword('');
-                } catch (err) {
-                  setAuthError(err?.body?.error || err?.message || 'Authorization failed');
-                } finally { setAuthLoading(false); }
-              }} disabled={authLoading}
+              <button onClick={handleAuthorize} disabled={authLoading || adminPin.length !== 4}
                 className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                 {authLoading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
                 {authLoading ? 'Verifying...' : 'Authorize'}
@@ -825,12 +1018,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
             </div>
                 </div>
               </div>
-            {filteredCatalog.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-10 text-center px-6">
-                <p className="text-sm font-semibold text-gray-700">No available items to rent right now.</p>
-                <p className="text-xs text-gray-400 mt-1">All garments are currently booked, in cleaning, or unavailable.</p>
-              </div>
-            )}
             </div>
           )}
     </div>

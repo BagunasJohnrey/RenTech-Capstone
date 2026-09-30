@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as promoCodesService from '../services/promoCodes.service.js';
+import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
 export const createPromoCodeSchema = z.object({
@@ -46,6 +47,16 @@ export async function getPromoCode(req: AuthenticatedRequest, res: Response, nex
 export async function createPromoCode(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const code = await promoCodesService.createPromoCode(req.body);
+    try {
+      await createAuditLog({
+        action: 'settings.promo-code.create', entity: 'promo-code',
+        entityId: String((code as { id?: unknown })?.id ?? (req.body as { code?: unknown })?.code ?? ''),
+        performedById: req.user?.id ?? null,
+        newValue: req.body ?? {},
+      });
+    } catch {
+      // audit is best-effort
+    }
     res.status(201).json(code);
   } catch (err) { next(err); }
 }
@@ -53,6 +64,16 @@ export async function createPromoCode(req: AuthenticatedRequest, res: Response, 
 export async function updatePromoCode(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const code = await promoCodesService.updatePromoCode(String(req.params.id), req.body);
+    try {
+      await createAuditLog({
+        action: 'settings.promo-code.update', entity: 'promo-code',
+        entityId: String(req.params.id),
+        performedById: req.user?.id ?? null,
+        newValue: req.body ?? {},
+      });
+    } catch {
+      // audit is best-effort
+    }
     res.json(code);
   } catch (err) { next(err); }
 }
@@ -60,6 +81,15 @@ export async function updatePromoCode(req: AuthenticatedRequest, res: Response, 
 export async function deletePromoCode(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const result = await promoCodesService.deletePromoCode(String(req.params.id));
+    try {
+      await createAuditLog({
+        action: 'settings.promo-code.delete', entity: 'promo-code',
+        entityId: String(req.params.id),
+        performedById: req.user?.id ?? null,
+      });
+    } catch {
+      // audit is best-effort
+    }
     res.json(result);
   } catch (err) { next(err); }
 }

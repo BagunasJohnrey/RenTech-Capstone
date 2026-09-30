@@ -7,7 +7,7 @@ import { AuthenticatedRequest } from '../types/index.js';
 // month/year. The service fills in `end` when start is set but end isn't
 // ("one month after start"), so a past month correctly returns only THAT
 // month instead of everything since.
-function getPeriodFilter(period?: string, year?: number, month?: number): { start?: Date; end?: Date; past?: boolean; weekly?: boolean } {
+export function getPeriodFilter(period?: string, year?: number, month?: number): { start?: Date; end?: Date; past?: boolean; weekly?: boolean } {
   const now = new Date();
   const thisYear = now.getFullYear();
   if (period === 'monthly') {
@@ -57,7 +57,8 @@ export async function getForecast(req: AuthenticatedRequest, res: Response, next
     // unbounded aggregation work.
     const raw = Number(req.query.period);
     const period = Number.isFinite(raw) && raw >= 1 && raw <= 12 ? Math.floor(raw) : 3;
-    const data = await dashboardService.getForecast(period);
+    const granularity = String(req.query.granularity || '').toLowerCase() === 'weekly' ? 'weekly' : 'monthly';
+    const data = await dashboardService.getForecast(period, granularity);
     res.json(data);
   } catch (err) {
     next(err);
@@ -70,6 +71,22 @@ export async function getInsights(req: AuthenticatedRequest, res: Response, next
     const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
     const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
     const data = await dashboardService.getInsights(getPeriodFilter(period, year, month));
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Single payload for the AI Insights page — replaces the old 4-request fan-out
+// (kpis + insights + forecast + inventory-analytics) with one cached bundle.
+export async function getBundle(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const period = String(req.query.period || 'all');
+    const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
+    const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
+    const fp = Number(req.query.fp);
+    const forecastPeriod = Number.isFinite(fp) && fp >= 1 && fp <= 12 ? Math.floor(fp) : 3;
+    const data = await dashboardService.getDashboardBundle(getPeriodFilter(period, year, month), forecastPeriod);
     res.json(data);
   } catch (err) {
     next(err);

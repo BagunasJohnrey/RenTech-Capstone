@@ -35,6 +35,8 @@ router.post('/forgot-password', createRateLimiter(5, 60_000), validate(authContr
 router.post('/reset-password', createRateLimiter(10, 60_000), validate(authController.resetPasswordSchema), authController.resetPassword);
 // Email verification: consume the signup confirmation token (from the email link).
 router.post('/verify-email', createRateLimiter(10, 60_000), validate(authController.verifyEmailSchema), authController.verifyEmail);
+// Resend the verification email — always 200 (no enumeration).
+router.post('/resend-verification', createRateLimiter(5, 60_000), validate(authController.resendVerificationSchema), authController.resendVerification);
 
 // OAuth (Google) handshake — Phase 3 server-side redirect.
 // POST /oauth (legacy, token-in-body) kept for backward-compat but unused
@@ -56,11 +58,25 @@ router.post('/login/mfa', createRateLimiter(10, 60_000), validate(authController
 
 router.get('/me', authMiddleware, authController.getMe);
 router.put('/me', authMiddleware, validate(authController.updateProfileSchema), authController.updateMe);
+// First-login staff: replace the admin-issued one-time password. Only usable
+// while Profile.mustChangePassword is set; rate-limited against guessing the
+// one-time password from a hijacked session.
+router.post('/change-password', authMiddleware, createRateLimiter(10, 60_000), validate(authController.changePasswordSchema), authController.changePassword);
 
-// Admin-only routes with MFA enforcement
-router.post('/verify-admin', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, validate(authController.verifyAdminSchema), authController.verifyAdmin);
+// Admin-only routes with MFA enforcement. verify-admin additionally allows
+// Staff callers (the discount flow runs inside the staff rental modal) — the
+// presented 4-digit admin PIN is the authorization factor, and the route is
+// rate-limited per-IP because a 4-digit space is brute-forceable.
+router.post('/verify-admin', authMiddleware, requireRole(Role.Admin, Role.Staff), requireMfaAdmin, createRateLimiter(5, 600_000), validate(authController.verifyAdminSchema), authController.verifyAdmin);
+router.put('/admin-pin', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, createRateLimiter(5, 60_000), validate(authController.setAdminPinSchema), authController.setAdminPin);
+router.get('/admin-pin', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.adminPinStatus);
 router.get('/staff', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.listStaff);
 router.post('/staff', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, validate(authController.createStaffSchema), authController.createStaff);
+// Edit a staff account's name/phone. Allowed for: the Admin (Team tab, MFA
+// enforced like every other staff mutation) or the staff member editing their
+// own profile (enforced inside the controller — an admin token is NOT
+// required, so staff self-service never trips the admin MFA gate).
+router.put('/staff/:id', authMiddleware, requireRole(Role.Admin, Role.Staff), requireMfaAdmin, validate(authController.updateStaffSchema), authController.updateStaff);
 router.delete('/staff/:id', authMiddleware, requireRole(Role.Admin), requireMfaAdmin, authController.removeStaff);
 
 export default router;

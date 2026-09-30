@@ -114,7 +114,7 @@ export default function CleaningQueue({ items, onMarkClean, onBulkClean, onViewA
                   {checked ? <CheckSquare size={18} /> : <Square size={18} />}
                 </button>
               )}
-              <ItemImage image={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={20} />
+              <ItemImage thumb image={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={20} />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
                 <p className={`text-xs truncate ${checked ? 'text-emerald-600 font-semibold' : 'text-gray-500'}`}>

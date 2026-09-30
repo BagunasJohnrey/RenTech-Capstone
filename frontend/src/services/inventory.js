@@ -24,6 +24,10 @@ export const inventoryService = {
   bulkStatus: (ids, status, outOfServiceReason) =>
     api.patch(`/inventory/bulk-status`, { ids, status, outOfServiceReason }),
 
+  // Bulk sale update: set onSale/discountPct/salePrice/saleEndsAt on a batch.
+  bulkSale: (ids, saleData) =>
+    api.patch(`/inventory/bulk-sale`, { ids, ...saleData }),
+
   availability: (itemId, rentalDate, dueDate) =>
     api.get(
       `/inventory/availability?itemId=${encodeURIComponent(itemId)}&rentalDate=${encodeURIComponent(rentalDate)}&dueDate=${encodeURIComponent(dueDate)}`

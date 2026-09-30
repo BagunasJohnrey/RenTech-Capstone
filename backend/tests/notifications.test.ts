@@ -23,6 +23,23 @@ describe('GET /api/notifications', () => {
     const res = await request(app).get('/api/notifications');
     expect(res.status).toBe(401);
   });
+
+  it('should accept a type filter', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.notification.findMany.mockResolvedValueOnce([
+      { id: 'notif-9', profileId: 'customer-id-111', type: 'customer_message', title: 'Message', message: 'Hi', isRead: false },
+    ]);
+
+    const res = await request(app)
+      .get('/api/notifications?type=customer_message')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(prisma.notification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ type: 'customer_message' }) })
+    );
+  });
 });
 
 describe('PUT /api/notifications/:id/read', () => {

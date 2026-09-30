@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { prisma } from '../config/database.js';
 import * as inventoryService from '../services/inventory.service.js';
 import * as transactionService from '../services/transactions.service.js';
 import * as customerService from '../services/customer.service.js';
+import { sendEmail, isSendableEmail } from '../services/brevo.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
@@ -61,7 +63,7 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
       promoCode,
       size,
       measurements,
-      requireMinimumDownpayment: true, // customers must pay the 50% downpayment
+      requireMinimumDownpayment: true, // customers must pay the flat minimum downpayment (default ₱200)
     });
 
     res.status(201).json(tx);
@@ -135,6 +137,97 @@ export async function updateCustomer(req: AuthenticatedRequest, res: Response, n
       });
     } catch { /* audit is non-critical */ }
     res.json(customer);
+  } catch (err) {
+    next(err);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+export const contactAdminSchema = z.object({
+  body: z.object({
+    transactionId: z.string().min(1).max(64).optional(),
+    message: z
+      .string()
+      .min(10, 'Message must be at least 10 characters')
+      .max(1000, 'Message is too long (max 1000 characters)'),
+  }),
+});
+
+// Customer → admin message (e.g. "please cancel my booking").
+// Primary channel is an in-app notification to admins only — repeat
+// messages must NOT be deduped, so this writes directly instead of reusing
+// notifyStaffMembers. Admin email is best-effort and never fails the request.
+export async function contactAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { transactionId, message } = req.body as { transactionId?: string; message: string };
+    const clean = String(message).trim();
+
+    const customer = await prisma.profile.findUnique({ where: { id: req.user.id } });
+    const customerName = customer?.name || req.user.email || 'A customer';
+
+    let tx: { id: string; customerId: string; txNumber?: unknown } | null = null;
+    if (transactionId) {
+      tx = await transactionService.getTransaction(String(transactionId));
+      if (tx.customerId !== req.user.id) {
+        throw new AppError(403, 'You can only message about your own bookings');
+      }
+    }
+
+    const ref = tx ? ` (booking ${String((tx as { txNumber?: unknown }).txNumber ?? tx.id)})` : '';
+    const admins = await prisma.profile.findMany({
+      where: { role: 'Admin' },
+      select: { id: true, email: true },
+    });
+    if (admins.length) {
+      await prisma.notification.createMany({
+        data: admins.map((s: { id: string }) => ({
+          profileId: s.id,
+          transactionId: tx ? tx.id : null,
+          type: 'customer_message',
+          title: `Message from ${customerName}${ref}`,
+          message: clean.slice(0, 500),
+        })),
+      });
+    }
+
+    let emailed = false;
+    try {
+      const itemRef = tx ? `<p style="color:#6b7280">Booking: ${escapeHtml(String((tx as { txNumber?: unknown }).txNumber ?? tx.id))}</p>` : '';
+      for (const a of admins as { email: string }[]) {
+        if (!isSendableEmail(a.email)) continue;
+        try {
+          const r = await sendEmail({
+            to: a.email,
+            subject: `Customer message${ref} — RenTech`,
+            html: `<p><strong>${escapeHtml(customerName)}</strong> wrote:</p><p>${escapeHtml(clean).replace(/\n/g, '<br>')}</p>${itemRef}`,
+            text: `${customerName} wrote:\n\n${clean}`,
+          });
+          if (r.delivered) emailed = true;
+        } catch (err) {
+          console.error('[contact] admin email skipped:', (err as Error)?.message);
+        }
+      }
+    } catch (err) {
+      console.error('[contact] admin email lookup skipped:', (err as Error)?.message);
+    }
+
+    try {
+      await createAuditLog({
+        action: 'contact_admin',
+        entity: 'transaction',
+        entityId: transactionId ?? req.user.id,
+        performedById: req.user.id,
+        newValue: { message: clean.slice(0, 500) },
+      });
+    } catch { /* audit is non-critical */ }
+
+    res.json({ message: 'Message sent to the boutique team', emailed });
   } catch (err) {
     next(err);
   }

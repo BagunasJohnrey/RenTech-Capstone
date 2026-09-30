@@ -1,8 +1,10 @@
-import { useState } from 'react';
-import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail, X, ScrollText } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
-import { api } from '../utils/api';
+import { api, API_ORIGIN } from '../utils/api';
+import TermsContent from './TermsContent';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
@@ -81,6 +83,8 @@ export default function Login({ onLogin, onVerifyMfa }) {
   const [touched, setTouched] = useState({});
   const [googleLoading, setGoogleLoading] = useState(false);
   const [signupNeedsVerification, setSignupNeedsVerification] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
 
   const updateSignup = (field, value) => setSignupData(prev => ({ ...prev, [field]: value }));
   const markTouched = (field) => setTouched(prev => ({ ...prev, [field]: true }));
@@ -101,9 +105,27 @@ export default function Login({ onLogin, onVerifyMfa }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    // Client-side email format check — catch typos before hitting the server.
+    // Shows a specific hint instead of the generic "Invalid email or password".
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('Please enter a valid email address (e.g. you@example.com)');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const result = await onLogin(email, password);
+      let result;
+      try {
+        result = await onLogin(email, password);
+      } catch (firstErr) {
+        // Cold-start race: the backend body parser may not be ready on the
+        // very first request after sleep. One retry after 2s fixes it;
+        // transient 503s (Render waking up) also benefit from the retry.
+        const retryable = firstErr?.status === 400 || firstErr?.status === 503;
+        if (!retryable) throw firstErr;
+        await new Promise(r => setTimeout(r, 2000));
+        result = await onLogin(email, password);
+      }
        // W2.7: If MFA is required, the backend already stored the challenge
       // tokens in the rt_mfa_pending httpOnly cookie. We just show the TOTP prompt.
       if (result?.requiresMfa) {
@@ -111,7 +133,9 @@ export default function Login({ onLogin, onVerifyMfa }) {
         return;
       }
     } catch (err) {
-      setError(err.message || 'Invalid email or password');
+      setError(err.status === 400
+        ? 'Check your email format — it should look like you@example.com'
+        : err.message || 'Invalid email or password');
     } finally {
       setLoading(false);
     }
@@ -145,6 +169,16 @@ export default function Login({ onLogin, onVerifyMfa }) {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
 
+  // Deep-link from the reset page's "Back to sign in" (/?forgot=1) — land
+  // straight in the forgot-password step instead of the login form.
+  const location = useLocation();
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('forgot') === '1') {
+      setForgotMode(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const enterForgotMode = () => {
     setError('');
     setForgotEmail(email);
@@ -160,6 +194,9 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setForgotLoading(true);
     try {
       await api.post('/auth/forgot-password', { email: forgotEmail });
+      // Remember the address for this tab so the reset page can offer a
+      // one-click resend (expired/invalid link) without asking again.
+      try { sessionStorage.setItem('rentech_reset_email', forgotEmail); } catch { /* private mode */ }
       setForgotSent(true);
     } catch (err) {
       setError(err?.message || 'Failed to send reset link');
@@ -186,6 +223,10 @@ export default function Login({ onLogin, onVerifyMfa }) {
         setError('Please fix the highlighted fields');
         return;
       }
+      if (!acceptedTerms) {
+        setError('Please agree to the Terms and Conditions to continue');
+        return;
+      }
       setSignupStep(2);
     } else if (signupStep === 2) {
       const fields = ['password', 'confirm'];
@@ -194,6 +235,10 @@ export default function Login({ onLogin, onVerifyMfa }) {
       setTouched(allTouched);
       if (fields.some(f => !fieldState(f).valid)) {
         setError('Please fix the highlighted fields');
+        return;
+      }
+      if (!acceptedTerms) {
+        setError('Please agree to the Terms and Conditions to create your account');
         return;
       }
       setLoading(true);
@@ -220,6 +265,8 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setIsSignup(false);
     setSignupStep(1);
     setSignupNeedsVerification(false);
+    setAcceptedTerms(false);
+    setShowTerms(false);
     setSignupData({ name: '', email: '', phone: '', address: '', password: '', confirm: '', preferences: [] });
   };
 
@@ -228,16 +275,21 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setError('');
     setSignupStep(1);
     setSignupNeedsVerification(false);
+    setAcceptedTerms(false);
+    setShowTerms(false);
   };
 
   const handleGoogle = async () => {
     setError('');
+    // Google redirects straight to OAuth. If no account exists yet, the backend
+    // routes to the "just a few details" page, where the T&C agreement is
+    // required before the account is created — so no gate needed here.
     setGoogleLoading(true);
     try {
       // Phase 3: redirect to the backend's server-side OAuth endpoint.
       // The backend handles the entire Google handshake and sets httpOnly
       // cookies — no tokens pass through the browser.
-      window.location.href = '/api/auth/oauth/redirect?provider=google';
+      window.location.href = `${API_ORIGIN}/api/auth/oauth/redirect?provider=google`;
     } catch (err) {
       setError(err.message || 'Google sign-in failed');
       setGoogleLoading(false);
@@ -297,12 +349,12 @@ export default function Login({ onLogin, onVerifyMfa }) {
 <div className="lg:hidden flex items-center justify-center mb-8">
                  <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
                </div>
-               {!forgotMode && (
-                 <>
-                   <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
-                   <p className="text-gray-500 text-sm mt-1 mb-7">Sign in to your RenTech account to continue.</p>
-                 </>
-               )}
+                {!forgotMode && (
+                  <>
+                    <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
+                    <p className="text-gray-500 text-sm mt-1 mb-7">Sign in to your RenTech account to continue.</p>
+                  </>
+                )}
 
                {/* Phase 5: MFA challenge screen */}
                {mfaChallenge && (
@@ -524,6 +576,41 @@ export default function Login({ onLogin, onVerifyMfa }) {
                     </div>
                   </div>
 
+                  <label className={`flex items-start gap-2.5 cursor-pointer select-none rounded-xl border p-3.5 transition-colors ${acceptedTerms ? 'bg-emerald-50/60 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'}`}>
+                    <input
+                      type="checkbox"
+                      checked={acceptedTerms}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setAcceptedTerms(true);
+                          setShowTerms(true);
+                        } else {
+                          setAcceptedTerms(false);
+                        }
+                      }}
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-[#bf4a53] focus:ring-[#bf4a53]"
+                    />
+                    <span className="text-xs text-gray-600 leading-relaxed">
+                      I have read and agree to the{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); setShowTerms(true); }}
+                        className="text-[#bf4a53] font-bold hover:underline inline"
+                      >
+                        Terms and Conditions
+                      </button>{' '}
+                      and{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); setShowTerms(true); }}
+                        className="text-[#bf4a53] font-bold hover:underline inline"
+                      >
+                        Privacy Policy
+                      </button>
+                      , including the Data Privacy Act of 2012 (RA 10173).
+                    </span>
+                  </label>
+
                   {error && <p className="text-red-500 text-xs font-semibold text-center">{error}</p>}
                   <button onClick={handleSignupNext}
                     className="w-full py-3 bg-[#bf4a53] text-white font-bold text-sm rounded-xl hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20 flex items-center justify-center gap-2">
@@ -567,12 +654,13 @@ export default function Login({ onLogin, onVerifyMfa }) {
                      })}
                    </div>
                   {error && <p className="text-red-500 text-xs font-semibold text-center">{error}</p>}
+
                   <div className="flex gap-3">
                     <button onClick={handleSignupBack}
                       className="flex-1 py-3 text-sm font-bold text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 flex items-center justify-center gap-1">
                       <ArrowLeft size={16} /> Back
                     </button>
-                    <button onClick={handleSignupNext} disabled={loading}
+                    <button onClick={handleSignupNext} disabled={loading || !acceptedTerms}
                       className="flex-1 py-3 bg-[#bf4a53] text-white font-bold text-sm rounded-xl hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20 disabled:opacity-50">
                       {loading ? 'Creating...' : 'Create Account'}
                     </button>
@@ -626,6 +714,52 @@ export default function Login({ onLogin, onVerifyMfa }) {
           )}
         </div>
       </div>
+
+      {/* Terms & Conditions / Privacy Policy modal */}
+      {showTerms && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowTerms(false)}>
+          <div
+            className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-[#bf4a53]/10 border border-[#bf4a53]/20 flex items-center justify-center text-[#bf4a53] shrink-0">
+                  <ScrollText size={18} />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="font-bold text-gray-900 text-sm sm:text-base">Terms and Conditions</h3>
+                  <p className="text-[11px] sm:text-xs text-gray-500">Effective date: August 2026</p>
+                </div>
+              </div>
+              <button onClick={() => setShowTerms(false)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0" aria-label="Close terms">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-4 sm:px-6 py-5 overflow-y-auto">
+              <TermsContent />
+            </div>
+            <div className="px-4 sm:px-6 py-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 bg-gray-50/60">
+              <p className="text-[11px] sm:text-xs text-gray-500 flex items-center gap-1.5">
+                <ShieldCheck size={14} className="text-emerald-600 shrink-0" />
+                We collect your data securely and never sell it.
+              </p>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button onClick={() => setShowTerms(false)}
+                  className="flex-1 sm:flex-none px-4 py-2.5 text-sm font-bold text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-100">
+                  Close
+                </button>
+                <button
+                  onClick={() => { setAcceptedTerms(true); setShowTerms(false); }}
+                  className="flex-1 sm:flex-none px-4 py-2.5 text-sm font-bold text-white bg-[#bf4a53] rounded-xl hover:bg-red-700 transition-colors"
+                >
+                  I Agree
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

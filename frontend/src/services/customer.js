@@ -24,4 +24,7 @@ export const customerService = {
 
   // Admin/Staff edit a customer's contact details.
   update: (id, patch) => api.put(`/customers/${id}`, patch),
+
+  // Customer messages the boutique team (e.g. cancellation request).
+  contactAdmin: (payload) => api.post('/customers/contact', payload),
 };

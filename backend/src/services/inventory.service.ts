@@ -36,6 +36,9 @@ export async function listItems(
         where: { status: { in: ['Active', 'Overdue', 'Reserved'] } },
         select: { status: true, rentalDate: true, dueDate: true },
       },
+      _count: {
+        select: { transactions: true },
+      },
     },
   });
 
@@ -71,7 +74,7 @@ export async function listItems(
     if (opts.exclude?.includes(displayStatus)) continue;
 
     if (!statusFilter || statusFilter === displayStatus) {
-      results.push({ ...rest, effectiveStatus: displayStatus });
+      results.push({ ...rest, effectiveStatus: displayStatus, rentalCount: item._count.transactions });
     }
   }
 
@@ -102,12 +105,10 @@ export async function getItem(id: number) {
       effectiveStatus = activeTx.status === 'Overdue' ? 'Overdue' : activeTx.status === 'Reserved' ? 'Reserved' : 'Rented';
     } else if (item.status === 'Rented' || item.status === 'Reserved') {
       effectiveStatus = 'Available';
-    } else if (item.status === 'Cleaning') {
-      const recentReturn = await prisma.transaction.findFirst({
-        where: { itemId: item.id, status: 'Returned', updatedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
-      });
-      if (!recentReturn) effectiveStatus = 'Available';
     }
+    // 'Cleaning' is intentionally left as-is (same as listItems): staff
+    // manually flip the item back to Available once cleaning is finished —
+    // no automatic change, so single-item and list views always agree.
   }
 
   const { transactions, ...rest } = item;
@@ -146,17 +147,59 @@ export async function updateItem(id: number, data: {
   discountPct?: number;
   salePrice?: number;
   saleEndsAt?: string | null;
-}) {
+}, performedById?: string) {
   const item = await prisma.inventoryItem.findUnique({ where: { id } });
   if (!item) {
     throw new AppError(404, 'Item not found');
   }
+
+  // Price and sale edits are revenue-relevant: audit them with old→new values
+  // under their own action names so they read distinctly from status moves
+  // (bulk status changes are logged separately in bulkSetStatus). Status-only
+  // edits stay silent here. Non-critical: never blocks the update.
+  try {
+    const priceChanged = data.price !== undefined && Number(data.price) !== Number(item.price);
+    if (priceChanged) {
+      await createAuditLog({
+        action: 'inventory.price.update', entity: 'inventory', entityId: String(id),
+        performedById: performedById ?? null,
+        oldValue: { price: item.price },
+        newValue: { price: data.price },
+      });
+    }
+    const saleKeys = ['onSale', 'discountPct', 'salePrice', 'saleEndsAt'] as const;
+    // saleEndsAt arrives as an ISO string but reads back as a Date: normalize
+    // both sides so re-sending an unchanged date doesn't log a phantom diff.
+    const norm = (v: unknown) => v instanceof Date ? v.toISOString() : String(v ?? null);
+    const saleChanged = saleKeys.some((k) => data[k] !== undefined && norm(data[k]) !== norm((item as Record<string, unknown>)[k]));
+    if (saleChanged) {
+      await createAuditLog({
+        action: 'inventory.sale.update', entity: 'inventory', entityId: String(id),
+        performedById: performedById ?? null,
+        oldValue: {
+          onSale: item.onSale, discountPct: item.discountPct,
+          salePrice: item.salePrice, saleEndsAt: item.saleEndsAt,
+        },
+        newValue: {
+          onSale: data.onSale ?? item.onSale, discountPct: data.discountPct ?? item.discountPct,
+          salePrice: data.salePrice ?? item.salePrice, saleEndsAt: data.saleEndsAt ?? item.saleEndsAt,
+        },
+      });
+    }
+  } catch { /* audit is non-critical */ }
 
   // Leaving OutOfService (or any status change off it) clears the recorded
   // reason so a later re-entry starts fresh.
   const patch: Prisma.InventoryItemUpdateInput = { ...data };
   if (data.status && data.status !== ItemStatus.OutOfService && item.outOfServiceReason) {
     patch.outOfServiceReason = null;
+  }
+
+  // Photo replaced → delete the old stored object so the bucket doesn't
+  // accumulate orphan files (skip absolute URLs, which aren't bucket objects).
+  if (data.image && data.image !== item.image && item.image && !/^https?:\/\//.test(item.image)) {
+    const { removeObject } = await import('./storage.service.js');
+    await removeObject(item.image);
   }
 
   const updated = await prisma.inventoryItem.update({ where: { id }, data: patch });
@@ -204,6 +247,50 @@ export async function bulkSetStatus(
 
   clearDataCache();
 
+  return { updated: result.count };
+}
+
+// Bulk sale update: set onSale/discountPct/salePrice/saleEndsAt on a batch of
+// items at once. Admin-only (enforced by caller).
+export async function bulkUpdateSale(
+  ids: number[],
+  saleData: {
+    onSale: boolean;
+    discountPct?: number | null;
+    salePrice?: number | null;
+    saleEndsAt?: string | null;
+  },
+  performedById?: string
+) {
+  if (ids.length === 0) return { updated: 0 };
+
+  const items = await prisma.inventoryItem.findMany({ where: { id: { in: ids } } });
+  if (items.length !== ids.length) {
+    throw new AppError(404, 'One or more items were not found');
+  }
+
+  const result = await prisma.inventoryItem.updateMany({
+    where: { id: { in: ids } },
+    data: {
+      onSale: saleData.onSale,
+      discountPct: saleData.discountPct ?? null,
+      salePrice: saleData.salePrice ?? null,
+      saleEndsAt: saleData.saleEndsAt ?? null,
+    },
+  });
+
+  try {
+    await createAuditLog({
+      action: 'update',
+      entity: 'inventory',
+      entityId: `bulk-sale:${ids.join(',')}`,
+      performedById,
+      oldValue: { ids, sale: items.map(i => ({ id: i.id, onSale: i.onSale, discountPct: i.discountPct, salePrice: i.salePrice, saleEndsAt: i.saleEndsAt })) },
+      newValue: { ids, sale: saleData },
+    });
+  } catch { /* non-critical */ }
+
+  clearDataCache();
   return { updated: result.count };
 }
 

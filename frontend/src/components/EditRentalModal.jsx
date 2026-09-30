@@ -75,6 +75,7 @@ function BookingTab({ transaction, inputClass, onClose, onSaved }) {
   const [pickup, setPickup] = useState(toYmd(transaction.rentalDate));
   const [due, setDue] = useState(toYmd(transaction.dueDate));
   const [notes, setNotes] = useState(transaction.notes ?? '');
+  const [alteration, setAlteration] = useState(transaction.alterationStatus || '');
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -86,6 +87,7 @@ function BookingTab({ transaction, inputClass, onClose, onSaved }) {
         rentalDate: pickup,
         dueDate: due,
         notes,
+        alterationStatus: alteration === '' ? null : alteration,
       });
       toastSuccess('Booking updated');
       onSaved?.({ type: 'booking', updated });
@@ -101,6 +103,20 @@ function BookingTab({ transaction, inputClass, onClose, onSaved }) {
     <div className="space-y-4">
       <Field label="Pickup date" type="date" required value={pickup} onChange={(e) => setPickup(e.target.value)} className={inputClass} />
       <Field label="Return due date" type="date" required value={due} onChange={(e) => setDue(e.target.value)} className={inputClass} min={pickup} />
+      <div>
+        <label htmlFor="alteration-status" className="block text-xs font-bold text-gray-700 mb-1.5">Alteration</label>
+        <select
+          id="alteration-status"
+          value={alteration}
+          onChange={(e) => setAlteration(e.target.value)}
+          className={`${inputClass} cursor-pointer`}
+        >
+          <option value="">No alteration needed</option>
+          <option value="pending">Pending — with tailor</option>
+          <option value="ready">Ready — fitted, ok for pickup</option>
+        </select>
+        <p className="text-[10px] text-gray-400 mt-1">Customers see this in Transactions. Date changes notify them automatically.</p>
+      </div>
       <Field label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} placeholder="Add a note for staff" />
 
       <p className="text-[10px] text-gray-400">Item and fee changes require cancel + re-book.</p>

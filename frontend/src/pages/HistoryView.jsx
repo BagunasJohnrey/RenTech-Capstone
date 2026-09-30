@@ -1,13 +1,16 @@
-﻿import { useState } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
+import CancelBookingModal from '../components/CancelBookingModal';
+import { customerService } from '../services/customer';
 import DateRangePicker, { formatDateRangeLabel } from '../components/DateRangePicker';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
 import { customerLabel, customerTelLink, itemLabel } from '../utils/format';
-import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
+import { isReleased, getReleasePhoto, invalidateTxCache } from '../hooks/useTransactions';
+import RowActionsMenu from '../components/RowActionsMenu';
 import ItemImage from '../components/ItemImage';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 
@@ -34,9 +37,9 @@ const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Rese
 // `components/DateRangePicker.jsx`. This page only deals in [from, to]
 // strings and a single popover-open flag.
 
-export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, loading, onNavigateDetail }) {
+export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
   const isStaff = role !== 'Customer';
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
   const [activeStatusFilter, setActiveStatusFilter] = useState('All');
 
@@ -44,11 +47,23 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [dateTo, setDateTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [detailTx, setDetailTx] = useState(null);
+  const [cancelTx, setCancelTx] = useState(null);
   const [releaseTx, setReleaseTx] = useState(null);
   const [editRental, setEditRental] = useState(null);       // tx staff is editing (booking dates/notes + customer)
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [sendingSms, setSendingSms] = useState(false);
   const itemsPerPage = 10;
+
+  // One-shot search prefill (e.g. jumping from Item Performance): apply it,
+  // then clear the source so later visits start unfiltered.
+  useEffect(() => {
+    if (initialSearch) {
+      setSearchQuery(initialSearch);
+      setCurrentPage(1);
+      onConsumeSearch?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSearch]);
 
   // Rows navigate to a real URL when the app provides a router callback;
   // otherwise fall back to the local modal (e.g. standalone usage).
@@ -56,6 +71,126 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     if (onNavigateDetail) onNavigateDetail(tx);
     else setDetailTx(tx);
   };
+
+  // Warm the full record before the user opens it: hover intent on desktop
+  // (180ms) + pointer-down everywhere (fires before click). The modal's
+  // enrichment then usually resolves synchronously from the shared cache
+  // instead of costing a ~500ms round-trip after opening.
+  const hoverTimer = useRef(null);
+  const warmTx = (id) => { if (prefetchTx && id != null) prefetchTx(id); };
+  const warmTxSoon = (id) => {
+    if (!prefetchTx || id == null) return;
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => prefetchTx(id), 180);
+  };
+  const cancelWarm = () => clearTimeout(hoverTimer.current);
+
+  // Row actions: at most 2 inline buttons (View + the single next workflow
+  // step — Release and Return never co-occur) with everything else behind a
+  // "⋯" overflow menu carrying text labels. 7 icon-only buttons in one cell
+  // was unreadable; the menu also finally fits Call customer everywhere.
+  const isStaffRole = role === 'Admin' || role === 'Staff';
+  const telFor = (tx) => (isStaff
+    ? customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone)
+    : null);
+
+  const menuItemsFor = (tx) => {
+    const items = [];
+    const tel = telFor(tx);
+    // No duplicates: overdue rows already show Call inline, so it stays out
+    // of the menu there (same rule as Return, which is inline-or-menu only).
+    if (tel && tx.status !== 'Overdue') items.push({ key: 'call', icon: Phone, label: 'Call customer', href: tel, tone: 'text-emerald-600' });
+    if (tx.status === 'Overdue' && isStaff) {
+      items.push({ key: 'sms', icon: MessageCircle, label: 'Send SMS', onSelect: () => setSmsModalTx(tx) });
+    }
+    // Overdue rows lead with the call action inline, so the return flow
+    // lives here instead of crowding the row (see renderRowActions).
+    if (isStaffRole && onReturn && tx.status === 'Overdue' && tel) {
+      items.push({ key: 'return', icon: Undo2, label: 'Process return', tone: 'text-[#bf4a53]', onSelect: () => onReturn(tx) });
+    }
+    if (isStaffRole) {
+      items.push({ key: 'edit', icon: Pencil, label: 'Edit rental', tone: 'text-amber-600', onSelect: () => setEditRental(tx) });
+    }
+    const cancellable = isStaffRole
+      ? ['Active', 'Reserved', 'Overdue'].includes(tx.status)
+      : tx.status === 'Active' && role === 'Customer';
+    if (cancellable) {
+      items.push({ key: 'cancel', icon: XCircle, label: 'Cancel booking', danger: true, onSelect: () => setCancelTx(tx) });
+    }
+    if (role === 'Admin') {
+      items.push({
+        key: 'delete', icon: Trash2, label: 'Delete transaction', danger: true,
+        onSelect: () => {
+          if (window.confirm(`Delete transaction ${tx.id}? This cannot be undone.`)) onDelete(tx.id);
+        },
+      });
+    }
+    return items;
+  };
+
+  const renderRowActions = (tx, { pad, icon }) => (
+    <>
+      <button
+        onClick={() => openDetail(tx)}
+        className={`${pad} text-gray-500 hover:bg-gray-100 rounded-full transition-colors`}
+        title="View Details"
+      >
+        <Eye size={icon} />
+      </button>
+      {isStaff && (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx) && (
+        <button
+          onClick={() => setReleaseTx(tx)}
+          className={`${pad} text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-full transition-colors`}
+          title="Release Item"
+        >
+          <Package size={icon} />
+          <span className="sr-only">Release Item</span>
+        </button>
+      )}
+      {isStaff && onReturn && ((tx.status === 'Active' && isReleased(tx)) || (tx.status === 'Overdue' && !telFor(tx))) && (
+        <button
+          onClick={() => onReturn(tx)}
+          className={`${pad} text-[#bf4a53] bg-red-50 hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors`}
+          title="Process Return"
+        >
+          <Undo2 size={icon} />
+          <span className="sr-only">Process Return</span>
+        </button>
+      )}
+      {/* Overdue rows chase the customer first: the call action takes the
+          inline slot (when a number exists) and return moves to the menu. */}
+      {isStaff && tx.status === 'Overdue' && telFor(tx) && (
+        <a
+          href={telFor(tx)}
+          className={`${pad} text-emerald-600 bg-emerald-50 hover:bg-emerald-600 hover:text-white rounded-full transition-colors`}
+          title="Call customer"
+          onClick={e => e.stopPropagation()}
+        >
+          <Phone size={icon} />
+          <span className="sr-only">Call customer</span>
+        </a>
+      )}
+      {role !== 'Customer' && (
+        <RowActionsMenu
+          items={menuItemsFor(tx)}
+          buttonClassName={`${pad} text-gray-500 hover:bg-gray-100 rounded-full transition-colors`}
+          iconSize={icon}
+        />
+      )}
+      {/* Customer-side: the overflow menu would hold exactly one item (Cancel
+          booking), so render it inline instead of behind a "⋯" tap. */}
+      {role === 'Customer' && tx.status === 'Active' && (
+        <button
+          onClick={() => setCancelTx(tx)}
+          className="inline-flex items-center gap-1 px-3 py-2 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-600 hover:text-white rounded-full transition-colors"
+          title="Cancel booking"
+        >
+          <XCircle size={icon} />
+          Cancel
+        </button>
+      )}
+    </>
+  );
 
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
     + ((dateFrom !== '' || dateTo !== '') ? 1 : 0);
@@ -73,6 +208,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     setDateTo(to);
     setCurrentPage(1);
   };
+
+  const handleContactAdmin = (payload) => customerService.contactAdmin(payload);
 
   const handleSendSMS = async (tx) => {
     setSendingSms(true);
@@ -200,9 +337,9 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             </div>
 
             {isStaff && (
-              <button onClick={() => api.download('/export/transactions', 'transactions.csv')}
+<button onClick={() => api.download('/export/transactions', 'transactions.xlsx')}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors shrink-0">
-                <Download size={14} /> CSV
+                <Download size={14} /> Excel
               </button>
             )}
           </div>
@@ -320,6 +457,9 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       key={tx.id}
                       className="hover:bg-gray-50/50 transition-colors group cursor-pointer"
                       onClick={() => openDetail(tx)}
+                      onPointerDown={() => warmTx(tx.id)}
+                      onMouseEnter={() => warmTxSoon(tx.id)}
+                      onMouseLeave={cancelWarm}
                     >
                       <td className="px-6 py-4 font-bold text-gray-900 font-mono text-xs">
 {String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}
@@ -340,112 +480,18 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                         <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
                           {tx.status || '—'}
                         </span>
+                        {tx.alterationStatus && (
+                          <span className={`ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                            {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4 font-bold text-gray-900 text-right">
                         {formatCurrency(tx.rentalFee ?? tx.amount)}
                       </td>
                       <td className="px-6 py-4 text-center" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={() => openDetail(tx)}
-                            className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
-                            title="View Details"
-                          >
-                            <Eye size={15} />
-                          </button>
-                          {(tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx) && role !== 'Customer' && (
-                            <button
-                              onClick={() => setReleaseTx(tx)}
-                              className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-full transition-colors"
-                              title="Release Item"
-                            >
-                              <Package size={15} />
-                              <span className="sr-only">Release Item</span>
-                            </button>
-                          )}
-                          {tx.status === 'Overdue' && role !== 'Customer' && customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone) && (
-                            <a
-                              href={customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone)}
-                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
-                              title="Call Customer"
-                            >
-                              <Phone size={15} />
-                              <span className="sr-only">Call Customer</span>
-                            </a>
-                          )}
-                          {tx.status === 'Overdue' && role !== 'Customer' && (
-                            <button
-                              onClick={() => setSmsModalTx(tx)}
-                              className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
-                              title="Send SMS"
-                            >
-                              <MessageCircle size={15} />
-                              <span className="sr-only">Send SMS</span>
-                            </button>
-                          )}
-                          {role !== 'Customer' && (tx.status === 'Overdue' || (tx.status === 'Active' && isReleased(tx))) && (
-                            <button
-                              onClick={() => onReturn(tx)}
-                              className="p-1.5 text-[#bf4a53] bg-red-50 hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors"
-                              title="Process Return"
-                            >
-                              <Undo2 size={16} />
-                              <span className="sr-only">Process Return</span>
-                            </button>
-                          )}
-                          {(role === 'Admin' || role === 'Staff') && (
-                            <button
-                              onClick={() => setEditRental(tx)}
-                              className="p-1.5 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
-                              title="Edit rental"
-                              aria-label={`Edit rental ${tx.txNumber ?? tx.id}`}
-                            >
-                              <Pencil size={14} />
-                            </button>
-                          )}
-                          {(role === 'Admin' || role === 'Staff') && ['Active', 'Reserved', 'Overdue'].includes(tx.status) && (
-                            <button
-                              onClick={() => {
-                                if (window.confirm(`Cancel this booking (${tx.txNumber ?? tx.id})? The item will be freed and marked Available.`)) {
-                                  onCancel(tx.id);
-                                }
-                              }}
-                              className="p-1.5 text-red-500 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
-                              title="Cancel Booking"
-                              aria-label={`Cancel booking ${tx.txNumber ?? tx.id}`}
-                            >
-                              <XCircle size={15} />
-                              <span className="sr-only">Cancel Booking</span>
-                            </button>
-                          )}
-                          {(tx.status === 'Active') && role === 'Customer' && (
-                            <button
-                              onClick={() => {
-                                if (window.confirm('Cancel this booking? This cannot be undone.')) {
-                                  onCancel(tx.id);
-                                }
-                              }}
-                              className="p-1.5 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors"
-                              title="Cancel Booking"
-                            >
-                              <XCircle size={15} />
-                              <span className="sr-only">Cancel Booking</span>
-                            </button>
-                          )}
-                          {role === 'Admin' && (
-                            <button
-                              onClick={() => {
-                                if (window.confirm(`Delete transaction ${tx.id}? This cannot be undone.`)) {
-                                  onDelete(tx.id);
-                                }
-                              }}
-                              className="p-1.5 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-full transition-colors"
-                              title="Delete Transaction"
-                            >
-                              <Trash2 size={14} />
-                              <span className="sr-only">Delete</span>
-                            </button>
-                          )}
+                          {renderRowActions(tx, { pad: 'p-1.5', icon: 15 })}
                         </div>
                       </td>
                     </tr>
@@ -496,6 +542,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 key={tx.id}
                 className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-4 space-y-2.5 cursor-pointer active:scale-[0.99] transition-transform"
                 onClick={() => openDetail(tx)}
+                onPointerDown={() => warmTx(tx.id)}
               >
                 <div className="flex justify-between items-start gap-3">
                   <div className="min-w-0">
@@ -508,6 +555,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     {tx.status || '—'}
                   </span>
                 </div>
+                {tx.alterationStatus && (
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                    {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                  </span>
+                )}
 
                 {role !== 'Customer' && (
                   <p className="text-sm text-gray-700 min-w-0">
@@ -526,101 +578,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     {formatCurrency(tx.rentalFee ?? tx.amount)}
                   </p>
                   <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                    <button
-                      onClick={() => openDetail(tx)}
-                      className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
-                      title="View Details"
-                    >
-                      <Eye size={16} />
-                    </button>
-                    {(tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx) && role !== 'Customer' && (
-                      <button
-                        onClick={() => setReleaseTx(tx)}
-                        className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-full transition-colors"
-                        title="Release Item"
-                      >
-                        <Package size={16} />
-                      </button>
-                    )}
-                    {tx.status === 'Overdue' && role !== 'Customer' && customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone) && (
-                      <a
-                        href={customerTelLink(tx.customerProfile || tx.customer, tx.contact || tx.customerPhone)}
-                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors"
-                        title="Call Customer"
-                      >
-                        <Phone size={16} />
-                      </a>
-                    )}
-                    {tx.status === 'Overdue' && role !== 'Customer' && (
-                      <button
-                        onClick={() => setSmsModalTx(tx)}
-                        className="p-2 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
-                        title="Send SMS"
-                      >
-                        <MessageCircle size={16} />
-                      </button>
-                    )}
-                    {role !== 'Customer' && (tx.status === 'Overdue' || (tx.status === 'Active' && isReleased(tx))) && (
-                      <button
-                        onClick={() => onReturn(tx)}
-                        className="p-2 text-[#bf4a53] bg-red-50 hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors"
-                        title="Process Return"
-                      >
-                        <Undo2 size={16} />
-                      </button>
-                    )}
-                    {/* Edit rental — mirror of the desktop-table action; opens the
-                        same EditRentalModal so dates/notes/customer edits work on
-                        mobile/iPad too. */}
-                    {(role === 'Admin' || role === 'Staff') && (
-                      <button
-                        onClick={() => setEditRental(tx)}
-                        className="p-2 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
-                        title="Edit rental"
-                        aria-label={`Edit rental ${tx.txNumber ?? tx.id}`}
-                      >
-                        <Pencil size={15} />
-                      </button>
-                    )}
-                    {(role === 'Admin' || role === 'Staff') && ['Active', 'Reserved', 'Overdue'].includes(tx.status) && (
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Cancel this booking (${tx.txNumber ?? tx.id})? The item will be freed and marked Available.`)) {
-                            onCancel(tx.id);
-                          }
-                        }}
-                        className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-full transition-colors"
-                        title="Cancel Booking"
-                      >
-                        <XCircle size={16} />
-                      </button>
-                    )}
-                    {(tx.status === 'Active') && role === 'Customer' && (
-                      <button
-                        onClick={() => {
-                          if (window.confirm('Cancel this booking? This cannot be undone.')) {
-                            onCancel(tx.id);
-                          }
-                        }}
-                        className="p-2 text-amber-600 bg-amber-50 hover:bg-amber-100 rounded-full transition-colors"
-                        title="Cancel Booking"
-                      >
-                        <XCircle size={16} />
-                      </button>
-                    )}
-                    {role === 'Admin' && (
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Delete transaction ${tx.id}? This cannot be undone.`)) {
-                            onDelete(tx.id);
-                          }
-                        }}
-                        className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-full transition-colors"
-                        title="Delete Transaction"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
+                    {renderRowActions(tx, { pad: 'p-2', icon: 16 })}
                   </div>
                 </div>
               </div>
@@ -660,6 +618,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           role={role}
           onClose={() => setDetailTx(null)}
           fetchFull={fetchFull}
+          onReturn={onReturn ? (tx) => { setDetailTx(null); onReturn(tx); } : undefined}
         />
       )}
 
@@ -699,6 +658,17 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         </div>
       )}
 
+      {/* Cancel Booking Modal (proper dialog + message-the-boutique) */}
+      {cancelTx && (
+        <CancelBookingModal
+          tx={cancelTx}
+          role={role}
+          onClose={() => setCancelTx(null)}
+          onCancel={onCancel}
+          onSendMessage={handleContactAdmin}
+        />
+      )}
+
       {releaseTx && (
         <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} />
       )}
@@ -707,7 +677,12 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         <EditRentalModal
           transaction={editRental}
           onClose={() => setEditRental(null)}
-          onSaved={() => setEditRental(null)}
+          onSaved={(r) => {
+            // Edits save outside the transactions hook — drop the cached full
+            // record so the next open re-reads instead of serving stale data.
+            if (r?.updated?.id) invalidateTxCache(r.updated.id);
+            setEditRental(null);
+          }}
         />
       )}
     </>

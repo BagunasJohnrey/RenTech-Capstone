@@ -10,31 +10,33 @@ import { getBookingCode } from '../utils/receipt';
 // download without regenerating the image.
 export default function BookingQR({ tx, payload, size = 128, className = '', showCode = true, title, onDataUrl }) {
   const [img, setImg] = useState(null);
+  // Depend on the stable booking identity — NOT the tx object, which the
+  // parent replaces with a fresh (enriched) copy ~500ms after mount. The old
+  // dep regenerated an identical QR on every enrichment (visible flash).
+  const code = payload || getBookingCode(tx);
+  const serverUri = tx?.qrCodeDataUri;
 
   useEffect(() => {
     let active = true;
-    let resolved = null;
-    if (tx?.qrCodeDataUri) {
-      resolved = tx.qrCodeDataUri;
-      setImg(resolved);
-      if (onDataUrl) onDataUrl(resolved);
+    if (serverUri) {
+      setImg(serverUri);
+      if (onDataUrl) onDataUrl(serverUri);
       return;
     }
-    QRCode.toDataURL(payload || getBookingCode(tx), { width: size * 2, margin: 1, errorCorrectionLevel: 'M' })
+    setImg(null);
+    QRCode.toDataURL(code, { width: size * 2, margin: 1, errorCorrectionLevel: 'M' })
       .then((url) => {
         if (active) {
           setImg(url);
-          resolved = url;
           if (onDataUrl) onDataUrl(url);
         }
       })
       .catch(() => { if (active) setImg(null); });
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx, payload, size]);
+  }, [tx?.id, serverUri, code, size]);
 
   if (!tx?.id) return null;
-  const code = getBookingCode(tx);
 
   return (
     <div className={`flex flex-col items-center ${className}`}>

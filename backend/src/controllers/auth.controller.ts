@@ -5,7 +5,7 @@ import * as authService from '../services/auth.service.js';
 import * as mfaService from '../services/mfa.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { supabaseAdmin } from '../config/supabase.js';
+import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { env } from '../config/env.js';
 import { setSessionCookies, clearSessionCookies, getRefreshTokenFromCookie, RtSession, setPkceCookie, getPkceCookie, clearPkceCookie, setOauthPendingCookie, clearOauthPendingCookie, getAccessTokenFromCookie, OAUTH_PKCE_COOKIE, OAUTH_PENDING_COOKIE, setMfaPendingCookie, getMfaPendingCookie, clearMfaPendingCookie, setMfaVerifiedCookie, isMfaVerifiedCookie, isMfaTrustedCookie, setMfaTrustedCookie } from '../middleware/cookies.js';
@@ -49,17 +49,33 @@ export const updateProfileSchema = z.object({
   }),
 });
 
+// Staff accounts no longer take a password from the admin — the backend mints
+// a one-time password (returned once in the response for out-of-band sharing)
+// and the staff member must change it on first login.
 export const createStaffSchema = z.object({
   body: z.object({
     email: z.string().email(),
-    password: passwordSchema,
     name: z.string().min(1),
     phone: z.string().optional(),
   }),
 });
 
-// Phase 2: password reset schemas
+// Phase 2: password reset schemas (Brevo + legacy Supabase shapes).
+// Brevo links carry our own single-use `token` (64-char hex) and land on
+// /reset-password?token=... — the preferred path. The legacy Supabase shapes
+// below are kept so older emailed links still work:
+//   - token_hash: custom template linking straight to the app
+//   - code:       default template — /verify consumed the token and redirected
+//                 with a PKCE-style ?code=
+//   - access_token: legacy implicit flow — /verify redirected with
+//                 #access_token= in the URL hash
 export const forgotPasswordSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+});
+
+export const resendVerificationSchema = z.object({
   body: z.object({
     email: z.string().email(),
   }),
@@ -67,14 +83,40 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z.object({
   body: z.object({
-    token_hash: z.string().min(1),
+    token: z.string().min(1).optional(),
+    token_hash: z.string().min(1).optional(),
+    code: z.string().min(1).optional(),
+    access_token: z.string().min(1).optional(),
     password: passwordSchema,
+    // Optional old-password confirmation: when the user still remembers their
+    // current password, it is verified server-side BEFORE the link is
+    // consumed. Blank/absent = the "I forgot it too" case — the single-use
+    // email link is the authorization instead.
+    currentPassword: z.string().optional(),
+  }).superRefine((b, ctx) => {
+    if (!b.token && !b.token_hash && !b.code && !b.access_token) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'One of token, token_hash, code, or access_token is required',
+        path: ['token'],
+      });
+    }
   }),
 });
 
 export const verifyEmailSchema = z.object({
   body: z.object({
-    token_hash: z.string().min(1),
+    token: z.string().min(1).optional(),
+    token_hash: z.string().min(1).optional(),
+    code: z.string().min(1).optional(),
+  }).superRefine((b, ctx) => {
+    if (!b.token && !b.token_hash && !b.code) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'One of token, token_hash or code is required',
+        path: ['token'],
+      });
+    }
   }),
 });
 
@@ -118,6 +160,8 @@ export async function signup(req: Request, res: Response, next: NextFunction) {
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
     const { email, password } = req.body;
+    // Log the shape (never the password) so production 400s are self-diagnosing.
+    console.log('[login] email type:', typeof email, '| password type:', typeof password, '| length:', typeof password === 'string' ? password.length : 'N/A');
     // Trusted-device check: an rt_mfa_trusted cookie (HMAC-bound to this
     // email, set after a TOTP/backup-code pass within the last 30 days) lets
     // this browser skip the challenge on login.
@@ -224,8 +268,48 @@ export async function updateMe(req: AuthenticatedRequest, res: Response, next: N
 export async function createStaff(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');
-    const profile = await authService.createStaffAccount(req.user.id, req.body);
-    res.status(201).json(profile);
+    const { profile, oneTimePassword } = await authService.createStaffAccount(req.user.id, req.body);
+    // The one-time password is shown to the admin exactly once. It is never
+    // persisted server-side beyond the Supabase credential itself and never
+    // logged; first login forces the staff member to replace it.
+    res.status(201).json({ ...profile, oneTimePassword });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// First-login staff password change. Requires the current (one-time) password
+// in addition to the session — a stolen session can't lock the real staff
+// member out by changing the password first.
+export const changePasswordSchema = z.object({
+  body: z.object({
+    currentPassword: z.string().min(1),
+    newPassword: passwordSchema,
+  }),
+});
+
+export async function changePassword(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { currentPassword, newPassword } = req.body;
+    const profile = await prisma.profile.findUnique({ where: { id: req.user.id } });
+    if (!profile) throw new AppError(401, 'Not authenticated');
+    if (profile.mustChangePassword) {
+      // Forced first-login flow: replace the one-time password.
+      await authService.changeOwnPassword(req.user.id, currentPassword, newPassword);
+      invalidateProfileCache(req.user.userId);
+      res.json({ message: 'Password updated successfully' });
+      return;
+    }
+    // Voluntary change from Settings: same proof (current password verified
+    // against Supabase) but without the flag, plus all other sessions are
+    // revoked so a changed password signs out every other device.
+    await authService.changeOwnPassword(req.user.id, currentPassword, newPassword, {
+      voluntary: true,
+      accessToken: getAccessTokenFromCookie(req),
+    });
+    invalidateProfileCache(req.user.userId);
+    res.json({ message: 'Password updated successfully' });
   } catch (err) {
     next(err);
   }
@@ -262,19 +346,77 @@ export async function oauthCancel(req: Request, res: Response, next: NextFunctio
 
 export const verifyAdminSchema = z.object({
   body: z.object({
-    email: z.string().email(),
-    password: z.string().min(1),
+    pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits'),
   }),
 });
 
+// Discount authorization: a staff member presents the admin's 4-digit PIN to
+// approve a discount. The PIN is verified against every admin's scrypt-hashed
+// value in Supabase user_metadata; no password/email round-trip, and the raw
+// PIN never reaches the database.
 export async function verifyAdmin(req: Request, res: Response, next: NextFunction) {
   try {
-    const { email, password } = req.body;
-    const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
-    if (error || !data.user) throw new AppError(401, 'Invalid credentials');
-    const profile = await prisma.profile.findUnique({ where: { userId: data.user.id } });
-    if (!profile || profile.role !== 'Admin') throw new AppError(403, 'Not an admin account');
-    res.json({ verified: true, admin: { name: profile.name, email: profile.email } });
+    const { pin } = req.body;
+    const admin = await authService.verifyDiscountPin(pin);
+    if (!admin) throw new AppError(401, 'Invalid PIN');
+    res.json({ verified: true, admin });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export const setAdminPinSchema = z.object({
+  body: z.object({
+    pin: z.string().regex(/^\d{4}$/, 'PIN must be 4 digits'),
+    password: z.string().min(1, 'Password is required').optional(),
+    oldPin: z.string().regex(/^\d{4}$/, 'Current PIN must be 4 digits').optional(),
+  }),
+});
+
+// Admin-only (MFA-gated): whether a discount PIN is already configured, so the
+// settings UI can show "Add PIN" vs "Reset PIN".
+export async function adminPinStatus(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const configured = await authService.getAdminPinConfigured(req.user.userId);
+    res.json({ configured });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin-only (MFA-gated): set or change the 4-digit discount authorization PIN.
+// First-time setup takes no credentials; resetting an existing PIN requires the
+// current PIN + the admin's own Supabase password.
+export async function setAdminPin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { pin, password, oldPin } = req.body;
+    await authService.setAdminPin(req.user.userId, pin, password, oldPin);
+    res.json({ message: 'Discount PIN saved' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Admin edits a staff account's display details (name/phone). Email stays
+// fixed — it is the login identity and moving it would desync the Supabase
+// auth user. The admin's own password re-confirms the change.
+export const updateStaffSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).optional(),
+    phone: z.string().nullable().optional(),
+  }),
+});
+
+export async function updateStaff(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const staffId = req.params.id as string;
+    const profile = await authService.updateStaffAccount(req.user.id, staffId, req.body);
+    // Staff self-edits go through the cached profile path too.
+    clearProfileCache();
+    res.json(profile);
   } catch (err) {
     next(err);
   }
@@ -305,80 +447,199 @@ export async function removeStaff(req: AuthenticatedRequest, res: Response, next
 }
 
 // Phase 2: password reset — always returns 200 (no account enumeration).
-// Email delivery is handled entirely by Supabase's own email service
-// (Authentication → Emails). No third-party SMTP.
+// Delivery is via Brevo (branded template, single-use token in EmailToken).
+// Unknown emails resolve to the same generic message, so the endpoint can
+// never be used to probe which addresses are registered.
 export async function forgotPassword(req: Request, res: Response, next: NextFunction) {
   try {
     const { email } = req.body;
-    const redirectTo = `${env.FRONTEND_URL.replace(/\/$/, '')}/reset-password`;
-    await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo });
-    res.json({ message: 'If that email is registered, a reset link has been sent.' });
+    const result = await authService.requestPasswordReset(email);
+    res.json(result);
   } catch (err) {
     next(err);
   }
 }
 
-// Phase 2: consume the recovery token + new password. In Supabase v2, verifyOtp
-// returns a session (access_token + refresh_token) when valid. We verify the OTP,
-// set the new password, then set session cookies so the browser is logged in.
+// Resend the signup verification email — always 200 (no enumeration), same
+// shape as forgot-password. Rate-limited per IP (see auth.routes.ts).
+export async function resendVerification(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email } = req.body;
+    const result = await authService.requestVerificationEmail(email);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Phase 2: consume the recovery credential + new password. Accepts whichever
+// shape Supabase's email link delivered (see schema comment): a raw token_hash
+// (verifyOtp), a ?code= (exchange it for the recovery session), or an
+// #access_token= (validate it, set the password, then sign in fresh).
+// Invalid/expired credentials 401 with a resend-friendly message so the UI
+// can offer "request a new link" instead of a dead end.
+function resetLinkError(upstream?: string): AppError {
+  const expired = !!upstream && /expir/i.test(upstream);
+  return new AppError(
+    401,
+    expired
+      ? 'This reset link has expired. Please request a new one.'
+      : 'This reset link is invalid or has already been used. Please request a new one.'
+  );
+}
+
 export async function resetPassword(req: Request, res: Response, next: NextFunction) {
   try {
-    const { token_hash, password } = req.body;
-    const { data, error } = await supabaseAdmin.auth.verifyOtp({
-      token_hash,
-      type: 'recovery',
-    });
-    if (error || !data?.user) throw new AppError(401, 'Invalid or expired reset token');
-    await supabaseAdmin.auth.admin.updateUserById(data.user.id, { password });
+    const { token, token_hash, code, access_token, password, currentPassword } = req.body;
+    // Brevo path (preferred): our own single-use token — also accept it when
+    // an older client posts it as token_hash.
+    const brevoToken = token ?? (token_hash && authService.isBrevoTokenFormat(token_hash) ? token_hash : null);
+    if (brevoToken) {
+      try {
+        const result = await authService.resetPasswordWithToken(brevoToken, password, currentPassword || undefined);
+        if (result.session) {
+          setSessionCookies(res, result.session);
+        }
+        res.json({ message: 'Password reset successfully' });
+        return;
+      } catch (err) {
+        // A legacy Supabase token_hash can coincidentally also be 64-hex: when
+        // the credential arrived via token_hash and our table doesn't know it,
+        // fall through to the Supabase path below instead of 401ing a valid
+        // legacy link. Credentials via `token` are Brevo-only — rethrow.
+        if (token || !(err instanceof AppError) || err.statusCode !== 401) throw err;
+      }
+    }
+    let userId: string;
+    let userEmail: string | undefined;
+    let session: { access_token: string | null; refresh_token: string | null } | null = null;
+    let sessionTokenForRevoke: string | undefined;
+
+    if (token_hash) {
+      const { data, error } = await supabaseAdmin.auth.verifyOtp({
+        token_hash,
+        type: 'recovery',
+      });
+      if (error || !data?.user) throw resetLinkError(error?.message);
+      userId = data.user.id;
+      userEmail = data.user.email ?? undefined;
+      if (data.session) {
+        session = authService.toRtSession(data.session);
+        sessionTokenForRevoke = data.session.access_token ?? undefined;
+      }
+    } else if (code) {
+      const { data, error } = await supabaseSignUp.auth.exchangeCodeForSession(code);
+      if (error || !data?.user) throw resetLinkError(error?.message);
+      userId = data.user.id;
+      userEmail = data.user.email ?? undefined;
+      if (data.session) {
+        session = authService.toRtSession(data.session);
+        sessionTokenForRevoke = data.session.access_token ?? undefined;
+      }
+    } else {
+      const { data: { user }, error } = await supabaseAdmin.auth.getUser(access_token);
+      if (error || !user) throw resetLinkError(error?.message);
+      userId = user.id;
+      userEmail = user.email ?? undefined;
+    }
+
+    // Legacy paths honor the same optional old-password confirmation: when the
+    // user still remembers it, verify it before writing the new password.
+    if (currentPassword) {
+      if (!userEmail) throw resetLinkError();
+      const { error: verifyError } = await supabaseSignUp.auth.signInWithPassword({
+        email: userEmail,
+        password: currentPassword,
+      });
+      if (verifyError) {
+        throw new AppError(401, 'Current password is incorrect');
+      }
+    }
+
+    await supabaseAdmin.auth.admin.updateUserById(userId, { password });
     // W2.8: A password reset invalidates all existing sessions so old tokens
     // (which were issued before the password changed) can't be used to ride in.
-    // revokeAllUserSessions signs out all sessions for this user; the fresh
-    // session returned by verifyOtp then establishes a clean new session.
-    if (data.session?.access_token) {
-      try {
-        await authService.revokeAllUserSessions(data.user.id, data.session.access_token);
-      } catch { /* best-effort */ }
+    // revokeAllUserSessions signs out all sessions for this user; a fresh
+    // session below then establishes a clean new session.
+    try {
+      await authService.revokeAllUserSessions(userId, sessionTokenForRevoke ?? access_token);
+    } catch { /* best-effort */ }
+
+    if (!session) {
+      // Implicit-flow path has no session yet — sign in with the just-set
+      // password for a clean full session (access + refresh tokens).
+      if (!userEmail) throw resetLinkError();
+      const { data: signIn, error: signInError } = await supabaseSignUp.auth.signInWithPassword({
+        email: userEmail,
+        password,
+      });
+      if (signInError || !signIn?.session) throw resetLinkError(signInError?.message);
+      session = authService.toRtSession(signIn.session);
     }
-    if (data.session) {
-      const rtSession = authService.toRtSession(data.session);
-      setSessionCookies(res, rtSession);
-    }
+    setSessionCookies(res, session);
     res.json({ message: 'Password reset successfully' });
   } catch (err) {
     next(err);
   }
 }
 
-// Email verification: consume the signup confirmation token. The user was
-// created (unconfirmed) by signupCustomer via the public signUp endpoint;
-// verifyOtp({ type: 'signup' }) confirms the email and returns a session,
-// which we mint into httpOnly cookies so the user is logged in immediately.
+// Email verification: Brevo path (preferred) consumes our single-use token
+// from /verify-email?token=... — confirms the Supabase user and best-effort
+// mints session cookies. Legacy Supabase credentials (token_hash / ?code=)
+// fall through to the verifyOtp / exchangeCodeForSession path below.
 export async function verifyEmail(req: Request, res: Response, next: NextFunction) {
   try {
-    const { token_hash } = req.body;
-    const { data, error } = await supabaseAdmin.auth.verifyOtp({
-      token_hash,
-      type: 'signup',
-    });
-    if (error || !data?.user) throw new AppError(401, 'This verification link is invalid or has expired.');
+    const { token, token_hash, code } = req.body;
+    const brevoToken = token ?? (token_hash && authService.isBrevoTokenFormat(token_hash) ? token_hash : null);
+    if (brevoToken) {
+      try {
+        const { profile, session } = await authService.verifyEmailToken(brevoToken);
+        if (session) {
+          setSessionCookies(res, session);
+        }
+        res.json({ message: 'Email verified successfully', user: profile });
+        return;
+      } catch (err) {
+        // Same legacy-hash coincidence as resetPassword: fall through to the
+        // Supabase path when the credential arrived via token_hash.
+        if (token || !(err instanceof AppError) || err.statusCode !== 401) throw err;
+      }
+    }
+    let user: { id: string; email?: string | null } | null = null;
+    let session: { access_token: string | null; refresh_token: string | null } | null = null;
+    if (token_hash) {
+      const { data, error } = await supabaseAdmin.auth.verifyOtp({
+        token_hash,
+        type: 'signup',
+      });
+      if (error || !data?.user) throw new AppError(401, 'This verification link is invalid or has expired.');
+      user = data.user;
+      if (data.session) session = authService.toRtSession(data.session);
+    } else {
+      const { data, error } = await supabaseSignUp.auth.exchangeCodeForSession(code);
+      if (error || !data?.user) throw new AppError(401, 'This verification link is invalid or has expired.');
+      user = data.user;
+      if (data.session) session = authService.toRtSession(data.session);
+    }
+    if (!user) throw new AppError(401, 'This verification link is invalid or has expired.');
 
     // The profile was created at signup; find it by auth userId. If it's
     // missing (e.g. signup was interrupted), create a minimal one so the
     // verified user can use the app.
-    let profile = await prisma.profile.findUnique({ where: { userId: data.user.id } });
+    let profile = await prisma.profile.findUnique({ where: { userId: user.id } });
     if (!profile) {
       profile = await prisma.profile.create({
         data: {
-          userId: data.user.id,
-          email: data.user.email ?? '',
+          userId: user.id,
+          email: user.email ?? '',
           role: 'Customer',
-          name: data.user.email?.split('@')[0] ?? 'Customer',
+          name: user.email?.split('@')[0] ?? 'Customer',
         },
       });
     }
 
-    if (data.session) {
-      setSessionCookies(res, authService.toRtSession(data.session));
+    if (session) {
+      setSessionCookies(res, session);
     }
     res.json({ message: 'Email verified successfully', user: profile });
   } catch (err) {
@@ -422,7 +683,7 @@ export async function mfaEnable(req: AuthenticatedRequest, res: Response, next: 
     const decryptedSecret = decryptField(profile.totpSecret);
     if (!decryptedSecret) throw new AppError(400, 'MFA secret is corrupted — call /mfa/setup to re-enroll');
     if (!mfaService.verifyTotpToken(decryptedSecret, code)) {
-      throw new AppError(401, 'Invalid TOTP code');
+      throw new AppError(401, 'Invalid TOTP code — make sure your phone\'s clock is set to automatic and try again');
     }
     // Backup codes are generated server-side (crypto.randomBytes) and shown once.
     const backupCodes = mfaService.generateBackupCodes(10);
@@ -600,6 +861,18 @@ export async function oauthCallback(req: Request, res: Response, next: NextFunct
       token_type: tokenData.token_type ?? 'bearer',
       expires_in: tokenData.expires_in ?? null,
     });
+    // MFA continuity for admins who sign in with Google: the OAuth flow
+    // itself proves possession of the Google account, but our homegrown
+    // TOTP marker never gets minted because no TOTP challenge ran. Without
+    // the marker, requireMfaAdmin 403s every MFA-gated admin route (staff
+    // list, PIN, integrations) right after a Google login — the "settings
+    // not working" bug. Mint the marker for this access token (equivalent
+    // to a passed TOTP challenge) and trust this browser going forward.
+    const oauthUser = result.user as { mfaEnabled?: boolean; email?: string } | null;
+    if (oauthUser?.mfaEnabled && tokenData.access_token) {
+      setMfaVerifiedCookie(res, tokenData.access_token);
+      if (oauthUser.email) setMfaTrustedCookie(res, oauthUser.email);
+    }
     res.redirect(302, `${env.FRONTEND_URL.replace(/\/$/, '')}/`);
   } catch (err) {
     // User-facing OAuth errors (e.g. 409 "an account with this email already
@@ -634,17 +907,25 @@ export async function oauthDetails(req: Request, res: Response, next: NextFuncti
     }
 
      // Profile is now complete — set session cookies + clear pending flag.
-    // The refresh token from the callback is already in the rt_refresh cookie;
-    // read it so we preserve it (oauthGetOrCreateProfile doesn't return it).
-    const refreshToken = getRefreshTokenFromCookie(req);
-    setSessionCookies(res, {
-      access_token: accessToken,
-      refresh_token: refreshToken ?? null,
-      token_type: 'bearer',
-      expires_in: null,
-    });
-    clearOauthPendingCookie(res);
-    res.json({ user: result.user });
+     // The refresh token from the callback is already in the rt_refresh cookie;
+     // read it so we preserve it (oauthGetOrCreateProfile doesn't return it).
+     const refreshToken = getRefreshTokenFromCookie(req);
+     setSessionCookies(res, {
+       access_token: accessToken,
+       refresh_token: refreshToken ?? null,
+       token_type: 'bearer',
+       expires_in: null,
+     });
+     // Same MFA continuity as the OAuth callback: an MFA-enabled admin
+     // finishing the details form needs the verified marker or every
+     // MFA-gated admin route 403s for the rest of the session.
+     const detailUser = result.user as { mfaEnabled?: boolean; email?: string } | null;
+     if (detailUser?.mfaEnabled) {
+       setMfaVerifiedCookie(res, accessToken);
+       if (detailUser.email) setMfaTrustedCookie(res, detailUser.email);
+     }
+     clearOauthPendingCookie(res);
+     res.json({ user: result.user });
   } catch (err) {
     next(err);
   }

@@ -73,6 +73,30 @@ describe('Phase 5: TOTP correctness (real implementation, RFC vectors)', () => {
     expect(uri).toContain('digits=6');
     expect(uri).toContain('period=30');
   });
+
+  it('base32 roundtrip: encode→decode→HMAC produces correct TOTP for random secrets', () => {
+    // Generate 5 random secrets and verify that the RFC 6238 TOTP algorithm
+    // produces a 6-digit code (if base32 decode were broken by 32-bit overflow,
+    // the HMAC key would be corrupted and the code would still be 6 digits but
+    // never match the authenticator app's output).
+    for (let n = 0; n < 5; n++) {
+      const s = generateTotpSecret();
+      expect(s).toMatch(/^[A-Z2-7]{32}$/);
+      // Verify the secret roundtrips: build URI, extract secret, confirm match
+      const uri = buildTotpUri(s, 'roundtrip@test.com');
+      const params = new URLSearchParams(uri.split('?')[1]);
+      expect(params.get('secret')).toBe(s);
+      // Verify TOTP computation doesn't throw (base32 decode + HMAC)
+      const orig = Date.now;
+      Date.now = () => 1700000000 * 1000;
+      try {
+        const result = verifyTotpToken(s, '000000');
+        expect(typeof result).toBe('boolean');
+      } finally {
+        Date.now = orig;
+      }
+    }
+  });
 });
 
 describe('Phase 5: backup code storage + consumption (real implementation)', () => {

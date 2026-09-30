@@ -8,6 +8,7 @@ import { api } from '../utils/api';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { txPill } from '../utils/statusColors';
 import { promoService } from '../services/promo';
+import { sortByCategory } from '../utils/categorySort';
 
 export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook }) {
   const todayStats = useTodayTasks(role);
@@ -65,7 +66,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const preferred = available.filter((i) =>
       prefs.some((p) => (i.category || '').toLowerCase().includes(p.toLowerCase()))
     );
-    const recommended = (prefs.length > 0 && preferred.length > 0 ? preferred : available).slice(0, 4);
+    const recommended = sortByCategory(prefs.length > 0 && preferred.length > 0 ? preferred : available).slice(0, 4);
     const myRentals = (transactions || [])
       .filter((tx) => tx.status === 'Active' || tx.status === 'Overdue' || tx.status === 'Reserved')
       .slice(0, 3);
@@ -75,9 +76,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
     const itemName = (tx) => (typeof tx.item === 'string' ? tx.item : tx.item?.name) || 'Item';
 
     // New arrivals — newest available items this customer may not have seen.
-    const newArrivals = [...available]
+    const newArrivals = sortByCategory([...available]
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-      .slice(0, 4);
+    ).slice(0, 4);
 
     // Upcoming rentals (Reserved/Active with a future pickup) so the customer
     // sees at a glance what to pick up and when.
@@ -156,7 +157,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
 
             {/* Sale items pulled into the promo section */}
             {onSale.length > 0 && (
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
                 {onSale.map((item) => (
                   <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
                 ))}
@@ -201,7 +202,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </div>
             <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
           </div>
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             {recommended.map((item) => (
               <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
             ))}
@@ -223,7 +224,7 @@ export default function DashboardView({ role, transactions, inventory, customerI
               </div>
               <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
             </div>
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
               {newArrivals.map((item) => (
                 <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
               ))}
@@ -254,6 +255,9 @@ export default function DashboardView({ role, transactions, inventory, customerI
             </div>
           </div>
         )}
+
+        {/* End of results */}
+        <p className="text-center text-xs text-gray-400 pt-4 pb-2">You've reached the end of your feed</p>
       </div>
     );
   }
@@ -722,17 +726,21 @@ export default function DashboardView({ role, transactions, inventory, customerI
               <p className="text-sm text-gray-400 text-center py-6 font-medium">No rental data yet.</p>
             ) : (
               <div className="space-y-3.5">
-                {topItems.map(([name, count], i) => (
+                {topItems.map(([name, count]) => {
+                  // Tied counts share the same rank (rank = 1 + items strictly ahead).
+                  const rank = topItems.findIndex(([, c]) => c === count) + 1;
+                  return (
                   <div key={name}>
                     <div className="flex justify-between text-sm mb-1">
-                      <span className="text-gray-700 truncate flex-1">{i + 1}. {name}</span>
+                      <span className="text-gray-700 truncate flex-1">{rank}. {name}</span>
                       <span className="font-bold text-gray-900 ml-2">{count}x</span>
                     </div>
                     <div className="w-full bg-gray-100 rounded-full h-1.5">
                       <div className="h-1.5 rounded-full bg-[#bf4a53]" style={{ width: `${Math.min((count / maxTop) * 100, 100)}%` }} />
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -807,24 +815,38 @@ export default function DashboardView({ role, transactions, inventory, customerI
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5">
             <div className="flex items-center justify-between mb-3">
               <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Inventory Health</p>
-              <button onClick={() => onNavigate('Catalog')} className="text-xs font-semibold text-[#bf4a53] hover:underline">Manage</button>
+              <button onClick={() => onNavigate('Catalog')} className="text-[11px] font-bold text-[#bf4a53] bg-[#bf4a53]/5 hover:bg-[#bf4a53]/10 active:scale-[0.97] px-3 py-1.5 rounded-full transition-all">Manage</button>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500 font-medium">Available</span>
-                <span className="font-bold text-emerald-600">{availableItems} of {totalItems}</span>
+            {/* Available hero */}
+            <div className="rounded-2xl bg-emerald-50/60 border border-emerald-100/70 p-3.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-2xl font-extrabold text-gray-900 tabular-nums">
+                  {availableItems}<span className="text-sm font-medium text-gray-400">/{totalItems}</span>
+                </p>
+                <p className="text-[11px] font-bold text-emerald-600 whitespace-nowrap">
+                  {totalItems > 0 ? Math.round((availableItems / totalItems) * 100) : 0}% available
+                </p>
               </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500 font-medium">In cleaning</span>
-                <span className={`font-bold ${cleaningCount > 0 ? 'text-orange-500' : 'text-gray-900'}`}>{cleaningCount}</span>
+              <div className="w-full bg-white rounded-full h-2 mt-2 overflow-hidden">
+                <div
+                  className="h-2 rounded-full bg-emerald-500 transition-all"
+                  style={{ width: `${totalItems > 0 ? Math.round((availableItems / totalItems) * 100) : 0}%` }}
+                />
               </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500 font-medium">Out of service</span>
-                <span className={`font-bold ${damagedItems > 0 ? 'text-red-500' : 'text-gray-900'}`}>{damagedItems}</span>
+            </div>
+            {/* Attention tiles */}
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <div className="rounded-2xl bg-gray-50/70 border border-gray-100 p-2.5 text-center min-w-0">
+                <p className={`text-lg font-extrabold tabular-nums ${cleaningCount > 0 ? 'text-orange-500' : 'text-gray-300'}`}>{cleaningCount}</p>
+                <p className="text-[10px] font-semibold text-gray-500 leading-tight mt-0.5">In cleaning</p>
               </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500 font-medium">On sale</span>
-                <span className="font-bold text-[#bf4a53]">{onSaleCount}</span>
+              <div className="rounded-2xl bg-gray-50/70 border border-gray-100 p-2.5 text-center min-w-0">
+                <p className={`text-lg font-extrabold tabular-nums ${damagedItems > 0 ? 'text-red-500' : 'text-gray-300'}`}>{damagedItems}</p>
+                <p className="text-[10px] font-semibold text-gray-500 leading-tight mt-0.5">Out of service</p>
+              </div>
+              <div className="rounded-2xl bg-gray-50/70 border border-gray-100 p-2.5 text-center min-w-0">
+                <p className={`text-lg font-extrabold tabular-nums ${onSaleCount > 0 ? 'text-[#bf4a53]' : 'text-gray-300'}`}>{onSaleCount}</p>
+                <p className="text-[10px] font-semibold text-gray-500 leading-tight mt-0.5">On sale</p>
               </div>
             </div>
           </div>

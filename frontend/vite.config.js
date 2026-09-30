@@ -9,13 +9,13 @@ function cspPlugin() {
   const CSP = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://cdn.paymongo.com",
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: blob: https:",
-    "font-src 'self' data:",
-    "connect-src 'self' https://*.supabase.co https://*.paymongo.com wss://localhost:* https://www.google.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "connect-src 'self' https://*.supabase.co https://*.paymongo.com https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com",
+    "frame-src https://www.google.com",
     "object-src 'none'",
     "base-uri 'self'",
-    "frame-ancestors 'none'",
     "form-action 'self'",
   ].join('; ')
   return {
@@ -36,7 +36,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.png', 'apple-touch-icon.png'],
+      // Dev-only: skip the service worker (it fights HMR). The production
+      // build still emits dist/manifest.webmanifest via the plugin below, and
+      // the static public/manifest.webmanifest (duplicating it) clears the
+      // "Manifest: Line: 1, column: 1, Syntax error" console warning in dev —
+      // without that file, /manifest.webmanifest falls through to the SPA
+      // catch-all and returns index.html.
       manifest: {
         name: "RenTech — Mylene's Boutique",
         short_name: 'RenTech',
@@ -57,19 +63,57 @@ export default defineConfig({
         globIgnores: ['RenTech.png'], // 6.65MB hero/logo — served on demand, never precached
         // Keep API + Supabase signed URLs out of the SW cache.
         navigateFallbackDenylist: [/^\/api\//],
+        // Public catalog photos have stable URLs + 30-day cache headers, so
+        // CacheFirst across visits is safe. Scoped to /object/public/ only —
+        // signed URLs (/object/sign/) rotate and must never be cached.
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'rentech-public-images',
+              expiration: { maxEntries: 300, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
       },
     }),
     cspPlugin(),
   ],
   resolve: { dedupe: ['react', 'react-dom'] },
   build: {
+    sourcemap: false,
     rollupOptions: {
       output: {
+        // Pure hashes — hides component names like DashboardView-xxx.js
+        // from Network tab. Content is still readable (browser must run it),
+        // this only obscures filenames.
+        entryFileNames: 'assets/[hash].js',
+        chunkFileNames: 'assets/[hash].js',
+        assetFileNames: 'assets/[hash].[ext]',
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('react-dom') || id.includes('/react/') || id.includes('scheduler')) return 'react-vendor';
             if (id.includes('recharts') || id.includes('d3-') || id.includes('victory')) return 'charts-vendor';
             if (id.includes('lucide-react')) return 'icons-vendor';
+            // Heavy screen-specific libs — they are only reached via lazy chunks
+            // above, so splitting them out of the shared `vendor` keeps them off
+            // the boot path even if Rollup would otherwise hoist them.
+            if (id.includes('html5-qrcode')) return 'scanner-vendor';
+            if (id.includes('framer-motion')) return 'motion-vendor';
+            if (id.includes('react-markdown') || id.includes('remark') ||
+                id.includes('rehype') || id.includes('mdast') || id.includes('micromark') ||
+                id.includes('unist') || id.includes('vfile') || id.includes('hast') ||
+                id.includes('devlop') || id.includes('zwitch') || id.includes('unified') ||
+                id.includes('bail') || id.includes('comma-separated') || id.includes('decode-named') ||
+                id.includes('character-') || id.includes('ccount') || id.includes('trim-lines') ||
+                id.includes('space-separated') || id.includes('html-url-') || id.includes('property-information')) return 'markdown-vendor';
+            if (id.includes('/qrcode')) return 'qrcode-vendor';
+            if (id.includes('jspdf') || id.includes('fflate') || id.includes('canvg') ||
+                id.includes('dompurify') || id.includes('html2canvas') || id.includes('rgbcolor') ||
+                id.includes('svg-pathdata') || id.includes('text-segmentation') || id.includes('performance-now') ||
+                id.includes('rafc') || id.includes('css-line-break') || id.includes('utor') || id.includes('base64')) return 'pdf-vendor';
             return 'vendor';
           }
         },

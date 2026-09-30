@@ -1,6 +1,24 @@
 import { prisma } from '../config/database.js';
+import { TransactionStatus } from '@prisma/client';
 import { sma } from '../utils/sma.js';
-import { cacheOrCompute } from '../utils/ttlCache.js';
+import { cacheOrCompute, setDataCacheWarmer } from '../utils/ttlCache.js';
+import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
+
+// Refill the hot dashboard keys right after a mutation clears the cache, in the
+// background. Without this, the first dashboard visit after any booking /
+// return / payment pays the full query cost; with it, that visit is already
+// a warm cache hit. Self-registered here (dashboard.service is loaded by the
+// routes) so ttlCache doesn't have to import us (circular).
+setDataCacheWarmer(() => {
+  return Promise.allSettled([
+    getKpis(),
+    getTodayTasks(),
+    getInsights({}),
+    getForecast(3),
+    getInventoryAnalytics(),
+  ]).then(() => {});
+});
+
 
 function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
   if (filter?.start) where.createdAt = { gte: filter.start };
@@ -195,35 +213,168 @@ async function getDataMonths() {
   return { months, firstMonth: start };
 }
 
-export async function getForecast(period: number = 3) {
-  const key = `forecast:${period}`;
+const FORECAST_STATUSES: TransactionStatus[] = ['Returned', 'Active', 'Overdue', 'Cancelled'];
+const FORECAST_WEEKS = 12;
+const FORECAST_HORIZON = 3; // next-N periods projected
+const FORECAST_TOP_CATEGORIES = 6;
+
+// Confidence grows with history depth: thin histories project with the same
+// math but must be labeled as such so nobody reads a 2-month guess with
+// 2-year certainty.
+function forecastConfidence(historyMonths: number): 'low' | 'medium' | 'high' {
+  if (historyMonths < 4) return 'low';
+  if (historyMonths < 8) return 'medium';
+  return 'high';
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+// Flat-SMA projection: the last complete moving average carried forward.
+// Honest for an SMA model (it predicts "about the recent average") and the
+// UI labels it as projected, never as observed data.
+function projectForward(smaValues: (number | null)[], labels: string[], nextLabels: string[]) {
+  let last: number | null = null;
+  for (const v of smaValues) if (v !== null && v !== undefined) last = v;
+  if (last === null) return nextLabels.map((label) => ({ label, value: null as number | null }));
+  return nextLabels.map((label) => ({ label, value: round1(last as number) }));
+}
+
+function nextMonthLabels(lastYear: number, lastMonth: number, n: number): { label: string; year: number; month: number }[] {
+  const out: { label: string; year: number; month: number }[] = [];
+  let y = lastYear, m = lastMonth;
+  for (let i = 0; i < n; i++) {
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+    out.push({
+      label: new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' }),
+      year: y,
+      month: m,
+    });
+  }
+  return out;
+}
+
+function startOfWeekMonday(d: Date): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = (x.getDay() + 6) % 7; // Mon=0..Sun=6
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+
+export async function getForecast(period: number = 3, granularity: 'monthly' | 'weekly' = 'monthly') {
+  const key = `forecast:${period}:${granularity}`;
   return cacheOrCompute(key, async () => {
     const { months, firstMonth } = await getDataMonths();
 
-    // ONE query instead of one count per month — bucket by month in JS so the
+    // ONE query instead of one count per month — bucket by period in JS so the
     // remote pooler only sees a single round trip regardless of history length.
     // Cancelled bookings count too: they still represent demand (the customer
     // tried to rent), so the SMA isn't artificially depressed on a
     // cancellation-heavy month.
     const rows = await prisma.transaction.findMany({
       where: {
-        status: { in: ['Returned', 'Active', 'Overdue', 'Cancelled'] },
+        status: { in: FORECAST_STATUSES },
         createdAt: { gte: firstMonth },
       },
-      select: { createdAt: true },
+      select: { createdAt: true, itemId: true },
     });
+
+    if (granularity === 'weekly') {
+      const now = new Date();
+      const firstMonday = startOfWeekMonday(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (FORECAST_WEEKS - 1) * 7));
+      const weeks: { label: string; start: Date }[] = [];
+      for (let i = 0; i < FORECAST_WEEKS; i++) {
+        const start = new Date(firstMonday);
+        start.setDate(start.getDate() + i * 7);
+        weeks.push({
+          label: start.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+          start,
+        });
+      }
+      const weeklyCounts = weeks.map((w, i) => {
+        const end = i + 1 < weeks.length ? weeks[i + 1].start : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+        return rows.filter(t => t.createdAt >= w.start && t.createdAt < end).length;
+      });
+      const smaValues = sma(weeklyCounts, period);
+      const nextLabels = [1, 2, 3].map(i => {
+        const d = new Date(weeks[weeks.length - 1].start);
+        d.setDate(d.getDate() + i * 7);
+        return d.toLocaleString('en-US', { month: 'short', day: 'numeric' });
+      });
+      const historyMonths = (now.getFullYear() - firstMonday.getFullYear()) * 12 + (now.getMonth() - firstMonday.getMonth()) + 1;
+      const confidence = forecastConfidence(historyMonths);
+      return {
+        labels: weeks.map(w => w.label),
+        counts: weeklyCounts,
+        sma: smaValues,
+        period,
+        granularity,
+        projections: projectForward(smaValues, weeks.map(w => w.label), nextLabels),
+        byCategory: [],
+        historyMonths,
+        confidence,
+        confidenceNote: `Based on ${historyMonths} month${historyMonths === 1 ? '' : 's'} of history · ${confidence} confidence`,
+      };
+    }
 
     const monthlyCounts = months.map(m =>
       rows.filter(t => t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1).length
     );
 
     const smaValues = sma(monthlyCounts, period);
+    const last = months[months.length - 1];
+    const projections = projectForward(
+      smaValues,
+      months.map(m => m.label),
+      last ? nextMonthLabels(last.year, last.month, FORECAST_HORIZON).map(x => x.label) : []
+    );
+
+    // Per-category series over the same month buckets (top categories by
+    // volume) so the UI can show which lines are actually driving demand.
+    const catOf = new Map<number, string>();
+    try {
+      const items = await prisma.inventoryItem.findMany({ select: { id: true, category: true } });
+      for (const it of items) catOf.set(it.id, it.category || 'Other');
+    } catch { /* category split is enrichment — never fail the forecast */ }
+    const totals = new Map<string, number>();
+    for (const t of rows) {
+      const c = catOf.get(t.itemId) || 'Other';
+      totals.set(c, (totals.get(c) || 0) + 1);
+    }
+    const topCats = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, FORECAST_TOP_CATEGORIES).map(e => e[0]);
+    const byCategory = topCats.map(category => {
+      const counts = months.map(m =>
+        rows.filter(t =>
+          (catOf.get(t.itemId) || 'Other') === category &&
+          t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1
+        ).length
+      );
+      const catSma = sma(counts, period);
+      let catLast: number | null = null;
+      for (const v of catSma) if (v !== null && v !== undefined) catLast = v;
+      const latest = counts.length ? counts[counts.length - 1] : 0;
+      const prev = counts.length > 1 ? counts[counts.length - 2] : 0;
+      const average = counts.length ? round1(counts.reduce((a, b) => a + b, 0) / counts.length) : 0;
+      return {
+        category,
+        latest,
+        average,
+        projection: catLast === null ? null : round1(catLast),
+        trend: latest > prev ? 'up' : latest < prev ? 'down' : 'flat',
+      };
+    });
 
     return {
       labels: months.map(m => m.label),
       counts: monthlyCounts,
       sma: smaValues,
       period,
+      granularity,
+      projections,
+      byCategory,
+      historyMonths: months.length,
+      confidence: forecastConfidence(months.length),
+      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${forecastConfidence(months.length)} confidence`,
     };
   });
 }
@@ -284,8 +435,16 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     .map(item => ({ id: item.id, name: item.name, category: item.category, rentals: rentalCounts.get(item.id) || 0 }))
     .sort((a, b) => b.rentals - a.rentals);
 
-  const topRented = itemRentalCounts.slice(0, 5);
-  const underperforming = itemRentalCounts.filter(i => i.rentals === 0).slice(0, 10);
+  // "Most rented" only means something when an item was actually rented — with
+  // no transactions in the window, every count is 0 and a "leader" is a lie.
+  const hasRentalActivity = itemRentalCounts.some(i => i.rentals > 0);
+  const topRented = itemRentalCounts.filter(i => i.rentals > 0).slice(0, 5);
+  // "Underperforming → promote" only makes sense when SOME items are being
+  // rented; with zero activity the whole catalog isn't underperforming, there's
+  // simply no data yet.
+  const underperforming = hasRentalActivity
+    ? itemRentalCounts.filter(i => i.rentals === 0).slice(0, 10)
+    : [];
 
   const { months } = await getDataMonths();
   const filteredMonths = filter?.start
@@ -359,4 +518,28 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     totalItems: items.length,
     totalRented: rentedItemIds.size,
   };
+}
+
+// One cached round trip for the entire AI Insights page. The frontend used to
+// fire 4 separate requests (kpis, insights, forecast, inventory-analytics) —
+// each hit paid its own ~200 ms pooler round trip, and the independent keys
+// meant a single mutation could warm one endpoint while leaving another cold
+// until its own first load. Bundling them under one key gets all four with a
+// single fetch and a single invalidate/warm cycle.
+export async function getDashboardBundle(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }, forecastPeriod: number = 3) {
+  const startKey = filter?.start ? filter.start.toISOString() : 'all';
+  const endKey = filter?.end ? `:${filter.end.toISOString()}` : '';
+  const weeklyKey = filter?.weekly ? ':weekly' : '';
+  const key = `dashboardBundle:${startKey}${endKey}${weeklyKey}:fp${forecastPeriod}`;
+  return cacheOrCompute(key, async () => {
+    const [kpis, insights, forecast, analytics] = await Promise.all([
+      getKpis(filter ? { start: filter.start, end: filter.end } : undefined),
+      getInsightsUncached(filter),
+      // Single forecast implementation (monthly SMA + projections +
+      // per-category) shared with GET /forecast — no duplicated bucketing.
+      getForecast(forecastPeriod),
+      getInventoryAnalytics(),
+    ]);
+    return { kpis, insights, forecast, analytics };
+  });
 }

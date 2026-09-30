@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, ScanLine, Calendar, ChevronRight, Download } from 'lucide-react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
 import { usePayments } from '../hooks/usePayments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -12,8 +12,10 @@ import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import BookingQR from './BookingQR';
+import QRCode from 'qrcode';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { api } from '../utils/api';
 
 // Short booking code for the QR/receipt.
 const bookingCode = (tx) => getBookingCode(tx);
@@ -60,9 +62,28 @@ export default function CustomerRentalFlow({
 
   const [eventDate, setEventDate] = useState(() => {
     const d = new Date();
-    d.setDate(d.getDate() + 2);
+    d.setDate(d.getDate() + 3);
     return d.toISOString().split('T')[0];
   });
+  const eventDateTouched = useRef(false);
+  // Suggested rental period + minimum downpayment come from the admin's
+  // business rules (public endpoint) — fall back to the 3-day / ₱200 defaults.
+  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, min_downpayment: 200 });
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/settings/rental-defaults')
+      .then((d) => {
+        if (cancelled || !d || typeof d.rental_period_days !== 'number') return;
+        setRentalDefaults({ rental_period_days: d.rental_period_days, min_downpayment: d.min_downpayment || 0 });
+        if (!eventDateTouched.current) {
+          const dt = new Date();
+          dt.setDate(dt.getDate() + d.rental_period_days);
+          setEventDate(dt.toISOString().split('T')[0]);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const dueDate = useMemo(() => {
     if (!eventDate) return '';
     const d = new Date(eventDate);
@@ -85,14 +106,14 @@ export default function CustomerRentalFlow({
   const [selectedSize, setSelectedSize] = useState(() => savedSizes[0] || '');
   const [measurementsExpanded, setMeasurementsExpanded] = useState(false);
   const [measurements, setMeasurements] = useState({});
+  const [showSizeGuide, setShowSizeGuide] = useState(false);
   const saleInfo = selectedItem ? getSaleInfo(selectedItem) : null;
   const effectiveItemPrice = saleInfo?.active ? saleInfo.price : (selectedItem?.price || 0);
-  // FIX: the 50% minimum applies to the actual fee being charged (finalFee,
+  // The flat minimum applies to the actual fee being charged (finalFee,
   // after any promo). Same as the server's requireMinimumDownpayment rule so
   // promo-discounted bookings can't be blocked by an over-large minimum.
-  const [downpaymentAmount, setDownpaymentAmount] = useState(() =>
-    preselectedItem ? Math.round((preselectedItem.price || 0) * 0.5) : 0
-  );
+  // Prefilled with the flat floor once an item is picked (step 0 resets it).
+  const [downpaymentAmount, setDownpaymentAmount] = useState(0);
   const [confirmedTx, setConfirmedTx] = useState(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
@@ -104,7 +125,22 @@ export default function CustomerRentalFlow({
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('all');
+  // Catalog category filter — multi-select (empty = All), same collapsible
+  // dropdown design as the staff rental flow.
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const toggleCategory = (key) => {
+    setSelectedCategories(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+  const [catOpen, setCatOpen] = useState(false);
+  const catFilterRef = useRef(null);
+  useEffect(() => {
+    if (!catOpen) return;
+    const onPointerDown = (e) => { if (catFilterRef.current && !catFilterRef.current.contains(e.target)) setCatOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setCatOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKey); };
+  }, [catOpen]);
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_LOAD);
   const [loadingMore, setLoadingMore] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -143,24 +179,30 @@ export default function CustomerRentalFlow({
     return Object.keys(errs).length === 0;
   };
 
+  // Category options built from the bookable inventory so every category
+  // always appears — no hardcoded list to go stale.
+  const catalogCategories = useMemo(() => {
+    const seen = [];
+    for (const item of inventory) {
+      if (item.status === 'Deleted' || item.status === 'OutOfService') continue;
+      const label = item.category || 'Other';
+      if (!seen.some(c => c.key === label.toLowerCase())) seen.push({ key: label.toLowerCase(), label });
+    }
+    return seen;
+  }, [inventory]);
+
   const filteredCatalog = useMemo(() => {
-    const cats = {
-      all: () => true,
-      gown: (i) => i.category?.toLowerCase() === 'gown',
-      suit: (i) => i.category?.toLowerCase() === 'suit',
-      formal: (i) => i.category?.toLowerCase() === 'formal',
-    };
     return inventory.filter((item) => {
       // Hide items that can never be booked; show everything else (including
       // currently Rented/Reserved) so customers can reserve future-free dates.
-      if (item.status === 'OutOfService') return false;
-      const matchesCat = cats[activeCategory] ? cats[activeCategory](item) : true;
+      if (item.status === 'OutOfService' || item.status === 'Deleted') return false;
+      const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesCat && matchesSearch;
     });
-  }, [inventory, activeCategory, searchQuery]);
+  }, [inventory, selectedCategories, searchQuery]);
 
-  useEffect(() => { setVisibleCount(ITEMS_PER_LOAD); setLoadingMore(false); }, [activeCategory, searchQuery]);
+  useEffect(() => { setVisibleCount(ITEMS_PER_LOAD); setLoadingMore(false); }, [selectedCategories, searchQuery]);
 
   // Live availability check against the backend (same overlap logic as createRental).
   // Lets customers reserve an item that is currently Rented but free for their dates.
@@ -227,8 +269,10 @@ export default function CustomerRentalFlow({
 
   // FIX B: the price actually charged is the promo-discounted fee.
   const finalFee = promoApplied?.finalFee ?? effectiveItemPrice ?? 0;
-  // 50% min of the fee actually charged (after promo) — mirrors the server rule.
-  const minDownpayment = selectedItem ? Math.min(Math.round(finalFee * 0.5), finalFee) : 0;
+  // Flat minimum downpayment from admin config — no 50% requirement.
+  const minDownpayment = selectedItem
+    ? Math.min(rentalDefaults.min_downpayment || 200, finalFee)
+    : 0;
 
   // Build the booking payload sent to POST /bookings.
   // SECURITY: rentalFee is intentionally NOT sent — the server derives the
@@ -268,7 +312,7 @@ export default function CustomerRentalFlow({
   const handleNext = async () => {
     if (step === 0) {
       if (!selectedItem) { setFieldErrors({ item: 'Please select an item.' }); return; }
-      setDownpaymentAmount(Math.round(effectiveItemPrice * 0.5));
+      setDownpaymentAmount(rentalDefaults.min_downpayment || 200);
       setFieldErrors({});
       setStep(1);
       return;
@@ -287,14 +331,30 @@ export default function CustomerRentalFlow({
         // Create the booking first so we have a real transaction id.
         const created = await onSubmitBooking(buildBookingData());
         // FIX A: create a real PayMongo payment intent, then open the drop-in UI.
+        // Transient failures (server cold start / network blip) get ONE retry
+        // before we give up — rolling back a committed booking over a hiccup
+        // is what made "Confirm Payment" glitch until a refresh fixed it.
         let intent;
         try {
           intent = await createIntent({ transactionId: created.id, amount: Number(downpaymentAmount) });
         } catch (payErr) {
-          setConfirmError(payErr?.message || 'Payment failed. Please try again.');
-          // Roll back the committed booking so we don't leave an orphaned rental.
-          if (onCancelBooking) await onCancelBooking(created);
-          return;
+          const transient = !payErr?.status || payErr?.status >= 500 || payErr?.name === 'TimeoutError';
+          if (transient) {
+            try {
+              await new Promise((r) => setTimeout(r, 1200));
+              intent = await createIntent({ transactionId: created.id, amount: Number(downpaymentAmount) });
+            } catch (retryErr) {
+              setConfirmError(retryErr?.message || payErr?.message || 'Payment failed. Please try again.');
+              if (onCancelBooking) await onCancelBooking(created);
+              return;
+            }
+          } else {
+            // Definitive rejection (403/400/…): retrying can't help.
+            setConfirmError(payErr?.message || 'Payment failed. Please try again.');
+            // Roll back the committed booking so we don't leave an orphaned rental.
+            if (onCancelBooking) await onCancelBooking(created);
+            return;
+          }
         }
         // No real gateway configured yet: simulate a successful payment so the
         // booking can complete end-to-end. When PAYMONGO_SECRET_KEY is set, the
@@ -342,6 +402,250 @@ export default function CustomerRentalFlow({
     setConfirming(false);
   };
   const handleQRTap = () => { if (confirmedTx) setShowQRDetails(true); };
+  // Downloads the confirmed booking as a PNG receipt image styled like the
+  // system branding (Plus Jakarta Sans, burgundy gradient letterhead, app
+  // logo, RENTECH. wordmark). Drawn on canvas — no new dependencies and
+  // works on mobile browsers.
+  const handleSaveReceipt = async () => {
+    if (!confirmedTx) return;
+    try { await document.fonts?.ready; } catch { /* fall back to Arial */ }
+    const loadImage = (src, timeoutMs = 2500) => new Promise((resolve) => {
+      const img = new Image();
+      const done = (v) => resolve(v);
+      const timer = setTimeout(() => done(null), timeoutMs);
+      img.onload = () => { clearTimeout(timer); done(img); };
+      img.onerror = () => { clearTimeout(timer); done(null); };
+      img.src = src;
+    });
+    const logo = await loadImage('/pwa-192x192.png');
+    // QR only when the feature flag is on: reuse the already-rendered QR
+    // data URI when ready, otherwise generate it (same qrcode lib as
+    // BookingQR) so the saved image stays scannable.
+    let qrImg = null;
+    if (flags.qr_codes) {
+      let qrUrl = qrSaveUrl || confirmedTx.qrCodeDataUri || null;
+      if (!qrUrl) {
+        try { qrUrl = await QRCode.toDataURL(code, { width: 368, margin: 1, errorCorrectionLevel: 'M' }); } catch { qrUrl = null; }
+      }
+      if (qrUrl) qrImg = await loadImage(qrUrl);
+    }
+    const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
+    const code = bookingCode(confirmedTx);
+    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const F = (w, s, mono) => `${w} ${s}px ${mono ? '"Plus Jakarta Sans", monospace, Arial' : '"Plus Jakarta Sans", Arial, sans-serif'}`;
+    const rows = [
+      ['Item', selectedItem?.name || confirmedTx.item?.name || '—', 'bold'],
+      ['Pickup', formatDate(rentalDate), ''],
+      ['Event Date', formatDate(eventDate), 'bold'],
+      ['Return By', formatDate(dueDate), 'accent'],
+      ['Customer', confirmedTx.customer?.name || customer.name, 'bold'],
+      ['Size', confirmedTx.size, ''],
+    ];
+    const S = 2, W = 600, M = 24, PAD = 28, LH = 28;
+    const cardX = M, cardW = W - M * 2;
+    const cv = document.createElement('canvas');
+    const ctx = cv.getContext('2d');
+    const rr = (x, y, w, h, r) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    };
+    const wrap = (text, font, maxW) => {
+      ctx.font = font;
+      const words = String(text ?? '—').split(' ');
+      const lines = [];
+      let line = '';
+      for (const w of words) {
+        const t = line ? `${line} ${w}` : w;
+        if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; }
+        else line = t;
+      }
+      if (line) lines.push(line);
+      return lines;
+    };
+    const labelW = 150, gap = 16, valW = cardW - PAD * 2 - labelW - gap;
+    const measured = rows.map(([k, v, style]) => ({ k, style, lines: wrap(v, F(800, 19), valW) }));
+    const headerH = 178;
+    const rowsH = measured.reduce((h, r) => h + Math.max(r.lines.length, 1) * LH + 26, 0);
+    const qrH = qrImg ? 216 + 24 : 0;
+    const H = M + headerH + 30 + 64 + 30 + 24 + 30 + rowsH + 20 + 108 + 30 + qrH + 44 + 30 + 60 + M;
+    cv.width = W * S;
+    cv.height = H * S;
+    ctx.scale(S, S);
+    // Page backdrop
+    ctx.fillStyle = '#fcfcfd';
+    ctx.fillRect(0, 0, W, H);
+    const cardY = M, cardH = H - M * 2;
+    // Card base
+    rr(cardX, cardY, cardW, cardH, 28);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#f1f2f4';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Gradient letterhead clipped to the card's top corners
+    ctx.save();
+    rr(cardX, cardY, cardW, cardH, 28);
+    ctx.clip();
+    const grad = ctx.createLinearGradient(cardX, 0, cardX + cardW, 0);
+    grad.addColorStop(0, '#8e323a');
+    grad.addColorStop(0.5, '#a63f47');
+    grad.addColorStop(1, '#bf4a53');
+    ctx.fillStyle = grad;
+    ctx.fillRect(cardX, cardY, cardW, headerH);
+    ctx.restore();
+    const hx = cardX + PAD, hy = cardY + 36;
+    // Logo in a white ring
+    if (logo) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(hx + 32, hy + 32, 32, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.clip();
+      ctx.drawImage(logo, hx, hy, 64, 64);
+      ctx.restore();
+    }
+    const tx0 = hx + (logo ? 80 : 0);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = F(800, 27);
+    ctx.fillText("Mylene's Boutique", tx0, hy + 26);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = F(500, 16);
+    ctx.fillText('Rental Attire & Formal Wear', tx0, hy + 50);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText('Balayan, Batangas, Philippines', tx0, hy + 70);
+    // Receipt meta, right-aligned
+    ctx.textAlign = 'right';
+    const rx = cardX + cardW - PAD;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = F(800, 14);
+    ctx.fillText('BOOKING RECEIPT', rx, hy + 8);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = F(800, 22, true);
+    ctx.fillText(code, rx, hy + 36);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = F(500, 14);
+    ctx.fillText(today, rx, hy + 58);
+    // Confirmed title with emerald check badge
+    let y = cardY + headerH + 30;
+    const cy = y + 22;
+    ctx.beginPath();
+    ctx.arc(cardX + PAD + 26, cy, 26, 0, Math.PI * 2);
+    ctx.fillStyle = '#ecfdf5';
+    ctx.fill();
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cardX + PAD + 14, cy + 1);
+    ctx.lineTo(cardX + PAD + 23, cy + 10);
+    ctx.lineTo(cardX + PAD + 39, cy - 9);
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#111827';
+    ctx.font = F(800, 29);
+    ctx.fillText('Booking Confirmed!', cardX + PAD + 64, y + 24);
+    ctx.fillStyle = '#6b7280';
+    ctx.font = F(500, 17);
+    ctx.fillText('Your reservation has been secured.', cardX + PAD + 64, y + 50);
+    y += 64 + 30;
+    // Section label with burgundy rule
+    ctx.fillStyle = '#bf4a53';
+    ctx.fillRect(cardX + PAD, y, 4, 18);
+    ctx.fillStyle = '#6b7280';
+    ctx.font = F(800, 13);
+    ctx.fillText('R E S E R V A T I O N   D E T A I L S', cardX + PAD + 12, y + 14);
+    y += 30;
+    // Detail rows with hairline dividers (values wrap, never crop)
+    for (const r of measured) {
+      ctx.fillStyle = '#f3f4f6';
+      ctx.fillRect(cardX + PAD, y, cardW - PAD * 2, 1);
+      y += 13;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#6b7280';
+      ctx.font = F(500, 18);
+      ctx.fillText(r.k, cardX + PAD, y + 20);
+      ctx.textAlign = 'right';
+      ctx.font = F(800, 19);
+      ctx.fillStyle = r.style === 'accent' ? '#bf4a53' : '#111827';
+      r.lines.forEach((ln, i) => ctx.fillText(ln, cardX + cardW - PAD, y + 20 + i * LH));
+      y += Math.max(r.lines.length, 1) * LH + 13;
+    }
+    y += 20;
+    // Totals band
+    const boxH = 108;
+    rr(cardX + PAD, y, cardW - PAD * 2, boxH, 16);
+    ctx.fillStyle = '#fdf2f3';
+    ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#6b7280';
+    ctx.font = F(600, 18);
+    ctx.fillText('Downpayment', cardX + PAD + 18, y + 40);
+    ctx.fillText('Balance', cardX + PAD + 18, y + 76);
+    ctx.textAlign = 'right';
+    ctx.font = F(800, 21);
+    ctx.fillStyle = '#bf4a53';
+    ctx.fillText(peso(txDownpayment(confirmedTx)), cardX + cardW - PAD - 18, y + 40);
+    ctx.fillStyle = '#111827';
+    ctx.fillText(peso(txBalance(confirmedTx)), cardX + cardW - PAD - 18, y + 76);
+    y += boxH + 30;
+    // Scannable QR (only when QR codes are enabled) above the code pill
+    if (qrImg) {
+      const box = 216, bx = (W - box) / 2;
+      rr(bx, y, box, box, 20);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#eef0f2';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.drawImage(qrImg, bx + 16, y + 16, box - 32, box - 32);
+      y += box + 24;
+    }
+    // Booking-code pill
+    ctx.font = F(800, 20, true);
+    const pillW = ctx.measureText(code).width + 56;
+    const pillX = (W - pillW) / 2;
+    rr(pillX, y, pillW, 44, 22);
+    const pgrad = ctx.createLinearGradient(pillX, 0, pillX + pillW, 0);
+    pgrad.addColorStop(0, '#b33842');
+    pgrad.addColorStop(0.5, '#bf4a53');
+    pgrad.addColorStop(1, '#d97079');
+    ctx.fillStyle = pgrad;
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(code, W / 2, y + 29);
+    y += 44 + 14;
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = F(500, 15);
+    ctx.fillText('Show this code to staff on pickup.', W / 2, y + 16);
+    y += 30;
+    // Footer wordmark
+    ctx.fillStyle = '#e5e7eb';
+    ctx.fillRect(cardX + PAD, y, cardW - PAD * 2, 1);
+    y += 26;
+    ctx.font = F(800, 16);
+    const wm = 'RENTECH', dot = '.';
+    const wmW = ctx.measureText(wm).width + ctx.measureText(dot).width;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#111827';
+    ctx.fillText(wm, (W - wmW) / 2, y + 12);
+    ctx.fillStyle = '#bf4a53';
+    ctx.fillText(dot, (W - wmW) / 2 + ctx.measureText(wm).width, y + 12);
+    const a = document.createElement('a');
+    a.href = cv.toDataURL('image/png');
+    a.download = `receipt-${code}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
   const flags = useFeatureFlags();
   // Data URI of the confirmed receipt QR — lets the customer save/download it.
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
@@ -364,14 +668,72 @@ export default function CustomerRentalFlow({
                   className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-full text-xs font-medium focus:outline-none focus:border-[#bf4a53]" />
               </div>
             </div>
-            <div className="flex gap-2 overflow-x-auto mb-4">
-              {['all', 'gown', 'suit', 'formal'].map((cat) => (
-                <button key={cat} onClick={() => setActiveCategory(cat)}
-                  className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border ${
-                    activeCategory === cat ? 'bg-[#bf4a53] text-white border-[#bf4a53]' : 'bg-white border-gray-200 text-gray-600'}`}>
-                  {cat}
-                </button>
-              ))}
+            {/* Category filter — compact collapsible multi-select, same design
+                as the staff rental flow (single row when closed). */}
+            <div ref={catFilterRef} className="relative mb-4">
+              {(() => {
+                const total = inventory.filter(i => i.status !== 'Deleted' && i.status !== 'OutOfService').length;
+                const names = selectedCategories.map(k => catalogCategories.find(c => c.key === k)?.label || k);
+                const summary = names.length === 0 ? 'All' : names.length <= 2 ? names.join(', ') : `${names[0]}, +${names.length - 1}`;
+                return (
+                  <>
+                    <button type="button" aria-expanded={catOpen} aria-controls="cust-cat-panel"
+                      aria-label={`Filter by category, ${names.length === 0 ? 'showing all categories' : `${names.length} selected: ${names.join(', ')}`}. Activate to change.`}
+                      onClick={() => setCatOpen(o => !o)}
+                      className={`w-full min-h-[44px] inline-flex items-center gap-2 rounded-2xl border px-3.5 py-2 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53] focus-visible:ring-offset-2 ${
+                        selectedCategories.length > 0 ? 'border-[#bf4a53] bg-red-50/60' : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                    >
+                      <SlidersHorizontal size={15} aria-hidden="true" className="shrink-0 text-gray-400" />
+                      <span className="text-xs font-bold text-gray-500 uppercase tracking-wide shrink-0">Category</span>
+                      <span className="flex-1 min-w-0 truncate text-sm font-semibold text-gray-900">{summary}</span>
+                      {selectedCategories.length > 0 && (
+                        <span aria-hidden="true" className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-[#bf4a53] text-white text-[11px] font-bold inline-flex items-center justify-center tabular-nums">
+                          {selectedCategories.length}
+                        </span>
+                      )}
+                      <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-gray-400 transition-transform ${catOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {catOpen && (
+                      <div id="cust-cat-panel" role="group" aria-label="Choose categories"
+                        className="absolute z-30 top-full mt-2 left-0 right-0 bg-white border border-gray-100 rounded-2xl shadow-xl p-1.5 max-h-64 overflow-y-auto">
+                        <label className="flex min-h-[44px] items-center gap-3 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-[#bf4a53]/50">
+                          <input type="checkbox" checked={selectedCategories.length === 0} onChange={() => setSelectedCategories([])}
+                            aria-label={`All categories, ${total} items`} className="h-5 w-5 shrink-0 accent-[#bf4a53]" />
+                          <span className="flex-1 text-sm font-semibold text-gray-900">All</span>
+                          <span aria-hidden="true" className="text-[11px] font-bold text-gray-400 tabular-nums">{total}</span>
+                        </label>
+                        {catalogCategories.map(({ key, label }) => {
+                          const count = inventory.filter(i => (i.category || '').toLowerCase() === key && i.status !== 'Deleted' && i.status !== 'OutOfService').length;
+                          const checked = selectedCategories.includes(key);
+                          return (
+                            <label key={key} className="flex min-h-[44px] items-center gap-3 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-[#bf4a53]/50">
+                              <input type="checkbox" checked={checked} onChange={() => toggleCategory(key)}
+                                aria-label={`${label}, ${count} items`} className="h-5 w-5 shrink-0 accent-[#bf4a53]" />
+                              <span className="flex-1 text-sm font-medium text-gray-800">{label}</span>
+                              {checked && <Check size={15} strokeWidth={3} aria-hidden="true" className="shrink-0 text-[#bf4a53]" />}
+                              <span aria-hidden="true" className="text-[11px] font-bold text-gray-400 tabular-nums">{count}</span>
+                            </label>
+                          );
+                        })}
+                        <div className="flex items-center gap-2 p-1.5 pt-2 border-t border-gray-100 mt-1">
+                          <button type="button" onClick={() => setSelectedCategories([])} disabled={selectedCategories.length === 0}
+                            className="flex-1 min-h-[40px] rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]">
+                            Clear
+                          </button>
+                          <button type="button" onClick={() => setCatOpen(false)}
+                            className="flex-1 min-h-[40px] rounded-xl text-xs font-bold bg-gray-900 text-white hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53] focus-visible:ring-offset-2">
+                            Done
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <p aria-live="polite" className="sr-only">
+                      Showing {filteredCatalog.length} of {total} items{names.length > 0 ? ` in ${names.join(', ')}` : ''}
+                    </p>
+                  </>
+                );
+              })()}
             </div>
             {fieldErrors.item && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl px-4 py-2.5 text-center mb-3">
@@ -385,7 +747,7 @@ export default function CustomerRentalFlow({
                     aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per day`}
                     className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'}`}>
-                    <ItemImage image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
+                    <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-bold text-gray-900 line-clamp-1">{item.name}</p>
                       {getSaleInfo(item).active ? (
@@ -458,7 +820,7 @@ export default function CustomerRentalFlow({
         <div className="flex items-center justify-center py-4 px-6 bg-gray-50/50">
           {['Details', 'Payment', 'Receipt'].map((label, idx) => (
             <div key={label} className="flex-1 flex flex-col items-center relative">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
+              <div className={`relative z-10 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
                 step >= idx + 1 ? 'bg-[#bf4a53] border-[#bf4a53] text-white' : 'bg-white border-gray-200 text-gray-400'}`}>
                 {idx + 1}
               </div>
@@ -472,7 +834,7 @@ export default function CustomerRentalFlow({
           {step === 1 && (
             <div className="space-y-5">
               <div className="bg-gradient-to-r from-gray-50 to-white rounded-2xl p-4 flex items-center gap-4 border border-gray-100/60">
-                <ItemImage image={selectedItem.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-gray-200 shadow-sm" />
+                <ItemImage thumb image={selectedItem.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-gray-200 shadow-sm" />
                 <div className="flex-1">
                   <p className="font-bold text-gray-900">{selectedItem.name}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Pickup: {formatDate(rentalDate)}</p>
@@ -535,6 +897,7 @@ export default function CustomerRentalFlow({
                   event={eventDate}
                   bookedRanges={bookedRanges}
                   onChange={(p, e) => {
+                    eventDateTouched.current = true;
                     setRentalDate(p);
                     setEventDate(e);
                     clearFieldError('rentalDate');
@@ -573,7 +936,13 @@ export default function CustomerRentalFlow({
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Item Details</h4>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Size</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Size</label>
+                    <button type="button" onClick={() => setShowSizeGuide(true)}
+                      className="text-[10px] font-bold text-[#bf4a53] hover:text-red-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50 rounded">
+                      Size Guide
+                    </button>
+                  </div>
                   <select value={selectedSize} onChange={(e) => { setSelectedSize(e.target.value); clearFieldError('size'); }}
                     className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] ${fieldErrors.size ? 'border-red-300 bg-red-50' : ''}`}>
                     <option value="">-- Select Size --</option>
@@ -611,26 +980,34 @@ export default function CustomerRentalFlow({
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Required Downpayment</p>
-                <div>
-                  <div className="relative mt-2">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
-                    <Field showLabel={false} type="number" value={downpaymentAmount}
-                      onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
-                      className={`w-full pl-8 p-3 bg-white border rounded-xl text-sm font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.downpayment ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
-                      min={minDownpayment} aria-label="Required downpayment amount"
-                      error={fieldErrors.downpayment || undefined} />
-                  </div>
+                <div className="relative mt-2">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400 pointer-events-none">₱</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={downpaymentAmount}
+                    min={minDownpayment}
+                    aria-label="Required downpayment amount"
+                    onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
+                    className={`w-full pl-9 pr-4 py-3 bg-white border rounded-xl text-sm font-bold text-gray-900 placeholder-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors ${fieldErrors.downpayment ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                  />
                 </div>
-                <p className="text-[10px] text-gray-400 mt-1">Minimum 50% (₱{minDownpayment.toLocaleString()}) required to secure booking.</p>
+                {fieldErrors.downpayment && (
+                  <p className="text-[11px] text-red-500 font-medium ml-1">{fieldErrors.downpayment}</p>
+                )}
+                <p className="text-[10px] text-gray-400">
+                  Minimum of ₱{rentalDefaults.min_downpayment.toLocaleString()} required to secure booking.
+                </p>
               </div>
             </div>
           )}
 
           {/* Promo Code — shown only on the Payment step, never on the receipt */}
           {step === 2 && (
-          <div className="bg-gray-50 rounded-2xl p-4">
-            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block">Have a promo code?</label>
-            <div className="flex gap-2">
+          <div className="bg-gray-50 rounded-2xl p-4 flex flex-col items-center">
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block text-center">Have a promo code?</label>
+            <div className="flex gap-2 w-full max-w-xs justify-center">
               <Field showLabel={false} type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
                 placeholder="Enter code" maxLength={20} aria-label="Promo code"
                 className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]" />
@@ -640,7 +1017,7 @@ export default function CustomerRentalFlow({
               </button>
             </div>
             {promoApplied && (
-              <div className="mt-2 p-2.5 bg-emerald-50 rounded-xl flex items-center justify-between">
+              <div className="mt-2 p-2.5 bg-emerald-50 rounded-xl flex items-center justify-between w-full max-w-xs">
                 <div>
                   <span className="text-xs font-bold text-emerald-700">{promoApplied.code}</span>
                   <span className="text-xs text-emerald-600 ml-2">-{promoApplied.discountPct}% off</span>
@@ -651,9 +1028,9 @@ export default function CustomerRentalFlow({
                 </button>
               </div>
             )}
-            {promoError && <p className="text-xs text-red-500 font-medium mt-1">{promoError}</p>}
+            {promoError && <p className="text-xs text-red-500 font-medium mt-1 text-center">{promoError}</p>}
             {promoApplied && (
-              <div className="mt-2 flex justify-between text-sm">
+              <div className="mt-2 flex justify-between text-sm w-full max-w-xs">
                 <span className="text-gray-500">Discount</span>
                 <span className="font-bold text-emerald-600">-₱{promoApplied.discountAmount.toLocaleString()}</span>
               </div>
@@ -749,6 +1126,10 @@ export default function CustomerRentalFlow({
               {confirmError && (
                 <p className="text-xs text-center text-red-500 font-medium bg-red-50 py-2 rounded-lg">{confirmError}</p>
               )}
+              <button onClick={handleSaveReceipt}
+                className="w-full py-3.5 bg-white border border-gray-200 text-gray-800 font-bold rounded-full hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
+                <Download size={16} /> Save Receipt
+              </button>
               <button onClick={handleConfirm} disabled={confirming}
                 className="w-full py-3.5 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
                 {confirming ? 'Processing...' : 'Done'}
@@ -807,6 +1188,73 @@ export default function CustomerRentalFlow({
           </div>
         </div>
       </div>
+      )}
+
+      {/* Size Guide */}
+      {showSizeGuide && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={() => setShowSizeGuide(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-size-guide"
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 border-b border-gray-100/80 rounded-t-3xl">
+              <h3 id="dialog-title-size-guide" className="font-bold text-lg text-gray-900">Size Guide</h3>
+              <button onClick={() => setShowSizeGuide(false)} aria-label="Close size guide"
+                className="text-gray-400 hover:bg-gray-100 rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-500 leading-relaxed">
+                All measurements below are the garment's base dimensions. Our boutique
+                offers on-site tailoring — if your body measurements differ from the
+                chart, pick <strong>Custom / Measurements</strong> and we'll adjust
+                the fit before your event.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="px-3 py-2 text-left font-bold text-gray-600 border border-gray-200">Size</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Bust (in)</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Waist (in)</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Hips (in)</th>
+                      <th className="px-3 py-2 text-center font-bold text-gray-600 border border-gray-200">Shoulder (in)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ['XS', '31–32', '23–24', '33–34', '14'],
+                      ['S', '33–34', '25–26', '35–36', '14.5'],
+                      ['M', '35–36', '27–28', '37–38', '15'],
+                      ['L', '37–39', '29–31', '39–41', '15.5–16'],
+                      ['XL', '40–42', '32–34', '42–44', '16.5–17'],
+                      ['XXL', '43–45', '35–37', '45–47', '17.5–18'],
+                    ].map(([size, bust, waist, hips, shoulder]) => (
+                      <tr key={size} className="hover:bg-gray-50/50">
+                        <td className="px-3 py-2 font-bold text-gray-900 border border-gray-200">{size}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{bust}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{waist}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{hips}</td>
+                        <td className="px-3 py-2 text-center text-gray-600 border border-gray-200 tabular-nums">{shoulder}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-amber-50 border border-amber-200/70 rounded-2xl p-4 text-xs text-amber-800 leading-relaxed space-y-1.5">
+                <p className="font-bold">How to choose your size:</p>
+                <p><strong>1.</strong> Measure yourself with a soft tape (bust, waist, hips).</p>
+                <p><strong>2.</strong> Match your largest measurement to the chart above.</p>
+                <p><strong>3.</strong> If you fall between sizes, pick <strong>Custom / Measurements</strong> — our tailor will adjust the garment to fit you perfectly.</p>
+                <p><strong>4.</strong> Our gowns can be taken in or let out by about 1 inch in each area.</p>
+              </div>
+              <button onClick={() => setShowSizeGuide(false)}
+                className="w-full py-3 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors text-sm">
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

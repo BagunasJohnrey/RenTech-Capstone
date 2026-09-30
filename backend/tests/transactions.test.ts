@@ -9,6 +9,16 @@ app.use(express.json());
 app.use('/api', routes);
 app.use(errorHandler);
 
+// Dynamic future dates — hardcoded dates rot (pickup-in-the-past 400s) as
+// real time moves forward. Pickup = +2 days, due = +5 days.
+const futureDate = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+const PICKUP = futureDate(2);
+const DUE = futureDate(5);
+
 describe('POST /api/transactions', () => {
   it('should create rental when admin', async () => {
     const { prisma } = await import('../src/config/database.js');
@@ -20,7 +30,7 @@ describe('POST /api/transactions', () => {
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 1000 });
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
 
     // Security: rentalFee is NOT accepted from the client — derived server-side.
     expect(res.status).toBe(201);
@@ -32,7 +42,7 @@ describe('POST /api/transactions', () => {
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 2, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 1500 });
+      .send({ itemId: 2, rentalDate: PICKUP, dueDate: DUE, downpayment: 1500 });
 
     expect(res.status).toBe(403);
   });
@@ -44,7 +54,7 @@ describe('POST /api/transactions', () => {
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 999, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
+      .send({ customerId: 'customer-id-111', itemId: 999, rentalDate: PICKUP, dueDate: DUE });
 
     expect(res.status).toBe(404);
   });
@@ -58,7 +68,7 @@ describe('POST /api/transactions', () => {
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500 });
 
     expect(res.status).toBe(400);
   });
@@ -74,7 +84,7 @@ describe('POST /api/transactions', () => {
     const res = await request(app)
       .post('/api/transactions')
       .set('Authorization', 'Bearer admin-token')
-      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500 });
 
     expect(res.status).toBe(409);
   });
@@ -82,7 +92,7 @@ describe('POST /api/transactions', () => {
   it('should reject unauthenticated', async () => {
     const res = await request(app)
       .post('/api/transactions')
-      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE });
 
     expect(res.status).toBe(401);
   });
@@ -248,6 +258,11 @@ describe('PUT /api/transactions/:id/cancel', () => {
       .set('Authorization', 'Bearer admin-token');
 
     expect(res.status).toBe(200);
+    expect(prisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ type: 'booking_cancelled', profileId: 'customer-id-111' }),
+      })
+    );
   });
 
   it('should reject when staff', async () => {

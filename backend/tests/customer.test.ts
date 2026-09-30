@@ -9,11 +9,21 @@ app.use(express.json());
 app.use('/api', routes);
 app.use(errorHandler);
 
+// Dynamic future dates — hardcoded dates rot (pickup-in-the-past 400s) as
+// real time moves forward. Pickup = +2 days, due = +5 days.
+const futureDate = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+const PICKUP = futureDate(2);
+const DUE = futureDate(5);
+
 describe('GET /api/catalog', () => {
   it('should list available items without auth', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findMany.mockResolvedValueOnce([
-      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [] },
+      { id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available', transactions: [], _count: { transactions: 0 } },
     ]);
 
     const res = await request(app).get('/api/catalog');
@@ -62,11 +72,11 @@ describe('POST /api/bookings', () => {
     prisma.transaction.findFirst.mockResolvedValueOnce(null);
 
     // Security contract: fee is derived server-side (₱5000), customer must put
-    // down >= 50% (₱2500), and pickup can't be in the past.
+    // down the flat minimum (₱200 floor), and pickup can't be in the past.
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500 });
 
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('id');
@@ -76,7 +86,7 @@ describe('POST /api/bookings', () => {
   it('should reject when not authenticated', async () => {
     const res = await request(app)
       .post('/api/bookings')
-      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE });
 
     expect(res.status).toBe(401);
   });
@@ -85,12 +95,12 @@ describe('POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer admin-token')
-      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08' });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE });
 
     expect(res.status).toBe(403);
   });
 
-  it('should reject a downpayment below the 50% minimum', async () => {
+  it('should reject a downpayment below the flat ₱200 minimum', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findUnique.mockResolvedValueOnce({
       id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
@@ -100,7 +110,7 @@ describe('POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 1000 });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 100 });
 
     expect(res.status).toBe(400);
   });
@@ -117,7 +127,7 @@ describe('POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: '2026-09-05', dueDate: '2026-09-08', downpayment: 2500 });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500 });
 
     expect(res.status).toBe(409);
   });
@@ -241,6 +251,7 @@ describe('GET /api/catalog/:id validation', () => {
 });
 
 describe('GET /api/bookings query validation', () => {
+
   it('garbage status → 400', async () => {
     const res = await request(app)
       .get('/api/bookings?status=garbage')
@@ -252,6 +263,94 @@ describe('GET /api/bookings query validation', () => {
     const res = await request(app)
       .get('/api/bookings?status=Active')
       .set('Authorization', 'Bearer customer-token');
+
     expect(res.status).not.toBe(400);
+  });
+});
+
+describe('POST /api/customers/contact', () => {
+  it('should send a message without a booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.notification.createMany = vi.fn().mockResolvedValue({ count: 1 });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('message');
+    expect(prisma.notification.createMany).toHaveBeenCalled();
+  });
+
+  it('should send a message about an own booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.notification.createMany = vi.fn().mockResolvedValue({ count: 1 });
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'booking-1', customerId: 'customer-id-111', txNumber: 1001,
+    });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'booking-1', message: 'Please cancel this booking for me, thanks!' });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('should fan out customer messages to admins only (not staff)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.notification.createMany = vi.fn().mockResolvedValue({ count: 1 });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(200);
+    const findManyCall = (prisma.profile.findMany as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => (c[0] as { select?: unknown })?.select
+    );
+    expect(findManyCall?.[0]).toMatchObject({ where: { role: 'Admin' } });
+  });
+
+  it('should reject messaging about another customer booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'booking-2', customerId: 'other-customer-id', txNumber: 1002,
+    });
+
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'booking-2', message: 'Please cancel this booking for me, thanks!' });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('should reject a too-short message', async () => {
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ message: 'hi' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('should reject unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('should reject for admin (customer-only endpoint)', async () => {
+    const res = await request(app)
+      .post('/api/customers/contact')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ message: 'Please cancel my booking, my event was moved.' });
+
+    expect(res.status).toBe(403);
   });
 });
