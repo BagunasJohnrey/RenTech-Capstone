@@ -33,6 +33,7 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
     // /inventory/analytics for this period — skip the duplicate request.
     if (initialData) {
       setData(initialData);
+      setPage(0);
       return;
     }
     const params = period && period !== 'Overall' ? `?period=${period.toLowerCase()}` : '';
@@ -132,8 +133,8 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
           3-up on desktop */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
-          <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-            <DollarSign size={16} className="text-emerald-500" /> Top by Revenue
+          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <DollarSign size={20} className="text-emerald-500" /> Top by Revenue
           </h3>
           <div className="space-y-2">
             {topByRevenue.map((item) => (
@@ -151,8 +152,8 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
           </div>
         </div>
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
-          <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-            <TrendingUp size={16} className="text-blue-500" /> Top by Utilization
+          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <TrendingUp size={20} className="text-blue-500" /> Top by Utilization
           </h3>
           <div className="space-y-2">
             {topByUtilization.map((item) => (
@@ -170,8 +171,8 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
           </div>
         </div>
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm md:col-span-2 xl:col-span-1">
-          <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-            <RotateCcw size={16} className="text-orange-500" /> Top by Frequency
+          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <RotateCcw size={20} className="text-orange-500" /> Top by Frequency
           </h3>
           <div className="space-y-2">
             {topByFrequency.map((item) => (

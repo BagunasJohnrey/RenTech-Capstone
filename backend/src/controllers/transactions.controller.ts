@@ -45,7 +45,8 @@ export const returnSchema = z.object({
     // Validate the date shape so a bad string is a 400, not a 500 from new Date().
     returnDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid return date').optional(),     // server falls back to "now" if omitted
     isDamaged: z.boolean().optional().default(false),
-    isLate: z.boolean().optional(),        // informational; late fee computed by date anyway
+    isLate: z.boolean().optional(),        // legacy informational flag, ignored (late fees removed)
+    damageFee: z.coerce.number().min(0).max(1000000).optional(), // per-return override; omit for the default
     returnPhoto: z.string().optional(),
     conditionPhoto: z.string().optional(), // legacy alias
     notes: z.string().optional(),
@@ -132,6 +133,22 @@ export async function getTransaction(req: AuthenticatedRequest, res: Response, n
   }
 }
 
+// Staff activity timeline for one transaction (who assisted / released /
+// returned / edited / cancelled it). Staff/Admin only; the service resolves
+// staff names so the frontend can render "Assisted by X · Released by Y".
+export async function getTransactionAudits(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const tx = await transactionService.getTransaction(String(req.params.id));
+    if (req.user?.role === Role.Customer && tx.customerId !== req.user.id) {
+      throw new AppError(403, 'You can only view your own transactions');
+    }
+    const audits = await transactionService.getTransactionAudits(String(req.params.id));
+    res.json(audits);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Staff QR scan lookup: accepts `RT-XXXXXXXX`, the raw 8-char code, or a full
 // shareable URL carrying `?tx=RT-XXXXXXXX`. Staff/Admin only (route-guarded) so
 // customer QR payloads can't be enumerated by other customers.
@@ -184,7 +201,8 @@ export async function processReturn(req: AuthenticatedRequest, res: Response, ne
       req.body.isDamaged ?? false,
       req.body.returnPhoto ?? req.body.conditionPhoto,
       req.body.notes,
-      req.body.damageReason
+      req.body.damageReason,
+      req.body.damageFee ?? null
     );
 
     res.json(result);
@@ -222,6 +240,29 @@ export async function updateTransaction(req: AuthenticatedRequest, res: Response
       { rentalDate: req.body.rentalDate, dueDate: req.body.dueDate, notes: req.body.notes, alterationStatus: req.body.alterationStatus }
     );
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export const swapItemSchema = z.object({
+  body: z.object({
+    // SECURITY: only the replacement item is accepted — the fee is always
+    // re-derived server-side from the item (sale-aware), the promo is voided,
+    // and the downpayment is never touched (no refunds).
+    newItemId: z.number().int().positive(),
+  }),
+});
+
+export async function swapBookingItem(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const result = await transactionService.swapBookingItem(
+      String(req.params.id),
+      req.user.id,
+      req.body.newItemId
+    );
+    res.json(result);
   } catch (err) {
     next(err);
   }

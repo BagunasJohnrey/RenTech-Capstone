@@ -1,20 +1,30 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Camera, Package, User, Calendar, Scissors, Banknote, Smartphone, CreditCard } from 'lucide-react';
+import { X, Camera, Package, User, Calendar, Scissors, Banknote, Smartphone, CreditCard, Repeat } from 'lucide-react';
 import { api } from '../utils/api';
 import { storageService } from '../services';
 import { customerLabel, itemLabel } from '../utils/format';
 import { fileToBase64, downscaleToJpeg } from '../utils/file';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useLockScroll } from '../hooks/useLockScroll';
+import { useButtonGuard } from '../hooks/useButtonGuard';
+import { useToast } from './Toast';
+import SwapItemModal from './SwapItemModal';
 
-export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
+export default function ReleaseItemModal({ transaction: initialTx, onClose, onReleased, onSwapItem }) {
+  // Local copy: an in-sheet item swap replaces the garment (and fee) without
+  // closing the sheet — the release then continues against the new item.
+  const [tx, setTx] = useState(initialTx);
+  const [swapOpen, setSwapOpen] = useState(false);
+  const { success: toastSuccess } = useToast();
   // Freeze the page behind the sheet; the backdrop is tap-to-close only.
   useLockScroll(true);
   const [photoFile, setPhotoFile] = useState(null);
   const [photoUrl, setPhotoUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [needsAlteration, setNeedsAlteration] = useState(false);
-  const [releasing, setReleasing] = useState(false);
+  // Ref guard: state alone can't block same-tick double-taps on Confirm
+  // Release (duplicate release + duplicate payment records).
+  const { guarding: releasing, guard: guardRelease } = useButtonGuard();
   const [error, setError] = useState('');
 
   // Timed exit + swipe-down-to-dismiss, mirroring the transaction sheet.
@@ -89,7 +99,7 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
   const [payError, setPayError] = useState('');
   const [paySuccess, setPaySuccess] = useState(false);
 
-  const outstandingBalance = Math.max(0, transaction.balance ?? 0);
+  const outstandingBalance = Math.max(0, tx.balance ?? 0);
 
   useEffect(() => {
     if (outstandingBalance > 0 && !recordPayment) {
@@ -113,24 +123,24 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
     setPhotoUrl('');
   };
 
-  const handleRelease = async () => {
+  const handleRelease = () => {
     if (!photoFile) { setError('Please capture the pre-rental condition photo'); return; }
     if (recordPayment) {
       const amt = Number(payAmount);
       if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
       if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
     }
-    setReleasing(true);
-    setError('');
-    setPayError('');
-    try {
+    guardRelease(async () => {
+      setError('');
+      setPayError('');
+      try {
       const base64 = (await downscaleToJpeg(photoFile)) || (await fileToBase64(photoFile));
       const { path } = await storageService.upload(
-        `rental/${transaction.id}/release-${Date.now()}.jpg`,
+        `rental/${tx.id}/release-${Date.now()}.jpg`,
         'image/jpeg',
         base64
       );
-      const updated = await api.put(`/transactions/${transaction.id}/release`, {
+      const updated = await api.put(`/transactions/${tx.id}/release`, {
         releasePhoto: path,
         notes,
         needsAlteration,
@@ -139,17 +149,17 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
         const amt = Number(payAmount);
         if (amt > 0 && amt <= outstandingBalance) {
           try {
-            await api.post(`/transactions/${transaction.id}/payments`, { amount: amt, method: payMethod });
+            await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: payMethod });
             setPaySuccess(true);
           } catch { /* payment failure is non-critical for release */ }
         }
       }
       onReleased(updated);
       onClose();
-    } catch (err) {
-      setError(err?.message || 'Failed to release item');
-    }
-    setReleasing(false);
+      } catch (err) {
+        setError(err?.message || 'Failed to release item');
+      }
+    });
   };
 
   return (
@@ -198,20 +208,20 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
                 <User size={11} /> Customer
               </p>
-              <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(transaction.customer)}</p>
+              <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
             </div>
             <div className="p-3.5 bg-gray-50 rounded-2xl">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
                 <Package size={11} /> Item
               </p>
-              <p className="text-sm font-bold text-gray-900 truncate">{itemLabel(transaction.item)}</p>
+              <p className="text-sm font-bold text-gray-900 truncate">{itemLabel(tx.item)}</p>
             </div>
             <div className="p-3.5 bg-gray-50 rounded-2xl">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
                 <Calendar size={11} /> Rental Date
               </p>
               <p className="text-sm font-bold text-gray-900 truncate">
-                {new Date(transaction.rentalDate || transaction.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                {new Date(tx.rentalDate || tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </p>
             </div>
             <div className="p-3.5 bg-gray-50 rounded-2xl">
@@ -219,7 +229,7 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
                 <Calendar size={11} /> Due Date
               </p>
               <p className="text-sm font-bold text-gray-900 truncate">
-                {new Date(transaction.dueDate || transaction.returnDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                {new Date(tx.dueDate || tx.returnDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </p>
             </div>
           </div>
@@ -249,6 +259,11 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
               )}
             </div>
           </div>
+
+          <button onClick={() => setSwapOpen(true)}
+            className="w-full py-2.5 text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-2xl transition-colors flex items-center justify-center gap-1.5">
+            <Repeat size={14} /> Customer wants a different item? Swap it
+          </button>
 
           <div>
             <label className="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1.5">
@@ -372,6 +387,22 @@ export default function ReleaseItemModal({ transaction, onClose, onReleased }) {
           </div>
         </div>
     </div>
+      {swapOpen && (
+        <SwapItemModal
+          transaction={tx}
+          onClose={() => setSwapOpen(false)}
+          onSwapped={(updated, prevItemId) => {
+            // Continue the release against the NEW garment: refresh the sheet,
+            // force a fresh condition photo (the old one showed another item),
+            // and let the parent merge + fix inventory statuses.
+            setTx((prev) => ({ ...prev, ...updated }));
+            clearPhoto();
+            setSwapOpen(false);
+            toastSuccess(`Swapped to ${updated?.item?.name ?? 'new item'} — capture its photo`);
+            onSwapItem?.(updated, prevItemId);
+          }}
+        />
+      )}
   </div>
   );
 }

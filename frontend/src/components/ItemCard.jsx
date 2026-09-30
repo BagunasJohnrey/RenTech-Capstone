@@ -1,8 +1,13 @@
+import { useEffect, useRef, useState } from 'react';
 import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
 import ItemImage from './ItemImage';
+import { SkeletonCard } from './Skeleton';
 import { itemPill } from '../utils/statusColors';
+import { normalizeOccasions } from '../utils/occasions';
 
 // Determine whether a sale is currently active and the resulting price.
+// A 100%+ discount (free/negative price) is treated as corrupt data, not a
+// real sale — the card falls back to the regular price with no badge.
 export function getSaleInfo(item) {
   const now = Date.now();
   const active = !!item.onSale && (!item.saleEndsAt || new Date(item.saleEndsAt).getTime() > now);
@@ -11,15 +16,62 @@ export function getSaleInfo(item) {
   let pct = 0;
   if (item.salePrice != null && item.salePrice > 0) {
     price = item.salePrice;
-  } else if (item.discountPct != null && item.discountPct > 0) {
+  } else if (item.discountPct != null && item.discountPct > 0 && item.discountPct < 100) {
     pct = item.discountPct;
     price = Math.round(item.price * (1 - item.discountPct / 100));
   }
+  if (!(price > 0)) return { active: false, price: item.price, pct: 0 };
   return { active: true, price, pct };
+}
+
+// Holds a card on its skeleton until its photo settles (loaded or
+// definitively failed — never forever). The hidden eager preloader starts
+// only when the card nears the viewport, so below-fold grids keep the lazy
+// fetch behavior instead of downloading every thumb on mount.
+function useImageGate(item) {
+  const [ready, setReady] = useState(!item?.image);
+  const [inView, setInView] = useState(false);
+  const ref = useRef(null);
+  const imageKey = item?.image;
+  const idKey = item?.id;
+  useEffect(() => { setReady(!item?.image); }, [idKey, imageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (inView) return;
+    if (typeof IntersectionObserver === 'undefined' || !ref.current) {
+      setInView(true);
+      return;
+    }
+    const el = ref.current;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '400px' }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [inView]);
+  const markReady = () => setReady(true);
+  const skeleton = (
+    <div ref={ref}>
+      <SkeletonCard />
+      {inView && !!item?.image && (
+        <span className="hidden" aria-hidden="true">
+          <ItemImage thumb image={item.image} alt="" eager onSettled={markReady} />
+        </span>
+      )}
+    </div>
+  );
+  return { ready, skeleton };
 }
 
 function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, showBook }) {
   const sale = getSaleInfo(item);
+  const gate = useImageGate(item);
+  if (!gate.ready) return gate.skeleton;
   return (
     <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
       <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
@@ -63,15 +115,28 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</span>
           </div>
           <h3 className="font-bold text-gray-900 text-[13px] leading-tight truncate">{item.name}</h3>
+          {normalizeOccasions(item.occasions).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {normalizeOccasions(item.occasions).slice(0, 2).map((occ) => (
+                <span key={occ} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] border border-[#bf4a53]/20">
+                  {occ}
+                </span>
+              ))}
+              {normalizeOccasions(item.occasions).length > 2 && (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                  +{normalizeOccasions(item.occasions).length - 2}
+                </span>
+              )}
+            </div>
+          )}
           <p className="font-bold text-[13px]">
             {sale.active ? (
               <>
                 <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
                 <span className="text-gray-400 font-medium text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
-                <span className="text-gray-400 font-medium text-xs"> / day</span>
               </>
             ) : (
-              <span className="text-gray-900">₱{item.price.toLocaleString()} <span className="text-gray-400 font-medium text-xs">/ day</span></span>
+              <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
             )}
           </p>
         </div>
@@ -148,6 +213,8 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
   const isStaff = role !== 'Customer';
   const meta = itemPill(item.status);
   const StatusIcon = meta.icon;
+  const gate = useImageGate(item);
+  if (!gate.ready) return gate.skeleton;
 
   if (isStaff) {
     if (isAdmin) {
@@ -180,6 +247,20 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
       <div className="p-4 flex flex-col flex-1 gap-1">
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</div>
         <h3 className="font-bold text-gray-900 text-sm leading-tight line-clamp-2">{item.name}</h3>
+        {normalizeOccasions(item.occasions).length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {normalizeOccasions(item.occasions).slice(0, 2).map((occ) => (
+              <span key={occ} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] border border-[#bf4a53]/20">
+                {occ}
+              </span>
+            ))}
+            {normalizeOccasions(item.occasions).length > 2 && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                +{normalizeOccasions(item.occasions).length - 2}
+              </span>
+            )}
+          </div>
+        )}
         <p className="font-bold text-sm">
           {sale.active ? (
             <>

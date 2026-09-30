@@ -25,8 +25,9 @@ export const createBookingSchema = z.object({
 export async function getCatalog(req: Request, res: Response, next: NextFunction) {
   try {
     const category = req.query.category as string | undefined;
+    const occasion = req.query.occasion as string | undefined;
     const search = req.query.search as string | undefined;
-    const items = await inventoryService.listItems('Available', category, search);
+    const items = await inventoryService.listItems('Available', category, search, { occasion });
     res.json(items);
   } catch (err) {
     next(err);

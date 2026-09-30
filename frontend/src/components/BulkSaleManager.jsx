@@ -257,19 +257,49 @@ export default function BulkSaleManager() {
           </div>
 
           {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2 pt-2">
-              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40 transition-all">
-                <ChevronLeft size={16} />
-              </button>
-              <span className="text-xs text-gray-500 font-medium">Page {page} of {totalPages}</span>
-              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40 transition-all">
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          )}
+          {totalPages > 1 && (() => {
+            const pages = [];
+            const addPage = (p) => pages.push(p);
+            // Always show first page
+            addPage(1);
+            // Pages around current
+            for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) {
+              addPage(i);
+            }
+            // Always show last page
+            if (totalPages > 1) addPage(totalPages);
+            // Dedupe + build display list with ellipsis markers
+            const display = [];
+            let prev = 0;
+            for (const p of pages) {
+              if (p === prev) continue;
+              if (p - prev > 1) display.push('...');
+              display.push(p);
+              prev = p;
+            }
+            return (
+              <div className="flex items-center justify-center gap-1 pt-2">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                  className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40 transition-all">
+                  <ChevronLeft size={16} />
+                </button>
+                {display.map((p, i) => p === '...' ? (
+                  <span key={`e${i}`} className="px-1 text-gray-300 text-xs select-none">...</span>
+                ) : (
+                  <button key={p} onClick={() => setPage(p)}
+                    className={`min-w-[32px] h-8 rounded-xl text-xs font-bold transition-all ${
+                      page === p
+                        ? 'bg-[#bf4a53] text-white shadow-sm'
+                        : 'border border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}>{p}</button>
+                ))}
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                  className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40 transition-all">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            );
+          })()}
         </>
       )}
     </div>

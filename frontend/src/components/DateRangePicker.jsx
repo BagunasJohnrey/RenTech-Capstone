@@ -5,7 +5,9 @@
 // earlier day second). Future dates are allowed — Transactions include
 // Reserved rows with upcoming pickup dates — so there's no `max` clamp.
 //
-// Public surface: <DateRangePicker from={} to={} onChange={({from,to}) => {}} onClose={() => {}} />
+// Public surface: <DateRangePicker from={} to={} onChange={({from,to}) => {}} onClose={() => {}} boxed? />
+// `boxed` swaps the floating pill trigger for a full-width boxed control that
+// matches a sibling <select> (used in HistoryView's Sort + Date row).
 // Internal draft state lives here so the parent only sees committed values
 // when the user clicks Apply (or taps outside, which cancels).
 
@@ -28,11 +30,11 @@ function usePopoverPosition(anchorRef, open, deps = []) {
       const vw = window.innerWidth;
       const vh = window.innerHeight;
 
-      const popW = vw >= 1280 ? 694 : vw >= 768 ? 430 : Math.min(vw - 16, 430);
+      const popW = vw >= 1280 ? 308 : vw >= 768 ? 430 : Math.min(vw - 16, 430);
       // Keep 8px off whichever edge the popover leans toward.
       const left = r.left + popW > vw - 8 ? Math.max(8, vw - popW - 8) : Math.max(8, r.left);
 
-      const estH = vw >= 1280 ? 340 : vw >= 768 ? 520 : 560;
+      const estH = vw >= 1280 ? 450 : vw >= 768 ? 520 : 560;
       const spaceBelow = vh - r.bottom - 8;
       const placeBelow = spaceBelow >= Math.min(estH, 300) || r.top - 8 < 300;
 
@@ -68,9 +70,7 @@ const toISO = (d) => {
 const fromISO = (s) => { if (!s) return null; const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return toISO(d); };
 const today = () => toISO(new Date());
-const weekStartMonday = () => { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return toISO(d); };
 const monthStart = (offset = 0) => { const d = new Date(); d.setMonth(d.getMonth() + offset, 1); return toISO(d); };
-const monthEnd = (offset = 0) => { const d = new Date(); d.setMonth(d.getMonth() + offset + 1, 0); return toISO(d); };
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -79,10 +79,7 @@ const QUICK_RANGES = [
   { label: 'Yesterday', from: () => daysAgo(1), to: () => daysAgo(1) },
   { label: 'Last 7 days', from: () => daysAgo(6), to: today },
   { label: 'Last 30 days', from: () => daysAgo(29), to: today },
-  { label: 'Last 90 days', from: () => daysAgo(89), to: today },
-  { label: 'This week', from: weekStartMonday, to: today },
   { label: 'This month', from: () => monthStart(0), to: today },
-  { label: 'Last month', from: () => monthStart(-1), to: () => monthEnd(-1) },
 ];
 
 function formatLabel(from, to) {
@@ -176,7 +173,7 @@ function MonthGrid({ monthDate, rangeStart, rangeEnd, hoverDate, onSelect, onHov
   );
 }
 
-export default function DateRangePicker({ from, to, onChange }) {
+export default function DateRangePicker({ from, to, onChange, boxed = false }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef(null);
   const popoverRef = useRef(null);
@@ -186,7 +183,6 @@ export default function DateRangePicker({ from, to, onChange }) {
   // with the calendar header chevrons; this is a view offset, not a filter.
   const anchorInit = fromISO(from) || fromISO(to) || new Date();
   const [viewAnchor, setViewAnchor] = useState(new Date(anchorInit.getFullYear(), anchorInit.getMonth(), 1));
-  const canGoNext = true; // future months allowed — upcoming rentals live there.
   const [draftFrom, setDraftFrom] = useState(from || '');
   const [draftTo, setDraftTo] = useState(to || '');
   const [hoverDate, setHoverDate] = useState('');
@@ -209,11 +205,9 @@ export default function DateRangePicker({ from, to, onChange }) {
 
   const popoverStyle = usePopoverPosition(triggerRef, open, [open]);
   const vw = useViewportWidth();
-  // Phone + tablet + iPad (BOTH orientations, up to and including iPad Pro at
-  // 1366) use the mobile-style bottom sheet. Desktop ≥1280 keeps the anchored
-  // dual-month popover exactly as designed.
+  // Narrow viewports get the mobile-style bottom sheet; desktop keeps a
+  // compact anchored popover (single month, ~300px wide).
   const isMobileSheet = vw < 1280;
-  const isWide = !isMobileSheet;
 
   // Close on outside tap / Escape, but ignore clicks inside either element.
   useEffect(() => {
@@ -259,17 +253,11 @@ export default function DateRangePicker({ from, to, onChange }) {
     setViewAnchor(v => { const d = new Date(v); d.setMonth(d.getMonth() + delta); return d; });
   };
 
-  const prevMonth = new Date(viewAnchor.getFullYear(), viewAnchor.getMonth() - 1, 1);
-  const curMonth = viewAnchor;
-
   const monthTitle = (d) => `${SHORT_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 
-  const presetsRail = (
-    // Sheet: 2-col grid so every preset is visible without any horizontal
-    // swipe. Desktop: vertical sidebar rail.
-    <div className={isWide
-      ? 'shrink-0 bg-gray-50/40 border-r border-gray-100 py-2 flex flex-col w-36'
-      : 'shrink-0 border-b border-gray-100 py-2 px-2 grid grid-cols-2 gap-1'}>
+  // Compact preset row shared by both layouts — one wrap line, no sidebar.
+  const presetsRow = (
+    <div className="flex flex-wrap gap-1.5 px-3 pt-3">
       {QUICK_RANGES.map(q => {
         const qf = q.from(); const qt = q.to();
         const active = draftFrom === qf && draftTo === qt;
@@ -278,7 +266,7 @@ export default function DateRangePicker({ from, to, onChange }) {
             key={q.label}
             type="button"
             onClick={() => handleQuick(q)}
-            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors text-center ${
+            className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
               active ? 'bg-[#bf4a53] text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-800 border border-gray-200/60'
             }`}
           >
@@ -286,47 +274,38 @@ export default function DateRangePicker({ from, to, onChange }) {
           </button>
         );
       })}
-      <button
-        type="button"
-        onClick={() => { setDraftFrom(''); setDraftTo(''); const anchor = new Date(); setViewAnchor(new Date(anchor.getFullYear(), anchor.getMonth(), 1)); }}
-        className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors text-center ${
-          isWide ? '' : 'col-span-2'
-        } bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-dashed border-gray-200/80`}
-      >
-        Clear dates
-      </button>
     </div>
   );
 
+  // Single month — the old dual-month desktop grid doubled the popover width
+  // for little benefit (chevrons + preset jumps cover navigation).
   const calendarCore = (
-    // Sheet/tablet: slight inset from the left edge (presets rail eats px-2)
-    // so the right padding visually balances the now-fluid month grid.
-    <div className={isWide ? 'p-3 flex gap-4' : 'pt-2 pb-3 px-2 sm:px-4'}>
-      {isWide && (
-        <div>
-          <div className="text-xs font-bold text-gray-900 mb-1 text-center">{monthTitle(prevMonth)}</div>
-          <MonthGrid monthDate={prevMonth} rangeStart={draftFrom} rangeEnd={draftTo} hoverDate={hoverDate} onSelect={handlePick} onHover={setHoverDate} />
-        </div>
-      )}
-      <div className={isWide ? undefined : 'mx-auto w-fit'}>
-        <div className={`flex items-center justify-between mb-1 ${isWide ? 'text-center' : ''}`}>
-          {!isWide && <button type="button" onClick={() => shiftMonths(-1)} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500"><ChevronLeft size={16} /></button>}
-          {isWide && <button type="button" onClick={() => shiftMonths(-1)} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 invisible"><ChevronLeft size={16} /></button>}
-          <div className="text-xs font-bold text-gray-900">{monthTitle(curMonth)}</div>
-          <button type="button" onClick={() => shiftMonths(1)} disabled={!canGoNext} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 disabled:opacity-30"><ChevronRight size={16} /></button>
-        </div>
-        <MonthGrid monthDate={curMonth} rangeStart={draftFrom} rangeEnd={draftTo} hoverDate={hoverDate} onSelect={handlePick} onHover={setHoverDate} />
+    <div className="px-3 pt-2 pb-1 mx-auto w-fit">
+      <div className="flex items-center justify-between mb-1">
+        <button type="button" onClick={() => shiftMonths(-1)} aria-label="Previous month" className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500"><ChevronLeft size={16} /></button>
+        <div className="text-xs font-bold text-gray-900">{monthTitle(viewAnchor)}</div>
+        <button type="button" onClick={() => shiftMonths(1)} aria-label="Next month" className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500"><ChevronRight size={16} /></button>
       </div>
+      <MonthGrid monthDate={viewAnchor} rangeStart={draftFrom} rangeEnd={draftTo} hoverDate={hoverDate} onSelect={handlePick} onHover={setHoverDate} />
     </div>
   );
+
+  const clearDraft = () => {
+    setDraftFrom('');
+    setDraftTo('');
+    const anchor = new Date();
+    setViewAnchor(new Date(anchor.getFullYear(), anchor.getMonth(), 1));
+  };
 
   const footer = (
-    <div className={`flex items-center justify-between gap-3 border-t border-gray-100 ${isWide ? 'mt-3 pt-2.5 px-3 pb-3' : 'px-5 py-3'}`}>
+    <div className="flex items-center justify-between gap-2 border-t border-gray-100 mt-2 px-3 py-2.5">
       <span className="text-xs font-semibold text-gray-700 truncate">{draftLabel}</span>
-      <div className="flex items-center gap-1.5 shrink-0">
-        <button type="button" onClick={close} className="px-2.5 py-1.5 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-full">Cancel</button>
+      <div className="flex items-center gap-1 shrink-0">
+        {(draftFrom || draftTo) && (
+          <button type="button" onClick={clearDraft} className="px-2.5 py-1.5 text-xs font-bold text-gray-400 hover:text-[#bf4a53] rounded-full transition-colors">Clear</button>
+        )}
         <button type="button" onClick={() => { onChange({ from: draftFrom, to: draftTo }); close(); }} disabled={!canApply && !dirty}
-          className="px-3 py-1.5 text-xs font-bold text-white bg-gray-900 rounded-full hover:bg-black disabled:opacity-40">
+          className="px-4 py-1.5 text-xs font-bold text-white bg-gray-900 rounded-full hover:bg-black disabled:opacity-40">
           Apply
         </button>
       </div>
@@ -346,7 +325,7 @@ export default function DateRangePicker({ from, to, onChange }) {
           <div className="flex justify-center pt-2.5 pb-1 shrink-0">
             <div className="w-10 h-1 bg-gray-200 rounded-full" />
           </div>
-          {presetsRail}
+          {presetsRow}
           {/* Calendar + footer scroll together if the sheet is short on height. */}
           <div className="overflow-y-auto flex-1">
             {calendarCore}
@@ -357,13 +336,11 @@ export default function DateRangePicker({ from, to, onChange }) {
     ) : (
       <div ref={popoverRef}
         style={popoverStyle}
-        className="bg-white rounded-2xl border border-gray-200/80 shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 flex flex-row"
+        className="bg-white rounded-2xl border border-gray-200/80 shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150 w-[300px]"
       >
-        {presetsRail}
-        <div>
-          {calendarCore}
-          {footer}
-        </div>
+        {presetsRow}
+        {calendarCore}
+        {footer}
       </div>
     ),
     document.body
@@ -378,14 +355,20 @@ export default function DateRangePicker({ from, to, onChange }) {
         type="button"
         ref={triggerRef}
         onClick={() => (open ? close() : openPicker())}
-        className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-bold transition-all shadow-sm border ${
-          hasValue
-            ? 'bg-gray-900 text-white border-gray-900'
-            : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400 hover:text-gray-800'
-        }`}
+        className={boxed
+          ? `flex-1 min-w-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer border ${
+              hasValue
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-gray-50 border-gray-200/60 text-gray-700 hover:border-gray-400'
+            }`
+          : `inline-flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-bold transition-all shadow-sm border ${
+              hasValue
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400 hover:text-gray-800'
+            }`}
       >
-        <Calendar size={13} />
-        {label}
+        <Calendar size={13} className="shrink-0" />
+        <span className="truncate">{label}</span>
       </button>
       {popover}
     </>

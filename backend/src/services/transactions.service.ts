@@ -193,6 +193,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
         data: {
           customerId: data.customerId,
           processedById: processedById ?? null,
+          // Staff audit: who assisted this booking (walk-ins included). Set
+          // ONCE here and never overwritten — release/return write their own
+          // columns/logs instead of clobbering this. Null = online booking.
+          assistedById: processedById ?? null,
           itemId: data.itemId,
           rentalDate: start,
           dueDate: end,
@@ -236,7 +240,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     entity: 'transaction',
     entityId: transaction.id,
     performedById: processedById,
-    newValue: { transactionId: transaction.id, itemId: data.itemId, customerId: data.customerId },
+    newValue: { transactionId: transaction.id, itemId: data.itemId, customerId: data.customerId, assistedById: processedById ?? null },
   });
 
   // Auto-confirmation notification
@@ -278,10 +282,14 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   } catch { /* QR generation is non-critical */ }
   (transaction as Record<string, unknown>).qrCodeDataUri = qrCodeDataUri;
 
-  // Auto-confirmation SMS
+  // Auto-confirmation SMS — skipped when the customer opted out
+  // (notifyPrefs.booking === false). The in-app + staff alerts above still
+  // fire, mirroring the overdue opt-out behavior.
   try {
     const customerProfile = await prisma.profile.findUnique({ where: { id: data.customerId } });
-    if (customerProfile?.phone) {
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsBookingSms = !prefs || prefs.booking !== false;
+    if (customerProfile?.phone && wantsBookingSms) {
       const template = await prisma.smsTemplate.findFirst({ where: { name: 'booking_confirmation' } });
       const message = template?.content
         ? applyTemplate(template.content, {
@@ -333,12 +341,20 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   return transaction;
 }
 
+// Staff audit selects: every full-record read carries who assisted the
+// booking, who released the item, and who last handled it.
+const staffAuditSelect = {
+  customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
+  processedBy: { select: { id: true, name: true } },
+  assistedBy: { select: { id: true, name: true } },
+  releasedBy: { select: { id: true, name: true } },
+} as const;
+
 export async function getTransaction(id: string) {
   const tx = await prisma.transaction.findUnique({
     where: { id },
     include: {
-      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
-      processedBy: { select: { id: true, name: true } },
+      ...staffAuditSelect,
       item: true,
       payments: { orderBy: { createdAt: 'desc' } },
     },
@@ -360,8 +376,7 @@ export async function getTransactionByBookingCode(code: string) {
   const tx = await prisma.transaction.findFirst({
     where: { id: { startsWith: clean.toLowerCase() } },
     include: {
-      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
-      processedBy: { select: { id: true, name: true } },
+      ...staffAuditSelect,
       item: true,
       payments: { orderBy: { createdAt: 'desc' } },
     },
@@ -393,6 +408,8 @@ export async function listTransactions(params: {
         include: {
           customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
           item: { select: { id: true, name: true, category: true } },
+          assistedBy: { select: { id: true, name: true } },
+          releasedBy: { select: { id: true, name: true } },
         },
       orderBy: { createdAt: 'desc' },
       take: params.limit ?? 500,
@@ -411,7 +428,8 @@ export async function processReturn(
   isDamaged: boolean,
   returnPhoto?: string,
   notes?: string,
-  damageReason?: string
+  damageReason?: string,
+  damageFeeOverride?: number | null
 ) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -426,7 +444,9 @@ export async function processReturn(
   if (tx.status === 'Cancelled') throw new AppError(400, 'Transaction was cancelled');
 
   const retDate = new Date(returnDate);
-  const fees = await calculateFees(tx.rentalDate, tx.dueDate, retDate, isDamaged);
+  const fees = await calculateFees(tx.rentalDate, tx.dueDate, retDate, isDamaged, {
+    damageFee: damageFeeOverride,
+  });
 
   const additionalCharges = fees.latePenalty + fees.damageFee;
   const newBalance = tx.balance + additionalCharges;
@@ -466,13 +486,14 @@ export async function processReturn(
   });
 
   // Staff alert: late return (only when returned after the due date).
+  // No penalty is charged (late fees removed) — this is an FYI for the queue.
   if (retDate.getTime() > tx.dueDate.getTime()) {
     try {
       await notifyStaffMembers({
         transactionId,
         type: 'late_return',
         title: 'Late Return',
-        message: `${tx.customer.name} returned "${tx.item.name}" late — penalty ₱${fees.latePenalty.toLocaleString()}.`,
+        message: `${tx.customer.name} returned "${tx.item.name}" late (no penalty charged).`,
       });
     } catch { /* notification is non-critical */ }
   }
@@ -613,6 +634,176 @@ export async function updateTransaction(
   return updated;
 }
 
+// AT-PICKUP item swap (in-shop): the customer is at the counter, sees a
+// better garment, and staff moves the SAME booking record onto it — dates,
+// customer, and payment history stay put, only the garment (and its derived
+// price) changes. Agreed policy:
+//   - promo/coupon is VOIDED (it was validated against the old item's price;
+//     the consumed use is handed back);
+//   - downpayment stays exactly as paid — NO refunds, so balance floors at 0;
+//   - size/measurements are cleared (different garment, different fit);
+//   - any release photo is voided (it documented the wrong garment), so the
+//     new item must be released + photographed normally afterwards.
+export async function swapBookingItem(
+  transactionId: string,
+  performedById: string,
+  newItemId: number
+) {
+  const existing = await prisma.transaction.findUnique({
+    where: { id: transactionId },
+    include: {
+      item: true,
+      customer: { select: { id: true, name: true, email: true } },
+    },
+  });
+  if (!existing) throw new AppError(404, 'Transaction not found');
+  if (existing.status === 'Returned') throw new AppError(400, 'Cannot swap the item on a returned transaction');
+  if (existing.status === 'Cancelled') throw new AppError(400, 'Cannot swap the item on a cancelled transaction');
+  if (existing.status === 'Overdue') throw new AppError(400, 'Cannot swap the item — the rental is already out');
+  if (existing.itemId === newItemId) throw new AppError(400, 'This booking is already on the selected item');
+
+  const replacement = await prisma.inventoryItem.findUnique({ where: { id: newItemId } });
+  if (!replacement || replacement.status === ItemStatus.Deleted) throw new AppError(404, 'Replacement item not found');
+  if (replacement.status === ItemStatus.OutOfService) {
+    throw new AppError(400, 'Replacement item is out of service and cannot be rented');
+  }
+  if (replacement.status === ItemStatus.Cleaning) {
+    throw new AppError(409, 'Replacement item is unavailable for the selected dates (being cleaned)');
+  }
+
+  const newFee = effectiveItemPrice(replacement);
+  const oldNotes = existing.notes ?? null;
+  const swapNote =
+    `Item swapped at pickup: "${existing.item.name}" → "${replacement.name}" ` +
+    `(fee ₱${existing.rentalFee.toLocaleString()} → ₱${newFee.toLocaleString()}; promo voided, downpayment kept)`;
+
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      await assertItemAvailable(
+        {
+          itemId: newItemId,
+          rentalDate: existing.rentalDate,
+          dueDate: existing.dueDate,
+          excludeTxId: transactionId,
+          cleaningDelayDays: CLEANING_DELAY_DAYS,
+        },
+        tx
+      );
+
+      // Promo void: hand the consumed use back so global/per-customer caps
+      // stay honest (the swap itself never re-validates a coupon).
+      if (existing.promoCodeId) {
+        await tx.promoCode.updateMany({
+          where: { id: existing.promoCodeId, currentUses: { gt: 0 } },
+          data: { currentUses: { decrement: 1 } },
+        });
+      }
+
+      // Downpayment is historical (what was actually paid) — never touched.
+      // Balance recomputes against the new fee and floors at 0: swapping to a
+      // cheaper item forfeits the overpayment, per boutique policy (no refunds).
+      const balance = Math.max(0, newFee - existing.totalPaid);
+
+      // Optimistic lock on updatedAt: a concurrent release/return touching the
+      // same row makes this a 409 ("please retry") instead of silently
+      // half-applying the swap over a release.
+      const res = await tx.transaction.updateMany({
+        where: { id: transactionId, updatedAt: existing.updatedAt },
+        data: {
+          itemId: newItemId,
+          rentalFee: newFee,
+          balance,
+          promoCodeId: null,
+          size: null,
+          // DbNull clears the column (plain `null` is not assignable to the
+          // nullable-JSON update type and `undefined` would leave it untouched).
+          measurements: Prisma.DbNull,
+          releasePhoto: null,
+          releasedById: null,
+          notes: oldNotes ? `${oldNotes}\n${swapNote}` : swapNote,
+        },
+      });
+      if (res.count === 0) throw new AppError(409, 'Booking changed while swapping — please retry');
+
+      // Old garment back to the pool (same rule as cancellation); new one held
+      // exactly like a fresh booking (future pickup → Reserved, today → Rented).
+      if (existing.item.status !== ItemStatus.OutOfService) {
+        await tx.inventoryItem.update({
+          where: { id: existing.itemId },
+          data: { status: ItemStatus.Available, outOfServiceReason: null },
+        });
+      }
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const isFuture = existing.rentalDate.getTime() > todayStart.getTime();
+      await tx.inventoryItem.update({
+        where: { id: newItemId },
+        data: { status: isFuture ? ItemStatus.Reserved : ItemStatus.Rented },
+      });
+
+      return tx.transaction.findUnique({
+        where: { id: transactionId },
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          item: { select: { id: true, name: true, category: true } },
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      throw new AppError(409, 'Replacement item is unavailable for the selected dates');
+    }
+    throw err;
+  }
+
+  await createAuditLog({
+    action: 'item_swap',
+    entity: 'transaction',
+    entityId: transactionId,
+    performedById,
+    oldValue: { itemId: existing.itemId, itemName: existing.item.name, rentalFee: existing.rentalFee, promoCodeId: existing.promoCodeId, balance: existing.balance },
+    newValue: { itemId: newItemId, itemName: replacement.name, rentalFee: newFee, promoCodeId: null, balance: updated!.balance },
+  });
+
+  // Tell the customer in-app + by email (best-effort, never blocks the swap).
+  const moneyLine = updated!.balance > 0
+    ? ` New balance: ₱${Number(updated!.balance).toLocaleString()} — please settle it at the counter.`
+    : ' Nothing more to pay.';
+  try {
+    await createNotification({
+      profileId: existing.customerId,
+      transactionId,
+      type: 'booking_updated',
+      title: 'Rental item changed',
+      message: `Your rental was changed from "${existing.item.name}" to "${replacement.name}".${moneyLine}`,
+    });
+  } catch { /* notification is non-critical */ }
+  try {
+    const customerProfile = await prisma.profile.findUnique({ where: { id: existing.customerId } });
+    const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+    const wantsEmail = !prefs || prefs.email !== false;
+    if (customerProfile?.email && wantsEmail && isSendableEmail(customerProfile.email)) {
+      await sendEmail({
+        to: customerProfile.email,
+        subject: `Rental item changed: ${replacement.name} — RenTech`,
+        html: `<p>Hi ${customerProfile.name},</p><p>At pickup your rental was changed from "<strong>${existing.item.name}</strong>" to "<strong>${replacement.name}</strong>".${moneyLine}</p><p>RenTech · Balayan, Batangas</p>`,
+        text: `Hi ${customerProfile.name},\n\nAt pickup your rental was changed from "${existing.item.name}" to "${replacement.name}".${moneyLine}\n\nRenTech · Balayan, Batangas`,
+      });
+    }
+  } catch { /* email is non-critical */ }
+
+  clearDataCache();
+
+  return {
+    ...updated,
+    swappedFrom: { id: existing.itemId, name: existing.item.name },
+    previousFee: existing.rentalFee,
+    promoVoided: !!existing.promoCodeId,
+  };
+}
+
 export async function cancelTransaction(transactionId: string, performedById: string) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -733,7 +924,17 @@ export async function releaseRental(
       releasePhoto: releasePhoto ?? null,
       notes: notes ?? undefined,
       processedById,
+      // Staff audit: who physically released the item. Set ONCE (first release
+      // wins) so a re-release can't rewrite history; assistedBy is untouched.
+      ...(tx.releasedById ? {} : { releasedById: processedById }),
       ...alterationPatch,
+    },
+    include: {
+      assistedBy: { select: { id: true, name: true } },
+      releasedBy: { select: { id: true, name: true } },
+      processedBy: { select: { id: true, name: true } },
+      customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
+      item: true,
     },
   });
 
@@ -742,14 +943,19 @@ export async function releaseRental(
     data: { status: ItemStatus.Rented },
   });
 
-  await createAuditLog({
-    action: 'update',
-    entity: 'transaction',
-    entityId: transactionId,
-    performedById: processedById,
-    newValue: { status: 'Active', released: true },
-    oldValue: { status: tx.status },
-  });
+  // A re-release (photo retake / notes touch-up) must not log a second
+  // "Item released" entry — otherwise the staff timeline shows a phantom
+  // double release. First release wins; the audit logs it exactly once.
+  if (!tx.releasedById) {
+    await createAuditLog({
+      action: 'update',
+      entity: 'transaction',
+      entityId: transactionId,
+      performedById: processedById,
+      newValue: { status: 'Active', released: true, releasedById: (updated as { releasedById?: string | null }).releasedById ?? null },
+      oldValue: { status: tx.status },
+    });
+  }
 
   // Order-pickup email (Brevo, best-effort — the item is in the customer's hands).
   try {
@@ -783,6 +989,60 @@ export async function releaseRental(
   clearDataCache();
 
   return updated;
+}
+
+// Staff activity timeline for one transaction: every audit_logs row for this
+// transaction (create/release/return/edit/cancel) plus its payment records,
+// oldest first, with the acting staff member's name resolved. Staff/Admin
+// only (route-guarded); AuditLog has no profile relation, so names resolve
+// via one profile query.
+export async function getTransactionAudits(transactionId: string) {
+  const [txLogs, payLogs] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: { entity: 'transaction', entityId: transactionId },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    }),
+    prisma.auditLog.findMany({
+      where: { entity: 'payment' },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    }),
+  ]);
+  const logs = [
+    ...txLogs,
+    ...payLogs.filter(
+      (l) => (l.newValue as { transactionId?: string } | null)?.transactionId === transactionId
+    ),
+  ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  // Defense-in-depth: collapse repeat "released" entries to the FIRST one.
+  // The release path now logs exactly once (first release wins), but legacy
+  // rows with two releases would otherwise render a phantom double entry.
+  const seenRelease = { done: false };
+  const deduped = logs.filter((l) => {
+    if ((l.newValue as { released?: boolean } | null)?.released === true) {
+      if (seenRelease.done) return false;
+      seenRelease.done = true;
+    }
+    return true;
+  });
+  const staffIds = [...new Set(deduped.map((l) => l.performedById).filter((id): id is string => !!id))];
+  const staff = staffIds.length
+    ? await prisma.profile.findMany({
+        where: { id: { in: staffIds } },
+        select: { id: true, name: true, role: true },
+      })
+    : [];
+  const byId = new Map(staff.map((s) => [s.id, s]));
+  return deduped.map((l) => ({
+    id: l.id,
+    action: l.action,
+    entity: l.entity,
+    oldValue: l.oldValue,
+    newValue: l.newValue,
+    createdAt: l.createdAt,
+    performedBy: l.performedById ? (byId.get(l.performedById) ?? { id: l.performedById, name: 'Unknown staff', role: null }) : null,
+  }));
 }
 
 export async function getUpcomingReturns() {

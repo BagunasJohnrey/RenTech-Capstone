@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { defineConfig } from 'prisma/config';
 
 // Prisma 7 removed the `package.json#prisma` block. Keep the seed command here

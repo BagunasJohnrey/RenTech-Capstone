@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ShieldCheck, MessageSquare, CreditCard, RefreshCw, Sparkles, Mail } from 'lucide-react';
 import { settingsService } from '../../services/settings';
+import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
 import SettingsCard from './SettingsCard';
 
 const INTEGRATIONS = [
@@ -13,25 +14,47 @@ const INTEGRATIONS = [
 ];
 
 // Admin Integrations tab: live connectivity status for AI, SMS and payments.
+// Stale-while-revalidate: the last-known status paints instantly with a
+// "Status X ago" label, then refreshes silently in the background. Manual
+// Refresh forces a live re-probe (bypasses the 60s server cache).
 export default function IntegrationsTab() {
-  const [integrations, setIntegrations] = useState(null);
+  const [integrations, setIntegrations] = useState(() => readCache(CACHE_KEYS.INTEGRATIONS)?.data ?? null);
+  const [checkedAt, setCheckedAt] = useState(() => readCache(CACHE_KEYS.INTEGRATIONS)?.at ?? null);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
+  // Re-render every 30s so the "Status X ago" label stays fresh.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
 
-  const loadIntegrations = async () => {
+  const loadIntegrations = useCallback(async (fresh = false) => {
     setIntegrationsLoading(true);
     try {
-      const data = await settingsService.getIntegrationsStatus();
+      const data = await settingsService.getIntegrationsStatus(fresh ? { fresh: true } : undefined);
       setIntegrations(data);
+      const at = Date.now();
+      setCheckedAt(at);
+      writeCache(CACHE_KEYS.INTEGRATIONS, data);
     } catch {
-      setIntegrations(null);
+      // Keep showing the cached status on failure — a failed probe shouldn't
+      // blank the last-known state. Only clear when nothing was ever cached.
+      setIntegrations((prev) => prev);
     } finally {
       setIntegrationsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadIntegrations();
-  }, []);
+    loadIntegrations(false);
+  }, [loadIntegrations]);
+
+  // Prefer the server's probe time (survives its 60s cache); fall back to
+  // when this client last received a response.
+  const probeAt = integrations?.checkedAt ?? checkedAt;
+  const statusLabel = integrations
+    ? (integrationsLoading ? `Refreshing… · Status ${formatCheckedAgo(probeAt)}` : `Status ${formatCheckedAgo(probeAt)}`)
+    : null;
 
   return (
     <SettingsCard
@@ -40,18 +63,29 @@ export default function IntegrationsTab() {
       title="System Integrations"
       desc="Live connectivity status for AI, SMS, email and payments"
       action={
-        <button
-          onClick={loadIntegrations}
-          disabled={integrationsLoading}
-          className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={13} className={integrationsLoading ? 'animate-spin' : ''} />
-          {integrationsLoading ? 'Checking…' : 'Refresh'}
-        </button>
+        <div className="shrink-0 flex items-center gap-2">
+          {statusLabel && (
+            <span className="hidden sm:block text-[11px] font-semibold text-gray-400 tabular-nums" title={probeAt ? new Date(probeAt).toLocaleString('en-PH') : undefined}>
+              {statusLabel}
+            </span>
+          )}
+          <button
+            onClick={() => loadIntegrations(true)}
+            disabled={integrationsLoading}
+            className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={integrationsLoading ? 'animate-spin' : ''} />
+            {integrationsLoading ? (integrations ? 'Refreshing…' : 'Checking…') : 'Refresh'}
+          </button>
+        </div>
       }
     >
+      {statusLabel && (
+        <p className="sm:hidden text-[11px] font-semibold text-gray-400 tabular-nums -mt-1">{statusLabel}</p>
+      )}
       <div className="space-y-3">
         {INTEGRATIONS.map(({ key, name, desc, icon: Icon, iconClass }) => {
+          const coldLoading = integrationsLoading && !integrations;
           const status = integrations?.[key];
           const online = status?.configured && status?.reachable;
           const simulated = status?.simulated && !status?.configured;
@@ -65,7 +99,7 @@ export default function IntegrationsTab() {
                 <div className="min-w-0">
                   <p className="font-bold text-sm text-gray-900">{name}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-                  {integrationsLoading && !status ? (
+                  {coldLoading && !status ? (
                     <p className="text-[11px] text-gray-400 mt-1">Checking…</p>
                   ) : status ? (
                     <p className="text-[11px] mt-1 truncate font-medium"
@@ -91,12 +125,12 @@ export default function IntegrationsTab() {
                 : 'bg-gray-100 text-gray-400'
               }`}>
                 <span className={`relative flex h-2 w-2`}>
-                  {(online || integrationsLoading) && <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${online ? 'bg-emerald-400' : 'bg-amber-400'}`} />}
+                  {(online || coldLoading) && <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 ${online ? 'bg-emerald-400' : 'bg-amber-400'}`} />}
                   <span className={`relative inline-flex rounded-full h-2 w-2 ${
                     online ? 'bg-emerald-500' : simulated ? 'bg-amber-400' : offline ? 'bg-red-500' : 'bg-gray-300'
                   }`} />
                 </span>
-                {integrationsLoading && !status ? 'Checking'
+                {coldLoading && !status ? 'Checking'
                   : online ? 'Live'
                   : simulated ? 'Simulated'
                   : offline ? 'Error'

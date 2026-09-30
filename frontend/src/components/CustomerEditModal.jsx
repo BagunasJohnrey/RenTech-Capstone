@@ -4,6 +4,7 @@ import { customerService } from '../services';
 import { useToast } from './Toast';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 
 // Edit only contact/profile details — item + fee changes stay "cancel + re-book".
 export default function CustomerEditModal({ customer, onClose, onSaved }) {
@@ -15,33 +16,38 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
     address: customer.address ?? '',
     preferences: customer.preferences ?? '',
   });
-  const [saving, setSaving] = useState(false);
+  // Ref guard: blocks double-tap Save (duplicate customer updates).
+  const { guarding: saving, guard: guardSave } = useButtonGuard();
 
   const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.name || form.name.trim().length < 2) {
       toastError('Full name is required (min 2 characters)');
       return;
     }
-    setSaving(true);
-    try {
-      const prefs = typeof form.preferences === 'string'
-        ? form.preferences.split(',').map(s => s.trim()).filter(Boolean)
-        : form.preferences;
-      const updated = await customerService.update(customer.id, {
-        name: form.name.trim(),
-        phone: form.phone || null,
-        address: form.address || null,
-        preferences: prefs,
-      });
-      toastSuccess('Customer updated');
-      onSaved?.(updated);
-      onClose();
-    } catch (err) {
-      toastError(err?.message || 'Failed to update customer');
+    if (form.phone && form.phone.length !== 11) {
+      toastError('Phone must be exactly 11 digits');
+      return;
     }
-    setSaving(false);
+    guardSave(async () => {
+      try {
+        const prefs = typeof form.preferences === 'string'
+          ? form.preferences.split(',').map(s => s.trim()).filter(Boolean)
+          : form.preferences;
+        const updated = await customerService.update(customer.id, {
+          name: form.name.trim(),
+          phone: form.phone || null,
+          address: form.address || null,
+          preferences: prefs,
+        });
+        toastSuccess('Customer updated');
+        onSaved?.(updated);
+        onClose();
+      } catch (err) {
+        toastError(err?.message || 'Failed to update customer');
+      }
+    });
   };
 
   const inputClass = 'w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]';
@@ -68,7 +74,8 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
 
         <div className="p-5 space-y-4">
           <Field label="Full Name" required value={form.name} onChange={(e) => update('name', e.target.value)} className={inputClass} autoComplete="name" />
-          <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value.replace(/\D/g, ''))} className={inputClass} inputMode="tel" autoComplete="tel" placeholder="0917…" />
+          <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} className={`${inputClass}${form.phone && form.phone.length !== 11 ? ' border-red-300' : ''}`} inputMode="tel" autoComplete="tel" placeholder="09171234567" />
+          {form.phone && form.phone.length !== 11 && <p className="text-[10px] text-red-500 -mt-2">Phone must be exactly 11 digits (e.g. 09171234567)</p>}
           <Field label="Address" value={form.address} onChange={(e) => update('address', e.target.value)} className={inputClass} autoComplete="street-address" placeholder="Street, Balayan, Batangas" />
           <Field label="Interests (comma separated item types)" value={form.preferences}
             onChange={(e) => update('preferences', e.target.value)} className={inputClass}

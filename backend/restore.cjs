@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS "transactions" (
   "tx_number" SERIAL,
   "customer_id" TEXT NOT NULL REFERENCES "profiles"("id"),
   "processed_by_id" TEXT REFERENCES "profiles"("id"),
+  "assisted_by_id" TEXT REFERENCES "profiles"("id"),
+  "released_by_id" TEXT REFERENCES "profiles"("id"),
   "item_id" INTEGER NOT NULL REFERENCES "inventory_items"("id"),
   "promo_code_id" TEXT REFERENCES "promo_codes"("id"),
   "rental_date" TIMESTAMPTZ NOT NULL,

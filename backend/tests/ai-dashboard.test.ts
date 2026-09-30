@@ -281,14 +281,47 @@ describe('GET /api/dashboard/insights', () => {
 });
 
 describe('POST /api/ai/generate-report', () => {
-  beforeAll(() => {
+  // A structurally complete report (all sections + numbered recommendations,
+  // no ₱ amounts so the amount-guard passes regardless of fixture data).
+  const FULL_REPORT = [
+    'Executive Summary',
+    'The boutique recorded stable rental activity with no overdue returns this period.',
+    'Key Performance Indicators',
+    'Active rentals are 10 with 0 overdue.',
+    'Revenue Analysis',
+    'No sales data available yet.',
+    'Inventory & Utilization',
+    'The catalog snapshot holds no items needing urgent action.',
+    'Operational Health',
+    'No overdue returns and no damaged items were recorded.',
+    'Demand Forecast',
+    'Projected rental volume is stable at current levels.',
+    'Recommendations',
+    '1. Run a category-themed promo week for slow-moving items to lift bookings.',
+    '2. Feature the most-rented items at the storefront to capture walk-in demand.',
+  ].join('\n');
+  // The truncated stub seen in production (provider cut off by token limits):
+  // passes the amount-guard (no ₱) but must fail structural validation.
+  const TRUNCATED_STUB = "Executive Summary:\n\n\n\nThe data for Mylene's Boutique for the month of September 2021 is as follows:";
+
+  beforeAll(async () => {
+    // Route generateReport past the no-keys fallback into the Gemini path
+    // (setup.ts blanks all provider keys so tests never hit live APIs).
+    // Mutating the shared env object works — the service reads it per call.
+    const { env } = await import('../src/config/env.js');
+    env.GEMINI_API_KEY = 'test-key';
     global.fetch = vi.fn();
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        candidates: [{ content: { parts: [{ text: 'Executive Summary: The boutique is performing well.' }] } }],
+        candidates: [{ content: { parts: [{ text: FULL_REPORT }] } }],
       }),
     });
+  });
+
+  afterAll(async () => {
+    const { env } = await import('../src/config/env.js');
+    env.GEMINI_API_KEY = '';
   });
 
   it('should generate AI report for admin', async () => {
@@ -310,6 +343,41 @@ describe('POST /api/ai/generate-report', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('report');
     expect(res.body).toHaveProperty('source');
+    expect(res.body.source).toBe('ai');
+    expect(res.body).toHaveProperty('reportId');
+  });
+
+  it('rejects a truncated provider stub as source=error without saving history', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.count
+      .mockResolvedValueOnce(10)
+      .mockResolvedValueOnce(15)
+      .mockResolvedValueOnce(12)
+      .mockResolvedValueOnce(18)
+      .mockResolvedValueOnce(20)
+      .mockResolvedValueOnce(22);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([]);
+    prisma.payment.findMany.mockResolvedValueOnce([]);
+
+    // Both the first attempt and the correction retry return the stub.
+    const stub = {
+      ok: true,
+      json: () => Promise.resolve({
+        candidates: [{ content: { parts: [{ text: TRUNCATED_STUB }] } }],
+      }),
+    };
+    (global.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(stub)
+      .mockResolvedValueOnce(stub);
+
+    const res = await request(app)
+      .post('/api/ai/generate-report')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.source).toBe('error');
+    expect(res.body.report).toMatch(/incomplete|truncated/i);
+    expect(res.body).not.toHaveProperty('reportId');
   });
 
   it('should reject for customer', async () => {

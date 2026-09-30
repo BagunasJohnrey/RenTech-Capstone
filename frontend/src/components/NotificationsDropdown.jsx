@@ -6,6 +6,7 @@ import {
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useHandledMessages } from '../hooks/useHandledMessages';
 import ConfirmModal from './ConfirmModal';
 
 export const TYPE_CONFIG = {
@@ -77,6 +78,8 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [offlineToast, setOfflineToast] = useState(false);
   const [filter, setFilter] = useState('all'); // 'all' | 'new'
+  // Done messages don't count toward the Messages pill number.
+  const { handled } = useHandledMessages();
   // Delete confirmation: { mode: 'one', id, title } | { mode: 'all' } | null
   const [confirmDelete, setConfirmDelete] = useState(null);
 
@@ -153,9 +156,25 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
     }
   };
 
-  // Tapping a notification marks it read and jumps to its page.
+  // Jump to the main Notifications page with a preselected section (the
+  // page consumes + clears the hint on arrival).
+  const goNotificationsSection = (section) => {
+    try {
+      sessionStorage.setItem('rentech_notif_section', section);
+    } catch { /* private mode */ }
+    toggle();
+    if (onNavigateTab) onNavigateTab('Notifications');
+  };
+
+  // Tapping a notification marks it read and jumps to its page. Customer
+  // messages land on the main Notifications page (Messages section) instead
+  // of the standalone inbox.
   const handleOpen = (n) => {
     if (!n.isRead) handleMarkRead(n.id);
+    if (n.type === 'customer_message') {
+      goNotificationsSection('messages');
+      return;
+    }
     toggle();
     if (onNavigateTab) onNavigateTab(targetTabForNotification(n.type, role));
   };
@@ -266,8 +285,8 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
               </div>
             </div>
 
-            {/* Filter tabs */}
-            <div className="relative flex items-center gap-1.5 mt-3">
+            {/* Filter tabs + Messages shortcut (jumps to the main page) */}
+            <div className="relative flex items-center gap-1.5 mt-3 flex-wrap">
               {[
                 { key: 'all', label: 'All', count: notifications.length },
                 { key: 'new', label: 'New', count: notifications.filter((n) => !n.isRead).length },
@@ -287,6 +306,26 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
                   )}
                 </button>
               ))}
+              {role === 'Admin' && (() => {
+                const openMsgs = notifications.filter((n) => n.type === 'customer_message' && !handled.has(n.id));
+                const msgCount = openMsgs.length;
+                const msgUnread = openMsgs.filter((n) => !n.isRead).length;
+                return (
+                  <button
+                    onClick={() => goNotificationsSection('messages')}
+                    title="Open customer messages on the Notifications page"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold backdrop-blur transition-colors bg-blue-400/25 text-white hover:bg-blue-400/40"
+                  >
+                    <MessageCircle size={12} />
+                    Messages
+                    {msgCount > 0 && (
+                      <span className="ml-1 rounded-full bg-white text-blue-600 text-[10px] font-bold min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center tabular-nums">
+                        {msgUnread > 0 ? msgUnread : msgCount}
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
             </div>
           </div>
 

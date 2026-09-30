@@ -46,6 +46,17 @@ export const env = {
   BREVO_SENDER_EMAIL: process.env.BREVO_SENDER_EMAIL || '',
   BREVO_SENDER_NAME: process.env.BREVO_SENDER_NAME || 'RenTech',
 
+  // RAG retrieval (AI stylist grounding). Tier 1 keyword retrieval is always
+  // on; RAG_ENABLED=false restores the legacy full-catalog prompt. RAG_TOP_K
+  // caps grounded items per prompt (token/latency budget). EMBED_MODEL +
+  // EMBED_CACHE_MIN drive the Tier 2 pgvector path; REINDEX_SECRET guards the
+  // cron reindex endpoint (Admin JWT also accepted).
+  RAG_ENABLED: process.env.RAG_ENABLED !== 'false',
+  RAG_TOP_K: parseInt(process.env.RAG_TOP_K || '8', 10) || 8,
+  EMBED_MODEL: process.env.EMBED_MODEL || 'gemini-embedding-001',
+  EMBED_CACHE_MIN: parseInt(process.env.EMBED_CACHE_MIN || '15', 10) || 15,
+  REINDEX_SECRET: process.env.REINDEX_SECRET || '',
+
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
 
   // Groq fallback (second tier: Gemini → Groq → OpenRouter). Low-latency
@@ -67,11 +78,13 @@ export const env = {
   // at most IMAGE_MAX_DIM px on its longest edge, and re-encoded as WebP at
   // IMAGE_WEBP_QUALITY before it reaches the storage bucket. A small
   // IMAGE_THUMB_DIM px WebP derivative (IMAGE_THUMB_QUALITY) is stored
-  // alongside under `thumbs/` for grid thumbnails. Mirrors the client-side
+  // alongside under `thumbs/` for grid thumbnails. 768px keeps catalog /
+  // collection cards crisp on 2x displays (the old 480px thumbs rendered
+  // soft at card sizes) while staying far smaller than the full image. Mirrors the client-side
   // canvas downscale (utils/file.js) so direct API uploads (curl/Postman)
   // can't land full-size images in the bucket.
   IMAGE_MAX_DIM: parseInt(process.env.IMAGE_MAX_DIM || '1280', 10),
   IMAGE_WEBP_QUALITY: parseInt(process.env.IMAGE_WEBP_QUALITY || '78', 10),
-  IMAGE_THUMB_DIM: parseInt(process.env.IMAGE_THUMB_DIM || '480', 10),
-  IMAGE_THUMB_QUALITY: parseInt(process.env.IMAGE_THUMB_QUALITY || '70', 10),
+  IMAGE_THUMB_DIM: parseInt(process.env.IMAGE_THUMB_DIM || '768', 10),
+  IMAGE_THUMB_QUALITY: parseInt(process.env.IMAGE_THUMB_QUALITY || '78', 10),
 };

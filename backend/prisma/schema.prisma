@@ -51,6 +51,8 @@ model Profile {
 
   customerTransactions Transaction[]    @relation("CustomerTransactions")
   processedByTransactions Transaction[] @relation("ProcessedByTransactions")
+  assistedTransactions Transaction[] @relation("AssistedTransactions")
+  releasedTransactions Transaction[] @relation("ReleasedTransactions")
   notifications  Notification[]
   sentMessages   SentSms[]              @relation("SentMessages")
   sentByMessages SentSms[]              @relation("SentByMessages")
@@ -63,6 +65,10 @@ model InventoryItem {
   id          Int        @id @default(autoincrement())
   name        String
   category    String
+  occasions   String[]   @default([])
+  // Staff-only color tags (never rendered on cards) — powers the catalog
+  // Colors filter, text search, and RAG color matching ("green theme gowns").
+  colors      String[]   @default([])
   price       Float
   status      ItemStatus @default(Available)
   image       String?
@@ -73,6 +79,10 @@ model InventoryItem {
   salePrice   Float?     @map("sale_price")
   saleEndsAt  DateTime?  @map("sale_ends_at")
   outOfServiceReason String? @map("out_of_service_reason")
+  // Tier 2 RAG: dense embedding (Gemini text-embedding-004, 768-dim).
+  // NULL until the offline reindex runs. Raw SQL (match_chunks RPC) reads it
+  // so retrieval works even before `prisma generate` picks up this column.
+  embedding Unsupported("vector(768)")?
   createdAt   DateTime   @default(now()) @map("created_at")
   updatedAt   DateTime   @updatedAt @map("updated_at")
 
@@ -82,11 +92,35 @@ model InventoryItem {
   @@map("inventory_items")
 }
 
+// Tier 2 RAG: semantic knowledge index (pgvector, HNSW). One chunk per
+// inventory item (source='inventory', sourceId=item id), one per BusinessRule
+// (source='rule'), one per SmsTemplate (source='template'). Written ONLY by
+// the offline ingestion path (scripts/reindex-knowledge.ts, POST /ai/reindex)
+// — never on the chat request path.
+model KnowledgeChunk {
+  // Native UUID PK to match prisma/rag_pgvector.sql (Prisma's uuid() default
+  // would be TEXT and `db push` would try to rewrite the live PK column).
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  source    String
+  sourceId  String?  @map("source_id")
+  chunk     String
+  embedding Unsupported("vector(768)")?
+  metadata  Json?
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([source, sourceId])
+  @@map("knowledge_chunks")
+}
+
 model Transaction {
   id              String            @id @default(uuid())
   txNumber        Int               @default(autoincrement()) @map("tx_number")
   customerId      String            @map("customer_id")
   processedById   String?           @map("processed_by_id")
+  // Staff who created/assisted the booking (set once at create, never overwritten).
+  assistedById    String?           @map("assisted_by_id")
+  // Staff who physically released the item at pickup (set once at release).
+  releasedById    String?           @map("released_by_id")
   itemId          Int               @map("item_id")
   promoCodeId     String?           @map("promo_code_id")
   rentalDate      DateTime          @map("rental_date")
@@ -120,6 +154,8 @@ model Transaction {
 
   customer      Profile        @relation("CustomerTransactions", fields: [customerId], references: [id])
   processedBy   Profile?       @relation("ProcessedByTransactions", fields: [processedById], references: [id])
+  assistedBy    Profile?       @relation("AssistedTransactions", fields: [assistedById], references: [id], onDelete: SetNull)
+  releasedBy    Profile?       @relation("ReleasedTransactions", fields: [releasedById], references: [id], onDelete: SetNull)
   item          InventoryItem  @relation(fields: [itemId], references: [id])
   promoCode     PromoCode?     @relation(fields: [promoCodeId], references: [id])
   notifications Notification[]
@@ -130,6 +166,8 @@ model Transaction {
   @@index([customerId, status])
   @@index([status, dueDate])
   @@index([processedById])
+  @@index([assistedById])
+  @@index([releasedById])
   @@index([createdAt])
   @@map("transactions")
 }

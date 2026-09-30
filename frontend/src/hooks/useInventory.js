@@ -29,6 +29,8 @@ export function useInventory() {
     const payload = {
       name: newItem.name,
       category: newItem.category,
+      occasions: newItem.occasions || [],
+      colors: newItem.colors || [],
       price: newItem.price,
       status: newItem.status || 'Available',
       image: newItem.image || null,
@@ -50,6 +52,8 @@ export function useInventory() {
     const payload = {
       name: updatedItem.name,
       category: updatedItem.category,
+      occasions: updatedItem.occasions,
+      colors: updatedItem.colors,
       price: updatedItem.price,
       status: updatedItem.status,
       image: updatedItem.image,

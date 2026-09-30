@@ -12,11 +12,17 @@ type TxShape = {
   conditionPhoto: string | null;
 };
 
-export async function getInventoryAnalytics(startDate?: Date) {
-  const key = startDate ? `inventory-analytics:${startDate.toISOString()}` : 'inventory-analytics:all';
+export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
+  const key = startDate
+    ? `inventory-analytics:${startDate.toISOString()}:${endDate?.toISOString() ?? 'open'}`
+    : 'inventory-analytics:all';
   return cacheOrCompute(key, async () => {
     const txWhere: any = { status: { in: ['Active', 'Returned', 'Overdue'] } };
-    if (startDate) txWhere.rentalDate = { gte: startDate };
+    if (startDate || endDate) {
+      txWhere.rentalDate = {};
+      if (startDate) txWhere.rentalDate.gte = startDate;
+      if (endDate) txWhere.rentalDate.lt = endDate;
+    }
 
     // Light item select + one transaction query, grouped in JS — the old
     // `include: { transactions }` loaded every item's full history into memory.
@@ -45,7 +51,31 @@ export async function getInventoryAnalytics(startDate?: Date) {
       else txsByItem.set(t.itemId, [t]);
     }
 
+    // Days Idle stays a current-state column even in a period view (an item
+    // with no returns *in July* isn't "— idle" — it may have been idle since
+    // June), so when a window is active fetch the global latest return per
+    // item once and reuse it for every row.
+    let globalLastReturnByItem: Map<number, Date> | null = null;
+    if (startDate || endDate) {
+      const allReturns = await prisma.transaction.findMany({
+        where: { status: { in: ['Active', 'Returned', 'Overdue'] }, returnDate: { not: null } },
+        select: { itemId: true, returnDate: true },
+      });
+      globalLastReturnByItem = new Map();
+      for (const r of allReturns) {
+        if (!r.returnDate) continue;
+        const prev = globalLastReturnByItem.get(r.itemId);
+        if (!prev || r.returnDate > prev) globalLastReturnByItem.set(r.itemId, r.returnDate);
+      }
+    }
+
     const now = new Date();
+    // Period-aware utilization: rented days from rentals *started* in the
+    // window, over the window length (Jul 2026 → /31 days). Overall keeps the
+    // lifetime denominator so the all-time view is unchanged.
+    const periodDays = startDate
+      ? Math.max(1, Math.ceil(((endDate ?? now).getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)))
+      : null;
     const analytics = items.map(item => {
       const tx = txsByItem.get(item.id) || [];
       const totalRentals = tx.length;
@@ -57,21 +87,33 @@ export async function getInventoryAnalytics(startDate?: Date) {
         return days + Math.ceil((end.getTime() - t.rentalDate.getTime()) / (1000 * 60 * 60 * 24));
       }, 0);
 
-      const earliestTx = tx.length > 0 ? tx.reduce((a, b) => a.rentalDate < b.rentalDate ? a : b) : null;
-      const daysSinceFirstRental = earliestTx
-        ? Math.max(1, Math.ceil((now.getTime() - earliestTx.rentalDate.getTime()) / (1000 * 60 * 60 * 24)))
-        : 1;
+      let utilizationPct: number;
+      if (periodDays) {
+        utilizationPct = Math.min(100, Math.round((totalRentedDays / periodDays) * 100));
+      } else {
+        const earliestTx = tx.length > 0 ? tx.reduce((a, b) => a.rentalDate < b.rentalDate ? a : b) : null;
+        const daysSinceFirstRental = earliestTx
+          ? Math.max(1, Math.ceil((now.getTime() - earliestTx.rentalDate.getTime()) / (1000 * 60 * 60 * 24)))
+          : 1;
+        utilizationPct = Math.min(100, Math.round((totalRentedDays / daysSinceFirstRental) * 100));
+      }
 
-      const utilizationPct = Math.min(100, Math.round((totalRentedDays / daysSinceFirstRental) * 100));
+      let daysIdle: number | null;
+      if (globalLastReturnByItem) {
+        const lastGlobal = globalLastReturnByItem.get(item.id);
+        daysIdle = lastGlobal
+          ? Math.ceil((now.getTime() - lastGlobal.getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+      } else {
+        const lastReturn = tx.filter(t => t.returnDate).sort((a, b) => new Date(b.returnDate!).getTime() - new Date(a.returnDate!).getTime())[0];
+        daysIdle = lastReturn
+          ? Math.ceil((now.getTime() - lastReturn.returnDate!.getTime()) / (1000 * 60 * 60 * 24))
+          : null;
+      }
 
-      const lastReturn = tx.filter(t => t.returnDate).sort((a, b) => new Date(b.returnDate!).getTime() - new Date(a.returnDate!).getTime())[0];
-      const daysIdle = lastReturn
-        ? Math.ceil((now.getTime() - lastReturn.returnDate!.getTime()) / (1000 * 60 * 60 * 24))
-        : null;
-
-      // Transaction footprint for the Item Performance tx-status filter:
-      // every status this item has ever held + whether any handover was
-      // photo-proven ("Released", same meaning as the History tabs).
+      // Transaction footprint for the Item Performance tx-status filter —
+      // scoped to the active window (like rentals/revenue above) so the
+      // Transact. dropdown matches the period being viewed.
       const txStatuses = [...new Set(tx.map(t => t.status))];
       const hasReleased = tx.some(t => t.releasePhoto || t.conditionPhoto);
 

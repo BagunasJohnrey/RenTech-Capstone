@@ -231,16 +231,20 @@ export async function getDownloadUrl(path: string) {
   } catch (err) {
     // Transport-level failure (DNS, connection reset, timeout, paused
     // project): storage-js throws instead of returning { error }.
-    console.error(`[storage] createSignedUrl threw for "${path}":`, (err as Error)?.message ?? err);
+    // The bucket is logged so a wrong-bucket misconfiguration (e.g. a stale
+    // STORAGE_BUCKET in a long-lived dev process) is distinguishable from a
+    // genuinely missing object without a second debugging round.
+    console.error(`[storage] createSignedUrl threw for "${path}" in bucket "${BUCKET_NAME}":`, (err as Error)?.message ?? err);
     throw new AppError(503, 'Image service temporarily unavailable — please try again');
   }
 
   if (error) {
     // Log the real Supabase error so ops can distinguish "file missing" from
-    // "auth failure" / "bucket not found" / network issues.
+    // "auth failure" / "bucket not found" / network issues. The bucket is
+    // included for the same stale-env reason as above.
     const errRec = error as { message?: unknown; status?: unknown; statusCode?: unknown };
     const message = typeof errRec?.message === 'string' ? errRec.message : String(errRec?.message ?? '');
-    console.error(`[storage] createSignedUrl failed for "${path}":`, message, error);
+    console.error(`[storage] createSignedUrl failed for "${path}" in bucket "${BUCKET_NAME}":`, message, error);
     const status = storageErrorStatus(errRec);
     if (status === 503) {
       throw new AppError(503, 'Image service temporarily unavailable — please try again');

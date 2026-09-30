@@ -27,6 +27,8 @@ export const createItemSchema = z.object({
   body: z.object({
     name: z.string().min(1),
     category: z.string().min(1),
+    occasions: z.array(z.string().min(1).max(40)).max(12).optional(),
+    colors: z.array(z.string().min(1).max(30)).max(10).optional(),
     price: z.coerce.number().positive(),
     image: z.string().nullable().optional(),
     description: z.string().nullable().optional(),
@@ -44,6 +46,8 @@ export const updateItemSchema = z.object({
   body: z.object({
     name: z.string().min(1).optional(),
     category: z.string().min(1).optional(),
+    occasions: z.array(z.string().min(1).max(40)).max(12).optional(),
+    colors: z.array(z.string().min(1).max(30)).max(10).optional(),
     price: z.coerce.number().positive().optional(),
     status: z.nativeEnum(ItemStatus).optional(),
     outOfServiceReason: z.string().nullable().optional(),
@@ -117,6 +121,7 @@ export async function listItems(req: Request, res: Response, next: NextFunction)
     const isAuthenticated = !!authReq.user;
     const status = capQuery(req.query.status as string | undefined);
     const category = capQuery(req.query.category as string | undefined);
+    const occasion = capQuery(req.query.occasion as string | undefined);
     const search = capQuery(req.query.search as string | undefined);
 
     const isAdmin = authReq.user?.role === Role.Admin;
@@ -126,6 +131,7 @@ export async function listItems(req: Request, res: Response, next: NextFunction)
       category,
       search,
       {
+        occasion,
         // Staff/Admin see the true stored status (full lifecycle management).
         // Customers get the transaction-derived effective status so a piece
         // that is currently rented out or overdue never reads as "Available".
@@ -175,7 +181,7 @@ export async function updateItem(req: AuthenticatedRequest, res: Response, next:
     assertSaleAdminOnly(req.body, req.user?.role);
 
     if (req.user?.role === Role.Staff) {
-      const allowedFields = ['name', 'category', 'price', 'description', 'size', 'image', 'status', 'outOfServiceReason'];
+      const allowedFields = ['name', 'category', 'occasions', 'colors', 'price', 'description', 'size', 'image', 'status', 'outOfServiceReason'];
       const attemptedFields = Object.keys(req.body);
       const disallowed = attemptedFields.filter(f => !allowedFields.includes(f));
       if (disallowed.length > 0) {

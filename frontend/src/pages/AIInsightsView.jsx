@@ -38,23 +38,33 @@ function readAiCache(key) {
   return hit.data;
 }
 
+// Snapshot age for the "Updated X ago" label under Insights (same pattern as
+// Settings → Integrations / Data & Backups).
+function readAiCacheAt(key) {
+  const hit = aiCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > AI_CACHE_STALE_MS) return null;
+  return hit.at;
+}
+
 // AI-generated promo/restock suggestions — cached in localStorage for 1 day
 // (survives reloads; refresh button forces a fresh call). Deliberately not
 // auto-called on every page load: Gemini is slow + costs money.
+// Returns the raw { data, at } entry so callers can also show "Updated X ago".
 const AI_SUGGEST_TTL_MS = 24 * 60 * 60 * 1000;
 const AI_SUGGEST_KEY = 'rentech_ai_suggestions';
 const aiSuggestCache = new Map();
 
 function readAiSuggestCache() {
   const mem = aiSuggestCache.get('all');
-  if (mem && Date.now() - mem.at <= AI_SUGGEST_TTL_MS) return mem.data;
+  if (mem && Date.now() - mem.at <= AI_SUGGEST_TTL_MS) return mem;
   try {
     const raw = localStorage.getItem(AI_SUGGEST_KEY);
     if (!raw) return null;
     const { data, at } = JSON.parse(raw);
     if (Date.now() - at <= AI_SUGGEST_TTL_MS) {
       aiSuggestCache.set('all', { data, at });
-      return data;
+      return { data, at };
     }
     localStorage.removeItem(AI_SUGGEST_KEY);
   } catch {
@@ -71,6 +81,7 @@ function writeAiSuggestCache(data) {
   } catch {
     // storage unavailable — in-memory cache still works for this session
   }
+  return at;
 }
 
 export default function AIInsightsView({ analyticsData, role, onViewItemTransactions, onNavigateTab, cleaningItems = [], onBulkClean }) {
@@ -137,8 +148,20 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // skeleton — range/period switches would otherwise flash skeleton→content
   // on every cache miss. The sections just stay put until the new data lands.
   const [everRendered, setEverRendered] = useState(false);
-  const [aiSuggestions, setAiSuggestions] = useState(() => readAiSuggestCache());
+  const [aiSuggestions, setAiSuggestions] = useState(() => readAiSuggestCache()?.data ?? null);
+  const [suggestAt, setSuggestAt] = useState(() => readAiSuggestCache()?.at ?? null);
   const [suggestLoading, setSuggestLoading] = useState(false);
+  // "Updated X ago" for the rule-based highlights: age of the bundle snapshot
+  // the current insights were derived from (same pattern as Settings →
+  // Integrations / Data & Backups). When AI suggestions are shown, their own
+  // cache time is used instead (see updatedAt on InsightsPanel below).
+  const [dataAt, setDataAt] = useState(() => readAiCacheAt(cacheKey));
+  // Re-render every 30s so the "Updated X ago" label stays fresh.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
   // Forecast granularity: monthly comes with the bundle; weekly is fetched
   // on demand from /dashboard/forecast?granularity=weekly (admin-only).
   const [granularity, setGranularity] = useState('monthly');
@@ -200,6 +223,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
       setRevenueWeeklyData(hit.insights?.revenueByWeek || null);
       setInventoryAnalytics(hit.analytics);
       setAnalyticsSummary(hit.analytics?.summary);
+      setDataAt(readAiCacheAt(cacheKey));
       setLoaded(true);
       setEverRendered(true);
     }
@@ -228,6 +252,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         setRevenueWeeklyData(r?.insights?.revenueByWeek || null);
         setInventoryAnalytics(r?.analytics ?? null);
         setAnalyticsSummary(r?.analytics?.summary ?? null);
+        setDataAt(Date.now());
         settle();
         return r;
       });
@@ -280,7 +305,21 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const handleGenerateReport = () => {
     setReportLoading(true);
     api.post('/ai/generate-report', undefined, { timeout: 60000 })
-      .then(r => { setAiReport(r.report || r); setShowReportModal(true); loadRecentReports(); })
+      .then(r => {
+        // Provider down / rate-limited / flagged / truncated → toast instead
+        // of opening the modal on a one-line error stub.
+        if (r?.source === 'error') {
+          toastError(r?.retryable
+            ? 'AI is currently experiencing high traffic. Please try again in a moment.'
+            : /flagged/.test(r.report || '')
+              ? 'AI report was rejected because it invented figures. Please try again.'
+              : /incomplete|truncated/.test(r.report || '')
+                ? 'AI returned an incomplete report. Please try again.'
+                : 'AI generation is temporarily unavailable. Try again in a few minutes.');
+          return;
+        }
+        setAiReport(r.report || r); setShowReportModal(true); loadRecentReports();
+      })
       .catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); })
       .finally(() => setReportLoading(false));
   };
@@ -293,22 +332,26 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     if (!force) {
       const hit = readAiSuggestCache();
       if (hit) {
-        setAiSuggestions(hit);
+        setAiSuggestions(hit.data);
+        setSuggestAt(hit.at);
         return;
       }
     }
     setSuggestLoading(true);
     try {
       const r = await api.post('/ai/generate-report', undefined, { timeout: 60000 });
-      // Provider down / rate-limited / hallucination-flagged → keep static
-      // insights and say so plainly, instead of a confusing format error.
+      // Provider down / rate-limited / hallucination-flagged / truncated →
+      // keep static insights and say so plainly, instead of a confusing
+      // format error.
       if (r?.source === 'error') {
         setAiSuggestions(null);
         toastError(r?.retryable
           ? 'AI is currently experiencing high traffic — showing static insights. Please try again in a moment.'
           : /flagged/.test(r.report || '')
             ? 'AI report was rejected because it invented figures — showing static insights.'
-            : 'AI generation is temporarily unavailable. Showing static insights — try again in a few minutes.');
+            : /incomplete|truncated/.test(r.report || '')
+              ? 'AI returned an incomplete report — showing static insights. Please try again.'
+              : 'AI generation is temporarily unavailable. Showing static insights — try again in a few minutes.');
         return;
       }
       const suggestions = extractRecommendations(r.report || r);
@@ -317,7 +360,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         setAiSuggestions(null);
         return;
       }
-      writeAiSuggestCache(suggestions);
+      setSuggestAt(writeAiSuggestCache(suggestions));
       setAiSuggestions(suggestions);
     } catch (err) {
       toastError(err?.message || 'Failed to generate AI suggestions');
@@ -612,6 +655,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           <InsightsPanel
             role={role} aiSuggestions={aiSuggestions} suggestLoading={suggestLoading}
             handleAiSuggest={handleAiSuggest} insights={insights}
+            updatedAt={aiSuggestions?.length ? suggestAt : dataAt}
           />
         </div>
 

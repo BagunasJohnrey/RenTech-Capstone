@@ -55,6 +55,10 @@ router.post('/mfa/setup', authMiddleware, requireRole(Role.Admin), authControlle
 router.post('/mfa/enable', authMiddleware, requireRole(Role.Admin), validate(authController.mfaEnableSchema), authController.mfaEnable);
 router.post('/mfa/disable', authMiddleware, requireRole(Role.Admin), authController.mfaDisable);
 router.post('/login/mfa', createRateLimiter(10, 60_000), validate(authController.mfaChallengeSchema), authController.mfaChallenge);
+// In-session step-up: re-prove the second factor for the CURRENT session when
+// the MFA-verified marker was lost (no re-login). Same brute-force throttle
+// as the login challenge. NOT behind requireMfaAdmin (it is the remedy).
+router.post('/mfa/step-up', authMiddleware, requireRole(Role.Admin), createRateLimiter(10, 60_000), validate(authController.mfaStepUpSchema), authController.mfaStepUp);
 
 router.get('/me', authMiddleware, authController.getMe);
 router.put('/me', authMiddleware, validate(authController.updateProfileSchema), authController.updateMe);

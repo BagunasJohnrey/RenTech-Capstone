@@ -538,7 +538,7 @@ export async function getDashboardBundle(filter?: { start?: Date; end?: Date; pa
       // Single forecast implementation (monthly SMA + projections +
       // per-category) shared with GET /forecast — no duplicated bucketing.
       getForecast(forecastPeriod),
-      getInventoryAnalytics(),
+      getInventoryAnalytics(filter?.start, filter?.end),
     ]);
     return { kpis, insights, forecast, analytics };
   });

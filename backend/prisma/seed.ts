@@ -40,12 +40,22 @@ async function main() {
     },
   ];
 
+  // Name-based upsert: SmsTemplate.name has no unique constraint and rows
+  // created via the settings API get uuid ids, so upserting by id would
+  // duplicate rows on re-seed. Match by name instead — this also heals live
+  // DBs that are missing a template (e.g. booking_confirmation).
   for (const template of templates) {
-    await prisma.smsTemplate.upsert({
-      where: { id: template.name },
-      update: template,
-      create: { id: template.name, ...template },
+    const existing = await prisma.smsTemplate.findFirst({
+      where: { name: template.name },
     });
+    if (existing) {
+      await prisma.smsTemplate.update({
+        where: { id: existing.id },
+        data: { content: template.content, isDefault: true },
+      });
+    } else {
+      await prisma.smsTemplate.create({ data: template });
+    }
   }
 
   // Inventory Items

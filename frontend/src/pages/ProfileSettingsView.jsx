@@ -1,6 +1,4 @@
 import { useState } from 'react';
-import PromoCodesManager from '../components/PromoCodesManager';
-import BulkSaleManager from '../components/BulkSaleManager';
 import ProfileHeader from '../components/settings/ProfileHeader';
 import CustomerSettings from '../components/settings/CustomerSettings';
 import AdminSectionTabs from '../components/settings/AdminSectionTabs';
@@ -12,6 +10,7 @@ import TeamTab from '../components/settings/TeamTab';
 import AccountActions from '../components/settings/AccountActions';
 import InstallAppSetting from '../components/settings/InstallAppSetting';
 import HelpGuide from './HelpGuide';
+import StaffHelpGuide from './StaffHelpGuide';
 
 // Settings shell: shared page header + the active section for the signed-in
 // role. Admin-only operational settings are organized into tabs, with each
@@ -62,12 +61,6 @@ export default function ProfileSettingsView({
           {adminSection === 'data' && <DataBackupsTab />}
           {adminSection === 'notifications' && <NotificationsTab profile={profile} />}
           {adminSection === 'integrations' && <IntegrationsTab />}
-          {adminSection === 'promotions' && (
-            <>
-              <PromoCodesManager />
-              <BulkSaleManager />
-            </>
-          )}
           {adminSection === 'team' && (
             <TeamTab
               staffList={staffList}
@@ -82,6 +75,9 @@ export default function ProfileSettingsView({
           {adminSection === 'help' && <HelpGuide role={role} />}
         </>
       )}
+
+      {/* Staff-only Help Guide (Admin has the shared guide as a tab above) */}
+      {role === 'Staff' && <StaffHelpGuide />}
 
       {/* Install App — persistent entry point above Sign Out */}
       <InstallAppSetting />

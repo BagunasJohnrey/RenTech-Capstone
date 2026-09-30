@@ -21,7 +21,7 @@ function BottomNavItem({ item, isActive, onClick, badge }) {
 export default function MobileBottomNav({ role, activeTab, setActiveTab, currentNav, onFabClick, taskBadge = 0 }) {
   const fabIcon = role === 'Admin' ? <Sparkles size={22} strokeWidth={2.5} /> : <Plus size={24} strokeWidth={2.5} />;
   const isActive = (id) => activeTab === id || (id === 'Home' && activeTab === 'Dashboard');
-  const mainItems = currentNav.filter(i => i.id !== 'Help' && i.id !== 'Messages' && !(role === 'Staff' && i.id === 'Settings'));
+  const mainItems = currentNav.filter(i => i.id !== 'Help' && i.id !== 'Messages' && i.id !== 'Promotions' && !(role === 'Staff' && i.id === 'Settings'));
   const specialItem = mainItems.find(i => i.special);
   const regularItems = mainItems.filter(i => !i.special);
 

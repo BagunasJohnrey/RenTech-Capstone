@@ -1,15 +1,16 @@
 ﻿import { useState, useEffect, useRef } from 'react';
-import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone } from 'lucide-react';
+import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone, Repeat } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import CancelBookingModal from '../components/CancelBookingModal';
+import SwapItemModal from '../components/SwapItemModal';
 import { customerService } from '../services/customer';
 import DateRangePicker, { formatDateRangeLabel } from '../components/DateRangePicker';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
-import { customerLabel, customerTelLink, itemLabel } from '../utils/format';
-import { isReleased, getReleasePhoto, invalidateTxCache } from '../hooks/useTransactions';
+import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
+import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import ItemImage from '../components/ItemImage';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
@@ -30,28 +31,57 @@ const statusColors = Object.fromEntries(
   Object.entries(TX_STATUS_PILLS).map(([k, v]) => [k, `${v.bg} ${v.text}`])
 );
 
-const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved', 'Released'];  // Released = Active/Overdue with conditionPhoto
+const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved'];
+
+const SORT_OPTIONS = [
+  { value: 'priority', label: 'Status priority' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'dueSoon', label: 'Due soonest' },
+  { value: 'amountDesc', label: 'Highest amount' },
+];
+const SORT_LABELS = Object.fromEntries(SORT_OPTIONS.map((o) => [o.value, o.label]));
 
 // Date filter: the heavy lifting (two-month popover, presets, hover-range
 // highlight, single-tap vs range, future-date support) lives in
 // `components/DateRangePicker.jsx`. This page only deals in [from, to]
 // strings and a single popover-open flag.
 
-export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
+export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, onEditRental, onSwapItem, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
   const isStaff = role !== 'Customer';
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
-  const [activeStatusFilter, setActiveStatusFilter] = useState('All');
+  const initialStatus = (() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      return ALL_STATUSES.includes(s) ? s : 'All';
+    } catch { return 'All'; }
+  })();
+  const [activeStatusFilter, setActiveStatusFilter] = useState(initialStatus);
 
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // 'priority' is the role-aware default (staff chase Overdue first,
+  // customers watch Active first) — see statusPriority below.
+  const [sortBy, setSortBy] = useState('priority');
   const [currentPage, setCurrentPage] = useState(1);
   const [detailTx, setDetailTx] = useState(null);
   const [cancelTx, setCancelTx] = useState(null);
   const [releaseTx, setReleaseTx] = useState(null);
+  const [swapTx, setSwapTx] = useState(null);
   const [editRental, setEditRental] = useState(null);       // tx staff is editing (booking dates/notes + customer)
   const [smsModalTx, setSmsModalTx] = useState(null);
+  const [smsMessage, setSmsMessage] = useState('');
   const [sendingSms, setSendingSms] = useState(false);
+
+  const openSmsModal = (tx) => {
+    setSmsMessage(defaultOverdueMessage(tx));
+    setSmsModalTx(tx);
+  };
+  const closeSmsModal = () => {
+    setSmsModalTx(null);
+    setSmsMessage('');
+  };
   const itemsPerPage = 10;
 
   // One-shot search prefill (e.g. jumping from Item Performance): apply it,
@@ -64,6 +94,21 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSearch]);
+
+  // Deep-link from Staff Tasks "View All" (Ready for Pickup → Reserved,
+  // Overdue → Overdue): ?status=Reserved / ?status=Overdue. Open the
+  // filter panel so it's obvious why the list is limited.
+  useEffect(() => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      if (s && ALL_STATUSES.includes(s) && s !== activeStatusFilter) {
+        setActiveStatusFilter(s);
+        setShowFilters(true);
+      }
+    } catch {}
+    // only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Rows navigate to a real URL when the app provides a router callback;
   // otherwise fall back to the local modal (e.g. standalone usage).
@@ -101,7 +146,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     // of the menu there (same rule as Return, which is inline-or-menu only).
     if (tel && tx.status !== 'Overdue') items.push({ key: 'call', icon: Phone, label: 'Call customer', href: tel, tone: 'text-emerald-600' });
     if (tx.status === 'Overdue' && isStaff) {
-      items.push({ key: 'sms', icon: MessageCircle, label: 'Send SMS', onSelect: () => setSmsModalTx(tx) });
+      items.push({ key: 'sms', icon: MessageCircle, label: 'Send SMS', onSelect: () => openSmsModal(tx) });
     }
     // Overdue rows lead with the call action inline, so the return flow
     // lives here instead of crowding the row (see renderRowActions).
@@ -111,9 +156,15 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     if (isStaffRole) {
       items.push({ key: 'edit', icon: Pencil, label: 'Edit rental', tone: 'text-amber-600', onSelect: () => setEditRental(tx) });
     }
+    // At-pickup swap (Case B): already released but the customer is still in
+    // the shop and wants another garment. Unreleased rows swap from inside the
+    // release sheet instead, so they don't need this entry.
+    if (isStaff && ['Active', 'Reserved'].includes(tx.status) && isReleased(tx)) {
+      items.push({ key: 'swap', icon: Repeat, label: 'Swap item', tone: 'text-blue-600', onSelect: () => setSwapTx(tx) });
+    }
     const cancellable = isStaffRole
       ? ['Active', 'Reserved', 'Overdue'].includes(tx.status)
-      : tx.status === 'Active' && role === 'Customer';
+      : ['Active', 'Reserved'].includes(tx.status) && role === 'Customer';
     if (cancellable) {
       items.push({ key: 'cancel', icon: XCircle, label: 'Cancel booking', danger: true, onSelect: () => setCancelTx(tx) });
     }
@@ -178,8 +229,10 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         />
       )}
       {/* Customer-side: the overflow menu would hold exactly one item (Cancel
-          booking), so render it inline instead of behind a "⋯" tap. */}
-      {role === 'Customer' && tx.status === 'Active' && (
+          booking), so render it inline instead of behind a "⋯" tap.
+          Reserved rows get it too (direct cancel — nothing released yet);
+          Active rows route through the required admin message. */}
+      {role === 'Customer' && ['Active', 'Reserved'].includes(tx.status) && (
         <button
           onClick={() => setCancelTx(tx)}
           className="inline-flex items-center gap-1 px-3 py-2 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-600 hover:text-white rounded-full transition-colors"
@@ -193,13 +246,15 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   );
 
   const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
-    + ((dateFrom !== '' || dateTo !== '') ? 1 : 0);
+    + ((dateFrom !== '' || dateTo !== '') ? 1 : 0)
+    + (sortBy !== 'priority' ? 1 : 0);
 
   const clearFilters = () => {
     setActiveStatusFilter('All');
 
     setDateFrom('');
     setDateTo('');
+    setSortBy('priority');
     setCurrentPage(1);
   };
 
@@ -212,15 +267,17 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const handleContactAdmin = (payload) => customerService.contactAdmin(payload);
 
   const handleSendSMS = async (tx) => {
+    const message = smsMessage.trim();
+    if (!message || sendingSms) return;
     setSendingSms(true);
     try {
       await api.post('/sms/send', {
         profileId: tx.customerId,
         transactionId: tx.id,
-        message: `Hi ${customerLabel(tx.customer)}, your rental of ${itemLabel(tx.item)} is now overdue. Please return immediately to minimize penalties. Thank you!`,
+        message,
       });
       setSendingSms(false);
-      setSmsModalTx(null);
+      closeSmsModal();
       alert('SMS sent successfully.');
     } catch (err) {
       setSendingSms(false);
@@ -228,24 +285,40 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     }
   };
 
-  const statusPriority = { Active: 0, Overdue: 1, Reserved: 2, Returned: 3, Cancelled: 4 };
+  // Default order is role-aware: staff chase late returns (Overdue first),
+  // customers watch what's currently in their closet (Active first).
+  const statusPriority = isStaff
+    ? { Overdue: 0, Active: 1, Reserved: 2, Returned: 3, Cancelled: 4 }
+    : { Active: 0, Overdue: 1, Reserved: 2, Returned: 3, Cancelled: 4 };
 
-  const filteredTransactions = transactions
+  const txDateOf = (tx) => new Date(tx.date || tx.rentalDate || 0).getTime();
+  const txDueOf = (tx) => (tx.dueDate ? new Date(tx.dueDate).getTime() : NaN);
+  const txAmountOf = (tx) => Number(tx.rentalFee ?? tx.amount ?? 0);
+  // Deterministic tiebreak so equal keys order identically across renders.
+  const txTiebreak = (a, b) => String(a.txNumber ?? a.id ?? '').localeCompare(
+    String(b.txNumber ?? b.id ?? ''), undefined, { numeric: true });
+
+  // Search + date subset first so the pill counts always match the list.
+  const searchDateFiltered = transactions
     .filter((tx) => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
+      // Pure numbers match the booking # only — matching them against UUID
+      // fragments returns noise (nearly every UUID contains "41" somewhere).
+      const isNumeric = /^\d+$/.test(q);
+      // Booking QR codes look like RT-797B2B97 (first 8 hex chars of the
+      // UUID): strip the prefix + dashes so they match the record.
+      const qCompact = q.replace(/^rt-/, '').replace(/-/g, '');
+      const idCompact = (tx.id || '').toLowerCase().replace(/-/g, '');
+      const idMatch = isNumeric
+        ? false
+        : (tx.id || '').toLowerCase().includes(q) || (!!qCompact && idCompact.includes(qCompact));
       return (
-        (tx.id || '').toLowerCase().includes(q) ||
+        idMatch ||
+        String(tx.txNumber ?? '').toLowerCase().includes(q) ||
         (customerLabel(tx.customer) || '').toLowerCase().includes(q) ||
         (itemLabel(tx.item) || '').toLowerCase().includes(q)
       );
-    })
-    .filter((tx) => {
-      if (activeStatusFilter !== 'All') {
-        if (activeStatusFilter === 'Released') return isReleased(tx);
-        return tx.status === activeStatusFilter;
-      }
-      return true;
     })
     .filter((tx) => {
       if (dateFrom) {
@@ -259,12 +332,49 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         if (txDate > endDate) return false;
       }
       return true;
+    });
+
+  const statusCounts = {};
+  for (const tx of searchDateFiltered) {
+    if (tx.status) statusCounts[tx.status] = (statusCounts[tx.status] || 0) + 1;
+  }
+  const filteredTransactions = searchDateFiltered
+    .filter((tx) => {
+      if (activeStatusFilter !== 'All') {
+        return tx.status === activeStatusFilter;
+      }
+      return true;
     })
     .sort((a, b) => {
-      const pa = statusPriority[a.status] ?? 99;
-      const pb = statusPriority[b.status] ?? 99;
-      if (pa !== pb) return pa - pb;
-      return new Date(b.date || b.rentalDate || 0) - new Date(a.date || a.rentalDate || 0);
+      switch (sortBy) {
+        case 'newest':
+          return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
+        case 'oldest':
+          return txDateOf(a) - txDateOf(b) || txTiebreak(a, b);
+        case 'dueSoon': {
+          // Overdue rentals are the fire — always first (most overdue =
+          // earliest due date first), then everything else by due date
+          // ascending. Rows without a due date sink below dated rows.
+          const oa = a.status === 'Overdue' ? 0 : 1;
+          const ob = b.status === 'Overdue' ? 0 : 1;
+          if (oa !== ob) return oa - ob;
+          const da = txDueOf(a);
+          const db = txDueOf(b);
+          if (Number.isNaN(da) && Number.isNaN(db)) return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
+          if (Number.isNaN(da)) return 1;
+          if (Number.isNaN(db)) return -1;
+          return da - db || txTiebreak(a, b);
+        }
+        case 'amountDesc':
+          return txAmountOf(b) - txAmountOf(a) || txTiebreak(a, b);
+        case 'priority':
+        default: {
+          const pa = statusPriority[a.status] ?? 99;
+          const pb = statusPriority[b.status] ?? 99;
+          if (pa !== pb) return pa - pb;
+          return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
+        }
+      }
     });
 
   const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
@@ -304,7 +414,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
             <input
               type="text"
-              placeholder="Search by ID, customer, or item..."
+              placeholder="Search by booking #, ID, customer, or item..."
               value={searchQuery}
               onChange={handleSearchChange}
               className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors"
@@ -353,37 +463,55 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
                 {ALL_STATUSES.map(s => {
                   const active = activeStatusFilter === s;
-                  const count = s !== 'All'
-                    ? s === 'Released'
-                      ? transactions.filter(isReleased).length
-                      : transactions.filter(tx => tx.status === s).length
-                    : '';
+                  const count = s === 'All' ? searchDateFiltered.length : (statusCounts[s] || 0);
                   return (
                     <button key={s} onClick={() => { setActiveStatusFilter(s); setCurrentPage(1); }}
-                      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                      className={`shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
                         active
                           ? 'bg-gray-900 text-white shadow-sm'
                           : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
                       }`}>
-                      {s === 'All' ? 'All' : s}{count ? ` ${count}` : ''}
+                      <span>{s}</span>
+                      <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold inline-flex items-center justify-center tabular-nums ${
+                        active ? 'bg-white/20 text-white' : 'bg-gray-200/70 text-gray-600'
+                      }`}>
+                        {count}
+                      </span>
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Date row — the trigger pill doubles as the visible selection
-                summary; clicking opens a two-month calendar popover (portal
-                to <body>, so the panel's `overflow-hidden` can't clip it). */}
-            {isStaff && (
-              <div className="px-4 py-3 border-b border-gray-50">
-                <DateRangePicker
-                  from={dateFrom}
-                  to={dateTo}
-                  onChange={applyDateRange}
-                />
-              </div>
-            )}
+            {/* Sort + Date row — matched labeled controls side by side
+                (stacked on mobile). The date popover portals to <body>, so
+                the panel's `overflow-hidden` can't clip it. */}
+            <div className={`px-4 py-3 border-b border-gray-50 grid grid-cols-1 gap-2.5 ${isStaff ? 'sm:grid-cols-2' : ''}`}>
+              <label className="flex items-center gap-2 min-w-0">
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Sort</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => { setSortBy(e.target.value); setCurrentPage(1); }}
+                  aria-label="Sort transactions"
+                  className="flex-1 min-w-0 appearance-none bg-gray-50 border border-gray-200/60 rounded-lg py-2 pl-3 pr-8 text-sm font-medium text-gray-700 focus:outline-none focus:border-gray-400 transition-colors cursor-pointer bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%239ca3af%22 stroke-width=%223%22%3E%3Cpath d=%22m6 9 6 6 6-6%22/%3E%3C/svg%3E')] bg-no-repeat bg-[position:right_0.6rem_center]"
+                >
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              {isStaff && (
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Date</span>
+                  <DateRangePicker
+                    from={dateFrom}
+                    to={dateTo}
+                    onChange={applyDateRange}
+                    boxed
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Active filter chips + Clear all */}
             {activeFilterCount > 0 && (
@@ -401,6 +529,14 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     <Calendar size={11} className="text-gray-400" />
                     {formatDateRangeLabel(dateFrom, dateTo)}
                     <button onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                      <X size={11} />
+                    </button>
+                  </span>
+                )}
+                {sortBy !== 'priority' && (
+                  <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
+                    Sort: {SORT_LABELS[sortBy]}
+                    <button onClick={() => { setSortBy('priority'); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
                       <X size={11} />
                     </button>
                   </span>
@@ -462,7 +598,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       onMouseLeave={cancelWarm}
                     >
                       <td className="px-6 py-4 font-bold text-gray-900 font-mono text-xs">
-{String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}
+                        #{tx.txNumber ?? '—'}
                       </td>
                       {role !== 'Customer' && (
                         <td className="px-6 py-4 text-gray-700 font-medium">{customerLabel(tx.customer) || '—'}</td>
@@ -477,12 +613,15 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       </td>
                       <td className="px-6 py-4 text-gray-500 text-[13px]">{formatDate(tx.rentalDate || tx.date)}</td>
                       <td className="px-6 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
-                          {tx.status || '—'}
-                        </span>
-                        {tx.alterationStatus && (
-                          <span className={`ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                        {/* One pill only: an active alteration replaces the
+                            booking status instead of stacking beside it. */}
+                        {tx.alterationStatus ? (
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
                             {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                          </span>
+                        ) : (
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
+                            {tx.status || '—'}
                           </span>
                         )}
                       </td>
@@ -547,19 +686,20 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 <div className="flex justify-between items-start gap-3">
                   <div className="min-w-0">
                     <p className="text-xs font-mono font-bold text-gray-900">
-                      #{String(tx.txNumber ?? tx.id ?? '').slice(0, 8)}
+                      #{tx.txNumber ?? '—'}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">{formatDate(tx.rentalDate || tx.date)}</p>
                   </div>
-                  <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
-                    {tx.status || '—'}
-                  </span>
+                  {tx.alterationStatus ? (
+                    <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                      {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
+                    </span>
+                  ) : (
+                    <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {tx.status || '—'}
+                    </span>
+                  )}
                 </div>
-                {tx.alterationStatus && (
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                    {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
-                  </span>
-                )}
 
                 {role !== 'Customer' && (
                   <p className="text-sm text-gray-700 min-w-0">
@@ -622,10 +762,10 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         />
       )}
 
-      {/* SMS Confirmation Modal */}
+      {/* SMS Confirmation Modal — message is editable per send */}
       {smsModalTx && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-          onClick={() => setSmsModalTx(null)}>
+          onClick={closeSmsModal}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
             onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center p-6 border-b border-gray-100/80">
@@ -633,7 +773,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 <h3 className="font-bold text-lg text-gray-900">Confirm SMS</h3>
                 <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
               </div>
-              <button onClick={() => setSmsModalTx(null)}
+              <button onClick={closeSmsModal}
                 className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
                 <X size={20} />
               </button>
@@ -644,11 +784,29 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Due Date:</span> <strong className="text-red-500">{smsModalTx.dueDate || smsModalTx.date}</strong></p>
               </div>
-              <p className="text-xs text-gray-500 text-center">The SMS will say: "Please return your rented item immediately."</p>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
+                  <button onClick={() => setSmsMessage(defaultOverdueMessage(smsModalTx))}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Restore the default message">
+                    <RotateCcw size={11} /> Reset
+                  </button>
+                </div>
+                <textarea
+                  value={smsMessage}
+                  onChange={(e) => setSmsMessage(e.target.value.slice(0, 1600))}
+                  rows={4}
+                  className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm leading-relaxed min-h-[100px] focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all"
+                />
+                <p className={`text-[11px] text-right font-medium ${smsMessage.length > 160 ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {smsMessage.length}/1600{ smsMessage.length > 160 ? ` · ~${Math.ceil(smsMessage.length / 160)} segments` : '' }
+                </p>
+              </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={() => setSmsModalTx(null)}
+                <button onClick={closeSmsModal}
                   className="flex-1 py-2.5 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-full transition-colors">Cancel</button>
-                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms}
+                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms || !smsMessage.trim()}
                   className="flex-1 py-2.5 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-full transition-colors shadow-sm shadow-red-500/20">
                   {sendingSms ? 'Sending...' : 'Send SMS'}
                 </button>
@@ -670,7 +828,16 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
       )}
 
       {releaseTx && (
-        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} />
+        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} onSwapItem={(updated, prevItemId) => onSwapItem?.(updated, prevItemId)} />
+      )}
+
+      {swapTx && (
+        <SwapItemModal
+          transaction={swapTx}
+          inventory={inventory}
+          onClose={() => setSwapTx(null)}
+          onSwapped={(updated, prevItemId) => { onSwapItem?.(updated, prevItemId); setSwapTx(null); }}
+        />
       )}
 
       {editRental && (
@@ -678,9 +845,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           transaction={editRental}
           onClose={() => setEditRental(null)}
           onSaved={(r) => {
-            // Edits save outside the transactions hook — drop the cached full
-            // record so the next open re-reads instead of serving stale data.
-            if (r?.updated?.id) invalidateTxCache(r.updated.id);
+            // Merge the save into the list (booking dates/notes by id,
+            // customer profile across that customer's rows) so the change
+            // shows immediately — no refresh needed. Cache invalidation
+            // happens inside the merge.
+            onEditRental?.(r);
             setEditRental(null);
           }}
         />

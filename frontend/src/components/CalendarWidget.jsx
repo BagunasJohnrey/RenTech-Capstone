@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { toLocalYmd } from '../utils/format';
 
 export default function CalendarWidget({ selectedDate, onSelect, bookedDates = [], label }) {
   const today = new Date();
@@ -45,11 +46,11 @@ export default function CalendarWidget({ selectedDate, onSelect, bookedDates = [
 
   const handleDayClick = (day) => {
     if (isPast(day) || isBooked(day)) return;
-    onSelect(new Date(year, month, day).toISOString().split('T')[0]);
+    onSelect(toLocalYmd(new Date(year, month, day)));
   };
 
   const handleToday = () => {
-    onSelect(today.toISOString().split('T')[0]);
+    onSelect(toLocalYmd(today));
     setViewDate(new Date());
   };
 

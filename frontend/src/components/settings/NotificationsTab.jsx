@@ -26,8 +26,9 @@ const DEFAULT_TEMPLATES = {
   late_return: 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return as soon as possible. Thank you!',
 };
 
-// Admin Notifications tab: which automated SMS the boutique sends + the
-// editable SMS templates (backed by the sms-templates table).
+// Admin Notifications tab: this admin account's own SMS/email prefs + the
+// editable SMS templates (backed by the sms-templates table). These toggles
+// are per-account — customer messaging is controlled on each customer's profile.
 export default function NotificationsTab({ profile }) {
   // Notification Preferences (profile-backed; falls back to localStorage default)
   const [notifPrefs, setNotifPrefs] = useState(() =>
@@ -171,20 +172,20 @@ export default function NotificationsTab({ profile }) {
 
   return (
     <>
-      {/* Notification Preferences */}
+      {/* Notification Preferences — this account only */}
       <SettingsCard
         icon={Bell}
         iconClass="bg-red-50 text-[#bf4a53]"
-        title="Notification Preferences"
-        desc="Which automated SMS and emails the boutique sends out"
+        title="My Notification Preferences"
+        desc="Which automated SMS and emails this account receives. Customer messaging is controlled on each customer's own profile."
       >
         {/* Mobile-first: single column → 2-col on desktop */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {[
-            { key: 'booking', label: 'Booking Confirmation', desc: 'SMS when a new rental is created.', icon: Bell, colors: 'bg-red-50 text-[#bf4a53]' },
-            { key: 'reminder', label: 'Due Reminder', desc: 'Remind customer 1 day before due date.', icon: Clock, colors: 'bg-amber-50 text-amber-600' },
-            { key: 'lateReturn', label: 'Late Return Alert', desc: 'Notify when a rental becomes overdue.', icon: AlertTriangle, colors: 'bg-orange-50 text-orange-600' },
-            { key: 'email', label: 'Brevo Emails', desc: 'Send emails alongside SMS.', icon: Mail, colors: 'bg-blue-50 text-blue-600' },
+            { key: 'booking', label: 'Booking Confirmation', desc: 'SMS you receive when one of your rentals is created.', icon: Bell, colors: 'bg-red-50 text-[#bf4a53]' },
+            { key: 'reminder', label: 'Due Reminder', desc: 'Reminders you receive before your due date.', icon: Clock, colors: 'bg-amber-50 text-amber-600' },
+            { key: 'lateReturn', label: 'Late Return Alert', desc: 'Overdue alerts you receive for your rentals.', icon: AlertTriangle, colors: 'bg-orange-50 text-orange-600' },
+            { key: 'email', label: 'Brevo Emails', desc: 'Emails sent to you alongside SMS.', icon: Mail, colors: 'bg-blue-50 text-blue-600' },
           ].map(({ key, label, desc, icon: Icon, colors }) => (
             <button
               key={key}

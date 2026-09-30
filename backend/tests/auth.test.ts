@@ -312,7 +312,81 @@ describe('POST /api/auth/refresh', () => {
 
     expect(res.status).toBe(200);
     const setCookie = res.headers['set-cookie'] as string[];
-    expect(setCookie.some((c) => c.startsWith('rt_mfa_verified='))).toBe(false);
+    expect(setCookie.some((c: string) => c.startsWith('rt_mfa_verified='))).toBe(false);
+  });
+
+  // Regression: the rt_access cookie disappears when the JWT expires (~1h),
+  // so a refresh after idle/sleep can't present the old marker-bound token.
+  // A valid trust-this-device cookie for an MFA-enabled admin is equivalent
+  // proof (login skips the challenge on trust) — the marker must be carried
+  // over instead of dropped (which stranded admins behind 403
+  // mfa_challenge_required until a full re-login).
+  it('should re-mint the marker via the trust-device fallback when the access cookie is gone', async () => {
+    vi.mocked(supabaseAdmin.auth.refreshSession).mockResolvedValueOnce({
+      data: {
+        session: {
+          access_token: 'rotated-admin-token',
+          refresh_token: 'rotated-admin-refresh',
+          token_type: 'bearer',
+          expires_in: 3600,
+        },
+        user: { id: 'auth-admin-id-789', email: 'admin@example.com' },
+      },
+      error: null,
+    } as never);
+    const { buildMfaTrustedValue } = await import('../src/middleware/cookies.js');
+    const trusted = buildMfaTrustedValue('admin@example.com');
+    // No rt_access cookie (expired/dropped) and no rt_mfa_verified marker —
+    // only the refresh token + the 30-day trusted-device cookie.
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', ['rt_refresh=mock-refresh-token', `rt_mfa_trusted=${trusted}`]);
+
+    expect(res.status).toBe(200);
+    const setCookie = res.headers['set-cookie'] as string[];
+    const mfaCookie = setCookie.find((c) => c.startsWith('rt_mfa_verified='));
+    expect(mfaCookie).toBeDefined();
+    expect(mfaCookie!.split(';')[0].split('=')[1]).toBe(buildMfaVerifiedValue('rotated-admin-token'));
+  });
+
+  it('should NOT re-mint via trust fallback for a non-admin session', async () => {
+    const { buildMfaTrustedValue } = await import('../src/middleware/cookies.js');
+    const trusted = buildMfaTrustedValue('test@example.com');
+    // Default refreshSession mock resolves a Customer (auth-user-id-123).
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', ['rt_refresh=mock-refresh-token', `rt_mfa_trusted=${trusted}`]);
+
+    expect(res.status).toBe(200);
+    const setCookie = res.headers['set-cookie'] as string[];
+    expect(setCookie.some((c: string) => c.startsWith('rt_mfa_verified='))).toBe(false);
+  });
+
+  it('should NOT re-mint via trust fallback when the cookie belongs to another account', async () => {
+    vi.mocked(supabaseAdmin.auth.refreshSession).mockResolvedValueOnce({
+      data: {
+        session: {
+          access_token: 'rotated-admin-token-2',
+          refresh_token: 'rotated-admin-refresh-2',
+          token_type: 'bearer',
+          expires_in: 3600,
+        },
+        user: { id: 'auth-admin-id-789', email: 'admin@example.com' },
+      },
+      error: null,
+    } as never);
+    const { buildMfaTrustedValue } = await import('../src/middleware/cookies.js');
+    const trusted = buildMfaTrustedValue('someone-else@example.com');
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', ['rt_refresh=mock-refresh-token', `rt_mfa_trusted=${trusted}`]);
+
+    expect(res.status).toBe(200);
+    const setCookie = res.headers['set-cookie'] as string[];
+    expect(setCookie.some((c: string) => c.startsWith('rt_mfa_verified='))).toBe(false);
   });
 });
 
@@ -1133,6 +1207,93 @@ describe('Phase 5: MFA', () => {
       expect(res.status).toBe(401);
       expect(res.body.error).toContain('MFA not enabled');
     });
+  });
+});
+
+// POST /api/auth/mfa/step-up — in-session re-verification for a valid admin
+// session that lost its rt_mfa_verified marker (no re-login required).
+describe('POST /api/auth/mfa/step-up', () => {
+  it('should mint the marker for the current session on a valid TOTP code', async () => {
+    const res = await request(app)
+      .post('/api/auth/mfa/step-up')
+      .set('Authorization', 'Bearer admin-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: '123456' });
+
+    expect(res.status).toBe(200);
+    const setCookie = res.headers['set-cookie'] as string[];
+    const mfaCookie = setCookie.find((c) => c.startsWith('rt_mfa_verified='));
+    expect(mfaCookie).toBeDefined();
+    expect(mfaCookie!.split(';')[0].split('=')[1]).toBe(buildMfaVerifiedValue('admin-token'));
+  });
+
+  it('should accept a backup code as fallback and optionally trust the device', async () => {
+    vi.mocked(mfaService.verifyTotpToken).mockReturnValueOnce(false);
+    const res = await request(app)
+      .post('/api/auth/mfa/step-up')
+      .set('Authorization', 'Bearer admin-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: 'a1b2c3d4', trustDevice: true });
+
+    expect(res.status).toBe(200);
+    expect(mfaService.consumeBackupCode).toHaveBeenCalled();
+    const setCookie = res.headers['set-cookie'] as string[];
+    expect(setCookie.some((c) => c.startsWith('rt_mfa_verified='))).toBe(true);
+    expect(setCookie.some((c) => c.startsWith('rt_mfa_trusted='))).toBe(true);
+  });
+
+  it('should reject an invalid code', async () => {
+    vi.mocked(mfaService.verifyTotpToken).mockReturnValueOnce(false);
+    vi.mocked(mfaService.consumeBackupCode).mockResolvedValueOnce(false);
+    const res = await request(app)
+      .post('/api/auth/mfa/step-up')
+      .set('Authorization', 'Bearer admin-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: '000000' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('should reject non-admin callers', async () => {
+    const res = await request(app)
+      .post('/api/auth/mfa/step-up')
+      .set('Authorization', 'Bearer customer-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: '123456' });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('should reject unauthenticated callers', async () => {
+    const res = await request(app)
+      .post('/api/auth/mfa/step-up')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: '123456' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('should 400 when MFA is not enabled on the account', async () => {
+    // authMiddleware caches profiles: drop the entry so the override below is
+    // consulted, queue it twice (middleware + controller each query once),
+    // then drop the poisoned entry so later tests re-read the real fixture.
+    const { invalidateProfileCache } = await import('../src/utils/profileCache.js');
+    invalidateProfileCache('auth-admin-id-789');
+    const { prisma } = await import('../src/config/database.js');
+    const disabled = {
+      id: 'profile-1', userId: 'auth-admin-id-789', email: 'admin@example.com',
+      role: 'Admin', name: 'Test Admin', mfaEnabled: false, totpSecret: null, backupCodes: null,
+    };
+    vi.mocked(prisma.profile.findUnique).mockResolvedValueOnce(disabled).mockResolvedValueOnce(disabled);
+    const res = await request(app)
+      .post('/api/auth/mfa/step-up')
+      .set('Authorization', 'Bearer admin-token')
+      .set('Origin', 'http://localhost:5173')
+      .send({ code: '123456' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('not enabled');
+    invalidateProfileCache('auth-admin-id-789');
   });
 });
 

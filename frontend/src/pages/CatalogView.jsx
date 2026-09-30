@@ -4,6 +4,9 @@ import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import { FeaturedSkeleton } from '../components/Skeleton';
 import { itemPill } from '../utils/statusColors';
 import { categoryPriority, sortByCategory } from '../utils/categorySort';
+import { OCCASIONS, matchesOccasions, matchesOccasionQuery, normalizeOccasions } from '../utils/occasions';
+import { COLORS, matchesColors, matchesColorQuery, normalizeColors } from '../utils/colors';
+import ColorSelect from '../components/ColorSelect';
 
 const ADMIN_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted'];
 const STAFF_STATUSES = ['All', 'Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService'];
@@ -37,13 +40,44 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
   const isStaff = role !== 'Customer';
   const STATUSES = role === 'Admin' ? ADMIN_STATUSES : isStaff ? STAFF_STATUSES : CUSTOMER_STATUSES;
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
+  // One-shot search prefill (e.g. jumping from the AI stylist's item links):
+  // apply it, then clear the source so later visits start unfiltered.
+  useEffect(() => {
+    if (initialSearch) {
+      setSearchQuery(initialSearch);
+      setShowSuggestions(false);
+      onConsumeSearch?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSearch]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchRef = useRef(null);
 
   const [showFilters, setShowFilters] = useState(false);
 
-  const [activeStatusFilter, setActiveStatusFilter] = useState('All');
+  // Deep-link (?status=…): View All buttons elsewhere (Tasks cleaning queue,
+  // dashboard Needs Attention / Cleaning reminder) pre-select the status chip
+  // so the user lands on the filtered catalog.
+  const readStatusParam = () => {
+    try {
+      const s = new URLSearchParams(window.location.search).get('status');
+      if (s === 'In Cleaning' || s === 'Cleaning') return 'Cleaning';
+      if (s === 'OutOfService' || s === 'Out of Service') return 'OutOfService';
+      return 'All';
+    } catch { return 'All'; }
+  };
+  const [activeStatusFilter, setActiveStatusFilter] = useState(readStatusParam);
+  useEffect(() => {
+    const s = readStatusParam();
+    if (s !== 'All') {
+      setActiveStatusFilter(s);
+      setShowFilters(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedOccasions, setSelectedOccasions] = useState([]);
+  const [selectedColors, setSelectedColors] = useState([]);
   const [activeSizeFilter, setActiveSizeFilter] = useState('All');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
@@ -58,6 +92,32 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
   const allSizes = useMemo(() => {
     const set = new Set(inventory.map(item => item.size).filter(Boolean));
     return ['All', ...Array.from(set).sort()];
+  }, [inventory]);
+
+  // Fixed color list + any custom colors staff typed (deduped
+  // case-insensitively) so the Colors filter always covers what's tagged.
+  const filterColors = useMemo(() => {
+    const seen = new Map();
+    for (const item of inventory) {
+      for (const c of normalizeColors(item.colors)) {
+        const key = c.toLowerCase();
+        if (!seen.has(key)) seen.set(key, c);
+      }
+    }
+    const customs = [...seen.values()].filter((c) => !COLORS.some((p) => p.toLowerCase() === c.toLowerCase()));
+    customs.sort((a, b) => a.localeCompare(b));
+    return [...COLORS, ...customs];
+  }, [inventory]);
+
+  // Per-color item counts for the Colors dropdown rows.
+  const colorCounts = useMemo(() => {
+    const counts = {};
+    for (const item of inventory) {
+      for (const c of normalizeColors(item.colors)) {
+        counts[c] = (counts[c] ?? 0) + 1;
+      }
+    }
+    return counts;
   }, [inventory]);
 
   const deletedCount = useMemo(
@@ -91,6 +151,8 @@ export default function CatalogView({ role, inventory, onCustomerBook, onEdit, o
 
 const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
     + (selectedCategories.length > 0 ? 1 : 0)
+    + (selectedOccasions.length > 0 ? 1 : 0)
+    + (selectedColors.length > 0 ? 1 : 0)
     + (activeSizeFilter !== 'All' ? 1 : 0)
     + (minPrice !== '' || maxPrice !== '' ? 1 : 0)
     + (onSaleOnly ? 1 : 0)
@@ -98,8 +160,8 @@ const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
 
   const filteredInventory = useMemo(() => {
     const filtered = inventory.filter(item => {
-      const q = searchQuery.toLowerCase();
-      if (q && !item.name.toLowerCase().includes(q) && !item.category.toLowerCase().includes(q)) return false;
+      const q = searchQuery.toLowerCase().trim();
+      if (q && !item.name.toLowerCase().includes(q) && !(item.category || '').toLowerCase().includes(q) && !matchesOccasionQuery(item, q) && !matchesColorQuery(item, q)) return false;
       if (activeStatusFilter === 'All' && item.status === 'Deleted') return false;
       if (activeStatusFilter !== 'All') {
         // Customers/guests: "Available" = truly free (no bookings);
@@ -118,6 +180,8 @@ const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
         if (!match) return false;
       }
       if (selectedCategories.length > 0 && !selectedCategories.includes(item.category)) return false;
+      if (!matchesOccasions(item, selectedOccasions)) return false;
+      if (!matchesColors(item, selectedColors)) return false;
       if (activeSizeFilter !== 'All' && item.size !== activeSizeFilter) return false;
       if (minPrice !== '' && item.price < Number(minPrice)) return false;
       if (maxPrice !== '' && item.price > Number(maxPrice)) return false;
@@ -138,11 +202,13 @@ const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
       filtered.sort((a, b) => a.name.localeCompare(b.name));
     }
     return filtered;
-  }, [inventory, searchQuery, activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, isStaff, sortBy]);
+  }, [inventory, searchQuery, activeStatusFilter, selectedCategories, selectedOccasions, selectedColors, activeSizeFilter, minPrice, maxPrice, onSaleOnly, isStaff, sortBy]);
 
 const clearFilters = () => {
     setActiveStatusFilter('All');
     setSelectedCategories([]);
+    setSelectedOccasions([]);
+    setSelectedColors([]);
     setActiveSizeFilter('All');
     setMinPrice('');
     setMaxPrice('');
@@ -156,9 +222,21 @@ const toggleCategory = (cat) => {
     );
   };
 
+  const toggleOccasion = (occ) => {
+    setSelectedOccasions(prev =>
+      prev.includes(occ) ? prev.filter(o => o !== occ) : [...prev, occ]
+    );
+  };
+
+  const toggleColor = (color) => {
+    setSelectedColors(prev =>
+      prev.includes(color) ? prev.filter(c => c !== color) : [...prev, color]
+    );
+  };
+
   // Changes whenever a filter/search/toggle changes — keys the item grid so
   // it replays a quick fade on the way in instead of hard-swapping.
-  const gridKey = JSON.stringify([activeStatusFilter, selectedCategories, activeSizeFilter, minPrice, maxPrice, onSaleOnly, searchQuery, sortBy]);
+  const gridKey = JSON.stringify([activeStatusFilter, selectedCategories, selectedOccasions, selectedColors, activeSizeFilter, minPrice, maxPrice, onSaleOnly, searchQuery, sortBy]);
 
   // Search suggestions
   const suggestions = useMemo(() => {
@@ -167,13 +245,37 @@ const toggleCategory = (cat) => {
     const seen = new Set();
     const results = [];
     // Category matches
-    const cats = [...new Set(inventory.map(i => i.category))].filter(c => c.toLowerCase().includes(q));
+    const cats = [...new Set(inventory.map(i => i.category))].filter(c => (c || '').toLowerCase().includes(q));
     for (const c of cats.slice(0, 3)) {
       const key = `cat:${c}`;
       if (!seen.has(key)) { seen.add(key); results.push({ type: 'category', label: c, value: c }); }
     }
-    // Item name matches
-    const matchingItems = inventory.filter(i => i.name.toLowerCase().includes(q));
+    // Occasion-tag matches (e.g. typing "wedding" suggests the occasion filter)
+    const occs = OCCASIONS.filter(o => o.toLowerCase().includes(q));
+    for (const o of occs.slice(0, 3)) {
+      const key = `occ:${o}`;
+      if (!seen.has(key)) { seen.add(key); results.push({ type: 'occasion', label: o, value: o }); }
+    }
+    // Color-tag matches (e.g. typing "green" suggests the color filter;
+    // includes staff customs, not just the fixed list)
+    const allKnownColors = (() => {
+      const seen = new Map();
+      for (const c of COLORS) seen.set(c.toLowerCase(), c);
+      for (const i of inventory) {
+        for (const c of normalizeColors(i.colors)) {
+          const key = c.toLowerCase();
+          if (!seen.has(key)) seen.set(key, c);
+        }
+      }
+      return [...seen.values()];
+    })();
+    const cols = allKnownColors.filter(c => c.toLowerCase().includes(q));
+    for (const c of cols.slice(0, 3)) {
+      const key = `col:${c}`;
+      if (!seen.has(key)) { seen.add(key); results.push({ type: 'color', label: c, value: c }); }
+    }
+    // Item name matches (name, category, occasion, or color tags)
+    const matchingItems = inventory.filter(i => i.name.toLowerCase().includes(q) || (i.category || '').toLowerCase().includes(q) || matchesOccasionQuery(i, q) || matchesColorQuery(i, q));
     for (const i of sortByCategory(matchingItems).slice(0, 5)) {
       const key = `item:${i.id}`;
       if (!seen.has(key)) { seen.add(key); results.push({ type: 'item', label: i.name, value: i.name, category: i.category }); }
@@ -327,7 +429,7 @@ const toggleCategory = (cat) => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
           <input
             type="text"
-            placeholder={isStaff ? 'Search items by name or category...' : 'Search (e.g. Gatsby, Suit)...'}
+            placeholder={isStaff ? 'Search items by name, category, or occasion...' : 'Search (e.g. Wedding, Gown)...'}
             value={searchQuery}
             onChange={e => { setSearchQuery(e.target.value); setShowSuggestions(true); }}
             onFocus={() => { if (searchQuery.trim()) setShowSuggestions(true); }}
@@ -344,6 +446,8 @@ const toggleCategory = (cat) => {
             <div className="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white rounded-2xl border border-gray-100 shadow-xl shadow-gray-950/10 overflow-hidden">
               {(() => {
                 const cats = suggestions.filter(s => s.type === 'category');
+                const occs = suggestions.filter(s => s.type === 'occasion');
+                const cols = suggestions.filter(s => s.type === 'color');
                 const items = suggestions.filter(s => s.type === 'item');
                 return (
                   <>
@@ -368,7 +472,51 @@ const toggleCategory = (cat) => {
                         ))}
                       </div>
                     )}
-                    {cats.length > 0 && items.length > 0 && <div className="mx-3 border-t border-gray-100" />}
+                    {occs.length > 0 && (
+                      <div className="p-2">
+                        <p className="px-2.5 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Occasions</p>
+                        {occs.map((s, idx) => (
+                          <button
+                            key={`occ-${idx}`}
+                            onClick={() => {
+                              setSelectedOccasions(prev => prev.includes(s.value) ? prev : [...prev, s.value]);
+                              setShowFilters(true);
+                              setSearchQuery('');
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-2.5 py-2 hover:bg-[#bf4a53]/5 rounded-xl text-left transition-colors group"
+                          >
+                            <span className="shrink-0 w-8 h-8 rounded-xl bg-gradient-to-br from-[#bf4a53]/10 to-orange-100 flex items-center justify-center group-hover:from-[#bf4a53] group-hover:to-orange-400 transition-all">
+                              <Tag size={14} className="text-[#bf4a53] group-hover:text-white transition-colors" />
+                            </span>
+                            <span className="text-sm font-semibold text-gray-800">{s.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {cols.length > 0 && (
+                      <div className="p-2">
+                        <p className="px-2.5 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Colors</p>
+                        {cols.map((s, idx) => (
+                          <button
+                            key={`col-${idx}`}
+                            onClick={() => {
+                              setSelectedColors(prev => prev.includes(s.value) ? prev : [...prev, s.value]);
+                              setShowFilters(true);
+                              setSearchQuery('');
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-2.5 py-2 hover:bg-[#bf4a53]/5 rounded-xl text-left transition-colors group"
+                          >
+                            <span className="shrink-0 w-8 h-8 rounded-xl bg-gradient-to-br from-[#bf4a53]/10 to-orange-100 flex items-center justify-center group-hover:from-[#bf4a53] group-hover:to-orange-400 transition-all">
+                              <Tag size={14} className="text-[#bf4a53] group-hover:text-white transition-colors" />
+                            </span>
+                            <span className="text-sm font-semibold text-gray-800">{s.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {(cats.length > 0 || occs.length > 0 || cols.length > 0) && items.length > 0 && <div className="mx-3 border-t border-gray-100" />}
                     {items.length > 0 && (
                       <div className="p-2">
                         <p className="px-2.5 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Items</p>
@@ -503,9 +651,10 @@ const toggleCategory = (cat) => {
         </div>
       )}
 
-      {/* Modern filter toolbar */}
+      {/* Modern filter toolbar (no overflow-hidden: the Colors dropdown panel
+          must overlay the sections below instead of clipping inside) */}
       {showFilters && (
-        <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+        <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm animate-in fade-in slide-in-from-top-1 duration-150">
           <div className="px-4 py-3 grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-3">
             {/* On Sale toggle */}
             <button onClick={() => setOnSaleOnly(v => !v)}
@@ -555,11 +704,66 @@ const toggleCategory = (cat) => {
                 </div>
               </div>
             </div>
+
+            {/* Colors — beside Price on desktop (same toolbar row), stacked
+                full-width on mobile. Dropdown overlays content below. */}
+            <div className="col-span-2 sm:col-span-1 flex items-center gap-2 sm:min-w-[220px] sm:flex-1">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider shrink-0">Colors</span>
+              <div className="flex-1 min-w-0">
+                <ColorSelect
+                  options={filterColors}
+                  selected={selectedColors}
+                  onToggle={toggleColor}
+                  onClear={() => setSelectedColors([])}
+                  counts={colorCounts}
+                />
+              </div>
+            </div>
           </div>
 
-          {/* Active filter chips + clear */}
+          {/* Occasion filter — Advanced only (staff/admin + customers).
+              Tags come from each item's occasions list, so searching or
+              filtering by occasion returns items tagged to fit it. */}
+          <div className="px-4 pb-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Occasion</span>
+              {selectedOccasions.length > 0 && (
+                <button onClick={() => setSelectedOccasions([])} className="text-[11px] font-bold text-[#bf4a53] hover:underline">
+                  Clear occasions
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {OCCASIONS.map((occ) => {
+                const active = selectedOccasions.includes(occ);
+                const count = inventory.filter((i) => normalizeOccasions(i.occasions).includes(occ)).length;
+                return (
+                  <button
+                    key={occ}
+                    type="button"
+                    onClick={() => toggleOccasion(occ)}
+                    aria-pressed={active}
+                    title={count > 0 ? `${count} item${count === 1 ? '' : 's'} tagged ${occ}` : `No items tagged ${occ} yet`}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                      active
+                        ? 'bg-[#bf4a53] text-white shadow-sm'
+                        : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
+                    }`}
+                  >
+                    {occ}
+                    <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center tabular-nums ${active ? 'bg-white/25 text-white' : 'bg-gray-200/70 text-gray-500'}`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Active filter chips + clear (own bottom rounding now that the
+              card no longer clips overflow) */}
           {activeFilterCount > 0 && (
-            <div className="px-4 py-2.5 bg-gray-50/80 border-t border-gray-50 flex items-center gap-2 overflow-x-auto hide-scrollbar">
+            <div className="px-4 py-2.5 bg-gray-50/80 border-t border-gray-50 rounded-b-2xl flex items-center gap-2 overflow-x-auto hide-scrollbar">
               {activeStatusFilter !== 'All' && (
                 <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
                   {activeStatusFilter}
@@ -572,6 +776,22 @@ const toggleCategory = (cat) => {
                 <span key={cat} className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
                   {cat}
                   <button onClick={() => toggleCategory(cat)} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+              {selectedOccasions.map(occ => (
+                <span key={`occ-${occ}`} className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-[#bf4a53]/10 rounded-full border border-[#bf4a53]/30 text-[10px] font-bold text-[#bf4a53] shadow-sm">
+                  {occ}
+                  <button onClick={() => toggleOccasion(occ)} className="text-[#bf4a53]/60 hover:text-[#bf4a53] ml-0.5">
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+              {selectedColors.map(color => (
+                <span key={`col-${color}`} className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-[#bf4a53]/10 rounded-full border border-[#bf4a53]/30 text-[10px] font-bold text-[#bf4a53] shadow-sm">
+                  {color}
+                  <button onClick={() => toggleColor(color)} className="text-[#bf4a53]/60 hover:text-[#bf4a53] ml-0.5">
                     <X size={11} />
                   </button>
                 </span>
@@ -629,7 +849,7 @@ const toggleCategory = (cat) => {
           </div>
         ) : (
           <>
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
             {displayedInventory.map(item => (
               <ItemCard key={item.id} item={item} role={role} guest={guest}
                 onBook={() => handleItemAction(item)}

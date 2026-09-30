@@ -73,6 +73,14 @@ async function request(method, path, body = undefined, _retried = false, opts = 
 
   const headers = { 'Content-Type': 'application/json' };
 
+  // Idempotency keys on every mutation: a double-fired POST/PUT/PATCH/DELETE
+  // carries a unique key so future server-side dedup can collapse retries.
+  // Backend ignores unknown headers today (no breakage); the header is
+  // forward-compatible. GETs are side-effect-free and stay keyless.
+  if (method !== 'GET' && typeof crypto !== 'undefined' && crypto.randomUUID) {
+    headers['X-Idempotency-Key'] = crypto.randomUUID();
+  }
+
   const timeoutMs = opts.timeout || FETCH_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(TIMEOUT_REASON()), timeoutMs);
@@ -99,6 +107,13 @@ async function request(method, path, body = undefined, _retried = false, opts = 
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
+    // MFA-gated admin route hit without a verified second factor for this
+    // session (e.g. the marker was lost on token rotation). Broadcast so the
+    // app can offer in-session step-up verification instead of a dead-end
+    // error. Callers still receive the thrown error as usual.
+    if (typeof window !== 'undefined' && res.status === 403 && errorBody?.code === 'mfa_challenge_required') {
+      window.dispatchEvent(new CustomEvent('rentech:mfa-challenge'));
+    }
     const err = new Error(errorBody.error || `Request failed with status ${res.status}`);
     err.status = res.status;
     err.body = errorBody;

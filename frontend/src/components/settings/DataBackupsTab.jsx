@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Database, Download, RefreshCw, Loader2, FileText, Eye, Upload, X, AlertTriangle, CheckCircle2, CloudUpload, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { settingsService } from '../../services/settings';
 import { aiService } from '../../services/ai';
+import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
 import SettingsCard from './SettingsCard';
 import AIReportModal from '../AIReportModal';
 
@@ -26,8 +27,18 @@ const fmtDate = (iso) => {
 // Admin Data & Backups tab: one-click JSON backup download + visible history
 // of last backups, plus the last saved AI business reports (reopenable).
 export default function DataBackupsTab() {
-  const [backups, setBackups] = useState([]);
+  // Stale-while-revalidate: seed both lists from the last-known server data so
+  // remounts paint instantly with an "Updated X ago" label, then refresh
+  // silently in the background.
+  const [backups, setBackups] = useState(() => readCache(CACHE_KEYS.BACKUPS)?.data ?? []);
+  const [backupsAt, setBackupsAt] = useState(() => readCache(CACHE_KEYS.BACKUPS)?.at ?? null);
   const [backupsLoading, setBackupsLoading] = useState(true);
+  // Re-render every 30s so the "Updated X ago" labels stay fresh.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
   const [backupsPage, setBackupsPage] = useState(0);
   const BACKUPS_PAGE_SIZE = 5;
   const [backingUp, setBackingUp] = useState(false);
@@ -63,7 +74,8 @@ export default function DataBackupsTab() {
     return () => clearInterval(t);
   }, [importing]);
 
-  const [reports, setReports] = useState([]);
+  const [reports, setReports] = useState(() => readCache(CACHE_KEYS.AI_REPORTS)?.data ?? []);
+  const [reportsAt, setReportsAt] = useState(() => readCache(CACHE_KEYS.AI_REPORTS)?.at ?? null);
   const [reportsLoading, setReportsLoading] = useState(true);
   const [reportsPage, setReportsPage] = useState(0);
   const REPORTS_PAGE_SIZE = 5;
@@ -79,11 +91,15 @@ export default function DataBackupsTab() {
     setBackupErr('');
     try {
       const data = await settingsService.listBackups();
-      setBackups(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setBackups(list);
+      setBackupsAt(Date.now());
+      writeCache(CACHE_KEYS.BACKUPS, list);
       setBackupsPage(0);
     } catch (err) {
       setBackupErr(err?.message || 'Could not load backups.');
-      setBackups([]);
+      // Keep showing the cached list on failure instead of blanking it.
+      setBackups((prev) => prev);
     } finally {
       setBackupsLoading(false);
     }
@@ -93,14 +109,27 @@ export default function DataBackupsTab() {
     setReportsLoading(true);
     try {
       const data = await aiService.listReports();
-      setReports(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setReports(list);
+      setReportsAt(Date.now());
+      writeCache(CACHE_KEYS.AI_REPORTS, list);
       setReportsPage(0);
     } catch {
-      setReports([]);
+      // Keep showing the cached list on failure instead of blanking it.
+      setReports((prev) => prev);
     } finally {
       setReportsLoading(false);
     }
   }, []);
+
+  // Mutations (backup now / retry upload / delete report) change the lists
+  // outside the loaders — persist those too so the cache never goes stale.
+  useEffect(() => {
+    if (!backupsLoading && backups.length > 0) writeCache(CACHE_KEYS.BACKUPS, backups);
+  }, [backups, backupsLoading]);
+  useEffect(() => {
+    if (!reportsLoading && reports.length > 0) writeCache(CACHE_KEYS.AI_REPORTS, reports);
+  }, [reports, reportsLoading]);
 
   useEffect(() => {
     loadBackups();
@@ -117,6 +146,7 @@ export default function DataBackupsTab() {
       const cloudNote = meta?.uploaded ? 'Saved to cloud.' : 'Kept on this server only (cloud upload failed).';
       setBackupMsg(`Backup saved (${meta?.totalRows ?? 0} rows, ${meta?.storageFiles ?? 0} images, ${fmtBytes(meta?.sizeBytes)}). ${cloudNote} Downloading…`);
       setBackups((prev) => [meta, ...prev].slice(0, 20));
+      setBackupsAt(Date.now());
       setBackupsPage(0);
       try {
         await settingsService.downloadBackup(meta.id, meta.filename || `${meta.id}.json`);
@@ -150,6 +180,7 @@ export default function DataBackupsTab() {
     try {
       const updated = await settingsService.retryBackupUpload(b.id);
       setBackups((prev) => prev.map((x) => (x.id === b.id ? { ...x, ...updated } : x)));
+      setBackupsAt(Date.now());
       setBackupMsg('Cloud copy saved.');
       setTimeout(() => setBackupMsg(''), 4000);
     } catch (err) {
@@ -178,6 +209,7 @@ export default function DataBackupsTab() {
     try {
       const updated = await aiService.retryReportUpload(r.id);
       setReports((prev) => prev.map((x) => (x.id === r.id ? { ...x, ...updated } : x)));
+      setReportsAt(Date.now());
     } catch {
       // Error surfaces via the shared backup error line below.
       setBackupErr('Cloud upload failed — check the server logs and try again.');
@@ -193,6 +225,7 @@ export default function DataBackupsTab() {
     try {
       await aiService.deleteReport(r.id);
       setReports((prev) => prev.filter((x) => x.id !== r.id));
+      setReportsAt(Date.now());
     } catch {
       setBackupErr('Delete failed — check the server logs and try again.');
     } finally {
@@ -329,7 +362,7 @@ export default function DataBackupsTab() {
           <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handlePickFile} />
         </div>
 
-        {backupsLoading ? (
+        {backupsLoading && backups.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
             <Loader2 size={15} className="animate-spin" /> Loading backups…
           </div>
@@ -337,7 +370,11 @@ export default function DataBackupsTab() {
           <p className="text-sm text-gray-400 text-center py-6">No backups yet — click “Backup now” to create the first one.</p>
         ) : (
           <div className="space-y-2">
-            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">Last backups ({backups.length})</p>
+            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">
+              Last backups ({backups.length})
+              {backupsAt && <span className="normal-case font-semibold"> · Updated {formatCheckedAgo(backupsAt)}</span>}
+              {backupsLoading && <span className="normal-case font-semibold"> · Refreshing…</span>}
+            </p>
             {backups.slice(backupsPage * BACKUPS_PAGE_SIZE, backupsPage * BACKUPS_PAGE_SIZE + BACKUPS_PAGE_SIZE).map((b) => (
               <div key={b.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-2xl bg-gray-50/70 border border-gray-100">
                 <div className="min-w-0 flex-1">
@@ -511,7 +548,7 @@ export default function DataBackupsTab() {
           </button>
         }
       >
-        {reportsLoading ? (
+        {reportsLoading && reports.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
             <Loader2 size={15} className="animate-spin" /> Loading reports…
           </div>
@@ -519,7 +556,11 @@ export default function DataBackupsTab() {
           <p className="text-sm text-gray-400 text-center py-6">No saved reports yet — generate one from Business Intelligence.</p>
         ) : (
           <div className="space-y-2">
-            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">Last saved reports ({reports.length})</p>
+            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">
+              Last saved reports ({reports.length})
+              {reportsAt && <span className="normal-case font-semibold"> · Updated {formatCheckedAgo(reportsAt)}</span>}
+              {reportsLoading && <span className="normal-case font-semibold"> · Refreshing…</span>}
+            </p>
             {reports.slice(safeReportsPage * REPORTS_PAGE_SIZE, safeReportsPage * REPORTS_PAGE_SIZE + REPORTS_PAGE_SIZE).map((r) => (
               <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-2xl bg-gray-50/70 border border-gray-100">
                 <div className="min-w-0 flex-1">

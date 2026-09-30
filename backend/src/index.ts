@@ -84,6 +84,38 @@ app.use(errorHandler);
 app.listen(env.PORT, () => {
   console.log(`Server running on port ${env.PORT} [${env.NODE_ENV}]`);
   console.log(`[storage] Supabase URL: ${env.SUPABASE_URL}`);
+  console.log(`[storage] buckets: private=${process.env.STORAGE_BUCKET || 'rentech-images'} catalog=${process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog'}`);
+
+  // Dev-only .env staleness guard: tsx watch respawns on .ts changes but NEVER
+  // re-reads backend/.env, so a long-lived `npm run dev` silently keeps the
+  // old env after an edit (seen live: STORAGE_BUCKET changed, old process
+  // kept signing against the previous bucket and every condition photo 404'd
+  // until restart). Stat the file every minute and warn once when it changes
+  // post-boot. Production sets env via the host (no .env file) — stat failure
+  // just disables the check.
+  if (env.NODE_ENV !== 'production') {
+    Promise.all([import('node:fs'), import('node:url')]).then(async ([fs, url]) => {
+      // Resolved from this file (backend/src/index.ts) so the check works no
+      // matter which directory the dev server was launched from.
+      const dotenvPath = url.fileURLToPath(new URL('../.env', import.meta.url));
+      let bootMtime = 0;
+      try {
+        bootMtime = fs.statSync(dotenvPath).mtimeMs;
+      } catch { return; }
+      let warned = false;
+      const check = () => {
+        if (warned) return;
+        try {
+          if (fs.statSync(dotenvPath).mtimeMs > bootMtime) {
+            warned = true;
+            console.warn('[env] backend/.env changed since boot — RESTART the backend (tsx watch does not re-read env).');
+          }
+        } catch { /* ignore transient stat failures */ }
+      };
+      const timer = setInterval(check, 60 * 1000);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    }).catch(() => {});
+  }
   // The service key MUST carry role=service_role: with an anon key every
   // service-role path (storage uploads, auth.admin.*) fails confusingly
   // (e.g. RLS violations on backup uploads). Claims only, never the secret.
@@ -97,12 +129,33 @@ app.listen(env.PORT, () => {
   ensureBucket()
     .then(async () => {
       // Quick startup sanity: verify the bucket has files and signed URLs work.
+      // NOTE: root listing can return folder placeholders (e.g. "rental/" —
+      // the private bucket now only holds `rental/` condition shots), which
+      // have id == null and can never be signed. Descend one level to find a
+      // real file instead of signing the folder name (old code logged a
+      // benign `FAIL (Object not found)` for "rental" on every boot).
       const { supabaseAdmin } = await import('./config/supabase.js');
-      const { data: files } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').list('', { limit: 3 });
-      console.log(`[storage] bucket check (${process.env.STORAGE_BUCKET || 'rentech-images'}): ${files?.length ?? 0} sample files found`);
-      if (files?.[0]) {
-        const { data, error } = await supabaseAdmin.storage.from(process.env.STORAGE_BUCKET || 'rentech-images').createSignedUrl(files[0].name, 60);
-        console.log(`[storage] signed URL test for "${files[0].name}":`, error ? `FAIL (${error.message})` : 'OK');
+      const bucket = process.env.STORAGE_BUCKET || 'rentech-images';
+      const { data: files } = await supabaseAdmin.storage.from(bucket).list('', { limit: 10 });
+      console.log(`[storage] bucket check (${bucket}): ${files?.length ?? 0} sample entries found`);
+      let sample: string | null = null;
+      for (const entry of files ?? []) {
+        const rec = entry as { name?: string; id?: string | null };
+        if (!rec?.name) continue;
+        const isFolder = rec.id == null && !/\.[a-z0-9]+$/i.test(rec.name);
+        if (!isFolder) { sample = rec.name; break; }
+        const { data: inner } = await supabaseAdmin.storage.from(bucket).list(rec.name, { limit: 5 });
+        const innerFile = (inner ?? []).find((e) => {
+          const r = e as { name?: string; id?: string | null };
+          return !!r?.name && r.id != null;
+        }) as { name?: string } | undefined;
+        if (innerFile?.name) { sample = `${rec.name}/${innerFile.name}`; break; }
+      }
+      if (sample) {
+        const { data, error } = await supabaseAdmin.storage.from(bucket).createSignedUrl(sample, 60);
+        console.log(`[storage] signed URL test for "${sample}":`, error ? `FAIL (${error.message})` : 'OK');
+      } else {
+        console.log('[storage] signed URL test skipped — no sample file in bucket');
       }
     })
     .catch((err) => console.error('Storage bucket init failed:', err));
@@ -112,6 +165,9 @@ app.listen(env.PORT, () => {
   // instead of failing with "Bucket not found" after a fresh restart.
   ensureBackupBucket().catch((err) => console.error('Backup bucket init failed:', err));
   ensureAiReportsBucket().catch((err) => console.error('Reports bucket init failed:', err));
+  import('./services/aiPromoSuggestion.service.js').then(m =>
+    m.ensurePromoSuggestionsBucket().catch((err) => console.error('Promo suggestions bucket init failed:', err))
+  );
 
   // Pre-warm the dashboard cache so the first page load (AI Insights, KPIs,
   // revenue charts) is a cache hit instead of paying the cold-connection +
@@ -226,14 +282,20 @@ app.listen(env.PORT, () => {
   }, 10 * 60 * 1000);
   autoBackupStart.unref?.();
 
-  // Keep Render free tier alive: ping the health endpoint every 8 minutes so
-  // the server never sleeps. Only needed in production (dev is always warm).
+  // Keep Render free tier alive: free web services spin down after ~15 min
+  // without INBOUND traffic, so ping the PUBLIC url (Render injects
+  // RENDER_EXTERNAL_URL automatically) — a self-ping to 127.0.0.1 or the
+  // internal hostname never leaves the instance and does NOT reset the
+  // sleep timer. Every 8 min stays safely under the 15-min threshold.
+  // Only needed in production (dev is always warm).
   if (env.NODE_ENV === 'production') {
     const keepAlive = setInterval(async () => {
       try {
-        const host = process.env.RENDER_INTERNAL_HOSTNAME || '127.0.0.1';
-        const port = env.PORT;
-        await fetch(`http://${host}:${port}/api/health`);
+        const publicUrl = (process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '');
+        const target = publicUrl
+          ? `${publicUrl}/api/health`
+          : `http://127.0.0.1:${env.PORT}/api/health`;
+        await fetch(target);
       } catch { /* self-ping — best effort */ }
     }, 8 * 60 * 1000);
     keepAlive.unref?.();

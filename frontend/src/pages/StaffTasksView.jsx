@@ -1,12 +1,20 @@
-import { useState, useMemo } from 'react';
-import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle, RotateCcw } from 'lucide-react';
 import { api } from '../utils/api';
-import { customerLabel, itemLabel } from '../utils/format';
+import { customerLabel, itemLabel, defaultOverdueMessage } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import { isReleased } from '../hooks/useTransactions';
 import { txPill } from '../utils/statusColors';
+import { tabPath } from '../utils/routing';
 
-export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease }) {
+export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
+  const navigate = useNavigate();
+  const role = roleProp || 'Staff';
+  const goHistoryFiltered = (status) => {
+    const base = tabPath(role, 'History');
+    navigate(`${base}?status=${encodeURIComponent(status)}`);
+  };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -17,13 +25,23 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
 
   // SMS
   const [smsModalTx, setSmsModalTx] = useState(null);
+  const [smsMessage, setSmsMessage] = useState('');
   const [releaseTx, setReleaseTx] = useState(null);
+
+  const openSmsModal = (tx) => {
+    setSmsMessage(defaultOverdueMessage(tx));
+    setSmsModalTx(tx);
+  };
+  const closeSmsModal = () => {
+    setSmsModalTx(null);
+    setSmsMessage('');
+  };
 
   // Recent Activity
   const [activityFilter, setActivityFilter] = useState('All');
+  const [bookingsPage, setBookingsPage] = useState(1);
 
   // Full-view modals
-  const [showOverdueModal, setShowOverdueModal] = useState(false);
   const [sendingSms, setSendingSms] = useState(false);
 
   // Ready for Pickup
@@ -44,21 +62,18 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
     return txDate >= today;
   });
 
-  // Activity history - sorted by date desc, filtered by status
+  // Activity history - sorted by date desc, filtered by status. (No
+  // 'For Release' option: the Ready-for-Pickup card already covers exactly
+  // that set, so a duplicate filter here would be redundant.)
   const filteredActivity = useMemo(() => {
     return [...transactions]
-      .filter(tx => {
-        if (activityFilter === 'All') return true;
-        if (activityFilter === 'For Release') return (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx);
-        return tx.status === activityFilter;
-      })
+      .filter(tx => activityFilter === 'All' || tx.status === activityFilter)
       .sort((a, b) => new Date(b.date || b.rentalDate || 0) - new Date(a.date || a.rentalDate || 0));
   }, [transactions, activityFilter]);
 
   // --- Calendar ---
   const calendarTransactions = useMemo(() => {
     if (activityFilter === 'All') return transactions;
-    if (activityFilter === 'For Release') return transactions.filter(tx => (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx));
     return transactions.filter(tx => tx.status === activityFilter);
   }, [transactions, activityFilter]);
 
@@ -73,11 +88,13 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
       statusMap[day] = 'none';
       continue;
     }
-    const hasReturned = dayTx.some(t => t.status === 'Returned' || t.status === 'Cancelled');
-    const hasActiveOrReserved = dayTx.some(t => t.status === 'Active' || t.status === 'Reserved' || t.status === 'Overdue');
-    if (hasReturned && hasActiveOrReserved) statusMap[day] = 'mixed';
-    else if (hasReturned) statusMap[day] = 'returned';
-    else if (hasActiveOrReserved) statusMap[day] = 'active';
+    const hasTerminal = dayTx.some(t => t.status === 'Returned' || t.status === 'Cancelled');
+    const hasActionable = dayTx.some(t => t.status === 'Active' || t.status === 'Overdue');
+    const hasReserved = dayTx.some(t => t.status === 'Reserved');
+    if (hasTerminal && (hasActionable || hasReserved)) statusMap[day] = 'mixed';
+    else if (hasActionable) statusMap[day] = 'active';
+    else if (hasReserved) statusMap[day] = 'reserved';
+    else if (hasTerminal) statusMap[day] = 'returned';
     else statusMap[day] = 'none';
   }
 
@@ -110,26 +127,34 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
       })
     : null;
 
+  // Reset to page 1 when the day or filter changes
+  useEffect(() => { setBookingsPage(1); }, [selectedDate, activityFilter]);
+
+  const BOOKINGS_PAGE_SIZE = 4;
   const recentActivity = selectedDate
-    ? selectedDateBookings
+    ? selectedDateBookings.slice((bookingsPage - 1) * BOOKINGS_PAGE_SIZE, bookingsPage * BOOKINGS_PAGE_SIZE)
     : filteredActivity.slice(0, 5);
+  const bookingsTotalPages = selectedDate ? Math.ceil(selectedDateBookings.length / BOOKINGS_PAGE_SIZE) : 1;
 
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
 
-  // FIX D: surface SMS success/failure; only close on success.
+  // FIX D: surface SMS success/failure; only close on success. Sends the
+  // staff-editable message (pre-filled with the default, tweakable per send).
   const handleSendSMS = async (tx) => {
+    const message = smsMessage.trim();
+    if (!message || sendingSms) return;
     setSendingSms(true);
     try {
       await api.post('/sms/send', {
         profileId: tx.customerId,
         transactionId: tx.id,
-        message: `Hi ${customerLabel(tx.customer)}, your rental of ${itemLabel(tx.item)} is now overdue. Please return immediately to minimize penalties. Thank you!`,
+        message,
       });
       setSendingSms(false);
-      setSmsModalTx(null);
+      closeSmsModal();
       alert('SMS sent successfully.');
     } catch (err) {
       setSendingSms(false);
@@ -213,16 +238,16 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                   bg: 'bg-red-50 border-red-200/70',
                   label: `${customerLabel(tx.customer)} — ${itemLabel(tx.item)}`,
                   sub: `${Math.floor((now - new Date(tx.dueDate || tx.date)) / 86400000)}d overdue`,
-                  action: () => setShowOverdueModal(true),
+                  tx,
                 })),
                 ...pickupToday.slice(0, 2).map(tx => ({
                   key: `pk-${tx.id}`,
-                  icon: Undo2,
-                  tone: 'text-emerald-600',
-                  bg: 'bg-emerald-50 border-emerald-200/70',
+                  icon: Package,
+                  tone: 'text-blue-600',
+                  bg: 'bg-blue-50 border-blue-200/70',
                   label: `Prepare pickup for ${customerLabel(tx.customer)}`,
                   sub: `${itemLabel(tx.item)} due today`,
-                  action: () => onNavigate && onNavigate('History'),
+                  action: () => setReleaseTx(tx),
                 })),
               ].slice(0, 4);
 
@@ -235,74 +260,36 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               }
 
               return focusItems.map((f) => (
-                <button key={f.key} onClick={f.action}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all hover:shadow-sm hover:scale-[1.01] ${f.bg}`}>
+                <div key={f.key}
+                  onClick={() => { if (f.tx && onNavigateDetail) onNavigateDetail(f.tx); else if (f.action) f.action(); }}
+                  title={f.tx ? 'View transaction details' : undefined}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all hover:shadow-sm hover:scale-[1.01] ${f.bg} ${f.tx && onNavigateDetail ? 'cursor-pointer' : ''}`}>
                   <f.icon size={16} className={`${f.tone} shrink-0`} />
                   <div className="flex-1 min-w-0 text-left">
                     <p className="text-sm font-bold text-gray-900 truncate">{f.label}</p>
                     <p className="text-[11px] text-gray-500 truncate">{f.sub}</p>
                   </div>
+                  {f.tx && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openSmsModal(f.tx); }}
+                      title="Send SMS reminder"
+                      className="p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm shrink-0">
+                      <MessageCircle size={14} />
+                      <span className="sr-only">Send SMS</span>
+                    </button>
+                  )}
                   <ChevronRight size={16} className="text-gray-300 shrink-0" />
-                </button>
+                </div>
               ));
             })()}
           </div>
         </div>
 
-      {/* Inline Overdue Section */}
-      {showOverdueModal && (
-        <div className="bg-white rounded-3xl border border-red-100/50 shadow-sm overflow-hidden">
-          <div className="flex justify-between items-center p-5 border-b border-red-100/50 bg-red-50/30">
-            <div>
-              <h3 className="font-bold text-lg text-gray-900">All Overdue Rentals</h3>
-              <p className="text-xs text-gray-500">{overdueItems.length} item(s) overdue</p>
-            </div>
-            <button onClick={() => setShowOverdueModal(false)}
-              className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
-              <X size={20} />
-            </button>
-          </div>
-          <div className="p-4 space-y-2.5 max-h-[400px] overflow-y-auto">
-            {overdueItems.map((tx) => {
-              const dueDate = new Date(tx.dueDate || tx.date);
-              const now = new Date(); now.setHours(0, 0, 0, 0);
-              const diffMs = now - dueDate;
-              const daysOverdue = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-              const initial = (tx.customer || '?').charAt(0).toUpperCase();
-              const isOverduePickedUp = inventory.some(i => i.id === tx.itemId && i.status === 'Rented');
-              return (
-                <div key={tx.id} className="flex items-start gap-3 p-4 bg-red-50/70 rounded-2xl border border-red-100/50">
-                  <div className="w-9 h-9 rounded-full bg-red-100 text-red-600 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">{initial}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
-                      <span className="shrink-0 text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full whitespace-nowrap">{daysOverdue === 0 ? 'Due today' : `${daysOverdue}d overdue`}</span>
-                    </div>
-                    <p className="text-xs text-gray-600 truncate mt-0.5">{itemLabel(tx.item)}</p>
-                    <p className="text-[11px] text-red-500 font-medium mt-0.5">Due {dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
-                    <div className="flex items-center gap-2 mt-2.5">
-                      <button onClick={() => { setShowOverdueModal(false); setSmsModalTx(tx); }}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] font-bold text-white bg-[#bf4a53] hover:bg-red-700 rounded-full transition-colors shadow-sm">
-                        <MessageCircle size={12} /> Send SMS
-                      </button>
-                      {onReturn && isOverduePickedUp && isReleased(tx) && (
-                        <button onClick={() => { setShowOverdueModal(false); onReturn(tx); }}
-                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-full transition-colors">
-                          <Undo2 size={12} /> Return
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          {/* Recent Activity Card */}
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6">
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+          {/* Recent Activity Card — fixed height so it doesn't collapse when empty/filtered */}
+          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col min-h-[480px]">
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-bold text-gray-900">
@@ -330,12 +317,12 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               </div>
             </div>
 
-            {/* Filter capsule */}
+            {/* Filter capsule — single row on all screens */}
             <div className="flex justify-center mb-5 px-1">
-              <div className="inline-flex flex-wrap items-center justify-center gap-1.5 bg-gray-100/80 rounded-2xl px-2 py-2 max-w-full">
+              <div className="inline-flex flex-nowrap items-center justify-center gap-1 bg-gray-100/80 rounded-2xl px-1.5 py-1.5 max-w-full overflow-x-auto hide-scrollbar">
                 <button
                   onClick={() => setActivityFilter('All')}
-                  className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                  className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
                     activityFilter === 'All' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
@@ -343,47 +330,40 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                 </button>
                 <button
                   onClick={() => setActivityFilter('Reserved')}
-                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
                     activityFilter === 'Reserved' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                  <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
                   Reserved
                 </button>
                 <button
                   onClick={() => setActivityFilter('Active')}
-                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
                     activityFilter === 'Active' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
                   Active
                 </button>
                 <button
                   onClick={() => setActivityFilter('Returned')}
-                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
                     activityFilter === 'Returned' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
                   Returned
-                </button>
-                <button
-                  onClick={() => setActivityFilter('For Release')}
-                  className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                    activityFilter === 'For Release' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-teal-500" />
-                  For Release
                 </button>
               </div>
             </div>
 
-            {/* Activity list */}
-            <div className="space-y-1">
+            {/* Activity list — flex-1 keeps the card tall even when empty */}
+            <div className="space-y-1 flex-1 flex flex-col">
               {recentActivity.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-8">No recent activity.</p>
+                <div className="flex-1 flex items-center justify-center py-8">
+                  <p className="text-sm text-gray-400 text-center">No recent activity.</p>
+                </div>
               ) : (
                 recentActivity.map((tx, i) => {
                   const initial = (tx.customer || '?').charAt(0).toUpperCase();
@@ -391,10 +371,14 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                   const now = new Date(); now.setHours(0, 0, 0, 0);
                   const daysOverdue = Math.floor((now - dueDate) / (1000 * 60 * 60 * 24));
                   const showActions = tx.status === 'Active' || tx.status === 'Overdue';
-                  const isPickedUp = showActions && inventory.some(i => i.id === tx.itemId && i.status === 'Rented');
+                  const isItemRented = showActions && inventory.some(i => i.id === tx.itemId && i.status === 'Rented');
+                  const openDetail = () => { if (onNavigateDetail) onNavigateDetail(tx); };
                   return (
                     <div key={tx.id}>
-                      <div className="flex items-center gap-3.5 px-1 py-3">
+                      <div
+                        onClick={openDetail}
+                        title={onNavigateDetail ? 'View transaction details' : undefined}
+                        className={`flex items-center gap-3.5 px-1 py-3 ${onNavigateDetail ? 'cursor-pointer hover:bg-gray-50/70 rounded-xl transition-colors' : ''}`}>
                         <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
                           <span className="text-sm font-bold text-gray-500">{initial}</span>
                         </div>
@@ -410,7 +394,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                         <div className="flex items-center gap-2 shrink-0">
                           {showActions && (
                             <>
-                              <button onClick={(e) => { e.stopPropagation(); setSmsModalTx(tx); }}
+                              <button onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}
                                 className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="Send SMS">
                                 <MessageCircle size={14} />
                               </button>
@@ -420,7 +404,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                                   <Package size={14} />
                                 </button>
                               )}
-                              {onReturn && isPickedUp && isReleased(tx) && (
+                              {onReturn && isItemRented && isReleased(tx) && (
                                 <button onClick={(e) => { e.stopPropagation(); onReturn(tx); }}
                                   className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors" title="Process Return">
                                   <Undo2 size={14} />
@@ -428,7 +412,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                               )}
                             </>
                           )}
-                          <span className={`shrink-0 px-3 py-1 rounded-full text-[11px] font-bold ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>
+                          <span className={`shrink-0 px-3 py-1 rounded-full text-[11px] font-bold whitespace-nowrap text-center ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>
                             {tx.status || '—'}
                           </span>
                         </div>
@@ -439,10 +423,38 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                 })
               )}
             </div>
+            {selectedDate && selectedDateBookings.length > 0 && (
+              bookingsTotalPages > 1 ? (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                  <span className="text-[11px] text-gray-400 font-semibold tabular-nums">
+                    Page {bookingsPage} of {bookingsTotalPages} · {selectedDateBookings.length} bookings
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setBookingsPage(p => Math.max(1, p - 1))} disabled={bookingsPage === 1}
+                      aria-label="Previous bookings page"
+                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
+                      <ChevronLeft size={15} />
+                    </button>
+                    <button onClick={() => setBookingsPage(p => Math.min(bookingsTotalPages, p + 1))} disabled={bookingsPage === bookingsTotalPages}
+                      aria-label="Next bookings page"
+                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
+                      <ChevronRight size={15} />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 pt-4 border-t border-gray-100 text-center">
+                  <p className="text-[11px] text-gray-400 font-semibold">
+                    Showing all {selectedDateBookings.length} booking{selectedDateBookings.length === 1 ? '' : 's'} — that&rsquo;s everything for this day ✓
+                  </p>
+                </div>
+              )
+            )}
           </div>
 
-          {/* Calendar Card */}
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6">
+          {/* Calendar Card — stretches to match Recent Activity; the day grid
+              fills the leftover height so there's no dead space at the bottom */}
+          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <Calendar size={20} className="text-gray-700" />
@@ -469,19 +481,22 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               ))}
             </div>
 
-            {/* Calendar grid */}
-            <div className="grid grid-cols-7">
+            {/* Calendar grid — flex-1 + stretched cells fill the card height */}
+            <div className="grid grid-cols-7 flex-1 content-stretch">
               {calendarWeeks.map((week, wi) =>
                 week.map((cell, ci) => {
                   if (!cell) {
-                    return <div key={`${wi}-${ci}`} className="aspect-square" />;
+                    return <div key={`${wi}-${ci}`} className="flex flex-col items-center justify-center py-1 h-full" aria-hidden="true"><div className="w-9 h-9" /></div>;
                   }
                   const day = cell.day;
                   const status = statusMap[day] || 'none';
-                  const isSelected = day === 6 && currentMonth === 4 && currentYear === 2026;
+                  const isSelected = !!selectedDate
+                    && day === selectedDate.getDate()
+                    && currentMonth === selectedDate.getMonth()
+                    && currentYear === selectedDate.getFullYear();
 
                   return (
-                    <div key={`${wi}-${ci}`} className="flex flex-col items-center py-1">
+                    <div key={`${wi}-${ci}`} className="flex flex-col items-center justify-center py-1 h-full">
                       <div
                         onClick={() => setSelectedDate(new Date(currentYear, currentMonth, day))}
                         className={`w-9 h-9 flex items-center justify-center text-sm font-medium rounded-full cursor-pointer transition-colors ${
@@ -491,8 +506,10 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                             ? 'bg-blue-500 text-white'
                             : status === 'returned'
                             ? 'bg-emerald-500 text-white'
+                            : status === 'reserved'
+                            ? 'bg-indigo-400 text-white'
                             : status === 'mixed'
-                            ? 'bg-orange-400 text-white'
+                            ? 'text-white bg-[linear-gradient(135deg,#3b82f6_50%,#10b981_50%)]'
                             : 'text-gray-700 hover:bg-gray-100'
                         }`}
                       >
@@ -504,69 +521,125 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               )}
             </div>
 
-            {/* Legend */}
-            <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100">
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Active
+            {/* Legend — single centered row on all screens (desktop too) */}
+            <div className="flex items-center justify-center gap-x-3 mt-4 pt-4 border-t border-gray-100">
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 font-medium whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" /> Active
               </span>
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Returned
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 font-medium whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" /> Reserved
               </span>
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-orange-400" /> Mixed
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 font-medium whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" /> Returned
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 font-medium whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-[linear-gradient(135deg,#3b82f6_50%,#10b981_50%)] shrink-0" /> Mixed
               </span>
             </div>
 
           </div>
         </div>
 
-        {/* Ready for Pickup */}
-        {pendingPickup.length > 0 && (
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-lg text-gray-900">Ready for Pickup</h3>
-                <span className="inline-flex items-center justify-center bg-blue-100 text-blue-600 text-[10px] font-bold min-w-[22px] h-5 rounded-full px-1.5">
-                  {pendingPickup.length}
-                </span>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {pendingPickup.slice(0, 6).map(tx => (
-                <div key={tx.id}
-                  className="flex items-center justify-between p-3.5 bg-blue-50/60 rounded-2xl border border-blue-100/50 gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                      {(tx.customer || '?').charAt(0).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
-                      <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
-                      <p className="text-[10px] text-blue-500 font-medium">
-                        {new Date(tx.rentalDate || tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                      </p>
-                    </div>
+        {/* Pickup + Overdue — paired action queues (latest 5 each) */}
+        {(pendingPickup.length > 0 || overdueItems.length > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Ready for Pickup */}
+            {pendingPickup.length > 0 ? (
+              <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col">
+                <div className="flex items-center mb-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-lg text-gray-900">Ready for Pickup</h3>
+                    <span className="inline-flex items-center justify-center bg-blue-100 text-blue-600 text-[10px] font-bold min-w-[22px] h-5 rounded-full px-1.5">
+                      {pendingPickup.length}
+                    </span>
                   </div>
-                  <button onClick={() => setReleaseTx(tx)}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-full transition-colors shadow-sm">
-                    Release
-                  </button>
                 </div>
-              ))}
-            </div>
-            {pendingPickup.length > 6 && (
-              <button onClick={() => onNavigate('History')}
-                className="mt-3 w-full py-2.5 text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors">
-                View All ({pendingPickup.length})
-              </button>
-            )}
+                <div className="space-y-2 flex-1">
+                  {pendingPickup.slice(0, 5).map(tx => (
+                    <div key={tx.id} className="flex items-center justify-between p-3 bg-blue-50/60 rounded-2xl border border-blue-100/50 gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0 text-xs font-bold">
+                          {(tx.customer || '?').charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
+                          <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
+                          <p className="text-[10px] text-blue-500 font-medium">
+                            {new Date(tx.rentalDate || tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+                      <button onClick={() => setReleaseTx(tx)}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-full transition-colors shadow-sm">
+                        Release
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => goHistoryFiltered('Reserved')}
+                  className="mt-3 w-full py-2.5 text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors">
+                  View All ({pendingPickup.length})
+                </button>
+              </div>
+            ) : <div className="hidden lg:block" />}
+
+            {/* Overdue Rentals */}
+            {overdueItems.length > 0 ? (
+              <div className="bg-white rounded-3xl border border-red-100/50 shadow-sm p-6 flex flex-col">
+                <div className="flex items-center mb-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-lg text-gray-900">Overdue Rentals</h3>
+                    <span className="inline-flex items-center justify-center bg-red-100 text-red-600 text-[10px] font-bold min-w-[22px] h-5 rounded-full px-1.5">
+                      {overdueItems.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-2 flex-1">
+                  {overdueItems.slice(0, 5).map(tx => {
+                    const dueDate = new Date(tx.dueDate || tx.date);
+                    const now = new Date(); now.setHours(0,0,0,0);
+                    const daysOverdue = Math.max(0, Math.floor((now - dueDate) / 86400000));
+                    return (
+                      <div key={tx.id}
+                        onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
+                        title={onNavigateDetail ? 'View transaction details' : undefined}
+                        className={`flex items-center justify-between p-3 bg-red-50/60 rounded-2xl border border-red-100/50 gap-3 ${onNavigateDetail ? 'cursor-pointer hover:bg-red-50 transition-colors' : ''}`}>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 text-xs font-bold">
+                            {(tx.customer || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
+                            <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
+                            <p className="text-[10px] font-bold text-red-500">
+                              {daysOverdue === 0 ? 'Due today' : `${daysOverdue}d overdue`}
+                            </p>
+                          </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}
+                          className="shrink-0 p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm">
+                          <MessageCircle size={14} />
+                          <span className="sr-only">Send SMS</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button onClick={() => goHistoryFiltered('Overdue')}
+                  className="mt-3 w-full py-2.5 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors">
+                  View All ({overdueItems.length})
+                </button>
+              </div>
+            ) : <div className="hidden lg:block" />}
           </div>
         )}
 
-      {/* SMS Confirmation Modal */}
+      {/* SMS Confirmation Modal — message is editable per send.
+          z-[9999] matches the other full-screen modals so it always sits on
+          top (it was getting buried under nav/tutorial layers). */}
       {smsModalTx && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-          onClick={() => setSmsModalTx(null)}>
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
+          onClick={closeSmsModal}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
             onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center p-6 border-b border-gray-100/80">
@@ -574,7 +647,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                 <h3 className="font-bold text-lg text-gray-900">Confirm SMS</h3>
                 <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
               </div>
-              <button onClick={() => setSmsModalTx(null)}
+              <button onClick={closeSmsModal}
                 className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
                 <X size={20} />
               </button>
@@ -585,11 +658,29 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Due Date:</span> <strong className="text-red-500">{smsModalTx.dueDate || smsModalTx.date}</strong></p>
               </div>
-              <p className="text-xs text-gray-500 text-center">The SMS will say: "Please return your rented item immediately."</p>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
+                  <button onClick={() => setSmsMessage(defaultOverdueMessage(smsModalTx))}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Restore the default message">
+                    <RotateCcw size={11} /> Reset
+                  </button>
+                </div>
+                <textarea
+                  value={smsMessage}
+                  onChange={(e) => setSmsMessage(e.target.value.slice(0, 1600))}
+                  rows={4}
+                  className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm leading-relaxed min-h-[100px] focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all"
+                />
+                <p className={`text-[11px] text-right font-medium ${smsMessage.length > 160 ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {smsMessage.length}/1600{ smsMessage.length > 160 ? ` · ~${Math.ceil(smsMessage.length / 160)} segments` : '' }
+                </p>
+              </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={() => setSmsModalTx(null)}
+                <button onClick={closeSmsModal}
                   className="flex-1 py-2.5 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-full transition-colors">Cancel</button>
-                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms}
+                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms || !smsMessage.trim()}
                   className="flex-1 py-2.5 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-full transition-colors shadow-sm shadow-red-500/20">
                   {sendingSms ? 'Sending...' : 'Send SMS'}
                 </button>
@@ -600,7 +691,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
       )}
 
       {releaseTx && (
-        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} />
+        <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} onSwapItem={(updated, prevItemId) => onSwapItem?.(updated, prevItemId)} />
       )}
     </div>
   );

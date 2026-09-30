@@ -1,19 +1,39 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Camera, Clock, AlertTriangle, CheckCircle, Check, DollarSign, Undo2, FileText } from 'lucide-react';
+import { X, Camera, AlertTriangle, CheckCircle, Check, DollarSign, Undo2, FileText } from 'lucide-react';
 
 import { customerLabel, itemLabel } from '../utils/format';
 import { storageService } from '../services';
+import { api } from '../utils/api';
 import { fileToBase64, downscaleToJpeg } from '../utils/file';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useLockScroll } from '../hooks/useLockScroll';
 
+// Fallback default damage fee when the Settings value can't be loaded —
+// mirrors the backend default (utils/fees.ts).
+const FALLBACK_DAMAGE_FEE = 1000;
+
 export default function ProcessReturnModal({ transaction, onClose, onComplete }) {
   // Freeze the page behind the sheet; the backdrop is tap-to-close only.
   useLockScroll(true);
-  const [isLate, setIsLate] = useState(null);
-  const [isDamaged, setIsDamaged] = useState(null);
+  // Damage is optional: defaults to good condition so a clean return confirms
+  // in one tap; ticking Damaged reveals reason + customizable fee.
+  const [isDamaged, setIsDamaged] = useState(false);
   const [damageReason, setDamageReason] = useState('');
   const [otherDamageReason, setOtherDamageReason] = useState('');
+  const [damageFee, setDamageFee] = useState('');
+  // Live default from Admin Settings (damage_fee rule) so the placeholder and
+  // summary match what a blank field will actually charge. Falls back to 1000.
+  const [defaultFee, setDefaultFee] = useState(FALLBACK_DAMAGE_FEE);
+  useEffect(() => {
+    let active = true;
+    api.get('/settings/rules')
+      .then((rules) => {
+        const parsed = rules?.damage_fee != null ? parseFloat(rules.damage_fee) : NaN;
+        if (active && Number.isFinite(parsed) && parsed >= 0) setDefaultFee(parsed);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
   const [returnPhotoFile, setReturnPhotoFile] = useState(null);
   const [returnPhotoUrl, setReturnPhotoUrl] = useState('');
   const [returnNotes, setReturnNotes] = useState('');
@@ -117,14 +137,16 @@ const handleRadioKeys = (e) => {
   radios[next].focus();
 };
 
-  const basePenalty = isLate ? 500 : 0;
-  const damageFee = isDamaged ? 1000 : 0;
-  const totalFees = basePenalty + damageFee;
-
   const DAMAGE_REASONS = ['Torn', 'Stained', 'Missing parts', 'Other'];
 
   const reasonText = damageReason === 'Other' ? otherDamageReason.trim() : damageReason;
-  const canConfirm = isLate !== null && isDamaged !== null && (!isDamaged || reasonText);
+  // Blank = backend default (the Settings value); a typed value overrides it.
+  const parsedFee = damageFee.trim() === '' ? null : Number(damageFee);
+  const invalidFee = parsedFee !== null && (!Number.isFinite(parsedFee) || parsedFee < 0);
+  const effectiveFee = isDamaged ? (invalidFee ? 0 : (parsedFee ?? defaultFee)) : 0;
+  const totalFees = effectiveFee;
+
+  const canConfirm = (!isDamaged || reasonText) && !invalidFee && !submitting;
 
   useEffect(() => () => { if (returnPhotoUrl) URL.revokeObjectURL(returnPhotoUrl); }, [returnPhotoUrl]);
 
@@ -142,12 +164,19 @@ const handleRadioKeys = (e) => {
     setReturnPhotoUrl('');
   };
 
+  // Double-submit guard: blocks the Confirm button (state) AND re-entrant
+  // calls (ref — covers the gap between tap and re-render) for the whole
+  // flow: photo upload + return processing. On success the parent closes the
+  // modal and the guard stays set, so a stray second tap can't process the
+  // same return twice.
+  const submittingRef = useRef(false);
   const handleComplete = async () => {
-    if (!canConfirm || submitting) return;
+    if (submittingRef.current || !canConfirm) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     setError('');
     let photoPath;
     if (returnPhotoFile) {
-      setSubmitting(true);
       try {
         const base64 = (await downscaleToJpeg(returnPhotoFile)) || (await fileToBase64(returnPhotoFile));
         const { path } = await storageService.upload(
@@ -158,12 +187,20 @@ const handleRadioKeys = (e) => {
         photoPath = path;
       } catch (err) {
         setError(err?.message || 'Photo upload failed');
+        submittingRef.current = false;
         setSubmitting(false);
         return;
       }
+    }
+    try {
+      await onComplete(transaction.id, isDamaged, false, photoPath, isDamaged ? reasonText : undefined, parsedFee);
+    } catch (err) {
+      // App's handler toasts internally and rarely rejects, but a rejection
+      // from any caller must still unblock the button.
+      setError(err?.message || 'Failed to process return');
+      submittingRef.current = false;
       setSubmitting(false);
     }
-    onComplete(transaction.id, isDamaged, isLate, photoPath, isDamaged ? reasonText : undefined);
   };
 
   return (
@@ -224,44 +261,11 @@ const handleRadioKeys = (e) => {
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                <Clock size={14} className="text-orange-500" />
-                Is this return late?
-              </p>
-              <span className={`text-[11px] font-bold ${isLate === null ? 'text-gray-400' : isLate ? 'text-orange-600' : 'text-emerald-600'}`}>
-                {isLate === null ? 'Required' : isLate ? 'Late · ₱500' : 'On time'}
-              </span>
-            </div>
-            <div role="radiogroup" aria-label="Is this return late?" onKeyDown={handleRadioKeys}
-              className="bg-white border border-gray-200 rounded-2xl overflow-hidden divide-y divide-gray-100">
-              <ReturnOptionRow
-                selected={isLate === true}
-                onSelect={() => setIsLate(true)}
-                icon={AlertTriangle}
-                tileCls="bg-orange-50 text-orange-500"
-                title="Yes, it's late"
-                sub="Late penalty of ₱500 applies"
-                dotCls="bg-orange-500 border-orange-500"
-              />
-              <ReturnOptionRow
-                selected={isLate === false}
-                onSelect={() => setIsLate(false)}
-                icon={CheckCircle}
-                tileCls="bg-emerald-50 text-emerald-600"
-                title="On time"
-                sub="No penalty"
-                dotCls="bg-emerald-500 border-emerald-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
                 <AlertTriangle size={14} className="text-red-500" />
                 Item condition
               </p>
-              <span className={`text-[11px] font-bold ${isDamaged === null ? 'text-gray-400' : isDamaged ? 'text-red-600' : 'text-emerald-600'}`}>
-                {isDamaged === null ? 'Required' : isDamaged ? 'Damaged · ₱1,000' : 'Good'}
+              <span className={`text-[11px] font-bold ${isDamaged ? 'text-red-600' : 'text-emerald-600'}`}>
+                {isDamaged ? `Damaged · ₱${effectiveFee.toLocaleString()}` : 'Good · Optional'}
               </span>
             </div>
             <div role="radiogroup" aria-label="Item condition" onKeyDown={handleRadioKeys}
@@ -272,7 +276,7 @@ const handleRadioKeys = (e) => {
                 icon={AlertTriangle}
                 tileCls="bg-red-50 text-red-500"
                 title="Damaged — out of rotation"
-                sub="Damage fee of ₱1,000 · reason required"
+                sub="Reason required · fee adjustable below"
                 dotCls="bg-red-500 border-red-500"
               />
               <ReturnOptionRow
@@ -287,31 +291,52 @@ const handleRadioKeys = (e) => {
             </div>
           </div>
 
-          {/* Damage reason — required to take the item out of rotation */}
+          {/* Damage details — reason required to take the item out of rotation,
+              fee customizable per-return (blank = default ₱1,000). */}
           {isDamaged === true && (
-            <div className="space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                <AlertTriangle size={14} /> Damage reason
-              </label>
-              <select
-                value={damageReason}
-                onChange={(e) => setDamageReason(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:bg-white focus:border-red-300 transition-all cursor-pointer"
-              >
-                <option value="">Select a reason…</option>
-                {DAMAGE_REASONS.map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
-              {damageReason === 'Other' && (
+            <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-150">
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                  <AlertTriangle size={14} /> Damage reason
+                </label>
+                <select
+                  value={damageReason}
+                  onChange={(e) => setDamageReason(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:bg-white focus:border-red-300 transition-all cursor-pointer"
+                >
+                  <option value="">Select a reason…</option>
+                  {DAMAGE_REASONS.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+                {damageReason === 'Other' && (
+                  <input
+                    type="text"
+                    value={otherDamageReason}
+                    onChange={(e) => setOtherDamageReason(e.target.value)}
+                    placeholder="Describe the damage (e.g. torn hem, missing button)"
+                    className="w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:border-red-300 transition-all"
+                  />
+                )}
+              </div>
+              <div className="space-y-2">
+                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                  <DollarSign size={14} /> Damage fee (₱)
+                </label>
                 <input
-                  type="text"
-                  value={otherDamageReason}
-                  onChange={(e) => setOtherDamageReason(e.target.value)}
-                  placeholder="Describe the damage (e.g. torn hem, missing button)"
-                  className="w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none focus:border-red-300 transition-all"
+                  type="number"
+                  min="0"
+                  value={damageFee}
+                  onChange={(e) => setDamageFee(e.target.value)}
+                  placeholder={`Default ₱${defaultFee.toLocaleString()} — leave blank`}
+                  className={`w-full bg-white border rounded-2xl px-4 py-3 text-[13px] font-medium focus:outline-none transition-all ${invalidFee ? 'border-red-300 focus:border-red-400' : 'border-gray-200/80 focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15'}`}
                 />
-              )}
+                {invalidFee ? (
+                  <p className="text-[11px] text-red-500 font-medium">Enter 0 or more</p>
+                ) : (
+                  <p className="text-[11px] text-gray-400">Blank uses the default. Type a custom amount to override it for this return.</p>
+                )}
+              </div>
             </div>
           )}
 
@@ -366,18 +391,10 @@ const handleRadioKeys = (e) => {
             <div className="space-y-2.5">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-600 flex items-center gap-1.5">
-                  <Clock size={14} className="text-orange-400" /> Late Penalty
-                </span>
-                <span className={`font-bold text-sm ${isLate ? 'text-orange-600' : 'text-gray-400'}`}>
-                  {isLate ? '₱500' : '—'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600 flex items-center gap-1.5">
                   <AlertTriangle size={14} className="text-red-400" /> Damage Fee
                 </span>
                 <span className={`font-bold text-sm ${isDamaged ? 'text-red-600' : 'text-gray-400'}`}>
-                  {isDamaged ? '₱1,000' : '—'}
+                  {isDamaged ? `₱${effectiveFee.toLocaleString()}` : '—'}
                 </span>
               </div>
               <div className="border-t border-gray-200 pt-2.5 mt-2.5 flex justify-between items-center">
@@ -407,7 +424,7 @@ const handleRadioKeys = (e) => {
                   : 'bg-gray-200 text-gray-400 cursor-not-allowed'
               }`}>
               <Undo2 size={16} />
-              {submitting ? 'Uploading...' : 'Confirm Return'}
+              {submitting ? 'Processing…' : 'Confirm Return'}
             </button>
           </div>
         </div>

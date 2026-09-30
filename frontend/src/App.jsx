@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { tabPath, tabFromPath, homeTab, HOME_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
+import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { tabPath, tabFromPath, homeTab, HOME_PATH, SIGN_IN_PATH, GUEST_COLLECTION_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
-  ClipboardList, AlertTriangle, MessageCircle
+  ClipboardList, AlertTriangle, Tag
 } from 'lucide-react';
 
 import { useAuth } from './hooks/useAuth';
@@ -12,6 +12,7 @@ import { useTransactions, normalizeTx } from './hooks/useTransactions';
 import { useStaff } from './hooks/useStaff';
 import { useCustomerProfile } from './hooks/useCustomerProfile';
 import { api, API_ORIGIN } from './utils/api';
+import { todayYmd } from './utils/format';
 import { useToast } from './components/Toast';
 
 import LoginPage from './pages/LoginPage';
@@ -39,6 +40,7 @@ import AvailabilityCalendar from './components/AvailabilityCalendar';
 import OnboardingTutorial from './components/OnboardingTutorial';
 import GlobalSearchModal from './components/GlobalSearchModal';
 import ItemDetailModal from './components/ItemDetailModal';
+import MfaStepUpModal from './components/MfaStepUpModal';
 
 // Route-level screens are code-split so the heavy recharts bundle (dashboard /
 // analytics) is only fetched when those tabs are actually opened.
@@ -46,6 +48,7 @@ const DashboardView = lazy(() => import('./pages/DashboardView'));
 const AIInsightsView = lazy(() => import('./pages/AIInsightsView'));
 const InventoryAnalyticsView = lazy(() => import('./pages/InventoryAnalyticsView'));
 const ProfileSettingsView = lazy(() => import('./pages/ProfileSettingsView'));
+const PromotionsView = lazy(() => import('./pages/PromotionsView'));
 const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
 const NotificationsView = lazy(() => import('./pages/NotificationsView'));
 const MessagesView = lazy(() => import('./pages/MessagesView'));
@@ -62,9 +65,12 @@ const navItems = {
   Admin: [
     { id: 'Dashboard', icon: LayoutGrid, label: 'Dashboard' },
     { id: 'Catalog', icon: ShoppingBag, label: 'Inventory' },
+    { id: 'Promotions', icon: Tag, label: 'Promotions' },
     { id: 'History', icon: Clock, label: 'Transactions' },
     { id: 'AI Insights', icon: Sparkles, label: 'Reports', special: true },
-    { id: 'Messages', icon: MessageCircle, label: 'Messages' },
+    // Messages inbox intentionally has no nav entry (desktop sidebar + mobile
+    // top shortcut both render from this list) — staff/admin reach it through
+    // Notifications → Messages and notification taps instead.
     { id: 'Settings', icon: Settings, label: 'Settings' },
   ],
   Staff: [
@@ -122,6 +128,15 @@ export default function RentechApp() {
     if (!item) return;
     setHistorySearch(item.name || '');
     goTab('History');
+  };
+  // One-shot Catalog search prefill (AI stylist item-name links): the chat
+  // modal closes, the catalog opens with the search bar pre-filled.
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const handleChatSearchItem = (item) => {
+    if (!item) return;
+    setShowChatbot(false);
+    setCatalogSearch(item.name || '');
+    goTab('Catalog');
   };
 
   const handleOAuthDetails = async (details) => {
@@ -183,14 +198,52 @@ export default function RentechApp() {
     cancel: cancelTransaction,
     remove: removeTransaction,
     release: releaseTransaction,
+    applyEdit: applyEditTransaction,
     getById,
     prefetchTx,
     loading: transactionsLoading,
   } = useTransactions();
   // Staff accounts (Admin) — encapsulated in useStaff (SoC).
   const { staffAccounts, staffLoadError, loadStaff, addStaff, removeStaff, updateStaff } = useStaff();
+
+  // In-session MFA step-up: any 403 mfa_challenge_required (api.js broadcast)
+  // pops the verification prompt instead of stranding admin tabs behind a
+  // dead-end error. On success we retry the staff list (Team tab) — other
+  // tabs recover on their next Refresh.
+  const [showMfaStepUp, setShowMfaStepUp] = useState(false);
+  useEffect(() => {
+    const open = () => {
+      if (role === 'Admin') setShowMfaStepUp(true);
+    };
+    window.addEventListener('rentech:mfa-challenge', open);
+    return () => window.removeEventListener('rentech:mfa-challenge', open);
+  }, [role]);
   // Editable customer profile + sync with auth profile — useCustomerProfile (SoC).
   const { customerInfo, syncFromProfile, updateCustomer } = useCustomerProfile(updateProfile);
+
+  // Distinct saved categories (presets + any custom ones staff added) so the
+  // Add/Edit item form keeps every used category in its dropdown.
+  const knownCategories = useMemo(() => {
+    const seen = new Set();
+    for (const item of inventory || []) {
+      const c = typeof item?.category === 'string' ? item.category.trim() : '';
+      if (c) seen.add(c);
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [inventory]);
+
+  // Distinct saved colors (fixed list + any customs staff typed) so the
+  // Add/Edit form offers every used color as a chip next time.
+  const knownColors = useMemo(() => {
+    const seen = new Set();
+    for (const item of inventory || []) {
+      for (const c of Array.isArray(item?.colors) ? item.colors : []) {
+        const t = typeof c === 'string' ? c.trim() : '';
+        if (t) seen.add(t);
+      }
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [inventory]);
 
   // Overdue badge count for Tasks nav
   const overdueCount = useMemo(() => {
@@ -211,21 +264,24 @@ export default function RentechApp() {
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [customerRental, setCustomerRental] = useState(null);
   const [showChatbot, setShowChatbot] = useState(false);
-  const [showLoginPage, setShowLoginPage] = useState(false);
-  const [guestView, setGuestView] = useState(false);
+  // Signed-out screens are URL-driven: /sign-in and /collection (guest) are
+  // real routes, so they survive refreshes, new tabs, and back/forward.
+  const goSignIn = () => navigate(SIGN_IN_PATH);
+  const goGuestCollection = () => navigate(GUEST_COLLECTION_PATH);
+  const guestCollection = location.pathname === GUEST_COLLECTION_PATH;
   const [outOfServiceItem, setOutOfServiceItem] = useState(null);
 
   // Load inventory for guest (public) catalog browsing.
   useEffect(() => {
-    if (guestView) loadInventory().catch(() => {});
-  }, [guestView, loadInventory]);
+    if (guestCollection) loadInventory().catch(() => {});
+  }, [guestCollection, loadInventory]);
 
   // Entering/exiting the guest collection swaps the whole page (landing ⇄
-  // catalog) without a route change, so the window keeps its old scroll
+  // catalog) via route change, so the window keeps its old scroll
   // position — reset it so the new view starts at the top.
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [guestView]);
+  }, [guestCollection]);
 
   // Availability calendar
   const [calendarItem, setCalendarItem] = useState(null);
@@ -403,7 +459,6 @@ export default function RentechApp() {
     // 404s any path other than '/') would show "Page not found" after logout.
     loggingOutRef.current = true;
     navigate('/', { replace: true });
-    setShowLoginPage(false);
     setShowLogoutModal(false);
     await logout();
     loggingOutRef.current = false;
@@ -419,6 +474,12 @@ export default function RentechApp() {
   const handleStaffNewRental = async (data) => {
     const payload = {
       customerName: data.customer,
+      // Walk-in contact handoff: the form collects these (StaffNewRental) and
+      // the backend persists them onto the (possibly auto-created) profile.
+      // Dropping them here used to save walk-ins with phone/address = null,
+      // which is why the detail modal showed no number or address.
+      contact: data.contact || undefined,
+      address: data.address || undefined,
       itemId: data.itemId,
       rentalDate: data.rentalDate,
       dueDate: data.returnDate || data.dueDate,
@@ -457,13 +518,15 @@ export default function RentechApp() {
 
   // Process return (FIX D: surface errors). A damaged return takes the item
   // OUT of rotation (skips cleaning); an intact return goes to Cleaning.
-  const handleProcessReturn = async (txId, isDamaged, isLate, returnPhoto, damageReason) => {
+  const handleProcessReturn = async (txId, isDamaged, _isLate, returnPhoto, damageReason, damageFee) => {
     try {
       const updated = await processReturnTx(txId, {
-        returnDate: new Date().toISOString().split('T')[0],
+        returnDate: todayYmd(),
         isDamaged: !!isDamaged,
         returnPhoto: returnPhoto || undefined,
         damageReason: damageReason || undefined,
+        // Custom per-return damage fee (null/undefined = backend default).
+        damageFee: damageFee ?? undefined,
       });
       if (updated.itemId) {
         markItemStatus(updated.itemId, isDamaged ? 'OutOfService' : 'Cleaning');
@@ -503,6 +566,28 @@ export default function RentechApp() {
     releaseTransaction(updated);
     if (updated.itemId) markItemStatus(updated.itemId, 'Rented');
     toastSuccess('Item released');
+  };
+
+  // Edit-rental save (booking dates/notes or customer profile) — merges the
+  // modal's result into the list so History reflects it without a refresh.
+  const handleEditRental = (saved) => {
+    applyEditTransaction(saved);
+  };
+
+  // At-pickup item swap — merges the swapped record (same tx id, new item +
+  // fee) and flips inventory statuses: old garment back to Available, new one
+  // held as Rented (picked up today) or Reserved (future pickup).
+  const handleSwapItem = (swapped, prevItemId) => {
+    if (!swapped) return;
+    applyEditTransaction(swapped);
+    if (prevItemId && swapped.itemId && prevItemId !== swapped.itemId) {
+      markItemStatus(prevItemId, 'Available');
+      const start = new Date(swapped.rentalDate || swapped.date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      markItemStatus(swapped.itemId, start.getTime() > today.getTime() ? 'Reserved' : 'Rented');
+    }
+    toastSuccess(`Booking moved to ${swapped.item?.name ?? 'new item'}`);
   };
 
   // Customer booking handler
@@ -690,6 +775,11 @@ export default function RentechApp() {
     return <TermsOfServiceView />;
   }
 
+  // Signed-in users never need the sign-in page — send them to their home.
+  if (isLoggedIn && location.pathname === SIGN_IN_PATH) {
+    return <Navigate to={HOME_PATH[viewRole] ?? '/'} replace />;
+  }
+
   // Fallback + role guard: unknown URL -> 404 page; URL owned by another role
   // -> Unauthorized page (no silent redirect). Runs after the auth gates so
   // role is resolved.
@@ -718,7 +808,7 @@ export default function RentechApp() {
   const handleViewFeatured = async (entry) => {
     const raw = entry?._item;
     const id = raw?.id ?? entry?.id;
-    setGuestView(true);
+    navigate(GUEST_COLLECTION_PATH);
 
     let item = raw || inventory.find((i) => i.id === id);
     if (!item && id != null) {
@@ -747,9 +837,9 @@ export default function RentechApp() {
     return <OAuthErrorView />;
   }
 
-  // Render: Landing -> Login -> Main App
+  // Render: Landing -> Login -> Main App (signed-out screens are routes).
   if (!isLoggedIn) {
-    if (showLoginPage) {
+    if (location.pathname === SIGN_IN_PATH) {
        return <LoginPage />;
     }
     // OAuth round-trip pads while signed out: the SPA lands on /oauth/callback
@@ -763,24 +853,25 @@ export default function RentechApp() {
       );
     }
     // Unknown URL while signed out -> 404 with a way back to the landing page.
-    if (!guestView && location.pathname !== '/') {
+    // /sign-in and /collection are the only public routes besides '/'.
+    if (!guestCollection && location.pathname !== '/' && location.pathname !== SIGN_IN_PATH) {
       return <NotFoundPage onGoHome={() => navigate('/', { replace: true })} />;
     }
     // Guest (public) catalog browsing — no account required to look.
-    if (guestView) {
+    if (guestCollection) {
       return (
         <div className="min-h-screen bg-[#FAFAFB] selection:bg-[#bf4a53]/10 selection:text-[#bf4a53] overflow-x-hidden">
           {/* Glass nav — matches landing page */}
           <header className="fixed top-0 inset-x-0 z-40 bg-[#FAFAFB]/80 backdrop-blur-lg border-b border-gray-100">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
-              <button onClick={() => setGuestView(false)} className="flex items-center gap-2 font-extrabold tracking-tighter text-gray-950 shrink-0">
+              <button onClick={() => navigate('/', { replace: true })} className="flex items-center gap-2 font-extrabold tracking-tighter text-gray-950 shrink-0">
                 <img src="/RenTech.png" alt="RENTECH" className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-xl" />
                 <span className="hidden sm:block">RENTECH<span className="text-[#bf4a53]">.</span></span>
               </button>
 
               <div className="flex items-center gap-2 md:gap-3 shrink-0">
                 <button
-                  onClick={() => { setGuestView(false); setShowLoginPage(true); }}
+                  onClick={goSignIn}
                   className="bg-[#bf4a53] text-white px-5 py-2.5 md:px-7 md:py-3 rounded-full font-bold text-xs md:text-sm shadow-lg shadow-[#bf4a53]/20 hover:bg-[#a63f47] transition-colors whitespace-nowrap"
                 >
                   Sign In to Rent
@@ -807,15 +898,15 @@ export default function RentechApp() {
               loading={inventoryLoading}
               guest
               onViewDetail={(item) => setDetailItem(item)}
-              onGuestBook={() => { setGuestView(false); setShowLoginPage(true); }}
-              onExitGuest={() => setGuestView(false)}
+              onGuestBook={goSignIn}
+              onExitGuest={() => navigate('/', { replace: true })}
             />
             {detailItem && (
               <ItemDetailModal
                 item={detailItem}
                 guest
                 onClose={() => setDetailItem(null)}
-                onGuestBook={() => { setDetailItem(null); setGuestView(false); setShowLoginPage(true); }}
+                onGuestBook={() => { setDetailItem(null); goSignIn(); }}
               />
             )}
           </div>
@@ -825,8 +916,8 @@ export default function RentechApp() {
     return (
       <Suspense fallback={<SkeletonScreen />}>
         <LandingPage
-          onLogin={() => setShowLoginPage(true)}
-          onBrowse={() => setGuestView(true)}
+          onLogin={goSignIn}
+          onBrowse={goGuestCollection}
           onViewFeatured={handleViewFeatured}
         />
       </Suspense>
@@ -847,18 +938,22 @@ export default function RentechApp() {
                 onNavigate={goTab}
                 onOpenChatbot={() => setShowChatbot(true)}
                 onOpenScanner={() => setShowScanner(true)}
-                onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
+                onCustomerBook={(item) => setCustomerRental({ item, date: todayYmd() })}
+                onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))}
               />
             )}
             {activeTab === 'Tasks' && (
               <TasksPage
                 transactions={transactions}
                 inventory={inventory}
+                role={viewRole}
                 onReturn={handleReturnClick}
                 onNavigate={goTab}
                 onRelease={handleReleaseRental}
+                onSwapItem={handleSwapItem}
                 onMarkClean={markItemClean}
                 onBulkClean={handleBulkClean}
+                onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))}
               />
             )}
             {activeTab === 'Catalog' && (
@@ -868,7 +963,7 @@ export default function RentechApp() {
                 transactions={transactions}
                 loading={inventoryLoading}
                 onBook={(item, date) => setCustomerRental({ item, date })}
-                onCustomerBook={(item) => setCustomerRental({ item, date: new Date().toISOString().split('T')[0] })}
+                onCustomerBook={(item) => setCustomerRental({ item, date: todayYmd() })}
                 onViewDetail={(item) => navigate(itemDetailPath(viewRole, item.id))}
                 onEdit={setEditingItem}
                 onDelete={handleDeleteInventoryItem}
@@ -879,13 +974,18 @@ export default function RentechApp() {
                 onStaffBookItem={(item) => setStaffBookingItem(item)}
                 onCheckAvailability={(item) => setCalendarItem(item)}
                 onRequestDelete={(item) => setDeleteConfirm(item)}
+                initialSearch={catalogSearch}
+                onConsumeSearch={() => setCatalogSearch('')}
               />
             )}
             {activeTab === 'History' && (
-              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
+              <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} onEditRental={handleEditRental} onSwapItem={handleSwapItem} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
             )}
             {activeTab === 'AI Insights' && (
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} />
+            )}
+            {activeTab === 'Promotions' && viewRole === 'Admin' && (
+              <PromotionsView inventory={inventory} onEditItem={setEditingItem} />
             )}
             {(activeTab === 'Profile' || activeTab === 'Settings') && (
               <ProfileSettingsView
@@ -906,7 +1006,7 @@ export default function RentechApp() {
               <HelpGuide role={viewRole} onStartTutorial={() => setShowOnboarding(true)} />
             )}
             {activeTab === 'Notifications' && (
-              <NotificationsView role={viewRole} onNavigateTab={goTab} />
+              <NotificationsView role={viewRole} onNavigateTab={goTab} onOpenBooking={(txId) => navigate(txDetailPath(viewRole, txId))} />
             )}
             {activeTab === 'Messages' && (
               <MessagesView onOpenBooking={(txId) => navigate(txDetailPath(viewRole, txId))} />
@@ -929,7 +1029,13 @@ export default function RentechApp() {
               return manual.includes(editingItem.status) ? manual : [...manual, editingItem.status];
             })()}
             submitLabel="Save Changes"
+            showCategory
+            knownCategories={knownCategories}
             showPhoto
+            showOccasions
+            showColors
+            knownColors={knownColors}
+            role={role}
             showSale={role === 'Admin'}
             onSubmit={(values) => handleUpdateItem(values)}
             onClose={() => setEditingItem(null)}
@@ -941,7 +1047,12 @@ export default function RentechApp() {
             statusOptions={['Available', 'Cleaning', 'OutOfService']}
             submitLabel="Add Item"
             showCategory
+            knownCategories={knownCategories}
+            showOccasions
+            showColors
+            knownColors={knownColors}
             showPhoto
+            role={role}
             showSale={role === 'Admin'}
             maxWidth="max-w-lg"
             onSubmit={handleAddItem}
@@ -983,6 +1094,7 @@ export default function RentechApp() {
               onClose={() => setShowChatbot(false)}
               inventory={inventory}
               onBook={(item) => setCustomerRental({ item })}
+              onSearchItem={handleChatSearchItem}
             />
           </Suspense>
         )}
@@ -1041,7 +1153,7 @@ export default function RentechApp() {
             onBook={() => {
               const it = detailItem;
               navigate(basePath, { replace: true });
-              setCustomerRental({ item: it, date: new Date().toISOString().split('T')[0] });
+              setCustomerRental({ item: it, date: todayYmd() });
             }}
           />
         )}
@@ -1070,6 +1182,19 @@ export default function RentechApp() {
       />
         )}
 
+        {/* MFA step-up: re-verify the second factor for the current session
+            (no sign-out needed) when the marker was lost on token rotation */}
+        {showMfaStepUp && role === 'Admin' && (
+          <MfaStepUpModal
+            onClose={() => setShowMfaStepUp(false)}
+            onVerified={() => {
+              setShowMfaStepUp(false);
+              toastSuccess('Verified — reloading secure sections…');
+              loadStaff().catch(() => {});
+            }}
+          />
+        )}
+
         {/* QR Scanner – staff picks RELEASE/RETURN, then scans the booking QR */}
         {showScanner && viewRole === 'Staff' && (
           <Suspense fallback={null}>
@@ -1090,6 +1215,7 @@ export default function RentechApp() {
             transaction={scannedTx}
             onClose={() => { setScannedTx(null); setScannedAction(null); }}
             onReleased={(updated) => { handleReleaseRental(updated); setScannedTx(null); setScannedAction(null); }}
+            onSwapItem={(updated, prevItemId) => { handleSwapItem(updated, prevItemId); setScannedTx(normalizeTx({ ...scannedTx, ...updated })); }}
           />
         )}
 
@@ -1143,7 +1269,7 @@ export default function RentechApp() {
       onFabClick={() => {
         if (viewRole === 'Admin') goTab('AI Insights');
         else if (viewRole === 'Staff') setShowStaffRental(true);
-        else setCustomerRental({ item: null, date: new Date().toISOString().split('T')[0] });
+        else setCustomerRental({ item: null, date: todayYmd() });
       }}
     >
       <Suspense fallback={<PageSkeleton tab={activeTab} />}>

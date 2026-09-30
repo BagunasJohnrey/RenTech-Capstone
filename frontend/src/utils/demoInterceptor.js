@@ -11,7 +11,7 @@ import { getDemoRole } from './demoMode';
 const day = (offset) => {
   const d = new Date();
   d.setDate(d.getDate() + offset);
-  return d.toISOString().split('T')[0];
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
 const PROFILES = {
@@ -37,14 +37,14 @@ const PROFILES = {
 const IMG = (seed) => `https://picsum.photos/seed/${seed}/800/1000`;
 
 let items = [
-  { id: 1, name: 'Ivory Lace Wedding Gown', category: 'Gown', price: 3500, status: 'Available', effectiveStatus: 'Available', image: IMG('gown1'), description: 'Elegant cathedral-train lace gown.', size: 'M', onSale: true, discountPct: 15, salePrice: null, saleEndsAt: null },
-  { id: 2, name: 'Midnight Blue Barong Tagalog', category: 'Barong', price: 1500, status: 'Available', effectiveStatus: 'Available', image: IMG('barong1'), description: 'Classic piña barong with mother-of-pearl buttons.', size: 'L', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
-  { id: 3, name: 'Rose Gold Filipiniana', category: 'Filipiniana', price: 2200, status: 'Rented', effectiveStatus: 'Rented', image: IMG('fili1'), description: 'Modern terno with butterfly sleeves.', size: 'S', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
-  { id: 4, name: 'Charcoal Three-Piece Suit', category: 'Suit', price: 2000, status: 'Available', effectiveStatus: 'Available', image: IMG('suit1'), description: 'Slim-fit wool suit, includes tie.', size: 'XL', onSale: false, discountPct: null, salePrice: 1600, saleEndsAt: null },
-  { id: 5, name: 'Maria Clara Gala Gown', category: 'Gown', price: 4000, status: 'Cleaning', effectiveStatus: 'Cleaning', image: IMG('gown2'), description: 'Heritage-inspired formal gown.', size: 'M', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
-  { id: 6, name: 'Debutante Ball Gown', category: 'Gown', price: 3800, status: 'Available', effectiveStatus: 'Available', image: IMG('gown3'), description: 'Tulle ballgown with beaded bodice.', size: 'S', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
-  { id: 7, name: 'Barong for Kids', category: 'Barong', price: 800, status: 'OutOfService', effectiveStatus: 'OutOfService', outOfServiceReason: 'Missing two buttons', image: IMG('barong2'), description: 'Boys barong for ages 8–10.', size: 'Kids', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
-  { id: 8, name: 'Spanish-Era Costume Set', category: 'Costume', price: 2600, status: 'Available', effectiveStatus: 'Available', image: IMG('costume1'), description: 'Complete outfit for plays & festivals.', size: 'M', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
+  { id: 1, name: 'Ivory Lace Wedding Gown', category: 'Gown', occasions: ['Wedding', 'Gala'], price: 3500, status: 'Available', effectiveStatus: 'Available', image: IMG('gown1'), description: 'Elegant cathedral-train lace gown.', size: 'M', onSale: true, discountPct: 15, salePrice: null, saleEndsAt: null },
+  { id: 2, name: 'Midnight Blue Barong Tagalog', category: 'Barong', occasions: ['Wedding', 'Corporate'], price: 1500, status: 'Available', effectiveStatus: 'Available', image: IMG('barong1'), description: 'Classic piña barong with mother-of-pearl buttons.', size: 'L', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
+  { id: 3, name: 'Rose Gold Filipiniana', category: 'Filipiniana', occasions: ['Wedding', 'Graduation'], price: 2200, status: 'Rented', effectiveStatus: 'Rented', image: IMG('fili1'), description: 'Modern terno with butterfly sleeves.', size: 'S', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
+  { id: 4, name: 'Charcoal Three-Piece Suit', category: 'Suit', occasions: ['Wedding', 'Corporate'], price: 2000, status: 'Available', effectiveStatus: 'Available', image: IMG('suit1'), description: 'Slim-fit wool suit, includes tie.', size: 'XL', onSale: false, discountPct: null, salePrice: 1600, saleEndsAt: null },
+  { id: 5, name: 'Maria Clara Gala Gown', category: 'Gown', occasions: ['Gala', 'Debut'], price: 4000, status: 'Cleaning', effectiveStatus: 'Cleaning', image: IMG('gown2'), description: 'Heritage-inspired formal gown.', size: 'M', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
+  { id: 6, name: 'Debutante Ball Gown', category: 'Gown', occasions: ['Debut', 'Birthday'], price: 3800, status: 'Available', effectiveStatus: 'Available', image: IMG('gown3'), description: 'Tulle ballgown with beaded bodice.', size: 'S', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
+  { id: 7, name: 'Barong for Kids', category: 'Barong', occasions: ['Birthday', 'Graduation'], price: 800, status: 'OutOfService', effectiveStatus: 'OutOfService', outOfServiceReason: 'Missing two buttons', image: IMG('barong2'), description: 'Boys barong for ages 8–10.', size: 'Kids', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
+  { id: 8, name: 'Spanish-Era Costume Set', category: 'Costume', occasions: ['Costume Party', 'Photoshoot', 'Birthday'], price: 2600, status: 'Available', effectiveStatus: 'Available', image: IMG('costume1'), description: 'Complete outfit for plays & festivals.', size: 'M', onSale: false, discountPct: null, salePrice: null, saleEndsAt: null },
 ];
 
 const CUSTOMERS = {
@@ -53,12 +53,17 @@ const CUSTOMERS = {
   'c-pedro': { id: 'c-pedro', name: 'Pedro Reyes', email: 'pedro@example.com', phone: '09170002222', address: 'Calatagan, Batangas' },
 };
 
+const DEMO_ASSISTED = { id: 'demo-staff-profile', name: 'Kai (Demo Staff)' };
+const DEMO_RELEASED = { id: 's-2', name: 'Ana (Demo Staff 2)' };
+
 const tx = (id, itemId, customerId, status, startOff, dueOff, fee, paid) => {
   const item = items.find((i) => i.id === itemId);
   const customer = CUSTOMERS[customerId];
   return {
     id, txNumber: id, itemId, status,
     customerId, processedById: 'demo-staff-profile',
+    assistedById: 'demo-staff-profile', assistedBy: { ...DEMO_ASSISTED },
+    releasedById: null, releasedBy: null,
     rentalDate: day(startOff), dueDate: day(dueOff),
     date: day(startOff),
     rentalFee: fee, downpayment: Math.round(fee * 0.5), totalPaid: paid,
@@ -110,6 +115,8 @@ let demoReports = [
   { id: 'rpt-demo-2', createdAt: new Date(Date.now() - 86400000).toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: Gowns lead bookings, weekend demand spikes.', length: 320, uploaded: true, origin: 'both' },
   { id: 'rpt-demo-1', createdAt: new Date(Date.now() - 4 * 86400000).toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: revenue steady, 2 overdue rentals need attention.', length: 298, uploaded: true, origin: 'cloud' },
 ];
+
+let demoPromoSuggestions = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -435,13 +442,59 @@ function route(method, path, body) {
   }
   if (P(/^\/transactions\/[0-9a-f-]+\/release$/) && method === 'PUT') {
     const t = transactions.find((x) => path.includes(x.id));
-    if (t) t.releasePhoto = body.releasePhoto ?? 'demo/release.jpg';
+    if (t) {
+      t.releasePhoto = body.releasePhoto ?? 'demo/release.jpg';
+      if (!t.releasedById) { t.releasedById = 's-2'; t.releasedBy = { ...DEMO_RELEASED }; }
+    }
     return { value: clone(t ?? {}) };
+  }
+  if (P(/^\/transactions\/[0-9a-f-]+\/audits$/) && method === 'GET') {
+    const t = transactions.find((x) => path.includes(x.id));
+    const log = [];
+    if (t) {
+      log.push({
+        id: 'demo-a1', action: 'create', entity: 'transaction',
+        oldValue: null, newValue: { transactionId: t.id, assistedById: t.assistedById ?? 'demo-staff-profile' },
+        createdAt: t.createdAt, performedBy: { ...DEMO_ASSISTED, role: 'Staff' },
+      });
+      if (t.releasePhoto) {
+        log.push({
+          id: 'demo-a2', action: 'update', entity: 'transaction',
+          oldValue: { status: 'Reserved' }, newValue: { status: 'Active', released: true, releasedById: t.releasedById ?? 's-2' },
+          createdAt: t.createdAt, performedBy: { ...(t.releasedBy ?? DEMO_RELEASED), role: 'Staff' },
+        });
+      }
+    }
+    return { value: log };
   }
   if (P(/^\/transactions\/[0-9a-f-]+\/cancel$/) && method === 'PUT') {
     const t = transactions.find((x) => path.includes(x.id));
     if (t) t.status = 'Cancelled';
     return { value: clone(t ?? {}) };
+  }
+  if (P(/^\/transactions\/[0-9a-f-]+\/swap-item$/) && method === 'PUT') {
+    const t = transactions.find((x) => path.includes(x.id));
+    if (!t) return { status: 404, error: 'Not found' };
+    const it = items.find((i) => i.id === body.newItemId);
+    if (!it) return { status: 404, error: 'Replacement item not found' };
+    if (t.itemId === it.id) return { status: 400, error: 'This booking is already on the selected item' };
+    if (['Returned', 'Cancelled', 'Overdue'].includes(t.status)) return { status: 400, error: 'Cannot swap the item on this transaction' };
+    if (it.status === 'OutOfService') return { status: 400, error: 'Replacement item is out of service and cannot be rented' };
+    if (it.status !== 'Available') return { status: 409, error: 'Replacement item is unavailable for the selected dates' };
+    const prev = { id: t.itemId, name: t.item?.name ?? '' };
+    const prevFee = t.rentalFee;
+    const fee = it.salePrice > 0 ? it.salePrice
+      : it.onSale && it.discountPct > 0 ? Math.round(it.price * (1 - it.discountPct / 100)) : it.price;
+    const oldItem = items.find((i) => i.id === t.itemId);
+    if (oldItem && oldItem.status !== 'OutOfService') { oldItem.status = 'Available'; oldItem.effectiveStatus = 'Available'; }
+    it.status = 'Rented'; it.effectiveStatus = 'Rented';
+    Object.assign(t, {
+      itemId: it.id, rentalFee: fee, balance: Math.max(0, fee - (t.totalPaid ?? 0)),
+      promoCodeId: null, size: null, releasePhoto: null, releasedById: null,
+      item: { id: it.id, name: it.name, category: it.category, image: it.image, price: it.price },
+      notes: (t.notes ? t.notes + '\n' : '') + `Item swapped at pickup: "${prev.name}" → "${it.name}" (demo)`,
+    });
+    return { value: { ...clone(t), swappedFrom: prev, previousFee: prevFee, promoVoided: true } };
   }
   if (P(/^\/transactions\/[0-9a-f-]+$/) && method === 'PATCH') {
     const t = transactions.find((x) => path.includes(x.id));
@@ -569,6 +622,48 @@ function route(method, path, body) {
       },
     };
   }
+
+  // ---- Saved promo suggestions (demo) ----
+  if (path === '/ai/promo-suggestions' && method === 'GET') {
+    return { value: clone(demoPromoSuggestions) };
+  }
+  if (P(/^\/ai\/promo-suggestions\/(.+)$/) && method === 'GET') {
+    const id = P(/^\/ai\/promo-suggestions\/(.+)$/)[1];
+    const found = demoPromoSuggestions.find(s => s.id === id);
+    if (!found) return { status: 404, error: 'Not found (demo)' };
+    return { value: clone(found) };
+  }
+  if (P(/^\/ai\/promo-suggestions\/(.+)$/) && method === 'DELETE') {
+    const id = P(/^\/ai\/promo-suggestions\/(.+)$/)[1];
+    demoPromoSuggestions = demoPromoSuggestions.filter(s => s.id !== id);
+    return { value: { message: 'Deleted (demo)' } };
+  }
+  // When suggest-promos runs, also save to demo list
+  if (path === '/ai/suggest-promos') {
+    const suggestionId = 'promo-demo-' + Date.now();
+    const now = new Date();
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const demoSuggestions = {
+      itemSuggestions: [
+        { itemId: items[0]?.id || 1, itemName: items[0]?.name || 'Floral Gown Set', discountPct: 20, suggestedExpiryDays: 30, rationale: 'Wedding season peak — gowns have 40% lower utilization than expected this month.' },
+        { itemId: items[2]?.id || 3, itemName: items[2]?.name || 'Classic Barong', discountPct: 15, suggestedExpiryDays: 15, rationale: 'Graduation month — barong demand spikes 2x in May-June.' },
+      ],
+      voucherSuggestions: [
+        { code: 'GRAD2026', discountPct: 10, maxUses: 50, expiresInDays: 30, rationale: 'Graduation month promo to drive bulk bookings from groups and families.' },
+        { code: 'SUMMER15', discountPct: 15, maxUses: 30, expiresInDays: 60, rationale: 'Off-peak season retention — encourage repeat customers during slower months.' },
+      ],
+    };
+    const savedMeta = {
+      id: suggestionId, createdAt: now.toISOString(), createdBy: 'demo-admin', source: 'ai', provider: 'demo', model: 'demo',
+      currentMonth: monthNames[now.getMonth()] + ' ' + now.getFullYear(),
+      itemCount: demoSuggestions.itemSuggestions.length, voucherCount: demoSuggestions.voucherSuggestions.length,
+      excerpt: `${demoSuggestions.itemSuggestions.length} item sale idea(s), ${demoSuggestions.voucherSuggestions.length} voucher code(s)`,
+      uploaded: true, origin: 'both', suggestions: demoSuggestions,
+    };
+    demoPromoSuggestions.unshift(savedMeta);
+    return { value: { suggestions: demoSuggestions, source: 'ai', provider: 'demo', model: 'demo', suggestionId } };
+  }
+
   if (path === '/ai/generate-report') {
     const created = { id: 'rpt-demo-' + Date.now(), createdAt: new Date().toISOString(), createdBy: 'demo-admin-profile', source: 'demo', provider: 'demo', model: 'demo', excerpt: 'Demo report: Gowns drive revenue, Barong needs promotion, demand trending up.', length: 420, uploaded: true, origin: 'both' };
     demoReports.unshift(created);

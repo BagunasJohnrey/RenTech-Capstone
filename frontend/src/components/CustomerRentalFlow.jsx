@@ -9,8 +9,10 @@ import { inventoryService } from '../services/inventory';
 import BookingCalendar from './BookingCalendar';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
+import { todayYmd, toLocalYmd } from '../utils/format';
 import BookingQR from './BookingQR';
 import QRCode from 'qrcode';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
@@ -51,7 +53,7 @@ export default function CustomerRentalFlow({
   useEscapeClose(onClose);
   const [step, setStep] = useState(() => (preselectedItem ? 1 : 0));
   const [selectedItem, setSelectedItem] = useState(preselectedItem || null);
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => todayYmd(), []);
   const [rentalDate, setRentalDate] = useState(preselectedDate || todayStr);
   const measurementFields = useMemo(() => {
     const isFemale = selectedItem?.category?.toLowerCase().includes('gown');
@@ -63,22 +65,27 @@ export default function CustomerRentalFlow({
   const [eventDate, setEventDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 3);
-    return d.toISOString().split('T')[0];
+    return toLocalYmd(d);
   });
   const eventDateTouched = useRef(false);
   // Suggested rental period + minimum downpayment come from the admin's
   // business rules (public endpoint) — fall back to the 3-day / ₱200 defaults.
-  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, min_downpayment: 200 });
+  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200 });
   useEffect(() => {
     let cancelled = false;
     api.get('/settings/rental-defaults')
       .then((d) => {
         if (cancelled || !d || typeof d.rental_period_days !== 'number') return;
-        setRentalDefaults({ rental_period_days: d.rental_period_days, min_downpayment: d.min_downpayment || 0 });
+        setRentalDefaults({
+          rental_period_days: d.rental_period_days,
+          return_days_after_event: d.return_days_after_event || 1,
+          min_downpayment: d.min_downpayment || 0,
+        });
+        setDownpaymentAmount(d.min_downpayment || 200);
         if (!eventDateTouched.current) {
           const dt = new Date();
           dt.setDate(dt.getDate() + d.rental_period_days);
-          setEventDate(dt.toISOString().split('T')[0]);
+          setEventDate(toLocalYmd(dt));
         }
       })
       .catch(() => {});
@@ -88,9 +95,9 @@ export default function CustomerRentalFlow({
     if (!eventDate) return '';
     const d = new Date(eventDate);
     if (isNaN(d.getTime())) return '';
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
-  }, [eventDate]);
+    d.setDate(d.getDate() + rentalDefaults.return_days_after_event);
+    return toLocalYmd(d);
+  }, [eventDate, rentalDefaults.return_days_after_event]);
   const [useAccountDetails, setUseAccountDetails] = useState(true);
   const [customer, setCustomer] = useState({
     name: customerInfo?.name || '',
@@ -113,7 +120,7 @@ export default function CustomerRentalFlow({
   // after any promo). Same as the server's requireMinimumDownpayment rule so
   // promo-discounted bookings can't be blocked by an over-large minimum.
   // Prefilled with the flat floor once an item is picked (step 0 resets it).
-  const [downpaymentAmount, setDownpaymentAmount] = useState(0);
+  const [downpaymentAmount, setDownpaymentAmount] = useState(200);
   const [confirmedTx, setConfirmedTx] = useState(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
@@ -197,7 +204,12 @@ export default function CustomerRentalFlow({
       // currently Rented/Reserved) so customers can reserve future-free dates.
       if (item.status === 'OutOfService' || item.status === 'Deleted') return false;
       const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
-      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+      const q = searchQuery.trim().toLowerCase();
+      const tags = Array.isArray(item.occasions) ? item.occasions : [];
+      const matchesSearch = !q
+        || item.name.toLowerCase().includes(q)
+        || (item.category || '').toLowerCase().includes(q)
+        || tags.some((t) => String(t).toLowerCase().includes(q));
       return matchesCat && matchesSearch;
     });
   }, [inventory, selectedCategories, searchQuery]);
@@ -237,17 +249,23 @@ export default function CustomerRentalFlow({
   const displayedItems = filteredCatalog.slice(0, visibleCount);
   const allLoaded = visibleCount >= filteredCatalog.length;
 
+  // Reveal the next page of items. Used by infinite scroll AND the explicit
+  // "Show more" button — the button matters on tall screens where the capped
+  // list fits the first page exactly and no scroll event ever fires.
+  const loadMore = useCallback(() => {
+    if (loadingMore || allLoaded) return;
+    setLoadingMore(true);
+    setTimeout(() => {
+      setVisibleCount((prev) => Math.min(prev + ITEMS_PER_LOAD, filteredCatalog.length));
+      setLoadingMore(false);
+    }, 400);
+  }, [loadingMore, allLoaded, filteredCatalog.length]);
+
   const handleCatalogScroll = useCallback(() => {
     const el = catalogRef.current;
-    if (!el || loadingMore || allLoaded) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) {
-      setLoadingMore(true);
-      setTimeout(() => {
-        setVisibleCount((prev) => Math.min(prev + ITEMS_PER_LOAD, filteredCatalog.length));
-        setLoadingMore(false);
-      }, 400);
-    }
-  }, [loadingMore, allLoaded, filteredCatalog.length]);
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) loadMore();
+  }, [loadMore]);
 
   const toggleAccountDetails = (useAccount) => {
     setUseAccountDetails(useAccount);
@@ -309,7 +327,7 @@ export default function CustomerRentalFlow({
     else onClose();
   };
 
-  const handleNext = async () => {
+  const handleNextInner = async () => {
     if (step === 0) {
       if (!selectedItem) { setFieldErrors({ item: 'Please select an item.' }); return; }
       setDownpaymentAmount(rentalDefaults.min_downpayment || 200);
@@ -393,6 +411,12 @@ export default function CustomerRentalFlow({
       }
     }
   };
+
+  // Button guard: blocks double-tap Continue (harmless re-nav on steps 0/1,
+  // but step 2 creates the booking + payment — a double-fire there duplicates
+  // the transaction). `navigating` also disables the button during step 2.
+  const { guarding: navigating, guard: guardNext } = useButtonGuard();
+  const handleNext = () => guardNext(handleNextInner);
 
   const handleConfirm = async () => {
     if (confirming) return;
@@ -740,11 +764,11 @@ export default function CustomerRentalFlow({
                 {fieldErrors.item}
               </div>
             )}
-            <div ref={catalogRef} onScroll={handleCatalogScroll} className="flex-1 overflow-y-auto pr-1 hide-scrollbar">
+            <div ref={catalogRef} onScroll={handleCatalogScroll} className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[200px] max-h-[36vh] sm:max-h-[44vh]">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {displayedItems.map((item) => (
                   <button type="button" key={item.id} onClick={() => setSelectedItem(item)}
-                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per day`}
+                    aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per event`}
                     className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'}`}>
                     <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
@@ -776,6 +800,15 @@ export default function CustomerRentalFlow({
               </div>
               <div className="py-3 flex justify-center">
                 {loadingMore && <Loader2 size={18} className="text-gray-400 animate-spin" />}
+                {!loadingMore && !allLoaded && (
+                  <button
+                    type="button"
+                    onClick={loadMore}
+                    className="px-5 py-2 rounded-full text-xs font-bold text-[#bf4a53] bg-red-50 hover:bg-red-100 active:scale-[0.98] transition-all"
+                  >
+                    Show more ({filteredCatalog.length - visibleCount} more)
+                  </button>
+                )}
                 {!loadingMore && allLoaded && filteredCatalog.length > 0 && (
                   <p className="text-xs text-gray-400">All items loaded</p>
                 )}
@@ -886,6 +919,7 @@ export default function CustomerRentalFlow({
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
                   <Calendar size={14} /> Rental Schedule
                 </h4>
+                <p className="text-[10px] text-gray-400 -mt-2">Tap once for pickup, tap again for event date.</p>
                 {isCleaning ? (
                   <div className="flex items-start gap-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
                     <Calendar size={16} className="mt-0.5 text-amber-500" />
@@ -896,6 +930,7 @@ export default function CustomerRentalFlow({
                   pickup={rentalDate}
                   event={eventDate}
                   bookedRanges={bookedRanges}
+                  returnDays={rentalDefaults.return_days_after_event}
                   onChange={(p, e) => {
                     eventDateTouched.current = true;
                     setRentalDate(p);
@@ -909,7 +944,7 @@ export default function CustomerRentalFlow({
                   <span className="text-amber-500 mt-0.5"><Calendar size={16} /></span>
                   <div>
                     <p className="text-xs font-bold text-amber-800">Pick up from the store before your event date</p>
-                    <p className="text-[11px] text-amber-600 mt-0.5">Return is due the day after your event ({formatDate(dueDate)}).</p>
+                    <p className="text-[11px] text-amber-600 mt-0.5">Return is due {rentalDefaults.return_days_after_event === 1 ? 'the day after' : `${rentalDefaults.return_days_after_event} days after`} your event ({formatDate(dueDate)}).</p>
                   </div>
                 </div>
 
@@ -986,7 +1021,7 @@ export default function CustomerRentalFlow({
                     type="number"
                     inputMode="decimal"
                     placeholder="0"
-                    value={downpaymentAmount}
+                    value={downpaymentAmount || ''}
                     min={minDownpayment}
                     aria-label="Required downpayment amount"
                     onChange={(e) => { setDownpaymentAmount(Math.max(0, Number(e.target.value) || 0)); clearFieldError('downpayment'); }}
@@ -1145,9 +1180,9 @@ export default function CustomerRentalFlow({
             </button>
             <button
               onClick={handleNext}
-              disabled={step === 1 && (availability.checking || availability.available === false || isCleaning)}
+              disabled={navigating || (step === 1 && (availability.checking || availability.available === false || isCleaning))}
               className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : 'Confirm Payment'} <ChevronRight size={16} />
+              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : (navigating ? 'Processing…' : 'Confirm Payment')} <ChevronRight size={16} />
             </button>
           </div>
         )}

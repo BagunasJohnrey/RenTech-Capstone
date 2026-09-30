@@ -21,7 +21,7 @@ const inRange = (dateStr, start, end) => start && end && dateStr >= start && dat
  * unavailable (red) and lets staff pick a pickup date then an event date.
  * Booked ranges come from the item's active/overdue transactions.
  */
-export default function BookingCalendar({ pickup, event, onChange, bookedRanges = [], minDate, disabled = false }) {
+export default function BookingCalendar({ pickup, event, onChange, bookedRanges = [], minDate, disabled = false, returnDays = 1 }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const min = minDate || ymd(today);
@@ -129,7 +129,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
         })}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 mt-3 text-[10px] text-gray-500">
+      <div className="flex flex-wrap items-center justify-center gap-3 mt-3 text-[10px] text-gray-500">
         <span className="flex items-center gap-1">
           <span className="w-3 h-3 rounded bg-[#bf4a53]" /> Pickup
         </span>
@@ -144,12 +144,14 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
         </span>
       </div>
 
-      <p className="mt-2 text-[10px] text-gray-400">
+      <p className="mt-2 text-[10px] text-gray-400 text-center">
         {!pickup
           ? 'Tap a date to set the pickup date.'
           : !event
           ? 'Now tap the event date.'
-          : 'Return is due the day after the event.'}
+          : returnDays === 1
+          ? 'Return is due the day after the event.'
+          : `Return is due ${returnDays} days after the event.`}
       </p>
 
       {warn && (
@@ -166,7 +168,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
       )}
 
       {(pickup || event) && (
-        <div className="mt-2 text-[11px] text-gray-600 flex flex-wrap gap-x-3">
+        <div className="mt-2 text-[11px] text-gray-600 flex flex-wrap justify-center gap-x-3">
           {pickup && (
             <span>
               Pickup: <b>{fmt(pickup)}</b>
@@ -183,7 +185,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
                   {fmt(
                     (() => {
                       const r = new Date(event);
-                      r.setDate(r.getDate() + 1);
+                      r.setDate(r.getDate() + returnDays);
                       return ymd(r);
                     })()
                   )}
