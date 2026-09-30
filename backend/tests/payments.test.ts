@@ -204,6 +204,19 @@ describe('GET /api/payments/:id', () => {
 
     expect(res.status).toBe(200);
   });
+
+  // SECURITY: a customer may not read another customer's payment intent, and an
+  // unknown id must not be waved through either.
+  it('rejects a customer reading an unknown pi_ intent', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get('/api/payments/pi_someone_elses')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.status).toBe(403);
+  });
 });
 
 describe('POST /api/webhooks/paymongo', () => {

@@ -115,16 +115,17 @@ export async function handleMayaWebhook(req: Request, res: Response, next: NextF
 
     if (body.paymentStatus !== 'SUCCESS' || !body.id) return ack();
 
-    // Correlate to a transaction. Maya echoes the metadata we sent at charge
-    // time, so that is the cheap path; only fall back to a lookup when it is
-    // absent. The ledger re-reads the transaction anyway, so we never do a
-    // lookup we don't need.
-    let transactionId = body.metadata?.transactionId;
-    if (!transactionId) {
-      const tx = await prisma.transaction.findFirst({ where: { gatewayPaymentId: body.id } });
-      if (!tx) return ack();
-      transactionId = tx.id;
-    }
+    // SECURITY (the whole point of this handler): the payload is unsigned, so
+    // NOTHING in it chooses which booking gets credited. Not `metadata`, not
+    // `receiptNumber`. The binding comes only from the gatewayPaymentId WE
+    // stored when we created the charge — so a customer who pays their own
+    // downpayment once cannot replay that paymentId against another booking.
+    // (The re-check below proves the money arrived; this proves it was OUR money
+    // for THIS booking.)
+    const tx = await prisma.transaction.findFirst({
+      where: { gatewayPaymentId: body.id },
+    });
+    if (!tx) return ack();
 
     let verified;
     try {
@@ -143,7 +144,7 @@ export async function handleMayaWebhook(req: Request, res: Response, next: NextF
     let result;
     try {
       result = await applyPaymentToTransaction({
-        transactionId,
+        transactionId: tx.id,
         amount: verified.amount,
         gateway: 'maya',
         gatewayRef: body.id,
@@ -152,7 +153,7 @@ export async function handleMayaWebhook(req: Request, res: Response, next: NextF
     } catch (err: any) {
       // A closed or vanished transaction is a "nothing to do", not a failure to
       // retry — Maya would just keep hitting us.
-      if (err?.status === 400 || err?.status === 404) return ack();
+      if (err?.statusCode === 400 || err?.statusCode === 404) return ack();
       throw err;
     }
 

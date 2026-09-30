@@ -219,11 +219,12 @@ const txOpen = {
   rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 0, balance: 5000,
 };
 
+// NOTE: no `metadata` in the payload anywhere below — the handler must not read
+// it. Correlation is by the gatewayPaymentId we stored at charge time.
 const successPayload = {
   id: 'pay-maya-1',
   paymentStatus: 'SUCCESS',
   receiptNumber: 'RRN123',
-  metadata: { transactionId: 'tx-1' },
 };
 
 function mockMayaRetrieve(over: Record<string, any> = {}) {
@@ -232,6 +233,9 @@ function mockMayaRetrieve(over: Record<string, any> = {}) {
     json: () => Promise.resolve({ paymentId: 'pay-maya-1', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 }, ...over }),
   });
 }
+
+// The charge we created is bound to tx-1 by the stored gatewayPaymentId.
+const boundTx = { ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-1' };
 
 describe('GET /api/settings/integrations-status', () => {
   it('exposes a maya row', async () => {
@@ -425,9 +429,10 @@ describe('GET /api/payments/transaction/:id/status', () => {
 });
 
 describe('POST /api/webhooks/maya', () => {
-  it('credits a verified SUCCESS webhook', async () => {
+it('credits a verified SUCCESS webhook', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce(txOpen);
+    prisma.transaction.findFirst.mockResolvedValueOnce(boundTx);
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...boundTx });
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     global.fetch = mockMayaRetrieve();
 
@@ -456,7 +461,8 @@ describe('POST /api/webhooks/maya', () => {
 
   it('never credits more than Maya confirmed (Review Focus #3: forged inflation)', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce(txOpen);
+    prisma.transaction.findFirst.mockResolvedValueOnce(boundTx);
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...boundTx });
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     // Payload claims PHP 2000; Maya actually received PHP 2.
     global.fetch = mockMayaRetrieve({ totalAmount: { value: 200 } });
@@ -474,7 +480,8 @@ describe('POST /api/webhooks/maya', () => {
 
   it('uses the re-check amount when the payload understates it (Review Focus #5)', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce(txOpen);
+    prisma.transaction.findFirst.mockResolvedValueOnce(boundTx);
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...boundTx });
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     // Payload claims PHP 9999.99; Maya actually received PHP 1500.
     global.fetch = mockMayaRetrieve({ totalAmount: { value: 150000 } });
@@ -501,7 +508,8 @@ describe('POST /api/webhooks/maya', () => {
 
   it('reports duplicate for a replayed webhook', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce(txOpen);
+    prisma.transaction.findFirst.mockResolvedValueOnce(boundTx);
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...boundTx });
     prisma.payment.findUnique.mockResolvedValueOnce({ id: 'pay-existing', gatewayRef: 'pay-maya-1' });
     global.fetch = mockMayaRetrieve();
 
@@ -536,6 +544,50 @@ describe('POST /api/webhooks/maya', () => {
     expect(prisma.transaction.findUnique).not.toHaveBeenCalled();
     expect(prisma.payment.create).not.toHaveBeenCalled();
     env.MAYA_WEBHOOK_ALLOWED_IPS = [];
+  });
+
+  it('answers 200 for a closed rental instead of leaking a 4xx', async () => {
+    // Maya retries only 4x then abandons the booking, so a closed/vanished
+    // transaction must still be acknowledged with 200 (regression: this guard
+    // read err.status, but AppError exposes statusCode, so it was dead code).
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findFirst.mockResolvedValueOnce({ ...txOpen, status: 'Returned' });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, status: 'Returned' });
+    global.fetch = mockMayaRetrieve();
+
+    const res = await request(webhookApp).post('/api/webhooks/maya').send({
+      id: 'pay-maya-late', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ received: true, verified: false });
+  });
+
+  // SECURITY (C1): the payload's metadata is UNSIGNED. A customer could pay
+  // their own downpayment once and replay that paymentId naming any booking to
+  // mark it paid. The binding must come only from the stored gatewayPaymentId,
+  // never from the payload.
+  it('REFUSES a replayed payment naming a DIFFERENT booking via metadata', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // The attacker's real charge is bound to tx-attacker. The payload claims a
+    // different, unpaid transaction.
+    prisma.transaction.findFirst.mockResolvedValueOnce(null);
+    global.fetch = mockMayaRetrieve();
+
+    const res = await request(webhookApp).post('/api/webhooks/maya').send({
+      id: 'pay-maya-1',
+      paymentStatus: 'SUCCESS',
+      totalAmount: { value: 200000 },
+      metadata: { transactionId: 'VICTIM-TX' },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ received: true, verified: false });
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    // The lookup must be by the ref WE stored, not by the payload's claim.
+    expect(prisma.transaction.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { gatewayPaymentId: 'pay-maya-1' } })
+    );
   });
 
   it('resolves the transaction by gatewayPaymentId when metadata is absent', async () => {

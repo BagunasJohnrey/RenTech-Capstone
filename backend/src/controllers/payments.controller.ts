@@ -129,7 +129,10 @@ export async function getPayment(req: AuthenticatedRequest, res: Response, next:
         where: { gatewayRef: paymentId },
         include: { transaction: { select: { customerId: true } } },
       });
-      if (req.user?.role === 'Customer' && local && local.transaction.customerId !== req.user.id) {
+      // SECURITY: resolve local ownership before querying the gateway, so one
+      // customer can't read another customer's payment intent. An unknown id
+      // has no owner, so it is refused too — not waved through.
+      if (req.user?.role === 'Customer' && local?.transaction.customerId !== req.user.id) {
         throw new AppError(403, 'Not your payment');
       }
 
@@ -220,7 +223,7 @@ export async function getPaymentStatus(req: AuthenticatedRequest, res: Response,
       } catch (err: any) {
         // A closed/vanished transaction can't be credited — tell the client to
         // stop polling rather than surfacing an error it can't act on.
-        if (err?.status === 400 || err?.status === 404) {
+        if (err?.statusCode === 400 || err?.statusCode === 404) {
           return res.json({ status: 'failed', totalPaid: tx.totalPaid, balance: tx.balance, gateway });
         }
         throw err;
