@@ -183,10 +183,9 @@ export async function getPaymentStatus(req: AuthenticatedRequest, res: Response,
     // "Succeeded" must mean the booking's required downpayment is actually
     // covered — not merely that some money arrived. Reporting success for a
     // PHP 2 partial against a PHP 5,000 rental is the bug this prevents.
-    const rules = await getBusinessRules();
-    const flatMin = parseInt(rules.min_downpayment ?? '200', 10) || 200;
-    const owed = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - tx.totalPaid);
-    const required = Math.min(tx.downpayment > 0 ? tx.downpayment : flatMin, owed || tx.downpayment);
+    // A booking that recorded no downpayment requirement has nothing to settle
+    // online, so it needs no invented minimum and no rules lookup.
+    const required = tx.downpayment > 0 ? tx.downpayment : 0;
     const settled = tx.totalPaid >= required;
 
     const stateFor = (totalPaid: number, balance: number) => ({
@@ -211,12 +210,23 @@ export async function getPaymentStatus(req: AuthenticatedRequest, res: Response,
     // fall back to the cheap status-only probe if it errors.
     let status = 'PENDING';
     let amount = 0;
+    let amountConfirmed = false;
     try {
       const verified = await retrievePayment(tx.gatewayPaymentId);
       status = verified.status;
       amount = verified.amount;
+      amountConfirmed = true;
     } catch {
+      // The secret-key call failed (bad/rotated key, transient 5xx). The
+      // status-only probe uses the PUBLIC key and can still answer, but it
+      // carries no amount — so we must neither credit nor claim success.
+      // Without this, a wrong secret key reports EVERY payment as confirmed
+      // with PHP 0 credited.
       status = (await retrievePaymentStatus(tx.gatewayPaymentId)).status;
+    }
+
+    if (!amountConfirmed) {
+      return res.json(stateFor(tx.totalPaid, tx.balance));
     }
 
     if (status === 'SUCCESS' && amount > 0) {
@@ -238,7 +248,9 @@ export async function getPaymentStatus(req: AuthenticatedRequest, res: Response,
       } catch (err: any) {
         // A closed/vanished transaction can't be credited — tell the client to
         // stop polling rather than surfacing an error it can't act on.
-        if (err?.statusCode === 400 || err?.statusCode === 404) {
+        if (
+          err?.statusCode === 400 || err?.statusCode === 404 || err?.statusCode === 409
+        ) {
           return res.json({ status: 'failed', totalPaid: tx.totalPaid, balance: tx.balance, gateway });
         }
         throw err;

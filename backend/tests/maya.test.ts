@@ -355,8 +355,8 @@ describe('GET /api/payments/transaction/:id/status', () => {
     const { prisma } = await import('../src/config/database.js');
     // Read twice: once for the ownership/gateway check, once inside the ledger.
     prisma.transaction.findUnique
-      .mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-7' })
-      .mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-7' });
+      .mockResolvedValueOnce({ ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-7' })
+      .mockResolvedValueOnce({ ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-7' });
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -376,7 +376,7 @@ describe('GET /api/payments/transaction/:id/status', () => {
 
   it('reports pending while Maya is still pending', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-8' });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-8' });
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ paymentId: 'pay-maya-8', paymentStatus: 'PENDING' }),
@@ -391,7 +391,7 @@ describe('GET /api/payments/transaction/:id/status', () => {
 
   it('reports failed on PAYMENT_FAILED', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-x' });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-x' });
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ paymentId: 'pay-maya-x', paymentStatus: 'PAYMENT_FAILED' }),
@@ -403,7 +403,7 @@ describe('GET /api/payments/transaction/:id/status', () => {
 
   it('reports expired when the one-time QR has lapsed', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, gateway: 'maya', gatewayPaymentId: 'pay-maya-y' });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-y' });
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ paymentId: 'pay-maya-y', paymentStatus: 'PAYMENT_EXPIRED' }),
@@ -466,6 +466,48 @@ describe('GET /api/payments/transaction/:id/status', () => {
       .set('Authorization', 'Bearer customer-token');
 
     expect(res.body).toMatchObject({ status: 'partial', totalPaid: 2, balance: 4998 });
+  });
+
+  // N1: if the secret-key retrieve fails (bad/rotated key, transient 5xx) the
+  // status-only probe can still say SUCCESS — but we have no amount, so we must
+  // neither credit nor claim success. Otherwise a wrong key reports EVERY
+  // payment as confirmed with PHP 0 credited.
+  it('does NOT report succeeded when the amount could not be confirmed', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const tx = { ...txOpen, downpayment: 2000, gateway: 'maya', gatewayPaymentId: 'pay-maya-noamt' };
+    prisma.transaction.findUnique.mockResolvedValueOnce(tx);
+    // retrievePayment (secret) 502s; the public status probe still answers.
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 502, text: () => Promise.resolve('boom') })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ paymentId: 'pay-maya-noamt', paymentStatus: 'SUCCESS' }),
+      });
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.body.status).not.toBe('succeeded');
+    expect(res.body.totalPaid).toBe(0);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  // N3/edge: a booking with no recorded downpayment requirement has nothing to
+  // settle online, so it must not invent a PHP 200 requirement.
+  it('does not invent a requirement for a booking with no downpayment', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      ...txOpen, downpayment: 0, gateway: 'maya', gatewayPaymentId: 'pay-maya-none',
+    });
+    global.fetch = vi.fn();
+
+    const res = await request(app)
+      .get('/api/payments/transaction/tx-1/status')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.body).toMatchObject({ status: 'succeeded', amountDue: 0 });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   // I7: a customer whose QR lapsed needs to know what is still due, so they can

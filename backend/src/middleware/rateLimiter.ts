@@ -17,17 +17,14 @@ const MAX_REQUESTS = 160;
 const ASSET_MAX_REQUESTS = 600;
 
 // Derive the real client IP without trusting a spoofable X-Forwarded-For.
-// `trust proxy` (set in index.ts) makes Express resolve req.ip from the first
-// XFF hop; we still prefer the remote socket when no proxy hop is present.
+// `trust proxy` (set to 1 in index.ts) already makes Express resolve req.ip
+// from the trusted hop of X-Forwarded-For, which is the address we want to rate
+// limit on. We deliberately do NOT read the header ourselves: taking the
+// leftmost entry is the most client-controlled value in the chain, so an
+// attacker rotating X-Forwarded-For would get an unlimited number of buckets
+// (and, on /api/webhooks/maya, an unlimited number of secret-key re-checks).
 export function clientIp(req: Request): string {
-  const raw = req.socket?.remoteAddress;
-  if (env.NODE_ENV === 'production') {
-    const fwd = req.headers['x-forwarded-for'];
-    if (typeof fwd === 'string' && fwd.length) {
-      return fwd.split(',')[0].trim();
-    }
-  }
-  return req.ip || raw || 'unknown';
+  return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
 // Periodic sweep so the in-memory stores don't grow unbounded (e.g. attackers

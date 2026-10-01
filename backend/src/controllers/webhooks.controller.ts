@@ -151,9 +151,12 @@ export async function handleMayaWebhook(req: Request, res: Response, next: NextF
         method: 'maya',
       });
     } catch (err: any) {
-      // A closed or vanished transaction is a "nothing to do", not a failure to
-      // retry — Maya would just keep hitting us.
-      if (err?.statusCode === 400 || err?.statusCode === 404) return ack();
+      // 400/404 = nothing to do. 409 = a concurrent credit moved totalPaid first,
+      // so this delivery lost a race; Maya's retry (or the poller) will land it.
+      // All three ack rather than 4xx — a retry storm is worse than a delay.
+      if (
+        err?.statusCode === 400 || err?.statusCode === 404 || err?.statusCode === 409
+      ) return ack();
       throw err;
     }
 
