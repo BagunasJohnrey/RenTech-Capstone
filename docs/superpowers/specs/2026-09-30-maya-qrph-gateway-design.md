@@ -51,7 +51,8 @@ replacement.
 From the [Pay with Maya](https://developers.maya.ph/docs/pay-with-maya) docs:
 
 1. Merchant calls `POST /payments/v1/qr/payments` (**public key**, Basic auth) with the amount
-   in **centavos**, a `requestReferenceNumber`, and `redirectUrl` targets.
+   in **pesos** (a float — Maya's `Amount` schema is `minimum 0.01`, so it is NOT
+centavos), a `requestReferenceNumber`, and `redirectUrl` targets.
 2. Response returns `paymentId`, `redirectUrl` (Maya-hosted page), and `qrCodeBody`.
 3. **Dynamic QRPh codes are one-time use and valid for 1 hour.** After that the payment must be
    recreated.
@@ -150,8 +151,9 @@ bodies forwarded (`L7`), Basic auth from env keys.
 | `cancelPayment(paymentId)` | `POST /payments/v1/payments/{id}/cancel` | secret |
 | `checkMayaHealth()` | probe (no payment created) | secret |
 
-- **Amounts in centavos** (integers) at the boundary; the service converts and the client only
-  ever sees pesos.
+- **Amounts are pesos (float)** at the boundary, per Maya's `Amount` schema
+  (`type: number, format: float, minimum 0.01`); the client and DB speak pesos
+  throughout, so no conversion happens.
 - `createQrPayment` sets `redirectUrl: { success, failure, cancel }` pointing at our return
   route with the transaction id attached, so the webhook isn't the only way back.
 - `checkMayaHealth()` returns the same `{configured, reachable, latencyMs, detail}` shape as

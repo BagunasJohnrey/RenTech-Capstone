@@ -13,10 +13,13 @@ function baseUrl(): string {
     : 'https://pg-sandbox.paymaya.com';
 }
 
-// Maya amounts are integers in centavos at the API boundary; the client only
-// ever sees pesos. Every conversion happens here.
-const toCentavos = (pesos: number) => Math.round(pesos * 100);
-const toPesos = (centavos: number | undefined) => Math.round((centavos ?? 0)) / 100;
+// Maya's Pay with Maya API takes amounts in PESOS as a float, NOT centavos:
+// the OpenAPI schema for /payments/v1/qr/payments declares
+// `Amount: { type: number, format: float, minimum: 0.01, maximum: 9999999 }`
+// and the request example is `totalAmount: { currency: 'PHP', value: '100.00' }`.
+// A minimum of 0.01 only makes sense in pesos (centavos would floor at 1), so
+// sending centavos would charge the customer 100x the intended amount.
+const pesos = (n: number) => Math.round(n * 100) / 100;
 
 // The one shape every gateway returns, so the controller and the client never
 // branch on the provider. PayMongo's equivalent lives in paymongo.service.ts.
@@ -87,7 +90,7 @@ export async function createQrPayment(
   const data = await mayaFetch('/payments/v1/qr/payments', env.MAYA_PUBLIC_KEY, {
     method: 'POST',
     body: JSON.stringify({
-      totalAmount: { currency: 'PHP', value: toCentavos(amount) },
+      totalAmount: { currency: 'PHP', value: pesos(amount) },
       description,
       requestReferenceNumber: opts.requestReferenceNumber,
       redirectUrl: opts.redirectUrl,
@@ -99,7 +102,7 @@ export async function createQrPayment(
     gateway: 'maya',
     id: data.paymentId,
     status: data.paymentStatus ?? 'PENDING',
-    amount: toPesos(data.totalAmount?.value) || amount,
+    amount: pesos(Number(data.totalAmount?.value ?? amount)),
     currency: 'PHP',
     simulated: false,
     redirectUrl: data.redirectUrl,
@@ -120,7 +123,7 @@ export async function retrievePayment(paymentId: string): Promise<{
   return {
     paymentId: data.paymentId,
     status: data.paymentStatus,
-    amount: toPesos(data.totalAmount?.value),
+    amount: pesos(Number(data.totalAmount?.value ?? 0)),
     receiptNumber: data.receiptNumber,
   };
 }

@@ -16,7 +16,9 @@
 
 - **Never trust the Maya webhook payload.** Every credit requires `GET /payments/v1/payments/{id}` (secret key) returning `SUCCESS` with a matching amount. This is the entire security model — there is no HMAC.
 - **Always answer the Maya webhook `200` within 5 seconds**, including when the re-check fails. A retry storm is worse than a delayed booking; the polling endpoint repairs it.
-- **Maya speaks centavos (integers) at the API boundary.** The client only ever sees pesos. Convert at the service edge.
+- **Maya speaks pesos (float) at the API boundary.** Its `Amount` schema is
+  `{ type: number, format: float, minimum: 0.01 }`, so it is NOT centavos — sending
+  centavos would charge the customer 100x. The client and DB speak pesos throughout.
 - **New keys are optional and default to simulated mode.** No `MAYA_*` keys ⇒ `simulated: true`. In production without `MAYA_SIMULATE=true`, that is a hard `503` — never a silent simulation.
 - **`Payment.gatewayRef` is the idempotency anchor** (`@unique`). Both gateways credit through it; `P2002` means "already applied", not "error".
 - **Never forward a raw upstream error body to the client** (existing L7 rule in `paymongo.service.ts:56`). Upstream status code only.

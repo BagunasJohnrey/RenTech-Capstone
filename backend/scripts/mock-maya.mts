@@ -25,8 +25,8 @@
  *   POST /__mock/expire/:id       mark it PAYMENT_EXPIRED
  *   GET  /__mock/state            dump every charge
  *
- * Amounts are centavos, exactly like the real API — so the peso/centavo
- * conversion in maya.service.ts is genuinely exercised.
+ * Amounts are pesos, exactly like the real API — its Amount schema is a float
+ * with minimum 0.01, so maya.service.ts runs against the real units.
  */
 import { createServer } from 'node:http';
 
@@ -35,7 +35,7 @@ const PORT = Number(process.env.MOCK_MAYA_PORT || 4599);
 type Charge = {
   paymentId: string;
   requestReferenceNumber: string;
-  amountCentavos: number;
+  amountPesos: number;
   status: 'PENDING' | 'SUCCESS' | 'PAYMENT_FAILED' | 'PAYMENT_EXPIRED' | 'PAYMENT_CANCELLED';
   metadata: Record<string, string> | null;
 };
@@ -68,7 +68,7 @@ const view = (c: Charge) => ({
   requestReferenceNumber: c.requestReferenceNumber,
   metadata: c.metadata ?? undefined,
   receiptNumber: c.status === 'SUCCESS' ? `MOCK-RRN-${c.paymentId}` : undefined,
-  totalAmount: { currency: 'PHP', value: c.amountCentavos },
+  totalAmount: { currency: 'PHP', value: c.amountPesos },
 });
 
 const server = createServer(async (req, res) => {
@@ -94,12 +94,12 @@ const server = createServer(async (req, res) => {
     const charge: Charge = {
       paymentId,
       requestReferenceNumber: String(body.requestReferenceNumber ?? ''),
-      amountCentavos: Number(body?.totalAmount?.value ?? 0),
+      amountPesos: Number(body?.totalAmount?.value ?? 0),
       status: 'PENDING',
       metadata: body?.metadata ?? null,
     };
     charges.set(paymentId, charge);
-    console.log(`[mock-maya] created ${paymentId} for ₱${(charge.amountCentavos / 100).toFixed(2)} (${charge.requestReferenceNumber})`);
+    console.log(`[mock-maya] created ${paymentId} for ₱${charge.amountPesos.toFixed(2)} (${charge.requestReferenceNumber})`);
     return json(res, 200, {
       ...view(charge),
       // Points back at the return page so the redirect can be followed locally.

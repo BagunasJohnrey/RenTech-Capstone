@@ -60,7 +60,7 @@ describe('MAYA_BASE_URL override', () => {
     (envMock as any).MAYA_BASE_URL = 'http://127.0.0.1:4599';
     global.fetch = vi.fn().mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ paymentId: 'mock-1', redirectUrl: 'http://mock/pay', totalAmount: { value: 20000 } }),
+      json: () => Promise.resolve({ paymentId: 'mock-1', redirectUrl: 'http://mock/pay', totalAmount: { value: 200 } }),
     });
 
     // baseUrl() resolves per call, so no module re-import is needed.
@@ -73,7 +73,7 @@ describe('MAYA_BASE_URL override', () => {
     (envMock as any).MAYA_BASE_URL = '';
     global.fetch = vi.fn().mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ paymentId: 's-1', totalAmount: { value: 20000 } }),
+      json: () => Promise.resolve({ paymentId: 's-1', totalAmount: { value: 200 } }),
     });
 
     await createQrPayment(200, 'd', { transactionId: 't', requestReferenceNumber: 'r' });
@@ -85,14 +85,14 @@ describe('MAYA_BASE_URL override', () => {
 describe('createQrPayment', () => {
   beforeEach(() => { global.fetch = vi.fn(); });
 
-  it('converts pesos to centavos and returns the normalized charge', async () => {
+  it('sends the peso amount and returns the normalized charge', async () => {
     (global.fetch as any).mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({
         paymentId: 'pay-maya-1',
         redirectUrl: 'https://pg-sandbox.paymaya.com/pay/pay-maya-1',
         qrCodeBody: 'https://paymaya.com/qr/pay-maya-1',
-        totalAmount: { currency: 'PHP', value: 250000 },
+        totalAmount: { currency: 'PHP', value: 2500 },
       }),
     });
 
@@ -105,7 +105,7 @@ describe('createQrPayment', () => {
     expect(charge).toMatchObject({ gateway: 'maya', id: 'pay-maya-1', amount: 2500, simulated: false });
     expect(charge.redirectUrl).toBe('https://pg-sandbox.paymaya.com/pay/pay-maya-1');
     const body = JSON.parse((global.fetch as any).mock.calls[0][1].body);
-    expect(body.totalAmount).toEqual({ currency: 'PHP', value: 250000 });
+    expect(body.totalAmount).toEqual({ currency: 'PHP', value: 2500 });
     expect(body.redirectUrl.success).toBe('http://localhost:5173/payment-return?tx=tx-1');
     expect((global.fetch as any).mock.calls[0][0]).toBe(`${SANDBOX}/payments/v1/qr/payments`);
   });
@@ -113,7 +113,7 @@ describe('createQrPayment', () => {
   it('sets expiresAt one hour out', async () => {
     (global.fetch as any).mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ paymentId: 'p2', redirectUrl: 'u', totalAmount: { value: 20000 } }),
+      json: () => Promise.resolve({ paymentId: 'p2', redirectUrl: 'u', totalAmount: { value: 200 } }),
     });
     const charge = await createQrPayment(200, 'd', { transactionId: 't', requestReferenceNumber: 'r' });
     const delta = new Date(charge.expiresAt!).getTime() - Date.now();
@@ -143,7 +143,7 @@ describe('retrievePayment', () => {
   it('normalizes SUCCESS and the amount', async () => {
     (global.fetch as any).mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve({ paymentId: 'p1', paymentStatus: 'SUCCESS', totalAmount: { value: 250000 }, receiptNumber: 'RRN123' }),
+      json: () => Promise.resolve({ paymentId: 'p1', paymentStatus: 'SUCCESS', totalAmount: { value: 2500 }, receiptNumber: 'RRN123' }),
     });
     expect(await retrievePayment('p1')).toEqual({ paymentId: 'p1', status: 'SUCCESS', amount: 2500, receiptNumber: 'RRN123' });
     expect((global.fetch as any).mock.calls[0][0]).toBe(`${SANDBOX}/payments/v1/payments/p1`);
@@ -230,7 +230,7 @@ const successPayload = {
 function mockMayaRetrieve(over: Record<string, any> = {}) {
   return vi.fn().mockResolvedValue({
     ok: true,
-    json: () => Promise.resolve({ paymentId: 'pay-maya-1', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 }, ...over }),
+    json: () => Promise.resolve({ paymentId: 'pay-maya-1', paymentStatus: 'SUCCESS', totalAmount: { value: 2000 }, ...over }),
   });
 }
 
@@ -300,7 +300,7 @@ describe('POST /api/payments/create-intent with gateway=maya', () => {
         paymentId: 'pay-maya-9',
         redirectUrl: 'https://pg-sandbox.paymaya.com/pay/pay-maya-9',
         qrCodeBody: 'https://paymaya.com/qr/pay-maya-9',
-        totalAmount: { currency: 'PHP', value: 200000 },
+        totalAmount: { currency: 'PHP', value: 2000 },
       }),
     });
 
@@ -360,7 +360,7 @@ describe('GET /api/payments/transaction/:id/status', () => {
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ paymentId: 'pay-maya-7', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 } }),
+      json: () => Promise.resolve({ paymentId: 'pay-maya-7', paymentStatus: 'SUCCESS', totalAmount: { value: 2000 } }),
     });
 
     const res = await request(app)
@@ -438,7 +438,7 @@ describe('GET /api/payments/transaction/:id/status', () => {
     prisma.payment.findUnique.mockResolvedValueOnce({ id: 'pay-existing', gatewayRef: 'pay-maya-dup' });
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ paymentId: 'pay-maya-dup', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 } }),
+      json: () => Promise.resolve({ paymentId: 'pay-maya-dup', paymentStatus: 'SUCCESS', totalAmount: { value: 2000 } }),
     });
 
     const res = await request(app)
@@ -458,7 +458,7 @@ describe('GET /api/payments/transaction/:id/status', () => {
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ paymentId: 'pay-maya-part', paymentStatus: 'SUCCESS', totalAmount: { value: 200 } }),
+      json: () => Promise.resolve({ paymentId: 'pay-maya-part', paymentStatus: 'SUCCESS', totalAmount: { value: 2 } }),
     });
 
     const res = await request(app)
@@ -602,10 +602,10 @@ it('credits a verified SUCCESS webhook', async () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({ ...boundTx });
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     // Payload claims PHP 2000; Maya actually received PHP 2.
-    global.fetch = mockMayaRetrieve({ totalAmount: { value: 200 } });
+    global.fetch = mockMayaRetrieve({ totalAmount: { value: 2 } });
 
     const res = await request(webhookApp).post('/api/webhooks/maya')
-      .send({ ...successPayload, totalAmount: { value: 200000 } });
+      .send({ ...successPayload, totalAmount: { value: 2000 } });
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true, verified: true });
@@ -621,10 +621,10 @@ it('credits a verified SUCCESS webhook', async () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({ ...boundTx });
     prisma.payment.findUnique.mockResolvedValueOnce(null);
     // Payload claims PHP 9999.99; Maya actually received PHP 1500.
-    global.fetch = mockMayaRetrieve({ totalAmount: { value: 150000 } });
+    global.fetch = mockMayaRetrieve({ totalAmount: { value: 1500 } });
 
     await request(webhookApp).post('/api/webhooks/maya')
-      .send({ ...successPayload, totalAmount: { value: 999999 } });
+      .send({ ...successPayload, totalAmount: { value: 9999.99 } });
 
     expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ amount: 1500 }),
@@ -693,7 +693,7 @@ it('credits a verified SUCCESS webhook', async () => {
     global.fetch = mockMayaRetrieve();
 
     const res = await request(webhookApp).post('/api/webhooks/maya').send({
-      id: 'pay-maya-late', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 },
+      id: 'pay-maya-late', paymentStatus: 'SUCCESS', totalAmount: { value: 2000 },
     });
 
     expect(res.status).toBe(200);
@@ -714,7 +714,7 @@ it('credits a verified SUCCESS webhook', async () => {
     const res = await request(webhookApp).post('/api/webhooks/maya').send({
       id: 'pay-maya-1',
       paymentStatus: 'SUCCESS',
-      totalAmount: { value: 200000 },
+      totalAmount: { value: 2000 },
       metadata: { transactionId: 'VICTIM-TX' },
     });
 
@@ -737,7 +737,7 @@ it('credits a verified SUCCESS webhook', async () => {
     global.fetch = mockMayaRetrieve();
 
     const res = await request(webhookApp).post('/api/webhooks/maya')
-      .send({ id: 'pay-maya-1', paymentStatus: 'SUCCESS', totalAmount: { value: 200000 } });
+      .send({ id: 'pay-maya-1', paymentStatus: 'SUCCESS', totalAmount: { value: 2000 } });
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true, verified: true });
