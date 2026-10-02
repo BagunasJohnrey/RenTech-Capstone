@@ -12,6 +12,7 @@ import { api } from '../utils/api';
 import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
 import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
+import SmsResultModal from '../components/SmsResultModal';
 import ItemImage from '../components/ItemImage';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 
@@ -73,6 +74,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [sendingSms, setSendingSms] = useState(false);
+  const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
 
   const openSmsModal = (tx) => {
     setSmsMessage(defaultOverdueMessage(tx));
@@ -271,17 +273,18 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     if (!message || sendingSms) return;
     setSendingSms(true);
     try {
-      await api.post('/sms/send', {
+      const res = await api.post('/sms/send', {
         profileId: tx.customerId,
         transactionId: tx.id,
         message,
       });
       setSendingSms(false);
       closeSmsModal();
-      alert('SMS sent successfully.');
+      setSmsResult({ status: res?.status || 'sent', to: customerLabel(tx.customer), message });
     } catch (err) {
       setSendingSms(false);
-      alert(err?.message || 'Failed to send SMS.');
+      closeSmsModal();
+      setSmsResult({ status: 'error', to: customerLabel(tx?.customer), error: err?.message || 'Failed to send SMS.' });
     }
   };
 
@@ -814,6 +817,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             </div>
           </div>
         </div>
+      )}
+
+      {/* Post-send outcome — sent vs queued vs failed, stated honestly. */}
+      {smsResult && (
+        <SmsResultModal result={smsResult} onClose={() => setSmsResult(null)} />
       )}
 
       {/* Cancel Booking Modal (proper dialog + message-the-boutique) */}

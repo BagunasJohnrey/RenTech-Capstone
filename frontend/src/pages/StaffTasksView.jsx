@@ -4,6 +4,8 @@ import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, 
 import { api } from '../utils/api';
 import { customerLabel, itemLabel, defaultOverdueMessage } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
+import SmsResultModal from '../components/SmsResultModal';
+import SmsLogPanel from '../components/SmsLogPanel';
 import { isReleased } from '../hooks/useTransactions';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
@@ -26,6 +28,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
   // SMS
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [smsMessage, setSmsMessage] = useState('');
+  const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
   const [releaseTx, setReleaseTx] = useState(null);
 
   const openSmsModal = (tx) => {
@@ -141,24 +144,26 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
 
-  // FIX D: surface SMS success/failure; only close on success. Sends the
-  // staff-editable message (pre-filled with the default, tweakable per send).
+  // FIX D: surface the real provider outcome; only close on response.
+  // `sent` = Semaphore returned a message_id; `queued` = accepted but
+  // unconfirmed (check the SMS Log). Never claim success on a 200 alone.
   const handleSendSMS = async (tx) => {
     const message = smsMessage.trim();
     if (!message || sendingSms) return;
     setSendingSms(true);
     try {
-      await api.post('/sms/send', {
+      const res = await api.post('/sms/send', {
         profileId: tx.customerId,
         transactionId: tx.id,
         message,
       });
       setSendingSms(false);
       closeSmsModal();
-      alert('SMS sent successfully.');
+      setSmsResult({ status: res?.status || 'sent', to: customerLabel(tx.customer), message });
     } catch (err) {
       setSendingSms(false);
-      alert(err?.message || 'Failed to send SMS.');
+      closeSmsModal();
+      setSmsResult({ status: 'error', to: customerLabel(tx?.customer), error: err?.message || 'Failed to send SMS.' });
     }
   };
 
@@ -634,6 +639,24 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
           </div>
         )}
 
+      {/* SMS Log — read-only here (delete is admin-only in the panel).
+          Lets staff verify what actually went out without leaving Tasks. */}
+      <details className="bg-white rounded-3xl border border-gray-100/50 shadow-sm overflow-hidden group">
+        <summary className="flex items-center gap-3 p-6 cursor-pointer list-none">
+          <span className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
+            <MessageCircle size={18} />
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block font-bold text-lg text-gray-900">SMS Log</span>
+            <span className="block text-xs text-gray-500 font-medium mt-0.5">Manual + automatic sends and their delivery status</span>
+          </span>
+          <span className="text-xs font-bold text-gray-400 group-open:rotate-180 transition-transform">▾</span>
+        </summary>
+        <div className="px-6 pb-6">
+          <SmsLogPanel />
+        </div>
+      </details>
+
       {/* SMS Confirmation Modal — message is editable per send.
           z-[9999] matches the other full-screen modals so it always sits on
           top (it was getting buried under nav/tutorial layers). */}
@@ -692,6 +715,11 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
 
       {releaseTx && (
         <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} onSwapItem={(updated, prevItemId) => onSwapItem?.(updated, prevItemId)} />
+      )}
+
+      {/* Post-send outcome — sent vs queued vs failed, stated honestly. */}
+      {smsResult && (
+        <SmsResultModal result={smsResult} onClose={() => setSmsResult(null)} />
       )}
     </div>
   );

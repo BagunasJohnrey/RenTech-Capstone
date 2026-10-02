@@ -196,7 +196,7 @@ Code:
 ### Notifications / SMS / Email
 - In-app bell for staff: new booking, late, overdue, due today, no-show.
 - SMS via Semaphore + email via Brevo alongside.
-- No fee amounts in SMS text.
+- No per-day fee rates in SMS text (overdue texts show the outstanding balance as plain `PHP 1,250` — never the ₱ glyph).
 - Customer can turn off reminders / emails in Profile Settings.
 - Walk-in fake emails are never emailed.
 

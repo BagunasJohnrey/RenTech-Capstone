@@ -32,7 +32,7 @@ export async function sendSms(phone: string, message: string) {
     signal: AbortSignal.timeout(10000), // don't hang on a dead SMS gateway
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      api_key: env.SEMAPHORE_API_KEY,
+      apikey: env.SEMAPHORE_API_KEY,
       number: normalizedPhone,
       message,
     }),
@@ -46,8 +46,28 @@ export async function sendSms(phone: string, message: string) {
     throw new AppError(502, `Semaphore API error: ${response.status}`);
   }
 
-  const data = await response.json() as { message_id?: string }[];
-  return { messageId: data?.[0]?.message_id || null };
+  // Read the raw body so a 200 with a non-message payload (validation
+  // error object, empty body) can be logged instead of silently queuing.
+  // Supports both text() (real fetch) and json() (test mocks).
+  const raw = typeof response.text === 'function'
+    ? await response.text()
+    : JSON.stringify(await response.json());
+  let data: unknown = null;
+  try {
+    data = raw ? (JSON.parse(raw) as unknown) : null;
+  } catch {
+    console.error('[semaphore] 200 with non-JSON body:', raw.slice(0, 300));
+  }
+  const messageId = Array.isArray(data)
+    ? (data[0] as { message_id?: string } | undefined)?.message_id || null
+    : (data as { message_id?: string } | null)?.message_id || null;
+  if (!messageId) {
+    // 200 but nothing to track: Semaphore silently drops some messages
+    // (e.g. bodies starting with "TEST") or returns an unexpected shape.
+    // Log server-side only (raw echoes phone/message) so we can see which.
+    console.error('[semaphore] 200 but no message_id; raw:', raw.slice(0, 500));
+  }
+  return { messageId };
 }
 
 export function applyTemplate(template: string, variables: Record<string, string>): string {
