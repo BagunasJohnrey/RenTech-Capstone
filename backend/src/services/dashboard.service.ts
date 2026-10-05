@@ -242,7 +242,7 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 // adaptive window (thin histories average over what exists), spike-capped
 // values with user-facing flags, and a backtested error band. Bars elsewhere
 // always show TRUE counts — only the average uses capped values.
-function buildForecastSeries(counts: number[], requestedPeriod: number) {
+export function buildForecastSeries(counts: number[], requestedPeriod: number) {
   const nNonZero = counts.filter((c) => c > 0).length;
   const effectivePeriod = Math.max(1, Math.min(requestedPeriod, Math.max(1, nNonZero)));
   const provisional = nNonZero < 3;
@@ -261,9 +261,10 @@ function buildForecastSeries(counts: number[], requestedPeriod: number) {
   const errorPct = mape(actual, predicted);
 
   // Expected-range band: ±error around each average point (null where the
-  // average itself is null). Rendered as the shaded polygon behind the line.
+  // average itself is null; floored at zero — a rental count can never be
+  // negative). Rendered as the shaded polygon behind the line.
   const e = errorPct === null ? 0 : errorPct / 100;
-  const lo = values.map((v) => (v === null ? null : round1(v * (1 - e))));
+  const lo = values.map((v) => (v === null ? null : Math.max(0, round1(v * (1 - e)))));
   const hi = values.map((v) => (v === null ? null : round1(v * (1 + e))));
 
   return { values, flags, errorPct, band: { lo, hi }, provisional, effectivePeriod };
@@ -357,7 +358,7 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
         byCategory: [],
         historyMonths,
         confidence,
-        confidenceNote: `Based on ${historyMonths} month${historyMonths === 1 ? '' : 's'} of history · ${confidence} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
+        confidenceNote: `Last ${FORECAST_WEEKS} weeks · ${confidence} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
       };
     }
 

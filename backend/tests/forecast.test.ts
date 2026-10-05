@@ -4,6 +4,7 @@ import express from 'express';
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import { smaCapped, mape } from '../src/utils/sma.js';
+import { buildForecastSeries } from '../src/services/dashboard.service.js';
 
 const app = express();
 app.use(express.json());
@@ -42,6 +43,18 @@ describe('mape', () => {
   it('returns null when nothing is comparable', async () => {
     expect(mape([0, 0], [5, 5])).toBeNull();
     expect(mape([], [])).toBeNull();
+  });
+});
+
+describe('buildForecastSeries', () => {
+  it('floors the expected-range band at zero (counts can never be negative)', async () => {
+    // Wildly volatile history → error over 100% → raw lower bound negative.
+    const counts = [2, 30, 1, 28, 2, 27, 1, 28];
+    const s = buildForecastSeries(counts, 3);
+    expect(s.errorPct).toBeGreaterThan(100);
+    for (const v of s.band.lo) {
+      if (v !== null) expect(v).toBeGreaterThanOrEqual(0);
+    }
   });
 });
 

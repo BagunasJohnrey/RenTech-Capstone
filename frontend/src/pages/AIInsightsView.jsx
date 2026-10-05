@@ -545,8 +545,18 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // into the shaded expected-range polygon behind the trend line.
   const bandLo = activeForecast?.band?.lo || [];
   const bandHi = activeForecast?.band?.hi || [];
+  // X-axis ticks must be UNIQUE: recharts matches duplicate categories by
+  // label, so two bare "Apr" ticks (2025 vs 2026) make every hover resolve to
+  // the first match — April 2026 kept showing April 2025's numbers no matter
+  // what the tooltip read. Every monthly tick carries its year instead.
+  const shortMonthYear = (l) => {
+    const parts = String(l || '').split(' ');
+    if (!parts[0]) return '';
+    if (parts[1]) return `${parts[0]} ’${parts[1].slice(2)}`;
+    return parts[0];
+  };
   const forecastData = fLabels.map((l, i) => ({
-    label: showingWeekly ? l : shortMonth(l),
+    label: showingWeekly ? l : shortMonthYear(l),
     full: l,
     count: fCounts[i] || 0,
     sma: fSma[i] ?? null,
@@ -554,7 +564,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     bandSpan: bandLo[i] == null || bandHi[i] == null ? null : Math.max(0, Math.round((bandHi[i] - bandLo[i]) * 100) / 100),
   }));
   forecastData.push({
-    label: showingWeekly ? nextLabel : shortMonth(nextLabel),
+    label: showingWeekly ? nextLabel : shortMonthYear(nextLabel),
     full: nextLabel,
     count: null,
     sma: latestSmaVal,
@@ -562,7 +572,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   });
   const validSmaCount = forecastData.filter(d => d.sma !== null && !d.forecast).length;
   const hasSma = validSmaCount >= 2;
-  const countChart = fLabels.map(l => ({ label: shortMonth(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
+  const countChart = fLabels.map(l => ({ label: shortMonthYear(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
 
   // Season markers on observed monthly points only (never on projections,
   // never on weekly view).

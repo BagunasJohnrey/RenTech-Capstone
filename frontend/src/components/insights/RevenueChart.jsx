@@ -3,8 +3,8 @@
 // cover finished weeks only (in-progress and projection bars excluded).
 // Pure presentational.
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, ReferenceLine, ErrorBar, LabelList,
+  BarChart, Bar, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Cell, ReferenceLine, ErrorBar,
 } from 'recharts';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { RevenueTooltip } from './shared';
@@ -30,19 +30,24 @@ function annotationsFor(revChart) {
   return out;
 }
 
-function DeltaLabel({ x, y, width, index, info }) {
+// Invisible Line layer whose custom dots draw the delta labels. Line dots
+// live outside the bar layer, so hovering a bar no longer dims them (the
+// old LabelList lived inside the bars and vanished on every hover).
+// NOTE: Line dots receive cx/cy (not x/y like Bar labels) — read both.
+function DeltaDot({ x, y, cx, cy, index, info }) {
+  const px = cx ?? x;
+  const py = cy ?? y;
   const a = info?.[index];
-  if (!a || (!a.delta && !a.best)) return null;
-  const cx = x + width / 2;
+  if (px == null || py == null || !a || (!a.delta && !a.best)) return <g />;
   return (
     <g>
       {a.delta && (
-        <text x={cx} y={y - 8} textAnchor="middle" fontSize={11} fontWeight={800} fill={a.up ? '#059669' : '#ef4444'}>
+        <text x={px} y={py - 8} textAnchor="middle" fontSize={11} fontWeight={800} fill={a.up ? '#059669' : '#ef4444'}>
           {a.delta}
         </text>
       )}
       {a.best && (
-        <text x={cx} y={(a.delta ? y - 24 : y - 8)} textAnchor="middle" fontSize={11} fontWeight={700} fill="#b45309">
+        <text x={px} y={a.delta ? py - 24 : py - 8} textAnchor="middle" fontSize={11} fontWeight={700} fill="#b45309">
           ★ best
         </text>
       )}
@@ -56,6 +61,11 @@ export default function RevenueChart({
   stepMonth, goCurrentMonth,
 }) {
   const labels = annotationsFor(revChart);
+  // Delta labels sit above the bars (up to ~32px for a stacked ★ best +
+  // percent). When any exist, grow the top margin and extend the Y domain
+  // so the tallest bar's labels never clip against the card edge.
+  const hasLabels = Object.keys(labels).length > 0;
+  const chartTop = hasLabels ? 40 : 8;
   const hasWip = revChart.some((e) => e.wip);
   const hasForecast = revChart.some((e) => e.forecast);
   return (
@@ -92,10 +102,10 @@ export default function RevenueChart({
         <p className="text-sm text-gray-400 text-center py-12">{revChartEmptyLabel}</p>
       ) : (
         <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={revChart} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
+          <BarChart data={revChart} margin={{ top: chartTop, right: 16, bottom: 8, left: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={revChart.length > 7 ? -35 : 0} textAnchor={revChart.length > 7 ? 'end' : 'middle'} height={revChart.length > 7 ? 56 : 30} />
-            <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} />
+            <YAxis domain={[0, (dataMax) => hasLabels ? Math.ceil((dataMax * 1.18) / 1000) * 1000 : dataMax]} tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} allowDataOverflow={false} />
             <Tooltip content={<RevenueTooltip />} cursor={{ fill: '#f9fafb' }} />
             <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56} minPointSize={4}>
               {revChart.map((e, i) => (
@@ -107,9 +117,8 @@ export default function RevenueChart({
                   strokeDasharray={e.forecast ? '4 3' : 'none'}
                 />
               ))}
-              <LabelList dataKey="rev" content={(props) => <DeltaLabel {...props} info={labels} />} />
-              <ErrorBar dataKey="whisker" width={10} strokeWidth={2} stroke="#bf4a53" />
             </Bar>
+            <Line type="monotone" dataKey="rev" stroke="none" dot={(p) => <DeltaDot {...p} info={labels} />} activeDot={false} legendType="none" isAnimationActive={false} />
             <ReferenceLine y={0} stroke="#e5e7eb" />
           </BarChart>
         </ResponsiveContainer>
