@@ -70,7 +70,9 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     prisma.transaction.count({ where: { status: 'Cancelled' } }),
     prisma.inventoryItem.count({ where: { status: 'OutOfService' } }),
     filter?.start ? aggregateRevenueFrom(filter.start, filter.end) : aggregateMonthlyRevenue(),
-    prisma.inventoryItem.count(),
+    // Deleted excluded: archived items are not rentable stock, so dashboard
+    // totals ("N of M items free") and utilizationRate read on live stock.
+    prisma.inventoryItem.count({ where: { status: { not: 'Deleted' } } }),
     prisma.inventoryItem.count({ where: { status: 'Available' } }),
   ]);
 
@@ -316,6 +318,8 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       where: {
         status: { in: FORECAST_STATUSES },
         createdAt: { gte: firstMonth },
+        // Demand from archived items must not drive restock projections.
+        item: { status: { not: 'Deleted' } },
       },
       select: { createdAt: true, itemId: true },
     });
@@ -448,14 +452,24 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
 
   // Light select — the previous `include: { transactions }` pulled every item
   // plus its FULL transaction history into memory just to count them.
+  // Deleted items are excluded everywhere here: archived pieces are not
+  // rentable stock, so they must not inflate category totals, appear in
+  // top/underperforming lists, or show up as dead "0% utilised" rows on the
+  // Category Performance card. OutOfService stays IN (still boutique-owned
+  // stock, e.g. damaged pieces awaiting repair — the restock rules need them
+  // for accurate free-unit counts); only Deleted is terminal-archived.
   const items = await prisma.inventoryItem.findMany({
+    where: { status: { not: 'Deleted' } },
     select: { id: true, name: true, category: true },
   });
 
   // Everything below is derived from this one transaction query:
   // per-item rental counts, revenue by month, and revenue by category.
+  // Transactions on Deleted items are excluded too — otherwise an archived
+  // item's PAST rentals would still credit its category with "rented" units
+  // and revenue that no longer reflects rentable stock.
   const txs = await prisma.transaction.findMany({
-    where: txWhere,
+    where: { ...txWhere, item: { status: { not: 'Deleted' } } },
     select: {
       itemId: true,
       rentalFee: true,

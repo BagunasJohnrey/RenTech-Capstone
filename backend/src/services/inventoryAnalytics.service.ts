@@ -24,10 +24,18 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
       if (startDate) txWhere.rentalDate.gte = startDate;
       if (endDate) txWhere.rentalDate.lt = endDate;
     }
+    // Transactions on Deleted items excluded (same rule as the items query):
+    // an archived piece's past rentals must not credit it with utilisation
+    // or revenue on the performance tables.
+    txWhere.item = { status: { not: 'Deleted' } };
 
     // Light item select + one transaction query, grouped in JS — the old
     // `include: { transactions }` loaded every item's full history into memory.
+    // Deleted items excluded (same rule as dashboard insights): archived pieces
+    // are not rentable stock and must not appear as 0%-utilisation rows or
+    // dilute the averages.
     const items = await prisma.inventoryItem.findMany({
+      where: { status: { not: 'Deleted' } },
       select: { id: true, name: true, category: true, price: true, status: true, image: true },
     });
 

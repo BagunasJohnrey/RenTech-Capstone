@@ -180,6 +180,30 @@ describe('GET /api/dashboard/insights', () => {
     expect(res.body.underperforming[0].name).toBe('Barong C');
   });
 
+  it('excludes Deleted items from every insights query (no dead 0% rows)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockReset();
+    prisma.transaction.findMany.mockReset();
+    prisma.payment.findMany.mockReset();
+    prisma.inventoryItem.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+
+    // Unique period window (cache key includes start) so this test always
+    // computes fresh instead of hitting the warmed `insights:all` key.
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=yearly&year=2025')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    // Items query filters out archived stock.
+    const itemsArg = (prisma.inventoryItem.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(itemsArg.where).toMatchObject({ status: { not: 'Deleted' } });
+    // Transaction query excludes rentals of archived items.
+    const txArg = (prisma.transaction.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(txArg.where.item).toMatchObject({ status: { not: 'Deleted' } });
+  });
+
   it('buckets this month\'s revenue into weekly chunks on period=monthly', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, name: 'Gown A', category: 'Gown' }]);
