@@ -89,7 +89,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
-  const { error: toastError } = useToast();
+  const { error: toastError, info: toastInfo } = useToast();
   // Last saved AI reports (server history, admin-only) — reopenable from here
   // and from Settings → Data & Backups.
   const [recentReports, setRecentReports] = useState([]);
@@ -114,6 +114,19 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
       .catch(() => toastError('Could not open that report.'))
       .finally(() => setOpeningReportId(null));
   };
+  // Deep-link from the weekly-report notification: the dropdown/page tap
+  // stores the saved report id in `rentech_open_report` before navigating
+  // here. Consume + clear it on arrival so later visits start normally.
+  useEffect(() => {
+    if (role !== 'Admin') return;
+    let hint = null;
+    try {
+      hint = sessionStorage.getItem('rentech_open_report');
+      sessionStorage.removeItem('rentech_open_report');
+    } catch { /* private mode — no hint */ }
+    if (hint) openSavedReport(hint);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
   const [activePie, setActivePie] = useState(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const now0 = new Date();
@@ -357,6 +370,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           return;
         }
         setAiReport(r.report || r); setShowReportModal(true); loadRecentReports();
+        // Identical content to the latest saved report → the server reused
+        // that entry instead of stacking a duplicate row.
+        if (r?.deduped) toastInfo('Report unchanged since the last one — showing the existing entry.');
       })
       .catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); })
       .finally(() => setReportLoading(false));

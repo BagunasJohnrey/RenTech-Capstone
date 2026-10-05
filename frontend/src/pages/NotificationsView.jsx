@@ -141,9 +141,16 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
     }
   };
 
-  // Tapping a notification marks it read and jumps to its page.
+  // Tapping a notification marks it read and jumps to its page. Weekly
+  // auto-reports drop the `rentech_open_report` hint (mirrors the dropdown
+  // handleOpen) so the BI page auto-opens the saved report on arrival.
   const handleOpen = (n) => {
     if (!n.isRead) handleMarkRead(n.id);
+    if (n.type === 'ai_report' && n.reportId) {
+      try {
+        sessionStorage.setItem('rentech_open_report', n.reportId);
+      } catch { /* private mode — still navigates, just no auto-open */ }
+    }
     if (onNavigateTab) onNavigateTab(targetTabForNotification(n.type, role));
   };
 

@@ -331,9 +331,11 @@ vi.mock('../src/config/database.js', () => {
     },
     notification: {
       findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
       findUnique: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'notif-new', ...args.data })),
+      createMany: vi.fn().mockImplementation((args) => Promise.resolve({ count: args.data?.length ?? 0 })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),

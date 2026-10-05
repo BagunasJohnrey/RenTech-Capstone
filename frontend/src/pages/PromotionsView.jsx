@@ -63,7 +63,7 @@ const SEASONAL_EVENTS = {
 const PAGE_SIZE = 5;
 
 export default function PromotionsView({ inventory, onEditItem }) {
-  const { success: toastSuccess, error: toastError } = useToast();
+  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const [suggestions, setSuggestions] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -135,7 +135,10 @@ export default function PromotionsView({ inventory, onEditItem }) {
           toastError('AI service is currently unavailable. Please try again later.');
         }
       } else if (itemCount || voucherCount) {
-        toastSuccess(`Generated ${itemCount} item sale${itemCount !== 1 ? 's' : ''} and ${voucherCount} voucher idea${voucherCount !== 1 ? 's' : ''}`);
+        // Identical suggestions to the latest saved entry → the server reused
+        // it instead of stacking a duplicate history row.
+        if (result.deduped) toastInfo('Suggestions unchanged — showing the existing entry.');
+        else toastSuccess(`Generated ${itemCount} item sale${itemCount !== 1 ? 's' : ''} and ${voucherCount} voucher idea${voucherCount !== 1 ? 's' : ''}`);
       } else {
         toastSuccess('Analysis complete — no promotions needed right now');
       }

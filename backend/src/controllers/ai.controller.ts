@@ -96,7 +96,7 @@ export async function generateReport(req: AuthenticatedRequest, res: Response, n
           model: (result as { model?: string }).model ?? null,
           createdBy: req.user?.id ?? null,
         });
-        return res.json({ ...result, reportId: saved.id });
+        return res.json({ ...result, reportId: saved.id, ...(saved.skipped ? { deduped: true } : {}) });
       } catch {
         // fall through — return the report without history
       }
@@ -195,7 +195,7 @@ export async function suggestPromos(req: AuthenticatedRequest, res: Response, ne
           createdBy: req.user?.id ?? null,
           currentMonth,
         });
-        return res.json({ ...result, suggestionId: saved.id });
+        return res.json({ ...result, suggestionId: saved.id, ...(saved.skipped ? { deduped: true } : {}) });
       } catch {
         // fall through — return suggestions without history
       }
