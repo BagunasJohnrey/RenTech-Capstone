@@ -13,15 +13,46 @@ import * as aiReportService from './aiReport.service.js';
 // report (frontend redirects into the report modal; see NotificationsView /
 // NotificationsDropdown `ai_report` handling + `rentech_open_report` hint).
 //
-// Cadence is guarded by the `auto_report_last_run` BusinessRule (7-day
-// window, persisted so restarts never double-run — same pattern as the
-// daily auto-backup). Never throws — failures only log.
+// Cadence is CALENDAR-WEEK anchored (Manila Monday, `auto_report_last_week`
+// BusinessRule holding the YYYY-MM-DD of the last completed week) instead of
+// a rolling 7-day window, so every week gets exactly one report no matter
+// when in the week the backend restarts. Weeks missed entirely while the
+// system was down are NOT backfilled — the first tick after boot generates
+// for the current week only (one catch-up, then normal cadence).
+//
+// Unread re-notify: when a new week runs while earlier `ai_report`
+// notifications are still unread, each affected admin also gets ONE reminder
+// pointing at their newest unread report (no new report row, no spam —
+// reminders only fire inside the weekly run). Never throws — failures log.
 
+export const AUTO_REPORT_WEEK_RULE = 'auto_report_last_week';
+// Legacy rolling-timestamp key (pre-week-anchoring). Read once for migration
+// (a recent timestamp adopts the current week so deploys don't double-run)
+// and still stamped for observability; cadence no longer depends on it.
 export const AUTO_REPORT_RULE = 'auto_report_last_run';
-export const AUTO_REPORT_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+const LEGACY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const AUTO_REPORT_TYPE = 'ai_report';
 
-export async function runAutoReport(now = Date.now()): Promise<{ skipped: boolean; id?: string; deduped?: boolean }> {
+// YYYY-MM-DD (Manila time) of the Monday starting the week containing `now`.
+// Pure + exported for unit tests.
+export function manilaWeekKey(nowMs = Date.now()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(nowMs));
+  const [y, m, d] = parts.split('-').map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+  const monday = new Date(Date.UTC(y, m - 1, d - ((dow + 6) % 7)));
+  return monday.toISOString().slice(0, 10);
+}
+
+function reportIdFromMessage(message: unknown): string | null {
+  const m = String(message ?? '').match(/report:([A-Za-z0-9][A-Za-z0-9-_]*)/);
+  return m ? m[1] : null;
+}
+
+export async function runAutoReport(now = Date.now()): Promise<{
+  skipped: boolean; id?: string; deduped?: boolean; reminded?: boolean;
+}> {
   try {
     const db = prisma as unknown as {
       businessRule?: {
@@ -32,14 +63,32 @@ export async function runAutoReport(now = Date.now()): Promise<{ skipped: boolea
         findMany?: (args: unknown) => Promise<{ id: string }[]>;
       };
       notification?: {
+        findMany?: (args: unknown) => Promise<{ id: string; profileId: string; createdAt: Date | string; message: string }[]>;
         createMany?: (args: unknown) => Promise<unknown>;
       };
     };
-    // Cadence guard: skip while the last successful run is inside the window.
-    const last = await db.businessRule?.findUnique?.({ where: { key: AUTO_REPORT_RULE } });
-    const lastAt = last?.value ? Date.parse(last.value) : NaN;
-    if (Number.isFinite(lastAt) && now - lastAt < AUTO_REPORT_INTERVAL_MS) {
+    const week = manilaWeekKey(now);
+
+    // Same calendar week already handled → nothing to do. Unread reminders
+    // wait for next week's run (bounded: at most one reminder per week).
+    const lastWeek = await db.businessRule?.findUnique?.({ where: { key: AUTO_REPORT_WEEK_RULE } });
+    if (lastWeek?.value === week) {
       return { skipped: true };
+    }
+    if (!lastWeek?.value) {
+      // One-time migration from the old rolling timestamp: a run within the
+      // last 7 days adopts the current week instead of generating again
+      // immediately after the upgrade deploy.
+      const lastRun = await db.businessRule?.findUnique?.({ where: { key: AUTO_REPORT_RULE } });
+      const lastAt = lastRun?.value ? Date.parse(lastRun.value) : NaN;
+      if (Number.isFinite(lastAt) && now - lastAt < LEGACY_WINDOW_MS) {
+        await db.businessRule?.upsert?.({
+          where: { key: AUTO_REPORT_WEEK_RULE },
+          update: { value: week },
+          create: { key: AUTO_REPORT_WEEK_RULE, value: week, description: 'Manila-Monday week key of the last automatic weekly AI report' },
+        });
+        return { skipped: true };
+      }
     }
 
     const [kpis, insights, forecast, analytics] = await Promise.all([
@@ -61,9 +110,9 @@ export async function runAutoReport(now = Date.now()): Promise<{ skipped: boolea
     const result = await geminiService.generateReport({ kpis, insights, forecast, rules });
     // Only real AI output (`source === 'ai'`) is saved + notified. Fallback
     // stubs ("not configured") and error stubs (rate-limited / flagged /
-    // truncated) must never file history rows or ping admins — the schedule
-    // is for genuine weekly business reports, and a keyless dev backend
-    // would otherwise spam both every 7 days.
+    // truncated) must never file history rows or ping admins. No stamp on
+    // this path, so the next tick retries (saveAiReport dedupes by hash, so
+    // a retry after a partial failure can't double-save).
     if (!result || typeof (result as { report?: unknown }).report !== 'string'
       || (result as { source?: string }).source !== 'ai') {
       console.warn('[AutoReport] no usable AI output (fallback/error stub) — skipping save + notify');
@@ -78,36 +127,81 @@ export async function runAutoReport(now = Date.now()): Promise<{ skipped: boolea
       createdBy: null,
     });
 
-    // Stamp the run BEFORE notifying: even a deduped (unchanged-data) run
-    // counts as "checked this week" — the whole point of the schedule is a
-    // bounded cadence, not a new file every 7 days.
-    await db.businessRule?.upsert?.({
-      where: { key: AUTO_REPORT_RULE },
-      update: { value: new Date(now).toISOString() },
-      create: { key: AUTO_REPORT_RULE, value: new Date(now).toISOString(), description: 'Last successful automatic weekly AI report' },
-    });
-    try {
-      const { createAuditLog } = await import('../utils/audit.js');
-      await createAuditLog({
-        action: 'report.auto', entity: 'ai_report', entityId: saved.id, performedById: null,
-        newValue: { source: saved.source, provider: saved.provider, model: saved.model, deduped: saved.skipped ?? false },
-      });
-    } catch {
-      // audit is best-effort
+    const admins = await db.profile?.findMany?.({ where: { role: 'Admin' }, select: { id: true } }) ?? [];
+    // Unread snapshot BEFORE creating this week's rows, so the new
+    // notification never reminds about itself.
+    const unread = (await db.notification?.findMany?.({
+      where: { type: AUTO_REPORT_TYPE, isRead: false },
+    }) ?? []).filter((n) => admins.some((a) => a.id === n.profileId));
+    const unreadByAdmin = new Map<string, typeof unread>();
+    for (const n of unread) {
+      const list = unreadByAdmin.get(n.profileId) ?? [];
+      list.push(n);
+      unreadByAdmin.set(n.profileId, list);
     }
+    const newestFirst = (rows: typeof unread) =>
+      [...rows].sort((a, b) => (String(a.createdAt) < String(b.createdAt) ? 1 : -1));
 
-    // Identical content to the latest saved report → no new row, no ping.
-    // The cadence stamp above still prevents another run for 7 days.
+    const stampWeek = () => Promise.all([
+      db.businessRule?.upsert?.({
+        where: { key: AUTO_REPORT_WEEK_RULE },
+        update: { value: week },
+        create: { key: AUTO_REPORT_WEEK_RULE, value: week, description: 'Manila-Monday week key of the last automatic weekly AI report' },
+      }),
+      db.businessRule?.upsert?.({
+        where: { key: AUTO_REPORT_RULE },
+        update: { value: new Date(now).toISOString() },
+        create: { key: AUTO_REPORT_RULE, value: new Date(now).toISOString(), description: 'Last successful automatic weekly AI report' },
+      }),
+    ]);
+
+    // One reminder per admin with older unread report(s): points at their
+    // newest unread report so the tap deep-links straight into it. Returns
+    // whether any reminder went out. Exported for unit tests.
+    const remindUnread = async (): Promise<boolean> => {
+      if (!unreadByAdmin.size) return false;
+      const rows: { profileId: string; type: string; transactionId: null; title: string; message: string }[] = [];
+      for (const [profileId, notes] of unreadByAdmin) {
+        const ordered = newestFirst(notes);
+        const latestId = reportIdFromMessage(ordered[0]?.message);
+        const count = ordered.length;
+        rows.push({
+          profileId,
+          transactionId: null,
+          type: AUTO_REPORT_TYPE,
+          title: `Reminder: ${count} unread weekly report${count === 1 ? '' : 's'}`,
+          message: `You still have ${count} unread weekly report${count === 1 ? '' : 's'} from earlier.` +
+            (latestId ? `\nreport:${latestId}` : ''),
+        });
+      }
+      if (!rows.length) return false;
+      await db.notification?.createMany?.({ data: rows });
+      return true;
+    };
+
+    // Identical content to the latest saved report → no new row and no fresh
+    // "ready" ping. Admins with older unread reports still get their weekly
+    // reminder (a notification, not a save — the dedupe only skips files).
     if (saved.skipped) {
-      console.log(`[AutoReport] unchanged since ${saved.id} — reusing it, no new notification`);
-      return { skipped: false, id: saved.id, deduped: true };
+      const reminded = await remindUnread();
+      await stampWeek();
+      try {
+        const { createAuditLog } = await import('../utils/audit.js');
+        await createAuditLog({
+          action: 'report.auto', entity: 'ai_report', entityId: saved.id, performedById: null,
+          newValue: { week, source: saved.source, deduped: true, reminded },
+        });
+      } catch {
+        // audit is best-effort
+      }
+      console.log(`[AutoReport] week ${week} unchanged since ${saved.id} — reusing it${reminded ? ' + reminded unread admins' : ''}`);
+      return { skipped: false, id: saved.id, deduped: true, reminded };
     }
 
-    // Notify every Admin in-app. The report id rides in the message body as
-    // `report:<id>` (parsed by the frontend redirect); the title carries the
-    // human-readable date.
-    const admins = await db.profile?.findMany?.({ where: { role: 'Admin' }, select: { id: true } });
-    if (admins?.length) {
+    // Fresh report: notify every Admin in-app. The report id rides in the
+    // message body as `report:<id>` (parsed by the frontend redirect); the
+    // title carries the human-readable date.
+    if (admins.length) {
       const when = new Date(now).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
       await db.notification?.createMany?.({
         data: admins.map((a) => ({
@@ -119,8 +213,19 @@ export async function runAutoReport(now = Date.now()): Promise<{ skipped: boolea
         })),
       });
     }
-    console.log(`[AutoReport] saved ${saved.id} + notified ${admins?.length ?? 0} admin(s)`);
-    return { skipped: false, id: saved.id };
+    const reminded = await remindUnread();
+    await stampWeek();
+    try {
+      const { createAuditLog } = await import('../utils/audit.js');
+      await createAuditLog({
+        action: 'report.auto', entity: 'ai_report', entityId: saved.id, performedById: null,
+        newValue: { week, source: saved.source, provider: saved.provider, model: saved.model, reminded },
+      });
+    } catch {
+      // audit is best-effort
+    }
+    console.log(`[AutoReport] week ${week} saved ${saved.id} + notified ${admins.length} admin(s)${reminded ? ' + reminded unread admins' : ''}`);
+    return { skipped: false, id: saved.id, reminded };
   } catch (err) {
     console.error('[AutoReport] failed:', (err as Error)?.message ?? err);
     return { skipped: true };

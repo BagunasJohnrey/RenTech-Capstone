@@ -284,11 +284,11 @@ app.listen(env.PORT, () => {
   autoBackupStart.unref?.();
 
   // Automatic weekly AI business report (same generation path as the manual
-  // button). The service itself guards the 7-day cadence via the
-  // `auto_report_last_run` BusinessRule, so this tick can run on the same
-  // hourly cadence as a cheap check: most ticks exit at the rule read. The
-  // hourly (not daily) cadence keeps the worst-case drift after a downtime
-  // window small without ever double-running.
+  // button). The service anchors cadence to calendar weeks (Manila Monday via
+  // the `auto_report_last_week` rule), so this tick can run on the same
+  // hourly cadence as a cheap check: most ticks exit at the rule read.
+  // Missed weeks while down are NOT backfilled — the first tick after boot
+  // generates for the current week only.
   let autoReportRunning = false;
   const runAutoReportTick = async () => {
     if (autoReportRunning) return;

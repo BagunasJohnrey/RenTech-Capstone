@@ -109,8 +109,15 @@ describe('runAutoReport (weekly scheduler)', () => {
     prisma.transaction.findMany.mockResolvedValue([]);
     prisma.inventoryItem.findMany.mockResolvedValue([]);
     prisma.payment.findMany.mockResolvedValue([]);
-    prisma.businessRule.findUnique.mockResolvedValue(null);
+    prisma.notification.findMany.mockResolvedValue([]);
     prisma.profile.findMany.mockResolvedValue([{ id: 'admin-id-789' }]);
+    // Week rule: no week stamped yet → the run proceeds. Legacy rolling key
+    // falls through to null too (fresh install path, no migration adopt).
+    prisma.businessRule.findUnique.mockImplementation((args: unknown) =>
+      Promise.resolve((args as { where: { key: string } }).where.key === 'auto_report_last_week'
+        ? { value: '__none__' }
+        : null)
+    );
   });
 
   async function restoreKeys() {
@@ -118,8 +125,8 @@ describe('runAutoReport (weekly scheduler)', () => {
     env.GEMINI_API_KEY = '';
   }
 
-  it('saves the report, stamps the cadence rule, and notifies admins', async () => {
-    const { runAutoReport, AUTO_REPORT_RULE, AUTO_REPORT_TYPE } = await import('../src/services/autoReport.service.js');
+  it('saves the report, stamps the week rule, and notifies admins', async () => {
+    const { runAutoReport, AUTO_REPORT_WEEK_RULE, AUTO_REPORT_TYPE } = await import('../src/services/autoReport.service.js');
     const { prisma } = await import('../src/config/database.js');
     try {
       const res = await runAutoReport();
@@ -127,7 +134,7 @@ describe('runAutoReport (weekly scheduler)', () => {
       expect(res.id).toBeTruthy();
 
       expect(prisma.businessRule.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { key: AUTO_REPORT_RULE } })
+        expect.objectContaining({ where: { key: AUTO_REPORT_WEEK_RULE } })
       );
       expect(prisma.notification.createMany).toHaveBeenCalledWith({
         data: [
@@ -144,11 +151,11 @@ describe('runAutoReport (weekly scheduler)', () => {
     }
   });
 
-  it('skips while the last run is inside the 7-day window', async () => {
-    const { runAutoReport } = await import('../src/services/autoReport.service.js');
+  it('skips when the current Manila week is already stamped', async () => {
+    const { runAutoReport, manilaWeekKey } = await import('../src/services/autoReport.service.js');
     const { prisma } = await import('../src/config/database.js');
     try {
-      prisma.businessRule.findUnique.mockResolvedValueOnce({ value: new Date().toISOString() });
+      prisma.businessRule.findUnique.mockResolvedValueOnce({ value: manilaWeekKey() });
       const res = await runAutoReport();
       expect(res.skipped).toBe(true);
       expect(prisma.notification.createMany).not.toHaveBeenCalled();
@@ -157,13 +164,12 @@ describe('runAutoReport (weekly scheduler)', () => {
     }
   });
 
-  it('runs again after the window expires (stale rule timestamp)', async () => {
+  it('runs for a new week even though a report ran days ago (no backfill of missed weeks)', async () => {
     const { runAutoReport } = await import('../src/services/autoReport.service.js');
     const { prisma } = await import('../src/config/database.js');
     try {
-      prisma.businessRule.findUnique.mockResolvedValueOnce({
-        value: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
-      });
+      // Stale week key (a previous Monday) → proceeds exactly once for now.
+      prisma.businessRule.findUnique.mockResolvedValueOnce({ value: '2000-01-03' });
       const res = await runAutoReport();
       expect(res.skipped).toBe(false);
       expect(prisma.notification.createMany).toHaveBeenCalled();
@@ -172,31 +178,93 @@ describe('runAutoReport (weekly scheduler)', () => {
     }
   });
 
-  it('dedupes unchanged content: still stamps the rule, no new notification', async () => {
+  it('migrates from a recent legacy rolling timestamp without double-running', async () => {
     const { runAutoReport } = await import('../src/services/autoReport.service.js');
+    const { prisma } = await import('../src/config/database.js');
+    try {
+      // No week key yet (fresh upgrade), but the legacy key ran recently.
+      prisma.businessRule.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ value: new Date().toISOString() });
+      const res = await runAutoReport();
+      expect(res.skipped).toBe(true);
+      expect(prisma.notification.createMany).not.toHaveBeenCalled();
+      // The current week is adopted so the next tick stays quiet.
+      expect(prisma.businessRule.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { key: 'auto_report_last_week' } })
+      );
+    } finally {
+      await restoreKeys();
+    }
+  });
+
+  it('reminds admins with unread earlier reports, pointing at the newest unread', async () => {
+    const { runAutoReport, AUTO_REPORT_TYPE } = await import('../src/services/autoReport.service.js');
+    const { prisma } = await import('../src/config/database.js');
+    try {
+      prisma.businessRule.findUnique.mockResolvedValueOnce({ value: '2000-01-03' });
+      prisma.notification.findMany.mockResolvedValue([
+        { id: 'n-old', profileId: 'admin-id-789', createdAt: '2000-01-04T00:00:00.000Z', message: 'Ready.\nreport:rpt-old111' },
+        { id: 'n-new', profileId: 'admin-id-789', createdAt: '2000-01-05T00:00:00.000Z', message: 'Ready.\nreport:rpt-new222' },
+      ]);
+      const res = await runAutoReport();
+      expect(res.skipped).toBe(false);
+      expect(res.reminded).toBe(true);
+      // Fresh weekly ping + one reminder row.
+      expect(prisma.notification.createMany).toHaveBeenCalledTimes(2);
+      expect(prisma.notification.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            profileId: 'admin-id-789',
+            type: AUTO_REPORT_TYPE,
+            title: expect.stringContaining('2 unread'),
+            message: expect.stringContaining('report:rpt-new222'),
+          }),
+        ],
+      });
+    } finally {
+      await restoreKeys();
+    }
+  });
+
+  it('dedupes unchanged content: stamps the new week, no fresh ping', async () => {
+    const { runAutoReport, AUTO_REPORT_WEEK_RULE } = await import('../src/services/autoReport.service.js');
     const { prisma } = await import('../src/config/database.js');
     try {
       const first = await runAutoReport();
       expect(first.skipped).toBe(false);
+      const notifyCallsAfterFirst = prisma.notification.createMany.mock.calls.length;
+      expect(notifyCallsAfterFirst).toBe(1);
 
-      // Second run with an expired window but identical generated content.
-      prisma.businessRule.findUnique.mockResolvedValueOnce({
-        value: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
-      });
-      vi.clearAllMocks();
-      prisma.businessRule.findUnique.mockResolvedValueOnce({
-        value: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
-      });
+      // A later week, but generation produces byte-identical content.
+      prisma.businessRule.findUnique.mockResolvedValueOnce({ value: '2000-01-03' });
       const second = await runAutoReport();
       expect(second.skipped).toBe(false);
       expect(second.deduped).toBe(true);
       expect(second.id).toBe(first.id);
-      expect(prisma.notification.createMany).not.toHaveBeenCalled();
+      expect(second.reminded).toBe(false);
+      // No fresh "ready" ping and no unread to remind about.
+      expect(prisma.notification.createMany.mock.calls.length).toBe(notifyCallsAfterFirst);
+      expect(prisma.businessRule.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { key: AUTO_REPORT_WEEK_RULE } })
+      );
 
       const files = await fs.readdir(process.env.AI_REPORTS_DIR!);
       expect(files.filter((f) => f.endsWith('.json'))).toHaveLength(1);
     } finally {
       await restoreKeys();
     }
+  });
+
+  it('manilaWeekKey anchors weeks to Manila Mondays', async () => {
+    const { manilaWeekKey } = await import('../src/services/autoReport.service.js');
+    // Mon Oct 5 2026 noon Manila → that same Monday.
+    expect(manilaWeekKey(new Date('2026-10-05T12:00:00+08:00').getTime())).toBe('2026-10-05');
+    // Sun Oct 11 late night Manila → still the Oct-5 week.
+    expect(manilaWeekKey(new Date('2026-10-11T23:30:00+08:00').getTime())).toBe('2026-10-05');
+    // Mon Oct 12 just after midnight Manila → new week.
+    expect(manilaWeekKey(new Date('2026-10-12T00:30:00+08:00').getTime())).toBe('2026-10-12');
+    // Sunday-evening UTC is already Monday in Manila (Oct 11 16:30 UTC = Oct 12 00:30 +08).
+    expect(manilaWeekKey(new Date('2026-10-11T16:30:00Z').getTime())).toBe('2026-10-12');
   });
 });
