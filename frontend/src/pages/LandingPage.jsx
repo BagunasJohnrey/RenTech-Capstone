@@ -282,14 +282,14 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
           transition={{ duration: 0.35, ease: "easeInOut" }}
           className="fixed top-0 left-0 right-0 z-50 bg-[#FAFAFB]/80 backdrop-blur-lg border-b border-gray-100"
         >
-          <nav className="max-w-7xl mx-auto px-4 sm:px-6 py-3 md:py-4 flex justify-between items-center">
-            <div className="text-xl md:text-2xl font-extrabold tracking-tighter flex items-center gap-2 text-gray-950">
+          <nav className="max-w-7xl mx-auto px-4 sm:px-6 py-3 md:py-4 flex justify-between items-center gap-2">
+            <div className="min-w-0 flex-1 text-base sm:text-xl md:text-2xl font-extrabold tracking-tighter flex items-center gap-2 text-gray-950">
               <img 
                 src="/RenTech.png" 
                 alt="RENTECH Logo" 
-                className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-xl"
+                className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-xl shrink-0"
               />
-              <span className="hidden sm:block">RENTECH</span><span className="hidden sm:block text-[#bf4a53]">.</span>
+              <span className="truncate whitespace-nowrap">RenTech — <span className="text-[#bf4a53]">Mylene's Boutique</span></span>
             </div>
             
             <div className="hidden lg:flex items-center gap-8 text-sm font-semibold text-gray-600">
@@ -300,7 +300,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 md:gap-3">
+            <div className="flex shrink-0 items-center gap-2 md:gap-3">
               <motion.button 
                 whileHover={{ color: '#000' }} 
                 onClick={onLogin}
