@@ -19,7 +19,7 @@ function Row({ label, value, className = '' }) {
   );
 }
 
-export default function BookingReceipt({ tx, qrPayload, showQR = true, title }) {
+export default function BookingReceipt({ tx, qrPayload, showQR = true, title, pickupLabel, eventLabel, dueLabel }) {
   const flags = useFeatureFlags();
   // Data URI of the rendered QR — offered as a "Save QR" download.
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
@@ -46,6 +46,9 @@ export default function BookingReceipt({ tx, qrPayload, showQR = true, title }) 
       <div className="space-y-2">
         <Row label="Customer" value={customerName} className="font-semibold" />
         <Row label="Size" value={size} />
+        <Row label="Pickup" value={pickupLabel} />
+        <Row label="Event Date" value={eventLabel} />
+        <Row label="Return By" value={dueLabel} className="text-amber-600 font-semibold" />
         <Row label="Total" value={peso(fee)} className="font-semibold" />
         {promoDiscount > 0 && <Row label="Promo discount" value={`−${peso(promoDiscount)}`} className="text-emerald-600 font-semibold" />}
         <Row label="Balance (remaining)" value={peso(balance)} className="font-bold" />

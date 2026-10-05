@@ -6,6 +6,7 @@ import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
 import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
+import BottomSheet from '../components/BottomSheet';
 import { inventoryService } from '../services/inventory';
 import { paymentsService } from '../services/payments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -334,14 +335,19 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   // Filtered catalog (staff can pick any bookable item, including ones that are
   // currently Rented/Reserved — so they can reserve a future-free date). Deleted
-  // items are excluded since they're removed from the catalog.
+  // items are excluded since they're removed from the catalog. Available items
+  // sort first so bookable garments are always on top; the category filter and
+  // search still apply across everything.
   const filteredCatalog = useMemo(() => {
-    return inventory.filter(item => {
-      if (item.status === 'Deleted') return false;
-      const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
-      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesCat && matchesSearch;
-    });
+    const rank = (status) => (status === 'Available' ? 0 : 1);
+    return inventory
+      .filter(item => {
+        if (item.status === 'Deleted') return false;
+        const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
+        const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesCat && matchesSearch;
+      })
+      .sort((a, b) => rank(a.status) - rank(b.status));
   }, [inventory, selectedCategories, searchQuery]);
 
   // Reset visibleCount when filters change
@@ -646,9 +652,8 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const progressSteps = ['Items', 'Details', 'Confirm', 'Receipt'];
 
   return (
-    <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-sm" onClick={() => requestNavigate('close')}>
-      <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-new-rental" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+    <>
+      <BottomSheet onClose={() => requestNavigate('close')} labelledby="dialog-title-new-rental">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
           <h2 id="dialog-title-new-rental" className="text-xl font-bold text-gray-900">New Rental</h2>
@@ -675,7 +680,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         </div>
 
         {/* Content area with scrollable catalog */}
-        <div className="flex-1 overflow-hidden flex flex-col p-6">
+        <div className="flex-1 overflow-hidden flex flex-col min-h-0 p-6">
           {/* STEP 1: Catalog */}
           {step === 1 && (
             <div key="step1" className="step-enter flex flex-col flex-1 min-h-0">
@@ -778,6 +783,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               <div
                 ref={catalogRef}
                 onScroll={handleCatalogScroll}
+                data-sheet-scroll
                 className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[36vh] sm:max-h-[44vh]"
               >
                 {filteredCatalog.length === 0 ? (
@@ -854,7 +860,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
           {/* STEP 2: Details */}
           {step === 2 && (
-            <div key="step2" ref={step2Ref} className="step-enter overflow-y-auto pr-1 space-y-6">
+            <div key="step2" ref={step2Ref} data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-6">
               <h3 className="font-bold text-lg text-gray-900">Booking Details</h3>
 
 
@@ -983,7 +989,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
           {/* STEP 3: Receipt */}
           {step === 3 && (
-            <div key="step3" className="step-enter overflow-y-auto pr-1 space-y-4">
+            <div key="step3" data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-4">
               <div className="text-center">
                 <h3 className="text-lg font-bold text-gray-900">Review Transaction</h3>
                 <p className="text-sm text-gray-500">Finalize rental details</p>
@@ -1146,7 +1152,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
           {/* STEP 4: Receipt (post-booking with scannable QR for the customer) */}
           {step === 4 && createdTx && (
-            <div key="step4" className="step-enter overflow-y-auto pr-1 space-y-4">
+            <div key="step4" data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-4">
               <div className="text-center">
                 <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
                   <CheckCircle2 size={28} className="text-emerald-500" />
@@ -1157,13 +1163,13 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               {collectError && (
                 <p className="text-xs text-amber-700 font-medium bg-amber-50 border border-amber-200/70 rounded-2xl px-4 py-2.5 text-center">{collectError}</p>
               )}
-              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
-                <div className="flex justify-between"><span className="text-gray-500">Pickup</span><span className="font-semibold">{new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Event Date</span><span className="font-semibold">{new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="font-semibold text-amber-600">{new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
-              </div>
               <div className="print-area">
-                <BookingReceipt tx={createdTx} />
+                <BookingReceipt
+                  tx={createdTx}
+                  pickupLabel={new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
+                  eventLabel={new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
+                  dueLabel={new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
+                />
               </div>
             </div>
           )}
@@ -1214,8 +1220,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
             </>
           )}
         </div>
-      </div>
-      </div>
+      </BottomSheet>
 
       {/* Discard-changes confirm — Back / X / backdrop / Escape with unsaved entries */}
       {showDiscardConfirm && (
@@ -1273,6 +1278,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               </div>
             </div>
           )}
-    </div>
+    </>
   );
 }

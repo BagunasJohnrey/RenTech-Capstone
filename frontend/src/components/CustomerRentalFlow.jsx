@@ -14,6 +14,7 @@ import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
 import BookingQR from './BookingQR';
+import BottomSheet from './BottomSheet';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
 import { downloadReceiptImage } from '../utils/receiptImage';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
@@ -136,6 +137,21 @@ export default function CustomerRentalFlow({
   const [promoApplied, setPromoApplied] = useState(null);
   const [promoError, setPromoError] = useState('');
   const [promoApplying, setPromoApplying] = useState(false);
+  // Discoverable codes for the dropdown (active, unexpired, uses left).
+  // Fetched once per payment-step visit; manual entry still works.
+  const [availablePromos, setAvailablePromos] = useState([]);
+  const [promosLoading, setPromosLoading] = useState(false);
+  const [promoOpen, setPromoOpen] = useState(false);
+  useEffect(() => {
+    if (step !== 2) return;
+    let active = true;
+    setPromosLoading(true);
+    listPublicPromos()
+      .then((codes) => { if (active) setAvailablePromos(Array.isArray(codes) ? codes : []); })
+      .catch(() => { if (active) setAvailablePromos([]); })
+      .finally(() => { if (active) setPromosLoading(false); });
+    return () => { active = false; };
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -163,8 +179,13 @@ export default function CustomerRentalFlow({
   const [itemStatus, setItemStatus] = useState(null);
   const isCleaning = itemStatus === 'Cleaning' || selectedItem?.status === 'Cleaning';
   const catalogRef = useRef(null);
+  // All steps share one scroll container — reset it to the top on every step
+  // change so the next step always starts at its header (not mid-page where
+  // the previous step left off).
+  const stepBodyRef = useRef(null);
+  useEffect(() => { stepBodyRef.current?.scrollTo?.(0, 0); }, [step]);
 
-  const { validate: validatePromo } = usePromo();
+  const { validate: validatePromo, listPublic: listPublicPromos } = usePromo();
   const { createIntent } = usePayments();
   const { openDropIn } = usePaymongo();
   const { info: toastInfo } = useToast();
@@ -314,14 +335,17 @@ export default function CustomerRentalFlow({
     paymentMethod,
   });
 
-  const handleApplyPromo = async () => {
-    if (!promoCode.trim()) return;
+  const handleApplyPromo = async (codeOverride) => {
+    const raw = (codeOverride ?? promoCode).trim();
+    if (!raw) return;
     setPromoApplying(true);
     setPromoError('');
     try {
-      const result = await validatePromo(promoCode.trim(), effectiveItemPrice || 0);
+      const result = await validatePromo(raw, effectiveItemPrice || 0);
+      setPromoCode(result.code || raw);
       setPromoApplied(result);
       setPromoError('');
+      setPromoListOpen(false);
     } catch (err) {
       setPromoApplied(null);
       setPromoError(err.message || 'Invalid promo code');
@@ -466,10 +490,8 @@ export default function CustomerRentalFlow({
   // ---- Step 0: Catalog ----
   if (step === 0) {
     return (
-    <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-lg" onClick={onClose}>
-        <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-select-item" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
+      <BottomSheet onClose={onClose} labelledby="dialog-title-select-item">
+        <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
             <h2 id="dialog-title-select-item" className="text-xl font-bold text-gray-900">Select Item</h2>
             <button onClick={onClose} aria-label="Close item selection" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"><X size={20} /></button>
           </div>
@@ -553,7 +575,7 @@ export default function CustomerRentalFlow({
                 {fieldErrors.item}
               </div>
             )}
-            <div ref={catalogRef} onScroll={handleCatalogScroll} className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[200px] max-h-[36vh] sm:max-h-[44vh]">
+            <div ref={catalogRef} onScroll={handleCatalogScroll} data-sheet-scroll className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[200px] max-h-[36vh] sm:max-h-[44vh]">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {displayedItems.map((item) => (
                   <button type="button" key={item.id} onClick={() => setSelectedItem(item)}
@@ -610,15 +632,13 @@ export default function CustomerRentalFlow({
               Continue <ChevronRight size={16} />
             </button>
           </div>
-        </div>
-      </div>
-    </div>
+      </BottomSheet>
     );
   }
 
   // ---- Steps 1–3 ----
   const flowContent = (
-    <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-complete-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 relative" onClick={(e) => e.stopPropagation()}>
+    <>
         {isProcessingPayment && (
           <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center space-y-4">
             <Loader2 size={48} className="text-[#bf4a53] animate-spin" />
@@ -652,7 +672,7 @@ export default function CustomerRentalFlow({
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div ref={stepBodyRef} data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 p-5 space-y-5">
           {step === 1 && (
             <div className="space-y-5">
               <div className="bg-gradient-to-r from-gray-50 to-white rounded-2xl p-4 flex items-center gap-4 border border-gray-100/60">
@@ -827,41 +847,6 @@ export default function CustomerRentalFlow({
             </div>
           )}
 
-          {/* Promo Code — shown only on the Payment step, never on the receipt */}
-          {step === 2 && (
-          <div className="bg-gray-50 rounded-2xl p-4 flex flex-col items-center">
-            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block text-center">Have a promo code?</label>
-            <div className="flex gap-2 w-full max-w-xs justify-center">
-              <Field showLabel={false} type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                placeholder="Enter code" maxLength={20} aria-label="Promo code"
-                className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]" />
-              <button onClick={handleApplyPromo} disabled={!promoCode.trim() || promoApplying}
-                className="px-4 py-2.5 bg-[#bf4a53] text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
-                {promoApplying ? <Loader2 size={14} className="animate-spin" /> : 'Apply'}
-              </button>
-            </div>
-            {promoApplied && (
-              <div className="mt-2 p-2.5 bg-emerald-50 rounded-xl flex items-center justify-between w-full max-w-xs">
-                <div>
-                  <span className="text-xs font-bold text-emerald-700">{promoApplied.code}</span>
-                  <span className="text-xs text-emerald-600 ml-2">-{promoApplied.discountPct}% off</span>
-                </div>
-                <button onClick={() => { setPromoCode(''); setPromoApplied(null); }}
-                  className="text-xs text-red-500 font-semibold hover:underline">
-                  Remove
-                </button>
-              </div>
-            )}
-            {promoError && <p className="text-xs text-red-500 font-medium mt-1 text-center">{promoError}</p>}
-            {promoApplied && (
-              <div className="mt-2 flex justify-between text-sm w-full max-w-xs">
-                <span className="text-gray-500">Discount</span>
-                <span className="font-bold text-emerald-600">-₱{promoApplied.discountAmount.toLocaleString()}</span>
-              </div>
-            )}
-          </div>
-          )}
-
           {step === 2 && (
             <div className="space-y-5">
               {/* Maya QRPh is a single rail, not a menu: the customer scans one
@@ -925,6 +910,74 @@ export default function CustomerRentalFlow({
                     <div className="flex justify-between text-sm text-emerald-600"><span>Promo discount ({promoApplied.code})</span><span className="font-bold">−₱{promoApplied.discountAmount.toLocaleString()}</span></div>
                   )}
                   <div className="flex justify-between text-sm"><span className="text-gray-600">Remaining at pickup</span><span className="font-bold text-gray-900">₱{(finalFee - downpaymentAmount).toLocaleString()}</span></div>
+                  {/* Promo — a collapsed row under the totals; expands to the
+                      entry + live code list. Never shown on the receipt. */}
+                  <div className="border-t border-gray-200/70 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPromoOpen(o => !o)}
+                      aria-expanded={promoOpen}
+                      className="w-full flex items-center justify-between py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50 rounded-lg"
+                    >
+                      <span className="text-xs font-bold text-gray-500">
+                        Have a promo code?
+                        {promoApplied && <span className="ml-1.5 text-emerald-600">· {promoApplied.code} applied</span>}
+                      </span>
+                      <ChevronDown size={15} className={`text-gray-400 transition-transform ${promoOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {promoOpen && (
+                      <div className="pb-2 flex flex-col items-center">
+                        {!promoApplied ? (
+                          <>
+                            <div className="flex gap-2 w-full justify-center">
+                              <Field showLabel={false} type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
+                                placeholder="Enter code" maxLength={20} aria-label="Promo code"
+                                className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]" />
+                              <button onClick={() => handleApplyPromo()} disabled={!promoCode.trim() || promoApplying}
+                                className="px-4 py-2.5 bg-[#bf4a53] text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
+                                {promoApplying ? <Loader2 size={14} className="animate-spin" /> : 'Apply'}
+                              </button>
+                            </div>
+                            {promosLoading ? (
+                              <p className="mt-2 text-[11px] text-gray-400 font-medium">Checking available codes…</p>
+                            ) : availablePromos.length > 0 ? (
+                              <div className="mt-2 w-full bg-white border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+                                {availablePromos.map((p) => (
+                                  <button
+                                    key={p.code}
+                                    type="button"
+                                    disabled={promoApplying}
+                                    onClick={() => handleApplyPromo(p.code)}
+                                    className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-red-50/60 transition-colors disabled:opacity-50"
+                                  >
+                                    <span className="text-xs font-bold text-gray-900">{p.code}</span>
+                                    <span className="text-[11px] font-bold text-emerald-600 shrink-0">−{p.discountPct}%</span>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-[11px] text-gray-400 font-medium">No promo codes right now</p>
+                            )}
+                          </>
+                        ) : (
+                          <div className="w-full bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-3 flex items-center gap-3">
+                            <span className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                              <Check size={15} strokeWidth={3} />
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-bold text-emerald-800">{promoApplied.code} <span className="font-semibold text-emerald-600">· {promoApplied.discountPct}% off</span></p>
+                              <p className="text-xs font-bold text-emerald-600">−₱{promoApplied.discountAmount.toLocaleString()} saved</p>
+                            </div>
+                            <button onClick={() => { setPromoCode(''); setPromoApplied(null); }}
+                              className="text-xs text-gray-400 hover:text-red-500 font-semibold transition-colors shrink-0">
+                              Remove
+                            </button>
+                          </div>
+                        )}
+                        {promoError && <p className="text-xs text-red-500 font-medium mt-2 text-center">{promoError}</p>}
+                      </div>
+                    )}
+                  </div>
                   <div className="bg-white border-2 border-[#bf4a53] rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm">
                     <span className="text-sm font-bold text-gray-900">Paying now <span className="font-medium text-gray-400">(downpayment)</span></span>
                     <span className="font-extrabold text-[#bf4a53] text-xl">₱{downpaymentAmount.toLocaleString()}</span>
@@ -1025,12 +1078,20 @@ export default function CustomerRentalFlow({
             </button>
           </div>
         )}
-    </div>
+    </>
   );
 
-  return inline ? flowContent : (
+  return inline ? (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-complete-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto" onClick={(e) => e.stopPropagation()}>
         {flowContent}
+      </div>
+    </div>
+  ) : (
+    <>
+      <BottomSheet onClose={onClose} z="z-[100]" labelledby="dialog-title-complete-booking">
+        {flowContent}
+      </BottomSheet>
 
       {/* Size Guide */}
       {showSizeGuide && (
@@ -1098,6 +1159,6 @@ export default function CustomerRentalFlow({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
