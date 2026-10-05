@@ -437,9 +437,13 @@ export async function getInsights(filter?: { start?: Date; end?: Date; past?: bo
 }
 
 async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }) {
-  const txWhere: any = { status: { in: ['Active', 'Returned', 'Overdue'] } };
-  if (filter?.start) txWhere.createdAt = { gte: filter.start };
-  if (filter?.end) txWhere.createdAt = { ...txWhere.createdAt, lt: filter.end };
+  // Window by RENTAL date (when the item is out), not creation date — a booking
+  // made in September for October belongs to October. Reserved counts too: a
+  // locked upcoming rental is real demand for the period (Cancelled stays out).
+  // Revenue below is payments-based and unaffected by this query's shape.
+  const txWhere: any = { status: { in: ['Active', 'Returned', 'Overdue', 'Reserved'] } };
+  if (filter?.start) txWhere.rentalDate = { gte: filter.start };
+  if (filter?.end) txWhere.rentalDate = { ...txWhere.rentalDate, lt: filter.end };
 
   // Light select — the previous `include: { transactions }` pulled every item
   // plus its FULL transaction history into memory just to count them.

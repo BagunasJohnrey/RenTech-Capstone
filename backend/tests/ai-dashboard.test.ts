@@ -245,10 +245,10 @@ describe('GET /api/dashboard/insights', () => {
       { label: 'Wk 4', revenue: 0 },
       { label: 'Wk 5', revenue: 0 },
     ]);
-    // And the transaction query was bounded: gte June 1, lt July 1.
+    // And the transaction query was bounded on rental date: gte June 1, lt July 1.
     const findManyArg = prisma.transaction.findMany.mock.calls[0][0] as any;
-    expect(findManyArg.where.createdAt.gte).toEqual(new Date(2025, 5, 1));
-    expect(findManyArg.where.createdAt.lt).toEqual(new Date(2025, 6, 1));
+    expect(findManyArg.where.rentalDate.gte).toEqual(new Date(2025, 5, 1));
+    expect(findManyArg.where.rentalDate.lt).toEqual(new Date(2025, 6, 1));
   });
 
   it('counts counter-cash (completed) payments and ignores unpaid booked fees', async () => {
@@ -351,6 +351,30 @@ describe('GET /api/dashboard/insights', () => {
     expect(res.status).toBe(403);
   });
 
+  it('counts Reserved upcoming rentals in topRented for the rental month', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockReset();
+    prisma.transaction.findMany.mockReset();
+    prisma.payment.findMany.mockReset();
+    prisma.inventoryItem.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 9, name: 'Gown Z', category: 'Gown' }]);
+    // Booked in January for February, still Reserved: belongs to February.
+    prisma.transaction.findMany.mockResolvedValueOnce([
+      { itemId: 9, rentalFee: 5000, rentalDate: new Date(2025, 1, 10), createdAt: new Date(2025, 0, 20), item: { category: 'Gown' } },
+    ]);
+    prisma.payment.findMany.mockResolvedValueOnce([]);
+
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=monthly&year=2025&month=2')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.topRented).toHaveLength(1);
+    expect(res.body.topRented[0]).toMatchObject({ name: 'Gown Z', rentals: 1 });
+  });
+
   it('year filter scopes Yearly revenue to Jan 1..Dec 31 of that year', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, name: 'Gown A', category: 'Gown' }]);
@@ -363,8 +387,8 @@ describe('GET /api/dashboard/insights', () => {
 
     expect(res.status).toBe(200);
     const findManyArg = prisma.transaction.findMany.mock.calls[0][0] as any;
-    expect(findManyArg.where.createdAt.gte).toEqual(new Date(2024, 0, 1));
-    expect(findManyArg.where.createdAt.lt).toEqual(new Date(2025, 0, 1));
+    expect(findManyArg.where.rentalDate.gte).toEqual(new Date(2024, 0, 1));
+    expect(findManyArg.where.rentalDate.lt).toEqual(new Date(2025, 0, 1));
     expect(res.body).not.toHaveProperty('revenueByWeek');
   });
 

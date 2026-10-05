@@ -9,6 +9,7 @@ export default function StatusDistribution({ totalTx, statusDist, activePie, set
   return (
     <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm space-y-4">
       <h3 className="font-bold text-gray-900 text-lg">Status Distribution</h3>
+      <p className="text-xs text-gray-400 -mt-3">Live snapshot · all bookings (statuses are current-state, so this card never filters by period)</p>
       {totalTx === 0 ? (
         <p className="text-sm text-gray-400 text-center py-8">No transactions yet.</p>
       ) : (

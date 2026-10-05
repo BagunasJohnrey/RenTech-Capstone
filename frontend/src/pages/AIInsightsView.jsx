@@ -497,10 +497,18 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const mSmaVals = (forecast?.sma || []).filter(v => v !== null && v !== undefined);
   const mLatestSma = mSmaVals.length > 0 ? mSmaVals[mSmaVals.length - 1] : 0;
   const mPrevSma = mSmaVals.length >= 2 ? mSmaVals[mSmaVals.length - 2] : 0;
-  const avgPriceKnown = mCounts.length > 0 && mCounts[mCounts.length - 1] > 0;
-  const avgPrice = avgPriceKnown
-    ? (revByMonth[revByMonth.length - 1]?.revenue || 0) / mCounts[mCounts.length - 1]
-    : 1500;
+  // Average ticket: last month's revenue ÷ its bookings — but a stale/empty
+  // series (or a genuinely zero month) must not zero every projection
+  // forever. Fall back to the window average (same scope top and bottom),
+  // and only then admit the price is unknown.
+  const lastRev = revByMonth.length > 0 ? (revByMonth[revByMonth.length - 1]?.revenue || 0) : 0;
+  const lastCount = mCounts.length > 0 ? mCounts[mCounts.length - 1] : 0;
+  const summaryRev = analyticsSummary?.totalRevenue || 0;
+  const summaryRentals = analyticsSummary?.totalRentals || 0;
+  const avgPriceKnown = (lastCount > 0 && lastRev > 0) || (summaryRentals > 0 && summaryRev > 0);
+  const avgPrice = (lastCount > 0 && lastRev > 0)
+    ? lastRev / lastCount
+    : (summaryRentals > 0 && summaryRev > 0 ? summaryRev / summaryRentals : 1500);
   const forecastRev = mLatestSma * avgPrice;
   // With < 2 real months of revenue, a peso projection is a guess (avg price falls
   // back to a hard-coded 1500), so show the SMA direction rather than an inflated bar.

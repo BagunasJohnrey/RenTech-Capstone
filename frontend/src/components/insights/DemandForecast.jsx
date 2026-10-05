@@ -89,11 +89,13 @@ export default function DemandForecast({
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
                   const month = forecastData.find(d => d.label === label);
-                  // The expected-range band areas share the tooltip payload —
-                  // hide them so hover shows only real series, never raw
-                  // band math.
+                  // Band areas share the payload — hide their raw math rows,
+                  // but surface the range itself in plain words.
                   const rows = payload.filter((p) => p.name === 'Rentals' || p.name === smaName);
                   if (rows.length === 0) return null;
+                  const hi = month && month.bandLo != null && month.bandSpan != null
+                    ? Math.round((month.bandLo + month.bandSpan) * 10) / 10
+                    : null;
                   return (
                     <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm space-y-1">
                       <p className="font-bold text-gray-900">{month?.full || label}</p>
@@ -102,6 +104,9 @@ export default function DemandForecast({
                           {p.name}: {p.name === smaName ? Number(p.value).toFixed(1) : p.value}
                         </p>
                       ))}
+                      {hi !== null && (
+                        <p className="text-gray-600">Expected range: {Number(month.bandLo).toFixed(1)}–{hi.toFixed(1)}</p>
+                      )}
                       {month?.forecast && <p className="text-[11px] text-gray-400 italic">Projected</p>}
                     </div>
                   );
