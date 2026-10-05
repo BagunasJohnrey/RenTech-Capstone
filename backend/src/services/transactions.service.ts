@@ -54,6 +54,12 @@ interface CreateRentalInput {
   size?: string;
   measurements?: unknown;
   requireMinimumDownpayment?: boolean; // customers must put down the flat min_downpayment floor (default ₱200)
+  // Staff-only: the downpayment cash was physically collected at the counter,
+  // so write it as a completed Payment row atomically with the booking.
+  // Online bookings must leave this false — the gateway webhook credits the
+  // downpayment when the money actually lands (pre-creating a row here would
+  // double-count it). The staff controller forces this false for customers.
+  downpaymentCash?: boolean;
 }
 
 export async function createRental(data: CreateRentalInput, processedById?: string) {
@@ -203,6 +209,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           status: isFuture ? TransactionStatus.Reserved : TransactionStatus.Active,
           rentalFee: fee,
           downpayment,
+          // A cash-collected downpayment is money in hand: totalPaid starts
+          // there (the completed row below proves it). A promised/gateway
+          // downpayment starts at 0 until the ledger credits it.
+          totalPaid: data.downpaymentCash && downpayment > 0 ? downpayment : 0,
           balance,
           promoCodeId: promoCodeId ?? null,
           size: data.size ?? null,
@@ -219,6 +229,23 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           item: { select: { id: true, name: true, category: true } },
         },
       });
+
+      // Counter cash: the staff physically holds this money, so the booking
+      // opens with a completed Payment row (same shape as recordPayment).
+      // Without it the cash would exist only as a `downpayment` number and
+      // never appear in revenue. Online bookings skip this — the gateway
+      // webhook credits the same amount when it lands.
+      if (data.downpaymentCash && downpayment > 0) {
+        await tx.payment.create({
+          data: {
+            transactionId: created.id,
+            amount: downpayment,
+            method: 'cash',
+            type: balance <= 0 ? 'full' : 'partial',
+            status: 'completed',
+          },
+        });
+      }
 
       await tx.inventoryItem.update({
         where: { id: data.itemId },

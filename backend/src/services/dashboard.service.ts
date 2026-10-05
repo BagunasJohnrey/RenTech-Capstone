@@ -26,6 +26,22 @@ function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
   return where;
 }
 
+// Years that actually have bookings (drives the year picker so it never
+// offers decades of empty years). The current year is always included — new
+// bookings land there. One light indexed scan; cached like the rest.
+export async function getAvailableYears() {
+  return cacheOrCompute('years', async () => {
+    const rows = await prisma.transaction.findMany({ select: { createdAt: true } });
+    const years = new Set<number>();
+    for (const r of rows) {
+      const d = r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt);
+      if (!Number.isNaN(d.getTime())) years.add(d.getFullYear());
+    }
+    years.add(new Date().getFullYear());
+    return { years: [...years].sort((a, b) => a - b) };
+  });
+}
+
 export async function getKpis(filter?: { start?: Date; end?: Date }) {
   // Cached server-side so every consumer (customer Home, staff today-view,
   // admin dashboard, AI Insights) shares one computation instead of repeating
@@ -58,6 +74,11 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     prisma.inventoryItem.count({ where: { status: 'Available' } }),
   ]);
 
+  // All-time collected across every period (drives the AI Insights Overall
+  // tab). Kept separate from monthlyRevenue so the dashboards that consume
+  // getKpis() unfiltered keep their current-month figure.
+  const totalRevenue = await aggregateRevenueFrom(new Date(0));
+
   let prevRevenue = 0;
   if (filter?.start) {
     const end = filter.end || new Date();
@@ -83,6 +104,7 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     damagedItems: damagedCount,
     monthlyRevenue: periodRevenue,
     prevMonthRevenue: prevRevenue,
+    totalRevenue,
     totalItems,
     availableItems,
     inUseItems,
@@ -93,28 +115,25 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
   };
 }
 
+// Revenue counts money actually collected, from EITHER ledger path: online
+// gateway rows ('succeeded', written by payments.ledger.ts) AND counter cash
+// rows ('completed', written by recordPayment). Booked-but-unpaid rental fees
+// are never revenue — the ledger is the only proof money moved.
+const COLLECTED_PAYMENT_STATUS = ['succeeded', 'completed'];
+
 async function aggregateRevenueBetween(start: Date, end: Date) {
   const paymentSum = await prisma.payment.aggregate({
     _sum: { amount: true },
-    where: { status: 'succeeded', createdAt: { gte: start, lt: end } },
+    where: { status: { in: COLLECTED_PAYMENT_STATUS }, createdAt: { gte: start, lt: end } },
   });
-  if (paymentSum._sum.amount) return paymentSum._sum.amount;
-  const txSum = await prisma.transaction.aggregate({
-    _sum: { rentalFee: true },
-    where: { status: { in: ['Active', 'Overdue', 'Returned'] }, createdAt: { gte: start, lt: end } },
-  });
-  return txSum._sum.rentalFee || 0;
+  return paymentSum._sum.amount || 0;
 }
 
 async function aggregateRevenueFrom(start: Date, end?: Date) {
-  const where: any = { status: 'succeeded', createdAt: { gte: start } };
+  const where: any = { status: { in: COLLECTED_PAYMENT_STATUS }, createdAt: { gte: start } };
   if (end) where.createdAt.lt = end;
   const paymentSum = await prisma.payment.aggregate({ _sum: { amount: true }, where });
-  if (paymentSum._sum.amount) return paymentSum._sum.amount;
-  const txWhere: any = { status: { in: ['Active', 'Overdue', 'Returned'] }, createdAt: { gte: start } };
-  if (end) txWhere.createdAt.lt = end;
-  const txSum = await prisma.transaction.aggregate({ _sum: { rentalFee: true }, where: txWhere });
-  return txSum._sum.rentalFee || 0;
+  return paymentSum._sum.amount || 0;
 }
 
 async function aggregateMonthlyRevenue() {
@@ -124,22 +143,12 @@ async function aggregateMonthlyRevenue() {
   const paymentSum = await prisma.payment.aggregate({
     _sum: { amount: true },
     where: {
-      status: 'succeeded',
+      status: { in: COLLECTED_PAYMENT_STATUS },
       createdAt: { gte: startOfMonth },
     },
   });
 
-  if (paymentSum._sum.amount) return paymentSum._sum.amount;
-
-  const transactions = await prisma.transaction.aggregate({
-    _sum: { rentalFee: true },
-    where: {
-      status: { in: ['Active', 'Overdue', 'Returned'] },
-      createdAt: { gte: startOfMonth },
-    },
-  });
-
-  return transactions._sum.rentalFee || 0;
+  return paymentSum._sum.amount || 0;
 }
 
 export async function getTodayTasks() {
@@ -451,26 +460,28 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     ? months.filter(m => new Date(m.year, m.month - 1, 1) >= filter.start!)
     : months;
 
-  // Revenue prefers succeeded payments when any exist (accurate cash-in), else
-  // falls back to rental fees. Payments are fetched once and bucketed in JS —
-  // the old per-month aggregate loop is gone (6+ sequential round trips).
-  const paymentWhere: any = { status: 'succeeded' };
+  // Revenue is collected payments only (both ledger paths — see
+  // COLLECTED_PAYMENT_STATUS), bucketed by payment date in JS. Category
+  // revenue rides the same rows via the payment's transaction item, so every
+  // revenue figure on this endpoint shares one definition.
+  const paymentWhere: any = { status: { in: COLLECTED_PAYMENT_STATUS } };
   if (filter?.start) paymentWhere.createdAt = { gte: filter.start };
   if (filter?.end) paymentWhere.createdAt = { ...paymentWhere.createdAt, lt: filter.end };
   const payments = await prisma.payment.findMany({
     where: paymentWhere,
-    select: { amount: true, createdAt: true },
+    select: {
+      amount: true,
+      createdAt: true,
+      transaction: { select: { item: { select: { category: true } } } },
+    },
     orderBy: { createdAt: 'asc' },
   });
-  const hasPayments = payments.length > 0;
 
   const inMonth = (d: Date, m: { year: number; month: number }) =>
     d.getFullYear() === m.year && d.getMonth() === m.month - 1;
 
   const revenueByMonth = filteredMonths.map(m => {
-    const revenue = hasPayments
-      ? payments.filter(p => inMonth(p.createdAt, m)).reduce((sum, p) => sum + p.amount, 0)
-      : txs.filter(t => inMonth(t.createdAt, m)).reduce((sum, t) => sum + (t.rentalFee || 0), 0);
+    const revenue = payments.filter(p => inMonth(p.createdAt, m)).reduce((sum, p) => sum + p.amount, 0);
     return { label: m.label, revenue };
   });
 
@@ -484,23 +495,21 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     const y = filter.start.getFullYear();
     const mo = filter.start.getMonth();
     const inThisMonth = (d: Date) => d.getFullYear() === y && d.getMonth() === mo;
-    const inRange = hasPayments
-      ? payments.filter(p => inThisMonth(p.createdAt))
-      : txs.filter(t => inThisMonth(t.createdAt));
+    const inRange = payments.filter(p => inThisMonth(p.createdAt));
     const weekOf = (day: number) => Math.min(4, Math.floor((day - 1) / 7)); // 0..4
     const buckets = [0, 0, 0, 0, 0];
     for (const r of inRange) {
-      const d = (r as any).createdAt as Date;
-      buckets[weekOf(d.getDate())] += hasPayments ? (r as any).amount : ((r as any).rentalFee || 0);
+      const d = r.createdAt as Date;
+      buckets[weekOf(d.getDate())] += r.amount;
     }
     revenueByWeek = buckets.map((revenue, i) => ({ label: `Wk ${i + 1}`, revenue }));
   }
 
   const revenueByCategory: Record<string, number> = {};
-  for (const t of txs) {
-    const cat = t.item?.category;
+  for (const p of payments) {
+    const cat = p.transaction?.item?.category;
     if (!cat) continue;
-    revenueByCategory[cat] = (revenueByCategory[cat] || 0) + (t.rentalFee || 0);
+    revenueByCategory[cat] = (revenueByCategory[cat] || 0) + p.amount;
   }
 
   return {

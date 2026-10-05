@@ -1,13 +1,20 @@
 // Page header: title left, filter + export controls top-right on desktop,
 // stacked on mobile. Pure presentational — all state lives in the parent.
-import { Download } from 'lucide-react';
+import { Download, RefreshCw } from 'lucide-react';
 import { TIME_OPTIONS, SHORT_MONTHS } from './shared';
 
 export default function InsightsHeader({
   timeRange, setTimeRange,
   appliedMonth, appliedYear, setSelMonth, setSelYear, now0,
+  availableYears,
+  refreshState = 'idle', onRefresh, statusText = '',
   workbookScopeLabel, handleWorkbookExport,
 }) {
+  // Year picker offers only years with bookings (newest first); the applied
+  // year is always selectable even before the list loads.
+  const yearOptions = [...new Set([appliedYear, ...(availableYears ?? [])])]
+    .filter((y) => Number.isInteger(y))
+    .sort((a, b) => b - a);
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div className="min-w-0">
@@ -18,6 +25,23 @@ export default function InsightsHeader({
       {/* Controls — single one-line row on all screens: range pills,
           optional month/year, Excel. Compact on phones, roomier on sm+. */}
       <div className="flex items-center justify-center lg:justify-end gap-2 sm:gap-3 shrink-0 w-full lg:w-auto">
+
+        {/* Data freshness + manual refresh — one button left of the filter:
+            the label IS the button (tap to refresh). Spins while loading,
+            red on failure — tap retries. */}
+        <button onClick={onRefresh}
+          disabled={refreshState === 'loading'}
+          aria-label={refreshState === 'error' ? 'Retry loading dashboard data' : 'Refresh dashboard data'}
+          title={statusText || 'Refresh dashboard data'}
+          className={`shrink-0 inline-flex items-center gap-1.5 rounded-full pl-2 pr-2.5 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50 disabled:cursor-wait ${refreshState === 'error' ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-gray-500 hover:bg-gray-100'}`}
+        >
+          <RefreshCw size={13} className={refreshState === 'loading' ? 'animate-spin' : ''} />
+          {statusText && (
+            <span className={`hidden md:block text-[11px] font-semibold tabular-nums whitespace-nowrap ${refreshState === 'error' ? 'text-red-500' : 'text-gray-400'}`}>
+              {statusText}
+            </span>
+          )}
+        </button>
 
         {/* Range pills — segmented control */}
         <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
@@ -52,7 +76,7 @@ export default function InsightsHeader({
               onChange={e => setSelYear(Number(e.target.value))}
               className="bg-transparent text-[11px] sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
             >
-              {Array.from({ length: now0.getFullYear() - 2000 + 1 }, (_, i) => 2000 + i).map(y => (
+              {yearOptions.map(y => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>

@@ -38,6 +38,63 @@ describe('POST /api/transactions', () => {
     expect(res.body.rentalFee).toBe(5000);
   });
 
+  it('writes a completed Payment row for staff cash collected at booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, downpaymentCash: true });
+
+    expect(res.status).toBe(201);
+    // The cash is money in hand: completed row + totalPaid seeded, so revenue
+    // counts it and later collections don't re-collect it.
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amount: 1000, method: 'cash', status: 'completed' }),
+      })
+    );
+    expect(res.body.totalPaid).toBe(1000);
+    expect(res.body.balance).toBe(4000);
+  });
+
+  it('writes no Payment row without the cash flag (gateway credits it later)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
+
+    expect(res.status).toBe(201);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(res.body.totalPaid).toBe(0);
+  });
+
+  it('ignores downpaymentCash on customer bookings (webhook is the only credit)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, downpaymentCash: true });
+
+    expect(res.status).toBe(201);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
   // The prisma transaction.create mock returns { id, ...data } with no
   // included item/customer, so the notification/SMS blocks (which read
   // transaction.item.name) need a fuller shape stubbed per-test.
@@ -746,6 +803,7 @@ describe('GET /api/dashboard/kpis', () => {
     expect(res.body).toHaveProperty('activeRentals');
     expect(res.body).toHaveProperty('overdueReturns');
     expect(res.body).toHaveProperty('monthlyRevenue');
+    expect(res.body).toHaveProperty('totalRevenue');
   });
 
   it('should reject for customer', async () => {

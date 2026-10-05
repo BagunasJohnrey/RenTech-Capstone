@@ -616,6 +616,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     date: customer.rentalDate,
     amount: totals.discountedRate,
     downpayment: totals.downpayment,
+    // Cash tab = money in hand, recorded as a completed payment with the
+    // booking. Online tab = gateway webhook credits it when it lands.
+    downpaymentCash: payChannel === 'cash',
     balance: totals.balance,
     discountPct: isDiscountApproved ? discountPct : 0,
     discountApprovedBy: isDiscountApproved ? discountAuthorized?.admin?.name || null : null,

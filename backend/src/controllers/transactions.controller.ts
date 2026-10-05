@@ -29,6 +29,10 @@ export const createRentalSchema = z.object({
     // derived server-side from the item (sale-aware). Downpayment may be
     // supplied by staff (0 allowed for walk-ins) but is capped server-side.
     downpayment: z.number().min(0).optional(),
+    // Staff-only: cash physically collected with the booking (written as a
+    // completed Payment row). Forced false for customers — their downpayment
+    // is a promise until the gateway webhook credits it.
+    downpaymentCash: z.boolean().optional(),
     customerId: z.string().optional(),
     customerName: z.string().optional(),
     contact: z.string().optional(),
@@ -109,7 +113,13 @@ export async function createRental(req: AuthenticatedRequest, res: Response, nex
     }
 
     const tx = await transactionService.createRental(
-      { ...req.body, customerId },
+      {
+        ...req.body,
+        customerId,
+        // This route is staff/admin-only, but force the flag off for any
+        // customer-shaped call so a crafted body can't fake a cash payment.
+        downpaymentCash: req.user.role !== Role.Customer ? (req.body.downpaymentCash ?? false) : false,
+      },
       req.user.role !== Role.Customer ? req.user.id : undefined
     );
 

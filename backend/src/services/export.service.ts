@@ -375,7 +375,14 @@ async function inventorySheet(win?: ExportWindow, scopeLabel?: string): Promise<
           status: { in: ['Active', 'Returned', 'Overdue'] },
           ...txDateWhere(win),
         },
-        select: { id: true, rentalFee: true },
+        select: {
+          id: true,
+          rentalFee: true,
+          payments: {
+            where: { status: { in: ['succeeded', 'completed'] } },
+            select: { amount: true },
+          },
+        },
       },
     },
     orderBy: { name: 'asc' },
@@ -401,7 +408,10 @@ async function inventorySheet(win?: ExportWindow, scopeLabel?: string): Promise<
     Status: item.status,
     Size: item.size || '',
     'Total Rentals': item.transactions.length,
-    'Total Revenue': item.transactions.reduce((s, t) => s + t.rentalFee, 0),
+    'Total Revenue': item.transactions.reduce(
+      (s, t) => s + t.payments.reduce((a, p) => a + p.amount, 0),
+      0
+    ),
     Description: item.description || '',
   }));
 

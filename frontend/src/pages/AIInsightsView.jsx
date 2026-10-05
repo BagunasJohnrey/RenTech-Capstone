@@ -15,6 +15,7 @@ import ReportSection from '../components/insights/ReportSection';
 import SmartListModal from '../components/insights/SmartListModal';
 import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS } from '../components/insights/shared';
 import { api } from '../utils/api';
+import { formatCheckedAgo } from '../utils/cache';
 import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
 import { useToast } from '../components/Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -118,6 +119,22 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const now0 = new Date();
   const [selYear, setSelYear] = useState(now0.getFullYear());
   const [selMonth, setSelMonth] = useState(now0.getMonth() + 1); // 1-12
+  // Years that actually have bookings (drives the year picker — no empty
+  // decades). Fetched once; the applied year is always selectable regardless.
+  const [availableYears, setAvailableYears] = useState(null);
+  useEffect(() => {
+    let active = true;
+    api.get('/dashboard/years')
+      .then((r) => { if (active && Array.isArray(r?.years)) setAvailableYears(r.years); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+  // Manual refresh: re-runs the bundle effect below (cache-hit repaints
+  // instantly AND triggers the background refresh, so this always fetches).
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const handleRefresh = () => { setFetchError(null); setRefreshTick((t) => t + 1); };
   const isCurrentMonth = (y, m) => now0.getFullYear() === y && now0.getMonth() + 1 === m;
   const isCurrentYear = (y) => now0.getFullYear() === y;
   // Clamp the *applied* month/year so picking a future value can't leak into
@@ -201,6 +218,8 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   useEffect(() => {
     const range = timeRange;
     let active = true;
+    setFetching(true);
+    setFetchError(null);
     const periodParam = range === 'Overall' ? '' : `period=${range.toLowerCase()}`;
     // Month/year selectors pin the window for both KPI cards and the revenue
     // chart. Only the SMA forecast stays global (a full-history trend is the
@@ -231,6 +250,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     const settle = () => { if (!settled) { settled = true; if (active) { setLoaded(true); setEverRendered(true); } } };
     const fail = (err) => {
       if (!active) return;
+      setFetchError(err?.message || 'Failed to load dashboard data');
       toastError(err?.message || 'Failed to load dashboard data');
       settle();
     };
@@ -253,6 +273,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         setInventoryAnalytics(r?.analytics ?? null);
         setAnalyticsSummary(r?.analytics?.summary ?? null);
         setDataAt(Date.now());
+        setFetchError(null);
         settle();
         return r;
       });
@@ -266,11 +287,13 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
       settle();
     }).catch(() => {
       if (active) fail(new Error('Failed to load dashboard data'));
+    }).finally(() => {
+      if (active) setFetching(false);
     });
 
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange, appliedYear, appliedMonth]);
+  }, [timeRange, appliedYear, appliedMonth, refreshTick]);
 
   // FIX D: surface export failures instead of throwing unhandled.
   const handleExport = async (url, filename) => {
@@ -390,7 +413,32 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const revByWeek = revenueWeeklyData || insightsData?.revenueByWeek || null;
   const thisMonthRev = kpis?.monthlyRevenue || 0;
   const prevMonthRev = kpis?.prevMonthRevenue || 0;
+  // Overall answers "all time": show lifetime collected with no comparison
+  // badge. Windowed tabs show the window's collected vs the previous window.
+  const isOverallView = timeRange === 'Overall';
+  const displayRev = isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev;
+  const displayPrev = isOverallView ? 0 : prevMonthRev;
   const revChange = prevMonthRev > 0 ? ((thisMonthRev - prevMonthRev) / prevMonthRev) * 100 : 0;
+  // The revenue KPI follows the active tab (the backend already scopes the
+  // figure to the window) — so the label must follow it too instead of always
+  // reading "Monthly Revenue".
+  const revMonLabel = `${SHORT_MONTHS[(appliedMonth ?? now0.getMonth() + 1) - 1]} ${appliedYear ?? now0.getFullYear()}`;
+  const revLabel = timeRange === 'Yearly' ? `${appliedYear} Revenue`
+    : timeRange === 'Monthly' ? `${revMonLabel} Revenue`
+    : 'Total Revenue';
+  const revSub = timeRange === 'Yearly' ? `Collected Jan–Dec ${appliedYear}`
+    : timeRange === 'Monthly' ? `Collected ${revMonLabel}`
+    : 'All-time collected';
+  // Short "vs" label for the change pill (null = no comparison shown).
+  // Monthly walks back one month (Jan wraps to last Dec).
+  const revVsLabel = timeRange === 'Yearly' ? `vs ${appliedYear - 1}`
+    : timeRange === 'Monthly'
+      ? (() => {
+          const d = new Date(appliedYear, (appliedMonth ?? now0.getMonth() + 1) - 2, 1);
+          return `vs ${SHORT_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+        })()
+      : null;
+  const revCompare = timeRange === 'Yearly' ? 'the previous year' : 'last month';
   const rentedCount = insightsData?.totalRented || 0;
   const totalItems = kpis?.totalItems ?? 0;
 
@@ -562,9 +610,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   if (kpis?.overdueReturns > 0)
     insights.push(`${kpis.overdueReturns} overdue rental(s) need immediate attention.`);
   if (revChange > 0)
-    insights.push(`Monthly revenue is up ${revChange.toFixed(0)}% compared to last month.`);
+    insights.push(`Revenue is up ${revChange.toFixed(0)}% compared to ${revCompare}.`);
   else if (revChange < 0)
-    insights.push(`Monthly revenue is down ${Math.abs(revChange).toFixed(0)}% compared to last month.`);
+    insights.push(`Revenue is down ${Math.abs(revChange).toFixed(0)}% compared to ${revCompare}.`);
 
 
 
@@ -590,13 +638,18 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           timeRange={timeRange} setTimeRange={setTimeRange}
           appliedMonth={appliedMonth} appliedYear={appliedYear}
           setSelMonth={setSelMonth} setSelYear={setSelYear} now0={now0}
+          availableYears={availableYears}
+          refreshState={fetching ? 'loading' : fetchError ? 'error' : 'idle'}
+          onRefresh={handleRefresh}
+          statusText={fetching ? 'Refreshing…' : fetchError ? 'Failed to load — tap ⟳ to retry' : dataAt ? `Updated ${formatCheckedAgo(dataAt)}` : ''}
           workbookScopeLabel={workbookScopeLabel} handleWorkbookExport={handleWorkbookExport}
         />
 
         {/* KPI Cards — 2-up on phones, 3-up on tablets/iPads, 6-up on desktop */}
         <div key={cacheKey} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <KpiCards
-          thisMonthRev={thisMonthRev} prevMonthRev={prevMonthRev} revChange={revChange}
+          thisMonthRev={displayRev} prevMonthRev={displayPrev} revChange={revChange}
+          revLabel={revLabel} revSub={revSub} revVsLabel={revVsLabel}
           rentedCount={rentedCount} totalItems={totalItems}
           smaVals={smaVals} latestSmaVal={latestSmaVal} forecastRev={forecastRev}
           analyticsSummary={analyticsSummary}

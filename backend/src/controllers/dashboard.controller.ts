@@ -51,6 +51,14 @@ export async function getTodayTasks(req: AuthenticatedRequest, res: Response, ne
   }
 }
 
+export async function getAvailableYears(_req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await dashboardService.getAvailableYears());
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function getForecast(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     // L6: clamp the forecast window (1–12) — a huge period would fan out

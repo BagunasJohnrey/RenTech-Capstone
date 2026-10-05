@@ -486,6 +486,7 @@ export default function RentechApp() {
       dueDate: data.returnDate || data.dueDate,
       rentalFee: data.amount || data.rentalFee,
       downpayment: data.downpayment || 0,
+      downpaymentCash: data.downpaymentCash ?? false,
       notes: data.notes || '',
       conditionPhoto: data.conditionPhoto || undefined,
       size: data.size || undefined,
