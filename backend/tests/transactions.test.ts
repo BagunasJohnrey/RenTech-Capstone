@@ -229,7 +229,7 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-rel', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
-      rentalFee: 5000, balance: 4000, status: 'Reserved',
+      rentalFee: 5000, totalPaid: 5000, balance: 0, status: 'Reserved',
       assistedById: 'staff-id-456', releasedById: null,
       item: { id: 1, name: 'Test', status: 'Reserved' },
     });
@@ -248,6 +248,25 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     // assistedById must never be part of the release update (history preserved).
     const updateData = vi.mocked(prisma.transaction.update).mock.calls.at(-1)?.[0]?.data as Record<string, unknown>;
     expect(updateData).not.toHaveProperty('assistedById');
+  });
+
+  it('release refuses when balance is outstanding', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-rel-unpaid', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
+      rentalFee: 5000, totalPaid: 1000, balance: 4000, status: 'Reserved',
+      assistedById: 'staff-id-456', releasedById: null,
+      item: { id: 1, name: 'Test', status: 'Reserved' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-rel-unpaid/release')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ releasePhoto: 'rental/tx-rel-unpaid/release.jpg' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message || res.body.error || JSON.stringify(res.body)).toMatch(/payment|balance/i);
   });
 
   it('GET /transactions/:id/audits returns the timeline with staff names', async () => {
@@ -284,7 +303,7 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-rerelease', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
-      rentalFee: 5000, balance: 4000, status: 'Active',
+      rentalFee: 5000, totalPaid: 5000, balance: 0, status: 'Active',
       assistedById: 'staff-id-456', releasedById: 'staff-id-456',
       releasePhoto: 'rental/tx-rerelease/release-old.jpg',
       item: { id: 1, name: 'Test', status: 'Rented' },
@@ -379,12 +398,12 @@ describe('GET /api/transactions/:id', () => {
 });
 
 describe('PUT /api/transactions/:id/return', () => {
-  it('should process return', async () => {
+  it('should process return when fully paid', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date('2026-07-10'), dueDate: new Date('2026-07-13'),
-      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
       latePenalty: 0, damageFee: 0, status: 'Active',
       item: { id: 1, name: 'Test', status: 'Rented' },
     });
@@ -398,12 +417,31 @@ describe('PUT /api/transactions/:id/return', () => {
     expect(res.body.fees).toBeDefined();
   });
 
+  it('should refuse return when balance is outstanding', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-unpaid', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date('2026-07-10'), dueDate: new Date('2026-07-13'),
+      rentalFee: 5000, downpayment: 1000, totalPaid: 1000, balance: 4000,
+      latePenalty: 0, damageFee: 0, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Rented' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-unpaid/return')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ returnDate: '2026-07-14', isDamaged: false });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message || res.body.error || JSON.stringify(res.body)).toMatch(/balance/i);
+  });
+
   it('should waive late penalty (late fees removed)', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-2', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date('2026-07-01'), dueDate: new Date('2026-07-04'),
-      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
       latePenalty: 0, damageFee: 0, status: 'Active',
       item: { id: 1, name: 'Test', status: 'Rented' },
     });
@@ -423,7 +461,7 @@ describe('PUT /api/transactions/:id/return', () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-4', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date('2026-07-01'), dueDate: new Date('2026-07-04'),
-      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
       latePenalty: 0, damageFee: 0, status: 'Active',
       item: { id: 1, name: 'Test', status: 'Rented' },
     });

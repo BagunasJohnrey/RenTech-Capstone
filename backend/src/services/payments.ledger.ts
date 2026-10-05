@@ -34,8 +34,10 @@ export async function applyPaymentToTransaction(input: {
     const current = await tx.transaction.findUnique({ where: { id: input.transactionId } });
     if (!current) throw new AppError(404, 'Transaction not found');
 
-    // A payment that lands after the rental closed must not resurrect it.
-    if (current.status === 'Returned' || current.status === 'Cancelled') {
+    // A payment that lands after cancellation must not resurrect the booking.
+    // Returned stays creditable: damage assessed at return leaves a balance
+    // the customer may settle online afterwards.
+    if (current.status === 'Cancelled') {
       throw new AppError(400, 'Transaction is already closed');
     }
 
@@ -80,14 +82,14 @@ export async function applyPaymentToTransaction(input: {
     const totalPaid = current.totalPaid + amount;
     const balance = Math.max(0, current.rentalFee + current.latePenalty + current.damageFee - totalPaid);
 
-    // Conditional write: only lands if the rental is still open AND nobody
-    // else moved totalPaid since we read it. A zero count means a concurrent
-    // credit or a return landed in between — throwing rolls the insert back, so
-    // the caller can retry against fresh state instead of silently losing it.
+    // Conditional write: only lands if the rental wasn't cancelled AND nobody
+    // else moved totalPaid since we read it. Returned is allowed (post-return
+    // damage settlement). A zero count means a concurrent credit or a cancel
+    // landed in between — throwing rolls the insert back for a retry.
     const updated = await tx.transaction.updateMany({
       where: {
         id: input.transactionId,
-        status: { notIn: ['Returned', 'Cancelled'] },
+        status: { not: 'Cancelled' },
         totalPaid: current.totalPaid,
       },
       data: {

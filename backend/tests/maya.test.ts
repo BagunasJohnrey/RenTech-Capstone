@@ -683,13 +683,15 @@ it('credits a verified SUCCESS webhook', async () => {
     env.MAYA_WEBHOOK_ALLOWED_IPS = [];
   });
 
-  it('answers 200 for a closed rental instead of leaking a 4xx', async () => {
+  it('answers 200 for a cancelled rental instead of leaking a 4xx', async () => {
     // Maya retries only 4x then abandons the booking, so a closed/vanished
     // transaction must still be acknowledged with 200 (regression: this guard
     // read err.status, but AppError exposes statusCode, so it was dead code).
+    // Returned stays creditable (post-return damage settlement) — only
+    // Cancelled is terminal.
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findFirst.mockResolvedValueOnce({ ...txOpen, status: 'Returned' });
-    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, status: 'Returned' });
+    prisma.transaction.findFirst.mockResolvedValueOnce({ ...txOpen, status: 'Cancelled' });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...txOpen, status: 'Cancelled' });
     global.fetch = mockMayaRetrieve();
 
     const res = await request(webhookApp).post('/api/webhooks/maya').send({
@@ -804,9 +806,9 @@ describe('applyPaymentToTransaction', () => {
     expect(result.duplicate).toBe(true);
   });
 
-  it('refuses a payment on a closed transaction', async () => {
+  it('refuses a payment on a cancelled transaction', async () => {
     const { prisma } = await import('../src/config/database.js');
-    prisma.transaction.findUnique.mockResolvedValueOnce({ ...openTx, status: 'Returned' });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...openTx, status: 'Cancelled' });
     await expect(applyPaymentToTransaction({
       transactionId: 'tx-1', amount: 2000, gateway: 'maya', gatewayRef: 'pay-late', method: 'maya',
     })).rejects.toThrow(/already closed/);
@@ -834,7 +836,7 @@ describe('applyPaymentToTransaction', () => {
     expect(prisma.$transaction).toHaveBeenCalled();
   });
 
-  it('guards the update against a closed rental (status notIn)', async () => {
+  it('guards the update against a cancelled rental (status not)', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce(openTx);
     prisma.payment.findUnique.mockResolvedValueOnce(null);
@@ -846,7 +848,7 @@ describe('applyPaymentToTransaction', () => {
     expect(prisma.transaction.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         id: 'tx-1',
-        status: { notIn: ['Returned', 'Cancelled'] },
+        status: { not: 'Cancelled' },
       }),
     }));
   });

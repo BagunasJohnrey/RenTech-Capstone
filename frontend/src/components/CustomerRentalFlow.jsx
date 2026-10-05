@@ -14,8 +14,8 @@ import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
 import BookingQR from './BookingQR';
-import QRCode from 'qrcode';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
+import { downloadReceiptImage } from '../utils/receiptImage';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { api } from '../utils/api';
 
@@ -129,11 +129,13 @@ export default function CustomerRentalFlow({
   const [confirmedTx, setConfirmedTx] = useState(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  // True when the booking completed on the no-keys simulated path (dev/test
+  // only) — the receipt says so instead of claiming a real gateway payment.
+  const [simulatedPay, setSimulatedPay] = useState(false);
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(null);
   const [promoError, setPromoError] = useState('');
   const [promoApplying, setPromoApplying] = useState(false);
-  const [showQRDetails, setShowQRDetails] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -379,15 +381,17 @@ export default function CustomerRentalFlow({
             return;
           }
         }
-        // No gateway configured: simulate a success so the booking can complete
-        // end-to-end offline (existing dev path).
+        // No gateway configured: dev/test path only. Never presented as a
+        // real payment — the receipt carries a test-mode note instead.
         if (intent.simulated) {
           toastInfo('Payment gateway not configured — simulating successful payment.');
+          setSimulatedPay(true);
           setPaymentSuccess(true);
           setConfirmedTx(created);
           setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
           return;
         }
+        setSimulatedPay(false);
 
         // Maya: the customer leaves for Maya's hosted page and comes back at
         // /payment-return. We CANNOT claim success here — only the webhook (or
@@ -399,7 +403,11 @@ export default function CustomerRentalFlow({
           return;
         }
 
-        // PayMongo: hosted drop-in with a synchronous outcome.
+        // PayMongo: hosted drop-in with a synchronous outcome. It resolves
+        // ONLY on a successful gateway payment and rejects on cancel/failure —
+        // so reaching past this line means Maya/PayMongo confirmed the money.
+        // Anything else rolls the fresh booking back instead of stranding an
+        // unpaid rental behind a "confirmed" receipt.
         try {
           await openDropIn(intent.clientKey, {
             amount: Number(downpaymentAmount) * 100,
@@ -435,250 +443,21 @@ export default function CustomerRentalFlow({
     onClose();
     setConfirming(false);
   };
-  const handleQRTap = () => { if (confirmedTx) setShowQRDetails(true); };
-  // Downloads the confirmed booking as a PNG receipt image styled like the
-  // system branding (Plus Jakarta Sans, burgundy gradient letterhead, app
-  // logo, RENTECH. wordmark). Drawn on canvas — no new dependencies and
-  // works on mobile browsers.
+  // Downloads the confirmed booking as a PNG receipt image (shared renderer
+  // in utils/receiptImage.js so staff downloads look identical).
   const handleSaveReceipt = async () => {
     if (!confirmedTx) return;
-    try { await document.fonts?.ready; } catch { /* fall back to Arial */ }
-    const loadImage = (src, timeoutMs = 2500) => new Promise((resolve) => {
-      const img = new Image();
-      const done = (v) => resolve(v);
-      const timer = setTimeout(() => done(null), timeoutMs);
-      img.onload = () => { clearTimeout(timer); done(img); };
-      img.onerror = () => { clearTimeout(timer); done(null); };
-      img.src = src;
+    await downloadReceiptImage({
+      tx: confirmedTx,
+      itemName: selectedItem?.name,
+      customerName: customer.name,
+      pickupLabel: formatDate(rentalDate),
+      eventLabel: formatDate(eventDate),
+      dueLabel: formatDate(dueDate),
+      notes: confirmedTx.notes || customer.notes || null,
+      showQr: flags.qr_codes,
+      qrDataUri: qrSaveUrl,
     });
-    const logo = await loadImage('/pwa-192x192.png');
-    // QR only when the feature flag is on: reuse the already-rendered QR
-    // data URI when ready, otherwise generate it (same qrcode lib as
-    // BookingQR) so the saved image stays scannable.
-    let qrImg = null;
-    if (flags.qr_codes) {
-      let qrUrl = qrSaveUrl || confirmedTx.qrCodeDataUri || null;
-      if (!qrUrl) {
-        try { qrUrl = await QRCode.toDataURL(code, { width: 368, margin: 1, errorCorrectionLevel: 'M' }); } catch { qrUrl = null; }
-      }
-      if (qrUrl) qrImg = await loadImage(qrUrl);
-    }
-    const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
-    const code = bookingCode(confirmedTx);
-    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const F = (w, s, mono) => `${w} ${s}px ${mono ? '"Plus Jakarta Sans", monospace, Arial' : '"Plus Jakarta Sans", Arial, sans-serif'}`;
-    const rows = [
-      ['Item', selectedItem?.name || confirmedTx.item?.name || '—', 'bold'],
-      ['Pickup', formatDate(rentalDate), ''],
-      ['Event Date', formatDate(eventDate), 'bold'],
-      ['Return By', formatDate(dueDate), 'accent'],
-      ['Customer', confirmedTx.customer?.name || customer.name, 'bold'],
-      ['Size', confirmedTx.size, ''],
-    ];
-    const S = 2, W = 600, M = 24, PAD = 28, LH = 28;
-    const cardX = M, cardW = W - M * 2;
-    const cv = document.createElement('canvas');
-    const ctx = cv.getContext('2d');
-    const rr = (x, y, w, h, r) => {
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y, x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x, y + h, r);
-      ctx.arcTo(x, y + h, x, y, r);
-      ctx.arcTo(x, y, x + w, y, r);
-      ctx.closePath();
-    };
-    const wrap = (text, font, maxW) => {
-      ctx.font = font;
-      const words = String(text ?? '—').split(' ');
-      const lines = [];
-      let line = '';
-      for (const w of words) {
-        const t = line ? `${line} ${w}` : w;
-        if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; }
-        else line = t;
-      }
-      if (line) lines.push(line);
-      return lines;
-    };
-    const labelW = 150, gap = 16, valW = cardW - PAD * 2 - labelW - gap;
-    const measured = rows.map(([k, v, style]) => ({ k, style, lines: wrap(v, F(800, 19), valW) }));
-    const headerH = 178;
-    const rowsH = measured.reduce((h, r) => h + Math.max(r.lines.length, 1) * LH + 26, 0);
-    const qrH = qrImg ? 216 + 24 : 0;
-    const H = M + headerH + 30 + 64 + 30 + 24 + 30 + rowsH + 20 + 108 + 30 + qrH + 44 + 30 + 60 + M;
-    cv.width = W * S;
-    cv.height = H * S;
-    ctx.scale(S, S);
-    // Page backdrop
-    ctx.fillStyle = '#fcfcfd';
-    ctx.fillRect(0, 0, W, H);
-    const cardY = M, cardH = H - M * 2;
-    // Card base
-    rr(cardX, cardY, cardW, cardH, 28);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-    ctx.strokeStyle = '#f1f2f4';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    // Gradient letterhead clipped to the card's top corners
-    ctx.save();
-    rr(cardX, cardY, cardW, cardH, 28);
-    ctx.clip();
-    const grad = ctx.createLinearGradient(cardX, 0, cardX + cardW, 0);
-    grad.addColorStop(0, '#8e323a');
-    grad.addColorStop(0.5, '#a63f47');
-    grad.addColorStop(1, '#bf4a53');
-    ctx.fillStyle = grad;
-    ctx.fillRect(cardX, cardY, cardW, headerH);
-    ctx.restore();
-    const hx = cardX + PAD, hy = cardY + 36;
-    // Logo in a white ring
-    if (logo) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(hx + 32, hy + 32, 32, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-      ctx.clip();
-      ctx.drawImage(logo, hx, hy, 64, 64);
-      ctx.restore();
-    }
-    const tx0 = hx + (logo ? 80 : 0);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#ffffff';
-    ctx.font = F(800, 27);
-    ctx.fillText("Mylene's Boutique", tx0, hy + 26);
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.font = F(500, 16);
-    ctx.fillText('Rental Attire & Formal Wear', tx0, hy + 50);
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillText('Balayan, Batangas, Philippines', tx0, hy + 70);
-    // Receipt meta, right-aligned
-    ctx.textAlign = 'right';
-    const rx = cardX + cardW - PAD;
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.font = F(800, 14);
-    ctx.fillText('BOOKING RECEIPT', rx, hy + 8);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = F(800, 22, true);
-    ctx.fillText(code, rx, hy + 36);
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.font = F(500, 14);
-    ctx.fillText(today, rx, hy + 58);
-    // Confirmed title with emerald check badge
-    let y = cardY + headerH + 30;
-    const cy = y + 22;
-    ctx.beginPath();
-    ctx.arc(cardX + PAD + 26, cy, 26, 0, Math.PI * 2);
-    ctx.fillStyle = '#ecfdf5';
-    ctx.fill();
-    ctx.strokeStyle = '#10b981';
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cardX + PAD + 14, cy + 1);
-    ctx.lineTo(cardX + PAD + 23, cy + 10);
-    ctx.lineTo(cardX + PAD + 39, cy - 9);
-    ctx.stroke();
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#111827';
-    ctx.font = F(800, 29);
-    ctx.fillText('Booking Confirmed!', cardX + PAD + 64, y + 24);
-    ctx.fillStyle = '#6b7280';
-    ctx.font = F(500, 17);
-    ctx.fillText('Your reservation has been secured.', cardX + PAD + 64, y + 50);
-    y += 64 + 30;
-    // Section label with burgundy rule
-    ctx.fillStyle = '#bf4a53';
-    ctx.fillRect(cardX + PAD, y, 4, 18);
-    ctx.fillStyle = '#6b7280';
-    ctx.font = F(800, 13);
-    ctx.fillText('R E S E R V A T I O N   D E T A I L S', cardX + PAD + 12, y + 14);
-    y += 30;
-    // Detail rows with hairline dividers (values wrap, never crop)
-    for (const r of measured) {
-      ctx.fillStyle = '#f3f4f6';
-      ctx.fillRect(cardX + PAD, y, cardW - PAD * 2, 1);
-      y += 13;
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#6b7280';
-      ctx.font = F(500, 18);
-      ctx.fillText(r.k, cardX + PAD, y + 20);
-      ctx.textAlign = 'right';
-      ctx.font = F(800, 19);
-      ctx.fillStyle = r.style === 'accent' ? '#bf4a53' : '#111827';
-      r.lines.forEach((ln, i) => ctx.fillText(ln, cardX + cardW - PAD, y + 20 + i * LH));
-      y += Math.max(r.lines.length, 1) * LH + 13;
-    }
-    y += 20;
-    // Totals band
-    const boxH = 108;
-    rr(cardX + PAD, y, cardW - PAD * 2, boxH, 16);
-    ctx.fillStyle = '#fdf2f3';
-    ctx.fill();
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#6b7280';
-    ctx.font = F(600, 18);
-    ctx.fillText('Downpayment', cardX + PAD + 18, y + 40);
-    ctx.fillText('Balance', cardX + PAD + 18, y + 76);
-    ctx.textAlign = 'right';
-    ctx.font = F(800, 21);
-    ctx.fillStyle = '#bf4a53';
-    ctx.fillText(peso(txDownpayment(confirmedTx)), cardX + cardW - PAD - 18, y + 40);
-    ctx.fillStyle = '#111827';
-    ctx.fillText(peso(txBalance(confirmedTx)), cardX + cardW - PAD - 18, y + 76);
-    y += boxH + 30;
-    // Scannable QR (only when QR codes are enabled) above the code pill
-    if (qrImg) {
-      const box = 216, bx = (W - box) / 2;
-      rr(bx, y, box, box, 20);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-      ctx.strokeStyle = '#eef0f2';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.drawImage(qrImg, bx + 16, y + 16, box - 32, box - 32);
-      y += box + 24;
-    }
-    // Booking-code pill
-    ctx.font = F(800, 20, true);
-    const pillW = ctx.measureText(code).width + 56;
-    const pillX = (W - pillW) / 2;
-    rr(pillX, y, pillW, 44, 22);
-    const pgrad = ctx.createLinearGradient(pillX, 0, pillX + pillW, 0);
-    pgrad.addColorStop(0, '#b33842');
-    pgrad.addColorStop(0.5, '#bf4a53');
-    pgrad.addColorStop(1, '#d97079');
-    ctx.fillStyle = pgrad;
-    ctx.fill();
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(code, W / 2, y + 29);
-    y += 44 + 14;
-    ctx.fillStyle = '#9ca3af';
-    ctx.font = F(500, 15);
-    ctx.fillText('Show this code to staff on pickup.', W / 2, y + 16);
-    y += 30;
-    // Footer wordmark
-    ctx.fillStyle = '#e5e7eb';
-    ctx.fillRect(cardX + PAD, y, cardW - PAD * 2, 1);
-    y += 26;
-    ctx.font = F(800, 16);
-    const wm = 'RENTECH', dot = '.';
-    const wmW = ctx.measureText(wm).width + ctx.measureText(dot).width;
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#111827';
-    ctx.fillText(wm, (W - wmW) / 2, y + 12);
-    ctx.fillStyle = '#bf4a53';
-    ctx.fillText(dot, (W - wmW) / 2 + ctx.measureText(wm).width, y + 12);
-    const a = document.createElement('a');
-    a.href = cv.toDataURL('image/png');
-    a.download = `receipt-${code}.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
   };
   const flags = useFeatureFlags();
   // Data URI of the confirmed receipt QR — lets the customer save/download it.
@@ -1098,19 +877,18 @@ export default function CustomerRentalFlow({
                     <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
                     <p className="text-sm text-gray-500">Pay your downpayment securely with Maya.</p>
                   </div>
-                  <div className="p-6 rounded-2xl border-2 border-[#bf4a53] bg-red-50 shadow-sm flex flex-col items-center gap-3 text-center">
-                    <ScanLine size={28} className="text-[#bf4a53]" />
-                    <span className="text-sm font-bold text-gray-900">Maya / QRPh</span>
-                    <p className="text-xs text-gray-600 leading-snug">
-                      You'll be redirected to Maya to scan and pay. Works with your Maya app, GCash,
-                      or any QRPh-enabled banking app.
-                    </p>
-                    <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1">
-                      {['Maya', 'GCash', 'Bank apps'].map((app) => (
-                        <span key={app} className="px-2.5 py-1 rounded-full bg-white border border-gray-200 text-[11px] font-semibold text-gray-600">
-                          {app}
-                        </span>
-                      ))}
+                  <div className="p-5 rounded-2xl border-2 border-[#bf4a53] bg-red-50/60 shadow-sm flex items-center gap-4 text-left">
+                    <span className="w-12 h-12 rounded-2xl bg-[#bf4a53] text-white flex items-center justify-center shrink-0">
+                      <ScanLine size={24} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-gray-900">Maya / QRPh</p>
+                      <p className="text-xs text-gray-600 leading-snug mt-0.5">
+                        One QR — scan with your Maya app, GCash, or any QRPh bank app.
+                      </p>
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        You'll be redirected to Maya. Your booking completes only after Maya confirms the payment.
+                      </p>
                     </div>
                   </div>
                 </>
@@ -1118,7 +896,7 @@ export default function CustomerRentalFlow({
                 <>
                   <div className="text-center pb-2">
                     <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
-                    <p className="text-sm text-gray-500">Select how you'd like to pay the downpayment.</p>
+                    <p className="text-sm text-gray-500">Pay your downpayment securely with PayMongo.</p>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setPaymentMethod('gcash')}
@@ -1134,16 +912,26 @@ export default function CustomerRentalFlow({
                       <span className="text-sm font-bold text-gray-900">Card</span>
                     </button>
                   </div>
+                  <p className="text-[11px] text-gray-400 text-center -mt-2">
+                    A secure PayMongo checkout opens here. Your booking completes only after your payment succeeds.
+                  </p>
                 </>
               )}
+                {/* Pay-now vs pay-later: the customer pays ONLY the downpayment
+                    now — the rest is settled at pickup (release is locked until ₱0). */}
                 <div className="bg-gray-50 p-5 rounded-2xl space-y-2 border border-gray-100/60">
-                  <div className="flex justify-between text-sm"><span className="text-gray-600">Downpayment</span><span className="font-bold">₱{downpaymentAmount.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-gray-600">Total rental</span><span className="font-bold text-gray-900">₱{finalFee.toLocaleString()}</span></div>
                   {promoApplied && (
                     <div className="flex justify-between text-sm text-emerald-600"><span>Promo discount ({promoApplied.code})</span><span className="font-bold">−₱{promoApplied.discountAmount.toLocaleString()}</span></div>
                   )}
-                  <div className="flex justify-between text-sm"><span className="text-gray-600">Remaining Balance</span><span className="font-bold text-gray-900">₱{(finalFee - downpaymentAmount).toLocaleString()}</span></div>
-                  <div className="border-t border-gray-200 pt-2 mt-2 flex justify-between text-base"><span className="font-bold text-gray-900">Total</span><span className="font-bold text-[#bf4a53]">₱{finalFee.toLocaleString()}</span></div>
-                  <p className="text-[10px] text-gray-400 mt-1">Balance payable at pickup.</p>
+                  <div className="flex justify-between text-sm"><span className="text-gray-600">Remaining at pickup</span><span className="font-bold text-gray-900">₱{(finalFee - downpaymentAmount).toLocaleString()}</span></div>
+                  <div className="bg-white border-2 border-[#bf4a53] rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm">
+                    <span className="text-sm font-bold text-gray-900">Paying now <span className="font-medium text-gray-400">(downpayment)</span></span>
+                    <span className="font-extrabold text-[#bf4a53] text-xl">₱{downpaymentAmount.toLocaleString()}</span>
+                  </div>
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 leading-snug">
+                    Please settle the remaining ₱{(finalFee - downpaymentAmount).toLocaleString()} at pickup — the item is released only once fully paid.
+                  </p>
                 </div>
             </div>
           )}
@@ -1156,6 +944,7 @@ export default function CustomerRentalFlow({
                 </div>
                 <h3 className="text-xl font-bold text-gray-900">Booking Confirmed!</h3>
                 <p className="text-gray-500 text-sm mt-1">Your reservation has been secured.</p>
+                <p className="inline-block mt-2 font-mono text-xs font-bold text-white bg-[#bf4a53] rounded-full px-3.5 py-1.5">{bookingCode(confirmedTx)}</p>
               </div>
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
                 <p className="font-bold text-gray-900 text-base mb-2">{selectedItem.name}</p>
@@ -1164,54 +953,46 @@ export default function CustomerRentalFlow({
                 <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="text-amber-600 font-semibold">{formatDate(dueDate)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span>{confirmedTx.customer?.name || customer.name}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Size</span><span>{confirmedTx.size}</span></div>
-                <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex justify-between"><span className="text-gray-500">Downpayment</span><span className="text-[#bf4a53] font-bold">₱{txDownpayment(confirmedTx).toLocaleString()}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Balance</span><span className="font-bold">₱{txBalance(confirmedTx).toLocaleString()}</span></div>
-              </div>
-              <div className="flex flex-col items-center gap-2">
-                {flags.qr_codes ? (
-                  <>
-                    <button onClick={handleQRTap}
-                      className="relative bg-white p-4 rounded-2xl border border-gray-200 shadow-sm group cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
-                      title="Tap to view booking details">
-                      {/* Real, scannable QR (encodes the booking code). Server-rendered data URI on the booking response, otherwise generated client-side. */}
-                      <BookingQR tx={confirmedTx} size={144} showCode={false} onDataUrl={setQrSaveUrl} />
-                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 rounded-2xl">
-                        <div className="flex items-center gap-2 text-[#bf4a53] font-bold">
-                          <ScanLine size={20} /> Tap to view
-                        </div>
-                      </div>
-                    </button>
-                    <p className="font-mono text-[11px] font-bold tracking-wide text-gray-500">{bookingCode(confirmedTx)}</p>
-                    <p className="text-[11px] text-gray-400 text-center -mt-1">Show this code to staff on pickup — they can scan it to pull up your order.</p>
-                    {qrSaveUrl && (
-                      <a
-                        href={qrSaveUrl}
-                        download={`${bookingCode(confirmedTx)}.png`}
-                        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#bf4a53] bg-red-50 hover:bg-red-100 rounded-full px-3 py-1.5 transition-colors"
-                        title="Save a copy of this QR code">
-                        <Download size={13} /> Save QR
-                      </a>
-                    )}
-                  </>
-                ) : (
-                  <button onClick={handleQRTap}
-                    className="text-[#bf4a53] text-sm font-bold hover:underline flex items-center gap-1.5">
-                    <ScanLine size={16} /> View booking details
-                  </button>
+                {(confirmedTx.notes || customer.notes) && (
+                  <div className="flex justify-between gap-4"><span className="text-gray-500 shrink-0">Notes</span><span className="text-right text-gray-700">{confirmedTx.notes || customer.notes}</span></div>
+                )}
+                <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex justify-between"><span className="text-gray-500">Balance (remaining)</span><span className="font-bold">₱{txBalance(confirmedTx).toLocaleString()}</span></div>
+                <div className="bg-white border-2 border-[#bf4a53] rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm">
+                  <span className="text-sm font-bold text-gray-900">Paid now <span className="font-medium text-gray-400">(downpayment)</span></span>
+                  <span className="font-extrabold text-[#bf4a53] text-xl">₱{txDownpayment(confirmedTx).toLocaleString()}</span>
+                </div>
+                {txBalance(confirmedTx) > 0 && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 leading-snug">
+                    Please settle the remaining ₱{txBalance(confirmedTx).toLocaleString()} at pickup — the item is released only once fully paid.
+                  </p>
+                )}
+                {simulatedPay && (
+                  <p className="text-[11px] text-gray-500 bg-gray-100 rounded-xl px-3 py-2 leading-snug text-center">
+                    Test mode — no real payment was processed.
+                  </p>
                 )}
               </div>
-              <p className="text-xs text-center text-gray-400">Transaction ID: {confirmedTx.id}</p>
+              {flags.qr_codes && (
+                <div className="flex flex-col items-center gap-2">
+                  <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
+                    {/* Real, scannable QR (encodes the booking code). Server-rendered data URI on the booking response, otherwise generated client-side. */}
+                    <BookingQR tx={confirmedTx} size={144} showCode={false} onDataUrl={setQrSaveUrl} />
+                  </div>
+                  <p className="text-[11px] text-gray-400 text-center">Show this code to staff on pickup — they can scan it to pull up your order.</p>
+                  {qrSaveUrl && (
+                    <a
+                      href={qrSaveUrl}
+                      download={`${bookingCode(confirmedTx)}.png`}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#bf4a53] bg-red-50 hover:bg-red-100 rounded-full px-3 py-1.5 transition-colors"
+                      title="Save a copy of this QR code">
+                      <Download size={13} /> Save QR
+                    </a>
+                  )}
+                </div>
+              )}
               {confirmError && (
                 <p className="text-xs text-center text-red-500 font-medium bg-red-50 py-2 rounded-lg">{confirmError}</p>
               )}
-              <button onClick={handleSaveReceipt}
-                className="w-full py-3.5 bg-white border border-gray-200 text-gray-800 font-bold rounded-full hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
-                <Download size={16} /> Save Receipt
-              </button>
-              <button onClick={handleConfirm} disabled={confirming}
-                className="w-full py-3.5 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                {confirming ? 'Processing...' : 'Done'}
-              </button>
             </div>
           )}
         </div>
@@ -1229,44 +1010,27 @@ export default function CustomerRentalFlow({
             </button>
           </div>
         )}
+
+        {/* Receipt footer — pinned below the scrolling body so Save Receipt
+            and Done never scroll out of reach on small screens. */}
+        {step === 3 && confirmedTx && (
+          <div className="p-4 border-t bg-gray-50/50 flex gap-3">
+            <button onClick={handleSaveReceipt}
+              className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
+              <Download size={16} /> Save Receipt
+            </button>
+            <button onClick={handleConfirm} disabled={confirming}
+              className="flex-1 py-2.5 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+              {confirming ? 'Processing...' : 'Done'}
+            </button>
+          </div>
+        )}
     </div>
   );
 
   return inline ? flowContent : (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
         {flowContent}
-      {showQRDetails && confirmedTx && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm z-[250] flex items-center justify-center p-4" onClick={() => setShowQRDetails(false)}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in fade-in duration-200" onClick={(e) => e.stopPropagation()}>
-          <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-booking-info" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in fade-in duration-200 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 id="dialog-title-booking-info" className="font-bold text-lg text-gray-900">Booking Info</h3>
-              <button onClick={() => setShowQRDetails(false)} aria-label="Close booking info" className="text-gray-400 hover:bg-gray-100 rounded-full p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"><X size={18} /></button>
-            </div>
-            <div className="space-y-2 text-sm">
-              {[
-                ['Booking ID', confirmedTx.id, 'font-mono font-bold'],
-                ['Booking Code', bookingCode(confirmedTx), 'font-mono font-bold'],
-                ['Customer', confirmedTx.customer?.name || customer.name, 'font-bold'],
-                ['Item', confirmedTx.item?.name || selectedItem?.name, ''],
-                ['Size', confirmedTx.size, ''],
-                ['Pickup', formatDate(rentalDate), ''],
-                ['Event Date', formatDate(eventDate), 'font-semibold'],
-                ['Return By', formatDate(dueDate), 'text-amber-600 font-semibold'],
-                ['Status', confirmedTx.status, 'text-emerald-600 font-bold'],
-                ['Downpayment', `₱${txDownpayment(confirmedTx).toLocaleString()}`, ''],
-              ].map(([label, value, rowCls]) => {
-                if (value == null || value === '') return null;
-                return (
-                  <div key={label} className="flex justify-between"><span className="text-gray-500">{label}</span><span className={rowCls}>{value}</span></div>
-                );
-              })}
-            </div>
-            <button onClick={() => setShowQRDetails(false)} className="w-full mt-6 py-3 bg-gray-900 text-white font-bold rounded-full hover:bg-gray-800 transition-colors">Close</button>
-          </div>
-        </div>
-      </div>
-      )}
 
       {/* Size Guide */}
       {showSizeGuide && (

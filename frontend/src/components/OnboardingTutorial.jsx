@@ -10,7 +10,7 @@ const customerSteps = [
   {
     icon: Calendar, title: 'Select Dates & Book',
     desc: 'Choose your pickup date and event date. The item must be picked up before your event.',
-    detail: 'Return is due the day after your event. A minimum downpayment secures your booking.',
+    detail: 'Return is due the day after your event. A minimum downpayment secures your booking; the rest is due at pickup — the item is released only once fully paid.',
   },
   {
     icon: User, title: 'Enter Your Details',
@@ -20,7 +20,7 @@ const customerSteps = [
   {
     icon: PayIcon, title: 'Confirm & Pay',
     desc: 'Review your booking summary and pay the downpayment via GCash or card.',
-    detail: 'After payment, you will receive a booking confirmation with your transaction ID and QR code.',
+    detail: 'After payment, you will receive a booking confirmation with your transaction ID and QR code. Settle the remaining balance at pickup (cash or online) — pickup and return are locked until fully paid.',
   },
 ];
 
@@ -33,7 +33,7 @@ const staffSteps = [
   {
     icon: User, title: 'Enter Customer & Rental Details',
     desc: 'Fill in customer name, contact, and address. Set pickup date, event date, and select a size.',
-    detail: 'Return date is auto-calculated (event date + 1 day). Optional: downpayment, notes, and condition photo.',
+    detail: 'Return date is auto-calculated (event date + 1 day). Optional: downpayment, notes, and condition photo. Full payment is required before release — collect it in the release sheet (Cash or Online).',
   },
   {
     icon: FileText, title: 'Review & Confirm',
@@ -43,7 +43,7 @@ const staffSteps = [
   {
     icon: CheckCircle2, title: 'Rental Created',
     desc: 'The rental is now active. The item status changes to Reserved.',
-    detail: 'You can view it in Transactions and process the return when the item comes back.',
+    detail: 'Collect the full balance before release, and process the return only when fully paid. You can view it in Transactions.',
   },
 ];
 

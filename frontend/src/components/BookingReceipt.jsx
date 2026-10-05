@@ -37,21 +37,30 @@ export default function BookingReceipt({ tx, qrPayload, showQR = true, title }) 
   return (
     <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
       {title && <p className="font-bold text-gray-900 text-base">{title}</p>}
-      {itemName && <p className="font-bold text-gray-900 text-base mb-2">{itemName}</p>}
+      {itemName && (
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <p className="font-bold text-gray-900 text-base">{itemName}</p>
+          <span className="font-mono text-[11px] font-bold text-white bg-[#bf4a53] rounded-full px-2.5 py-1 shrink-0">{getBookingCode(tx)}</span>
+        </div>
+      )}
       <div className="space-y-2">
         <Row label="Customer" value={customerName} className="font-semibold" />
         <Row label="Size" value={size} />
         <Row label="Total" value={peso(fee)} className="font-semibold" />
         {promoDiscount > 0 && <Row label="Promo discount" value={`−${peso(promoDiscount)}`} className="text-emerald-600 font-semibold" />}
-        <Row label="Downpayment" value={peso(down)} className="text-[#bf4a53] font-bold" />
-        <Row label="Balance" value={peso(balance)} className="font-bold" />
+        <Row label="Balance (remaining)" value={peso(balance)} className="font-bold" />
       </div>
-      <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Transaction ID</p>
-          <p className="font-mono text-[11px] text-gray-500 break-all">{tx.id}</p>
-        </div>
-        {qrOn && (
+      <div className="bg-gray-50 border-2 border-[#bf4a53] rounded-xl px-3.5 py-3 flex justify-between items-center shadow-sm">
+        <span className="text-sm font-bold text-gray-900">Paid <span className="font-medium text-gray-400">(downpayment)</span></span>
+        <span className="font-extrabold text-[#bf4a53] text-xl">{peso(down)}</span>
+      </div>
+      {balance > 0 && (
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 leading-snug">
+          Please settle the remaining {peso(balance)} at pickup — the item is released only once fully paid.
+        </p>
+      )}
+      {qrOn && (
+        <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex items-center justify-center">
           <div className="shrink-0 text-center">
             <BookingQR tx={tx} payload={qrPayload} size={84} showCode={false} title="Scan to open this booking" onDataUrl={setQrSaveUrl} />
             <p className="mt-1 font-mono text-[10px] font-bold text-gray-400">{getBookingCode(tx)}</p>
@@ -65,8 +74,8 @@ export default function BookingReceipt({ tx, qrPayload, showQR = true, title }) 
               </a>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

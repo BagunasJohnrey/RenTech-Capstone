@@ -25,8 +25,14 @@ export async function createPaymentIntent(req: AuthenticatedRequest, res: Respon
       include: { payments: true },
     });
     if (!tx) throw new AppError(404, 'Transaction not found');
-    if (tx.customerId !== req.user.id) throw new AppError(403, 'Not your transaction');
-    if (tx.status === 'Returned' || tx.status === 'Cancelled') {
+    // Staff/Admin may initiate a gateway charge for any booking (counter
+    // checkout: customer pays on the staff device / scans the staff-shown QR).
+    // Customers may only charge their own bookings.
+    if (req.user.role === 'Customer' && tx.customerId !== req.user.id) throw new AppError(403, 'Not your transaction');
+    // Cancelled is terminal. Returned stays chargeable so post-return damage
+    // fees can still be collected online (the due<=0 check below still blocks
+    // fully-settled rentals).
+    if (tx.status === 'Cancelled') {
       throw new AppError(400, 'Transaction is already closed');
     }
 
@@ -94,7 +100,7 @@ export async function createPaymentIntent(req: AuthenticatedRequest, res: Respon
     const intent = await paymongoService.createPaymentIntent(
       amount,
       `Rental payment for transaction #${tx.txNumber}`,
-      { transactionId, customerId: req.user.id }
+      { transactionId, customerId: tx.customerId }
     );
 
     if (!intent.simulated) {

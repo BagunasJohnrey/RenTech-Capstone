@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, MapPin, UserCheck, PackageCheck, History } from 'lucide-react';
+import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, MapPin, UserCheck, PackageCheck, History, QrCode, ExternalLink } from 'lucide-react';
+import QRCode from 'qrcode';
 import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
 import { normalizeTx, invalidateTxCache } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
@@ -11,6 +12,8 @@ import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useLockScroll } from '../hooks/useLockScroll';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 import { api } from '../utils/api';
+import { paymentsService } from '../services/payments';
+import { usePaymongo } from '../hooks/usePaymongo';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -71,11 +74,20 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const [tx, setTx] = useState(transaction);
   const [showPayModal, setShowPayModal] = useState(false);
   const [payAmount, setPayAmount] = useState('');
-  const [payMethod, setPayMethod] = useState('cash');
   const [payNotes, setPayNotes] = useState('');
   const [payError, setPayError] = useState('');
   const [payLoading, setPayLoading] = useState(false);
   const [paySuccess, setPaySuccess] = useState(false);
+  // Record Payment channels: counter = manual cash/GCash/card record (existing),
+  // online = real gateway charge (PayMongo drop-in / Maya QR) on the staff device.
+  const [payChannel, setPayChannel] = useState('counter');
+  const [gateway, setGateway] = useState('paymongo');
+  const [gatewayLoading, setGatewayLoading] = useState(false);
+  const [gatewayIntent, setGatewayIntent] = useState(null);
+  const [gatewayQrUrl, setGatewayQrUrl] = useState(null);
+  const [gatewayStatus, setGatewayStatus] = useState(null);
+  const { openDropIn } = usePaymongo();
+  const pollStopRef = useRef(false);
   // Gate the body on enrichment: everything appears at once when the full
   // record lands — never staged pop-ins. Header/footer use instant list data.
   const [enriching, setEnriching] = useState(() => !!(transaction?.id && fetchFull));
@@ -102,11 +114,28 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     setTimeout(onClose, 150);
   }, [closing, onClose]);
   const closePayModal = useCallback(() => {
-    if (payLoading || payClosing) return;
+    if (payLoading || gatewayLoading || payClosing) return;
+    pollStopRef.current = true;
     setPayClosing(true);
     setTimeout(() => { setShowPayModal(false); setPayClosing(false); }, 150);
-  }, [payLoading, payClosing]);
-  const openPayModal = () => { setPayClosing(false); setShowPayModal(true); };
+  }, [payLoading, gatewayLoading, payClosing]);
+  const openPayModal = () => {
+    setPayClosing(false);
+    setPayChannel('counter');
+    setGatewayIntent(null);
+    setGatewayQrUrl(null);
+    setGatewayStatus(null);
+    setPayError('');
+    setPaySuccess(false);
+    pollStopRef.current = false;
+    // Prefill the full outstanding so Record ₱X is one tap.
+    if (!payAmount && tx?.balance > 0) setPayAmount(String(Math.max(0, tx.balance)));
+    // Which gateway new charges use (admin Settings → payment_gateway).
+    api.get('/settings/rental-defaults')
+      .then((d) => { if (d?.payment_gateway === 'maya') setGateway('maya'); else setGateway('paymongo'); })
+      .catch(() => {});
+    setShowPayModal(true);
+  };
   // Esc dismisses the topmost layer first (pay form before the detail sheet).
   const handleEscape = useCallback(() => {
     if (showPayModal) closePayModal();
@@ -254,11 +283,15 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const paidSoFar = Number(tx.totalPaid ?? 0) || 0;
   const paidPct = rentalTotal > 0 ? Math.min(100, Math.round((paidSoFar / rentalTotal) * 100)) : 0;
   const outstandingBalance = Math.max(0, tx.balance ?? 0);
+  // Returned stays payable (damage fee settled post-return); only Cancelled
+  // is terminal. Return itself requires a zero balance (backend enforces too).
   const canRecordPayment = (role === 'Admin' || role === 'Staff')
-    && !['Returned', 'Cancelled'].includes(tx.status)
+    && !['Cancelled'].includes(tx.status)
     && outstandingBalance > 0;
+  const isReturnBlockedByBalance = outstandingBalance > 0;
   const canProcessReturn = (role === 'Admin' || role === 'Staff')
-    && ['Active', 'Overdue'].includes(tx.status);
+    && ['Active', 'Overdue'].includes(tx.status)
+    && !isReturnBlockedByBalance;
 
 
   const handleRecordPayment = async () => {
@@ -268,7 +301,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
     setPayLoading(true);
     try {
-      const res = await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: payMethod, notes: payNotes || undefined });
+      // Counter = cash only (GCash/Card go through the Online tab gateway).
+      const res = await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: 'cash', notes: payNotes || undefined });
       // Payments post outside the transactions hook — drop the cached full
       // record so the next open re-reads instead of serving stale totals.
       invalidateTxCache(tx.id);
@@ -287,6 +321,91 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       setPayError(err?.message || 'Failed to record payment');
     } finally {
       setPayLoading(false);
+    }
+  };
+
+  // Online gateway charge from the counter (staff collects on their device or
+  // shows the QR to the customer). Same create-intent + webhook ledger as the
+  // customer flow — the modal polls getStatus so the sheet reflects the credit.
+  // Success = the ledger actually moved (totalPaid up / balance down), not just
+  // a "succeeded" label: after the rental is secured, getStatus reports
+  // succeeded from the downpayment even while a new damage charge is pending.
+  const pollGatewayStatus = async () => {
+    pollStopRef.current = false;
+    const paidAtStart = Number(tx.totalPaid ?? 0) || 0;
+    const balanceAtStart = Math.max(0, tx.balance ?? 0);
+    for (let i = 0; i < 20; i++) {
+      if (pollStopRef.current) return;
+      await new Promise((r) => setTimeout(r, 3000));
+      if (pollStopRef.current) return;
+      try {
+        const s = await paymentsService.getStatus(tx.id);
+        setGatewayStatus(s?.status ?? null);
+        const paidNow = Number(s?.totalPaid ?? paidAtStart) || 0;
+        const balanceNow = Math.max(0, s?.balance ?? balanceAtStart);
+        const moved = paidNow > paidAtStart || balanceNow < balanceAtStart;
+        if (moved || s?.status === 'partial') {
+          invalidateTxCache(tx.id);
+          setTx((prev) => ({
+            ...prev,
+            totalPaid: s.totalPaid ?? prev.totalPaid,
+            balance: s.balance ?? prev.balance,
+          }));
+          if (balanceNow <= 0) {
+            setPaySuccess(true);
+            setTimeout(() => {
+              setPayClosing(true);
+              setTimeout(() => { setShowPayModal(false); setPayClosing(false); setPaySuccess(false); setPayAmount(''); setGatewayIntent(null); setGatewayQrUrl(null); setGatewayStatus(null); }, 150);
+            }, 1200);
+          }
+          return;
+        }
+        if (s?.status === 'failed' || s?.status === 'expired') return;
+      } catch { /* transient blip — keep polling */ }
+    }
+  };
+
+  const handleGatewayCharge = async () => {
+    setPayError('');
+    const amt = Number(payAmount);
+    if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
+    if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
+    setGatewayLoading(true);
+    setGatewayStatus(null);
+    try {
+      const intent = await paymentsService.createIntent({ transactionId: tx.id, amount: amt });
+      if (intent?.simulated) {
+        setPayError('Online payments are not configured (simulated) — use Counter cash instead.');
+        return;
+      }
+      if (intent?.gateway === 'maya') {
+        setGatewayIntent(intent);
+        setGatewayStatus('pending');
+        if (intent.qrCodeBody) {
+          try { setGatewayQrUrl(await QRCode.toDataURL(intent.qrCodeBody, { width: 220, margin: 1 })); }
+          catch { setGatewayQrUrl(null); }
+        }
+        pollGatewayStatus();
+        return;
+      }
+      // PayMongo: hosted drop-in on the staff device, then poll for the webhook credit.
+      try {
+        await openDropIn(intent.clientKey, {
+          amount: Math.round(amt * 100),
+          currency: 'PHP',
+          description: `Counter payment for booking ${getBookingCode(tx)}`,
+        });
+      } catch (payErr) {
+        setPayError(payErr?.message || 'Payment was cancelled or failed.');
+        return;
+      }
+      setGatewayIntent(intent);
+      setGatewayStatus('pending');
+      pollGatewayStatus();
+    } catch (err) {
+      setPayError(err?.message || 'Could not start the online payment.');
+    } finally {
+      setGatewayLoading(false);
     }
   };
 
@@ -563,6 +682,11 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 {tx.damageFee > 0 && <DetailRow label="Damage Fee" value={fmtCurrency(tx.damageFee)} />}
                 {tx.totalPaid > 0 && <DetailRow label="Total Paid" value={fmtCurrency(tx.totalPaid)} />}
               </div>
+              {outstandingBalance > 0 && !['Cancelled', 'Returned'].includes(tx.status) && (
+                <p className="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 leading-snug">
+                  Please settle the remaining ₱{outstandingBalance.toLocaleString()} at pickup — the item is released only once fully paid.
+                </p>
+              )}
             </div>
             {Array.isArray(tx.payments) && tx.payments.length > 0 && (
               <div className="mt-3 space-y-2">
@@ -681,6 +805,11 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             backdrop / Esc still dismiss). */}
         <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
           <div className="space-y-2">
+            {(role === 'Admin' || role === 'Staff') && ['Active', 'Overdue'].includes(tx.status) && isReturnBlockedByBalance && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-xs font-semibold text-amber-800">
+                Settle the ₱{outstandingBalance.toLocaleString()} balance first — return is locked until fully paid.
+              </div>
+            )}
             {canProcessReturn && onReturn && (
               <button onClick={() => onReturn(tx)} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-2">
                 <Undo2 size={16} /> Process Return
@@ -688,7 +817,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             )}
             {canRecordPayment && (
               <button onClick={openPayModal} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
-                <Banknote size={16} /> Record Payment
+                <Banknote size={16} /> {tx.status === 'Returned' ? `Settle damage ₱${outstandingBalance.toLocaleString()}` : 'Record Payment'}
               </button>
             )}
           </div>
@@ -709,7 +838,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   <Banknote size={24} className="text-green-600" />
                 </div>
                 <p className="font-bold text-lg text-gray-900">Payment Recorded</p>
-                <p className="text-sm text-gray-500 mt-1">₱{Number(payAmount).toLocaleString()} via {payMethod}</p>
+                <p className="text-sm text-gray-500 mt-1">₱{Number(payAmount).toLocaleString()} via {payChannel === 'online' ? (gateway === 'maya' ? 'Maya' : 'PayMongo') : 'cash'}</p>
               </div>
             ) : (
               <>
@@ -725,6 +854,28 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   <p className="font-bold text-lg text-[#bf4a53]">₱{outstandingBalance.toLocaleString()}</p>
                 </div>
 
+                {/* Channel switch: counter cash vs live gateway charge */}
+                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-2xl" role="tablist" aria-label="Payment channel">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payChannel === 'counter'}
+                    onClick={() => { setPayChannel('counter'); setPayError(''); pollStopRef.current = true; }}
+                    className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'counter' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    <Banknote size={14} /> Counter
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payChannel === 'online'}
+                    onClick={() => { setPayChannel('online'); setPayError(''); }}
+                    className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    {gateway === 'maya' ? <QrCode size={14} /> : <CreditCard size={14} />} Online
+                  </button>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Amount</label>
                   <div className="relative">
@@ -736,24 +887,16 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                       value={payAmount}
                       onChange={e => { setPayAmount(e.target.value); setPayError(''); }}
                       placeholder="0"
-                      className="w-full pl-8 pr-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors"
+                      disabled={!!gatewayIntent}
+                      className="w-full pl-8 pr-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors disabled:opacity-60"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Payment Method</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[{ key: 'cash', label: 'Cash' }, { key: 'gcash', label: 'GCash' }, { key: 'card', label: 'Card' }].map(m => (
-                      <button
-                        key={m.key}
-                        onClick={() => setPayMethod(m.key)}
-                        className={`py-2.5 rounded-xl text-sm font-bold border transition-colors ${payMethod === m.key ? 'bg-[#bf4a53] text-white border-[#bf4a53]' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                {payChannel === 'counter' ? (
+                <>
+                <div className="bg-gray-50/70 border border-gray-100 rounded-2xl p-3 text-xs text-gray-600">
+                  Counter cash — for GCash / card, use the <span className="font-bold text-gray-900">Online</span> tab instead.
                 </div>
 
                 <div>
@@ -776,6 +919,59 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 >
                   {payLoading ? 'Recording...' : `Record ₱${Number(payAmount || 0).toLocaleString()}`}
                 </button>
+                </>
+                ) : (
+                <>
+                <div className="bg-blue-50/70 border border-blue-100 rounded-2xl p-3 text-xs text-gray-600">
+                  {gateway === 'maya'
+                    ? <>Collect via <span className="font-bold text-gray-900">Maya QRPh</span> — show the QR to the customer to scan, or open the link on their phone. Credit lands via webhook.</>
+                    : <>Collect via <span className="font-bold text-gray-900">PayMongo</span> (GCash / card) — the checkout opens on this device for the customer to pay now.</>}
+                </div>
+
+                {/* Maya QR payload once generated */}
+                {gatewayIntent?.gateway === 'maya' && (
+                  <div className="bg-white border border-gray-100 rounded-2xl p-4 flex flex-col items-center gap-2">
+                    {gatewayQrUrl
+                      ? <img src={gatewayQrUrl} alt="Maya payment QR" className="w-44 h-44 rounded-xl border border-gray-100" />
+                      : <QrCode size={40} className="text-gray-300" />}
+                    {gatewayIntent.redirectUrl && (
+                      <a href={gatewayIntent.redirectUrl} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-bold text-[#bf4a53] hover:underline">
+                        <ExternalLink size={12} /> Open Maya checkout
+                      </a>
+                    )}
+                    {gatewayIntent.expiresAt && (
+                      <p className="text-[11px] text-gray-400">QR valid for 1 hour · expires {new Date(gatewayIntent.expiresAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}</p>
+                    )}
+                    {gatewayStatus && !['succeeded'].includes(gatewayStatus) && (
+                      <p className="text-[11px] font-bold text-amber-600 animate-pulse">
+                        {gatewayStatus === 'expired' || gatewayStatus === 'failed' ? 'Payment not completed — generate a fresh QR.' : 'Waiting for customer payment…'}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {payError && <p className="text-xs text-red-500 font-medium">{payError}</p>}
+
+                {!gatewayIntent ? (
+                  <button
+                    onClick={handleGatewayCharge}
+                    disabled={gatewayLoading}
+                    className="w-full py-3.5 rounded-2xl font-bold text-sm bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                  >
+                    {gateway === 'maya' ? <QrCode size={15} /> : <CreditCard size={15} />}
+                    {gatewayLoading ? 'Starting…' : gateway === 'maya' ? `Generate Maya QR for ₱${Number(payAmount || 0).toLocaleString()}` : `Collect ₱${Number(payAmount || 0).toLocaleString()} via PayMongo`}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { pollStopRef.current = true; setGatewayIntent(null); setGatewayQrUrl(null); setGatewayStatus(null); setPayError(''); }}
+                    className="w-full py-3 rounded-2xl font-bold text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+                  >
+                    Start a fresh charge
+                  </button>
+                )}
+                </>
+                )}
               </>
             )}
             </div>

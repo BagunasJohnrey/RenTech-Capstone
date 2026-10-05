@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Loader2, Search, Calendar, User, Check, Percent, ShieldCheck, CheckCircle2, Printer, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, CreditCard, QrCode, ExternalLink, ScanLine } from 'lucide-react';
+import QRCode from 'qrcode';
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
 import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
 import { inventoryService } from '../services/inventory';
+import { paymentsService } from '../services/payments';
+import { usePaymongo } from '../hooks/usePaymongo';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { downloadReceiptImage } from '../utils/receiptImage';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { toLocalYmd, todayYmd } from '../utils/format';
 
@@ -44,50 +49,20 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // Selected item (only one at a time)
   const [selectedItem, setSelectedItem] = useState(initialItem || null);
 
-  // Customer lookup from past transactions
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [showCustomerResults, setShowCustomerResults] = useState(false);
-  const customerSearchRef = useRef(null);
-
-  const foundCustomers = useMemo(() => {
-    if (!customerSearch.trim()) return [];
-    const q = customerSearch.toLowerCase();
-    const seen = new Set();
-    const results = [];
-    for (const tx of transactions) {
-      if (results.length >= 5) break;
-      if (tx.customer && !seen.has(tx.customer) && tx.customer.toLowerCase().includes(q)) {
-        seen.add(tx.customer);
-        results.push({ name: tx.customer, contact: tx.contact || '', address: tx.address || '' });
-      }
-    }
-    return results;
-  }, [customerSearch, transactions]);
-
-  const selectCustomer = (c) => {
-    setCustomer({ ...customer, name: c.name, contact: c.contact, address: c.address });
-    setCustomerSearch(c.name);
-    setShowCustomerResults(false);
-  };
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handler = (e) => {
-      if (customerSearchRef.current && !customerSearchRef.current.contains(e.target)) {
-        setShowCustomerResults(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
   const todayStr = useMemo(() => todayYmd(), []);
 
-  // Fetch return-days-after-event setting from admin rules.
+  // Fetch return-days-after-event + minimum downpayment + payment gateway
+  // from admin rules (same floor + gateway as the customer flow).
   const [returnDays, setReturnDays] = useState(1);
+  const [minDownpayment, setMinDownpayment] = useState(200);
+  const [gateway, setGateway] = useState('paymongo');
   useEffect(() => {
     api.get('/settings/rental-defaults')
-      .then((d) => { if (d?.return_days_after_event) setReturnDays(d.return_days_after_event); })
+      .then((d) => {
+        if (d?.return_days_after_event) setReturnDays(d.return_days_after_event);
+        if (d?.min_downpayment) setMinDownpayment(d.min_downpayment);
+        if (d?.payment_gateway === 'maya') setGateway('maya'); else setGateway('paymongo');
+      })
       .catch(() => {});
   }, []);
 
@@ -147,9 +122,15 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     };
   });
 
-  // Downpayment
-  const [includeDownpayment, setIncludeDownpayment] = useState(false);
+  // Downpayment — required, same floor as the customer flow (never more
+  // than the fee being charged). Prefilled once an item is picked.
   const [downpaymentAmount, setDownpaymentAmount] = useState('');
+  useEffect(() => {
+    if (selectedItem && !String(downpaymentAmount ?? '').trim()) {
+      setDownpaymentAmount(String(minDownpayment || 200));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItem, minDownpayment]);
 
   // Discount: staff picks the % first; the admin approves that exact amount
   // with their PIN at order confirmation. The approval is bound to the % +
@@ -215,6 +196,19 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // Created transaction — shown on the post-booking receipt step (with QR).
   const [createdTx, setCreatedTx] = useState(null);
 
+  // Payment channel for the downpayment: cash (recorded with the booking) or
+  // online (real gateway charge collected right after the booking is created).
+  const [payChannel, setPayChannel] = useState('cash');
+  const [collecting, setCollecting] = useState(false);
+  const [gatewayIntent, setGatewayIntent] = useState(null);
+  const [gatewayQrUrl, setGatewayQrUrl] = useState(null);
+  const [gatewayStatus, setGatewayStatus] = useState(null);
+  const [collectError, setCollectError] = useState('');
+  const { openDropIn } = usePaymongo();
+  const flags = useFeatureFlags();
+  const pollStopRef = useRef(false);
+  useEffect(() => () => { pollStopRef.current = true; }, []);
+
   // Live availability check (same backend overlap logic as createRental) so
   // staff can't confirm dates that clash with an existing booking.
   const [availability, setAvailability] = useState({ checking: false, available: null, reason: '' });
@@ -273,10 +267,16 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       const filled = measurementFields.filter(f => measurements[f] && String(measurements[f]).trim());
       if (filled.length < 3) errs.measurements = 'Please provide at least 3 measurements';
     }
-    if (includeDownpayment) {
+    // Required downpayment, same rule as the customer flow: at least the
+    // flat floor (default ₱200), never more than the fee being charged.
+    {
+      const base = selectedItem?.price || 0;
+      const fee = base - Math.round(base * (discountPct / 100));
+      const min = Math.min(minDownpayment || 200, fee);
       const dp = Number(downpaymentAmount) || 0;
-      if (dp <= 0) errs.downpayment = 'Downpayment amount must be greater than 0';
-      if (dp > totals.baseRate) errs.downpayment = 'Downpayment cannot exceed the rental fee';
+      if (!dp || dp <= 0) errs.downpayment = 'Downpayment is required';
+      else if (dp < min) errs.downpayment = `Downpayment must be at least ₱${min.toLocaleString()}`;
+      else if (dp > fee) errs.downpayment = 'Downpayment cannot exceed the rental fee';
     }
     setFieldErrors(errs);
     setTouchedFields(prev => ({ ...prev, ...Object.fromEntries(Object.keys(errs).map(k => [k, true])) }));
@@ -290,9 +290,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     const base = selectedItem?.price || 0;
     const discountAmt = Math.round(base * (discountPct / 100));
     const afterDiscount = base - discountAmt;
-    const dp = includeDownpayment ? (Number(downpaymentAmount) || 0) : 0;
+    const dp = Number(downpaymentAmount) || 0;
     return { baseRate: base, discount: discountAmt, discountedRate: afterDiscount, downpayment: dp, balance: afterDiscount - dp };
-  }, [selectedItem, includeDownpayment, downpaymentAmount, discountPct]);
+  }, [selectedItem, downpaymentAmount, discountPct]);
 
   // Live field validity (green glow when valid)
   const fieldValid = useMemo(() => {
@@ -306,17 +306,18 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     if (size === 'Custom / Measurements' && measurementsExpanded) {
       const filled = measurementFields.filter(f => measurements[f] && String(measurements[f]).trim());
       if (filled.length >= 3) v.measurements = true;
-    } else if (size && size !== 'Custom / Measurements') {
+    } else     if (size && size !== 'Custom / Measurements') {
       v.measurements = true;
     }
-    if (includeDownpayment) {
+    {
+      const base = selectedItem?.price || 0;
+      const fee = base - Math.round(base * (discountPct / 100));
+      const min = Math.min(minDownpayment || 200, fee);
       const dp = Number(downpaymentAmount) || 0;
-      if (dp > 0 && dp <= totals.baseRate) v.downpayment = true;
-    } else {
-      v.downpayment = true;
+      if (dp >= min && dp <= fee && fee > 0) v.downpayment = true;
     }
     return v;
-  }, [customer, todayStr, size, measurementsExpanded, measurements, measurementFields, includeDownpayment, downpaymentAmount, totals.baseRate]);
+  }, [customer, todayStr, size, measurementsExpanded, measurements, measurementFields, downpaymentAmount, selectedItem, discountPct, minDownpayment]);
 
   // Category tabs (with live counts) built from the actual inventory so every
   // category (Gown, Barong, Filipiniana, Suit, Costume, …) always appears —
@@ -398,10 +399,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     if (customer.rentalDate !== init.rentalDate || customer.eventDate !== init.eventDate ||
         customer.returnDate !== init.returnDate) return true;
     if (size || Object.keys(measurements || {}).some(k => String(measurements[k] ?? '').trim() !== '')) return true;
-    if (includeDownpayment && String(downpaymentAmount ?? '').trim() !== '') return true;
+    if (String(downpaymentAmount ?? '').trim() !== '') return true;
     if ((Number(discountPct) || 0) > 0 || discountAuthorized) return true;
     return false;
-  }, [step, createdTx, selectedItem, customer, size, measurements, includeDownpayment, downpaymentAmount, discountPct, discountAuthorized]);
+  }, [step, createdTx, selectedItem, customer, size, measurements, downpaymentAmount, discountPct, discountAuthorized]);
 
   // Back / close go through here: with unsaved entries the user gets a
   // "Discard changes?" confirm instead of silently losing the rental.
@@ -484,38 +485,151 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         setShowAdminAuth(true);
         return;
       }
-      submitBooking();
+      // Online collects the downpayment through the gateway right after the
+      // booking is created; cash just records it with the booking.
+      if (payChannel === 'online') submitBookingOnline();
+      else submitBooking();
       return;
     }
     setStep(s => s + 1);
   };
+
+  // Online collection: the booking is created first (an intent needs a
+  // transaction id), then the downpayment is charged through the gateway.
+  // The receipt lands only after the gateway confirms — Maya via QR + poll,
+  // PayMongo via drop-in + poll. Anything unrecoverable falls back to the
+  // receipt with the balance due at pickup (release stays locked until ₱0).
+  const submitBookingOnline = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setCollectError('');
+    setGatewayIntent(null);
+    setGatewayQrUrl(null);
+    setGatewayStatus(null);
+    try {
+      const created = await createBookingRecord();
+      // Seed immediately so the poller can merge gateway totals into it.
+      setCreatedTx(created);
+      const amt = Number(totals.downpayment) || 0;
+      let intent;
+      try {
+        intent = await paymentsService.createIntent({ transactionId: created.id, amount: amt });
+      } catch (intentErr) {
+        setCollectError(intentErr?.message || 'Could not start the online payment — collect the downpayment at pickup instead.');
+        setSubmitting(false);
+        submittingRef.current = false;
+        setStep(4);
+        return;
+      }
+      if (intent?.simulated) {
+        setSubmitting(false);
+        submittingRef.current = false;
+        setStep(4);
+        return;
+      }
+      setCollecting(true);
+      if (intent?.gateway === 'maya') {
+        setGatewayIntent(intent);
+        setGatewayStatus('pending');
+        if (intent.qrCodeBody) {
+          try { setGatewayQrUrl(await QRCode.toDataURL(intent.qrCodeBody, { width: 220, margin: 1 })); }
+          catch { setGatewayQrUrl(null); }
+        }
+        pollStopRef.current = false;
+        const ok = await pollBookingPaid(created.id);
+        finishOnlineCollect(created, ok);
+        return;
+      }
+      try {
+        await openDropIn(intent.clientKey, {
+          amount: Math.round(amt * 100),
+          currency: 'PHP',
+          description: `Downpayment for ${selectedItem?.name || 'booking'}`,
+        });
+      } catch (payErr) {
+        setCollecting(false);
+        setCollectError(payErr?.message || 'Payment was cancelled — collect the downpayment at pickup instead.');
+        setSubmitting(false);
+        submittingRef.current = false;
+        setStep(4);
+        return;
+      }
+      setGatewayIntent(intent);
+      setGatewayStatus('pending');
+      pollStopRef.current = false;
+      const ok = await pollBookingPaid(created.id);
+      finishOnlineCollect(created, ok);
+    } catch (err) {
+      setError(err?.message || 'Failed to create rental. Please try again.');
+      setCollecting(false);
+      setSubmitting(false);
+      submittingRef.current = false;
+    }
+  };
+
+  // Polls until the downpayment credit lands (getStatus reports succeeded
+  // once totalPaid covers the booking's downpayment). Resolves false on
+  // timeout/failure/expiry so the caller can fall back to pickup collection.
+  const pollBookingPaid = async (txId) => {
+    for (let i = 0; i < 20; i++) {
+      if (pollStopRef.current) return false;
+      await new Promise((r) => setTimeout(r, 3000));
+      if (pollStopRef.current) return false;
+      try {
+        const s = await paymentsService.getStatus(txId);
+        setGatewayStatus(s?.status ?? null);
+        if (s?.status === 'succeeded') {
+          setCreatedTx((prev) => (prev ? { ...prev, totalPaid: s.totalPaid ?? prev.totalPaid, balance: s.balance ?? prev.balance } : prev));
+          return true;
+        }
+        if (s?.status === 'failed' || s?.status === 'expired') return false;
+      } catch { /* transient blip — keep polling */ }
+    }
+    return false;
+  };
+
+  const finishOnlineCollect = (created, ok) => {
+    setCollecting(false);
+    if (!ok) {
+      setCollectError('Payment not confirmed yet — the booking is saved; collect the downpayment at pickup instead.');
+    }
+    // createdTx was seeded at creation and merged by the poller on success.
+    setCreatedTx((prev) => prev ?? created);
+    setSubmitting(false);
+    submittingRef.current = false;
+    setStep(4);
+  };
+
+  const buildBookingPayload = () => ({
+    customer: customer.name,
+    contact: customer.contact,
+    address: customer.address,
+    item: selectedItem.name,
+    itemId: selectedItem.id,
+    date: customer.rentalDate,
+    amount: totals.discountedRate,
+    downpayment: totals.downpayment,
+    balance: totals.balance,
+    discountPct: isDiscountApproved ? discountPct : 0,
+    discountApprovedBy: isDiscountApproved ? discountAuthorized?.admin?.name || null : null,
+    size,
+    measurements,
+    notes: customer.notes,
+    rentalDate: customer.rentalDate,
+    eventDate: customer.eventDate,
+    returnDate: customer.returnDate,
+  });
+
+  const createBookingRecord = () => onAddTransaction(buildBookingPayload());
 
   const submitBooking = async () => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
     {
-      const transactionData = {
-        customer: customer.name,
-        contact: customer.contact,
-        address: customer.address,
-        item: selectedItem.name,
-        itemId: selectedItem.id,
-        date: customer.rentalDate,
-        amount: totals.discountedRate,
-        downpayment: totals.downpayment,
-        balance: totals.balance,
-        discountPct: isDiscountApproved ? discountPct : 0,
-        discountApprovedBy: isDiscountApproved ? discountAuthorized?.admin?.name || null : null,
-        size,
-        measurements,
-        notes: customer.notes,
-        rentalDate: customer.rentalDate,
-        eventDate: customer.eventDate,
-        returnDate: customer.returnDate,
-      };
       try {
-        const created = await onAddTransaction(transactionData);
+        const created = await createBookingRecord();
         setCreatedTx(created);
         setSubmitting(false);
         submittingRef.current = false;
@@ -747,35 +861,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Customer</h4>
-                <div ref={customerSearchRef} className="relative">
-                  <div className="relative">
-                    <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input type="text" placeholder="Search past customers or enter new name..."
-                      value={customerSearch}
-                      onChange={e => { setCustomerSearch(e.target.value); setShowCustomerResults(true); }}
-                      onFocus={() => setShowCustomerResults(true)}
-                      className="w-full pl-9 p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
-                  </div>
-                  {showCustomerResults && foundCustomers.length > 0 && (
-                    <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-gray-100 rounded-2xl shadow-lg z-10 overflow-hidden">
-                      {foundCustomers.map((c, i) => (
-                        <button key={i}
-                          onClick={() => selectCustomer(c)}
-                          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
-                        >
-                          <div className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center shrink-0">
-                            <User size={14} className="text-[#bf4a53]" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-gray-900 truncate">{c.name}</p>
-                            {c.contact && <p className="text-[11px] text-gray-500">{c.contact}</p>}
-                          </div>
-                          <Check size={14} className="text-emerald-500 shrink-0" />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
                 <div>
                   <Field showLabel={false} type="text" placeholder="Full Name" value={customer.name}
                     onChange={e => { setCustomer({...customer, name: e.target.value}); clearFieldError('name'); touchField('name'); }}
@@ -871,28 +956,20 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               </div>
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-bold text-sm text-gray-900">Downpayment</p>
-                    <p className="text-xs text-gray-500">Optional partial payment</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" checked={includeDownpayment} onChange={e => setIncludeDownpayment(e.target.checked)} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#bf4a53]"></div>
-                  </label>
+                <div>
+                  <p className="font-bold text-sm text-gray-900">Downpayment <span className="text-[#bf4a53]">*</span></p>
+                  <p className="text-xs text-gray-500">Required — minimum ₱{Math.min(minDownpayment || 200, totals.discountedRate || 0).toLocaleString()} to secure the booking</p>
                 </div>
-                {includeDownpayment && (
-                  <div>
-                    <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
-                      <input type="number" placeholder="Amount" value={downpaymentAmount}
-                        onChange={e => { setDownpaymentAmount(e.target.value); clearFieldError('downpayment'); touchField('downpayment'); }}
-                        onBlur={() => touchField('downpayment')}
-                        className={inputClass('downpayment', 'pl-8')} />
-                    </div>
-                    {fieldErrors.downpayment && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.downpayment}</p>}
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
+                    <input type="number" placeholder="Amount" value={downpaymentAmount}
+                      onChange={e => { setDownpaymentAmount(e.target.value); clearFieldError('downpayment'); touchField('downpayment'); }}
+                      onBlur={() => touchField('downpayment')}
+                      className={inputClass('downpayment', 'pl-8')} aria-label="Required downpayment amount" />
                   </div>
-                )}
+                  {fieldErrors.downpayment && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.downpayment}</p>}
+                </div>
               </div>
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
@@ -900,10 +977,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 <textarea placeholder="Remarks / Notes" value={customer.notes}
                   onChange={e => setCustomer({...customer, notes: e.target.value})}
                   className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[80px] focus:outline-none focus:border-[#bf4a53]" />
-                <div className="bg-blue-50/50 rounded-xl p-4 text-center">
-                  <p className="text-xs font-semibold text-blue-700">Photo taken at pickup</p>
-                  <p className="text-[10px] text-blue-500 mt-0.5">Pre-rental condition photo will be captured when the customer picks up the item.</p>
-                </div>
               </div>
             </div>
           )}
@@ -932,10 +1005,18 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   {totals.discount > 0 && (
                     <div className="flex justify-between text-sm"><span className="text-gray-500">After Discount</span><span className="font-semibold">₱{totals.discountedRate.toLocaleString()}</span></div>
                   )}
-                  {includeDownpayment && totals.downpayment > 0 && (
-                    <div className="flex justify-between text-[#bf4a53]"><span>Downpayment</span><span>-₱{totals.downpayment.toLocaleString()}</span></div>
+                  <div className="flex justify-between border-t pt-3 mt-2"><span className="text-gray-500">Balance (remaining)</span><span className="font-bold text-gray-900">₱{totals.balance.toLocaleString()}</span></div>
+                  {totals.downpayment > 0 && (
+                    <div className="bg-white border-2 border-[#bf4a53] rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm">
+                      <span className="text-sm font-bold text-gray-900">Paying now <span className="font-medium text-gray-400">(downpayment)</span></span>
+                      <span className="font-extrabold text-[#bf4a53] text-xl">₱{totals.downpayment.toLocaleString()}</span>
+                    </div>
                   )}
-                  <div className="flex justify-between font-bold text-base border-t pt-3 mt-2"><span>Balance</span><span className="text-[#bf4a53]">₱{totals.balance.toLocaleString()}</span></div>
+                  {totals.balance > 0 && (
+                    <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 leading-snug">
+                      Please settle the remaining ₱{totals.balance.toLocaleString()} at pickup — the item is released only once fully paid.
+                    </p>
+                  )}
                   {discountPct > 0 && (
                     isDiscountApproved ? (
                       <p className="text-[10px] text-emerald-600 font-medium text-center pt-1">Discount approved by {discountAuthorized.admin?.name}</p>
@@ -947,20 +1028,94 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 </div>
 </div>
 
-              {/* Discount Section — staff picks the %; the admin approves it
-                  with their PIN when Confirm is pressed (not before). */}
+              {/* Payment — how the ₱{totals.downpayment} downpayment is collected.
+                  Cash records it with the booking; Online charges it through the
+                  gateway right after the booking is created (receipt lands only
+                  after the gateway confirms). */}
               <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Percent size={16} className="text-gray-500" />
-                    <h4 className="font-bold text-sm text-gray-900">Discount</h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold text-sm text-gray-900">Payment</h4>
+                  <span className="text-xs font-bold text-[#bf4a53] bg-red-50 rounded-full px-3 py-1.5">₱{totals.downpayment.toLocaleString()} downpayment</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-2xl" role="tablist" aria-label="Downpayment channel">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payChannel === 'cash'}
+                    onClick={() => setPayChannel('cash')}
+                    className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'cash' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    <Banknote size={14} /> Cash
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payChannel === 'online'}
+                    onClick={() => setPayChannel('online')}
+                    className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    {gateway === 'maya' ? <QrCode size={14} /> : <CreditCard size={14} />} Online
+                  </button>
+                </div>
+                {payChannel === 'cash' ? (
+                  <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 rounded-xl px-3.5 py-3">
+                    Collect <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} in cash</span> at the counter — it is recorded with the booking. The remaining ₱{totals.balance.toLocaleString()} is settled at pickup.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-gray-500 leading-relaxed bg-blue-50/70 border border-blue-100 rounded-xl px-3.5 py-3">
+                      {gateway === 'maya'
+                        ? <>Charge <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via Maya QRPh</span> — after Confirm, show the QR to the customer to scan. The receipt lands only after Maya confirms.</>
+                        : <>Charge <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via PayMongo</span> (GCash / card) — after Confirm, the secure checkout opens on this device. The receipt lands only after the payment succeeds.</>}
+                    </p>
+                    {collecting && gatewayIntent?.gateway === 'maya' && (
+                      <div className="bg-white border border-gray-100 rounded-2xl p-4 flex flex-col items-center gap-2">
+                        {gatewayQrUrl
+                          ? <img src={gatewayQrUrl} alt="Maya payment QR" className="w-44 h-44 rounded-xl border border-gray-100" />
+                          : <QrCode size={40} className="text-gray-300" />}
+                        {gatewayIntent.redirectUrl && (
+                          <a href={gatewayIntent.redirectUrl} target="_blank" rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-bold text-[#bf4a53] hover:underline">
+                            <ExternalLink size={12} /> Open Maya checkout
+                          </a>
+                        )}
+                        <p className="text-[11px] font-bold text-amber-600 animate-pulse flex items-center gap-1.5">
+                          <Loader2 size={12} className="animate-spin" /> Waiting for customer payment…
+                        </p>
+                      </div>
+                    )}
+                    {collecting && gatewayIntent?.gateway !== 'maya' && (
+                      <p className="text-[11px] font-bold text-amber-600 animate-pulse flex items-center gap-1.5">
+                        <Loader2 size={12} className="animate-spin" /> Waiting for payment confirmation…
+                      </p>
+                    )}
                   </div>
-                  {discountPct > 0 && (
-                    <button onClick={() => { handleDiscountChange(0); }}
-                      className="text-xs font-bold text-red-500 hover:underline">
-                      Remove
-                    </button>
-                  )}
+                )}
+                {collectError && <p className="text-xs text-red-500 font-medium bg-red-50 rounded-xl px-3.5 py-2.5">{collectError}</p>}
+              </div>
+
+              {/* Discount — staff picks the %; the admin approves that exact
+                  amount with their PIN when Confirm is pressed (not before). */}
+              <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                      <Percent size={15} />
+                    </span>
+                    <div>
+                      <h4 className="font-bold text-sm text-gray-900">Discount</h4>
+                      <p className="text-[11px] text-gray-400">Admin approves it at confirmation</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-extrabold rounded-full px-3 py-1.5 ${discountPct > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>{discountPct}%</span>
+                    {discountPct > 0 && (
+                      <button onClick={() => { handleDiscountChange(0); }}
+                        className="text-xs font-bold text-red-500 hover:underline">
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <div className="flex items-center gap-3">
@@ -999,15 +1154,17 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 <h3 className="text-lg font-bold text-gray-900">Rental Created</h3>
                 <p className="text-sm text-gray-500">Show this receipt to the customer. They can show the QR at pickup.</p>
               </div>
+              {collectError && (
+                <p className="text-xs text-amber-700 font-medium bg-amber-50 border border-amber-200/70 rounded-2xl px-4 py-2.5 text-center">{collectError}</p>
+              )}
+              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
+                <div className="flex justify-between"><span className="text-gray-500">Pickup</span><span className="font-semibold">{new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Event Date</span><span className="font-semibold">{new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="font-semibold text-amber-600">{new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
+              </div>
               <div className="print-area">
                 <BookingReceipt tx={createdTx} />
               </div>
-              <button
-                onClick={() => window.print()}
-                className="w-full py-3 rounded-full font-bold text-sm bg-white border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 text-gray-700 no-print"
-              >
-                <Printer size={16} /> Print
-              </button>
             </div>
           )}
         </div>
@@ -1020,10 +1177,27 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
             </div>
           )}
           {step === 4 ? (
-            <button onClick={onClose}
-              className="flex-1 py-2.5 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow">
-              Done
-            </button>
+            <>
+              <button
+                onClick={() => downloadReceiptImage({
+                  tx: createdTx,
+                  itemName: selectedItem?.name,
+                  customerName: customer.name,
+                  pickupLabel: new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
+                  eventLabel: new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
+                  dueLabel: new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
+                  notes: customer.notes || null,
+                  showQr: flags.qr_codes,
+                })}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 no-print"
+              >
+                <Download size={16} /> Save Receipt
+              </button>
+              <button onClick={onClose}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow">
+                Done
+              </button>
+            </>
           ) : (
             <>
               <button onClick={() => requestNavigate('back')} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
@@ -1031,11 +1205,11 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               </button>
               <button
                 onClick={handleNext}
-                disabled={submitting || (step >= 2 && (availability.checking || availability.available === false))}
+                disabled={submitting || collecting || (step >= 2 && (availability.checking || availability.available === false))}
                 className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors shadow flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
-                {step === 3 ? (submitting ? 'Processing…' : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
+                {submitting || collecting ? <Loader2 size={16} className="animate-spin" /> : null}
+                {step === 3 ? (collecting ? 'Collecting…' : submitting ? 'Processing…' : payChannel === 'online' ? 'Create & Collect Online' : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
               </button>
             </>
           )}

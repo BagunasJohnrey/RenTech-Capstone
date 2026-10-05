@@ -29,14 +29,14 @@ export const TERMS_SECTIONS = [
     id: 'booking',
     title: '4. Booking, Downpayment & Payment',
     paragraphs: [
-      'A booking is confirmed only when the required downpayment (minimum ₱200) is received and a confirmation is issued by the platform. The remaining balance is payable at pickup. Payments are processed through our payment partners (Maya or PayMongo) or in-store. Promotional codes, sale prices, and fees shown at checkout are final at the time of booking. In the event of a pricing error, the boutique reserves the right to correct it before the rental is handed over.',
+      'A booking is confirmed only when the required downpayment (minimum ₱200) is received and a confirmation is issued by the platform. The remaining balance is payable at pickup — the item is released only once fully paid, via cash or our online payment partners (Maya or PayMongo). Promotional codes, sale prices, and fees shown at checkout are final at the time of booking. In the event of a pricing error, the boutique reserves the right to correct it before the rental is handed over.',
     ],
   },
   {
     id: 'pickup-return',
     title: '5. Pickup, Return & Late Returns',
     paragraphs: [
-      'Items must be picked up before the scheduled event date and returned the day after the event, unless otherwise agreed. Items are due at the boutique in Balayan, Batangas. Rentals that are not returned on time are considered overdue; the boutique may charge applicable fees, send reminders, and escalate the matter until the item is returned.',
+      'Items must be picked up before the scheduled event date and returned the day after the event, unless otherwise agreed. Items are due at the boutique in Balayan, Batangas. Returns are accepted only when the balance is fully paid; any damage fee assessed at return may leave a new balance, which remains payable after the item is back. Rentals that are not returned on time are considered overdue; the boutique may send reminders and escalate the matter until the item is returned.',
     ],
   },
   {

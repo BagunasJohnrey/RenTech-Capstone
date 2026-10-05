@@ -443,6 +443,14 @@ export async function processReturn(
   if (tx.status === 'Returned') throw new AppError(400, 'Transaction already returned');
   if (tx.status === 'Cancelled') throw new AppError(400, 'Transaction was cancelled');
 
+  // No return until fully paid: the rental balance (fee − amounts actually
+  // credited) must be zero first. Staff settle it via Record Payment (counter
+  // or Online tab), then process the return. Damage assessed at return may
+  // leave a new balance — that stays payable post-return (see recordPayment).
+  if (tx.balance > 0) {
+    throw new AppError(400, `Settle the outstanding balance of ₱${Number(tx.balance).toLocaleString()} before returning`);
+  }
+
   const retDate = new Date(returnDate);
   const fees = await calculateFees(tx.rentalDate, tx.dueDate, retDate, isDamaged, {
     damageFee: damageFeeOverride,
@@ -907,6 +915,14 @@ export async function releaseRental(
   if (tx.status === TransactionStatus.Returned) throw new AppError(400, 'Transaction already returned');
   if (tx.status === TransactionStatus.Cancelled) throw new AppError(400, 'Transaction was cancelled');
 
+  // No release until fully paid: the item leaves the shop only once the
+  // rental balance (fee − amounts actually credited) is zero. Staff collect
+  // it via Record Payment (counter cash or Online tab) — or in the release
+  // sheet itself, which charges first and releases second.
+  if (tx.balance > 0) {
+    throw new AppError(400, `Collect the full payment of ₱${Number(tx.balance).toLocaleString()} before releasing`);
+  }
+
   // Staff discovered the garment doesn't fit during release — flag it
   // immediately so the customer sees the pill and gets notified.
   const alterationPatch = needsAlteration === true
@@ -1078,7 +1094,9 @@ export async function recordPayment(
     include: { payments: true },
   });
   if (!tx) throw new AppError(404, 'Transaction not found');
-  if (tx.status === 'Returned' || tx.status === 'Cancelled') {
+  // Cancelled is terminal. Returned stays payable: a damaged return can leave
+  // a damage-fee balance that the customer settles after the item is back.
+  if (tx.status === 'Cancelled') {
     throw new AppError(400, 'Transaction is already closed');
   }
 
