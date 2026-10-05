@@ -7,7 +7,7 @@ export default function KpiCards({
   thisMonthRev, prevMonthRev, revChange,
   revLabel = 'Monthly Revenue', revSub = 'Collected this month', revVsLabel = null,
   rentedCount, totalItems,
-  smaVals, latestSmaVal, forecastRev,
+  smaVals, latestSmaVal, forecastRev, avgPriceKnown,
   analyticsSummary,
 }) {
   return (
@@ -46,7 +46,11 @@ export default function KpiCards({
         <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">
           {smaVals.length >= 2 ? `${Math.round(latestSmaVal)}` : '—'}
         </h4>
-        {smaVals.length >= 2 && <span className="text-[10px] md:text-xs font-semibold text-gray-500">{fmt(forecastRev)}</span>}
+        {smaVals.length >= 2 && (
+          <span className="text-[10px] md:text-xs font-semibold text-gray-500">
+            {avgPriceKnown ? fmt(forecastRev) : 'price data maturing'}
+          </span>
+        )}
       </div>
       {analyticsSummary && (
         <>

@@ -1,7 +1,8 @@
-// Demand forecast card: SMA chart (monthly/weekly toggle), SMA summary,
-// 3-period outlook table. Pure presentational — series math stays in parent.
+// Demand forecast card: average-trend chart (monthly/weekly toggle) with
+// expected-range band and spike flags, summary tiles, 3-period outlook
+// table. Pure presentational — series math stays in parent.
 import {
-  ComposedChart, BarChart, Line, Bar, XAxis, YAxis, CartesianGrid,
+  ComposedChart, BarChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceDot,
 } from 'recharts';
 import { CustomTooltip, CONFIDENCE_STYLES, SEASON_MARKERS, SHORT_MONTHS, fmt } from './shared';
@@ -11,6 +12,7 @@ export default function DemandForecast({
   activeForecast, hasSma, countChart, validSmaCount,
   forecastData, latestSmaVal, prevSmaVal, smaTrend, smaName,
   seasonDots, projections, avgPriceKnown, avgPrice,
+  spikeNotes, forecastProvisional, forecastErrorPct,
 }) {
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2">
@@ -37,15 +39,31 @@ export default function DemandForecast({
         {weeklyLoading
           ? 'Loading weekly buckets…'
           : showingWeekly
-            ? '3‑week moving average with rental counts'
-            : '3‑month moving average with rental counts'}
+            ? 'Average rental trend with weekly counts'
+            : 'Average rental trend with monthly counts'}
       </p>
-      {activeForecast?.confidenceNote && (
-        <p className="px-5 md:px-7 pb-4">
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${CONFIDENCE_STYLES[activeForecast.confidence] || 'bg-gray-100 text-gray-500'}`}>
-            {activeForecast.confidenceNote}
-          </span>
+      {(activeForecast?.confidenceNote || forecastProvisional) && (
+        <p className="px-5 md:px-7 pb-4 flex flex-wrap gap-1.5">
+          {activeForecast?.confidenceNote && (
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${CONFIDENCE_STYLES[activeForecast.confidence] || 'bg-gray-100 text-gray-500'}`}>
+              {activeForecast.confidenceNote}
+            </span>
+          )}
+          {forecastProvisional && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700">
+              Early forecast — still learning
+            </span>
+          )}
         </p>
+      )}
+      {spikeNotes?.length > 0 && (
+        <div className="px-5 md:px-7 pb-3 space-y-1">
+          {spikeNotes.map((s) => (
+            <p key={s.label} className="text-[11px] font-semibold text-amber-700">
+              ⚠ {s.label} had a one-time spike — excluded from the average so it doesn’t inflate the forecast.
+            </p>
+          ))}
+        </div>
       )}
       {!hasSma ? (
         <div>
@@ -71,11 +89,16 @@ export default function DemandForecast({
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
                   const month = forecastData.find(d => d.label === label);
+                  // The expected-range band areas share the tooltip payload —
+                  // hide them so hover shows only real series, never raw
+                  // band math.
+                  const rows = payload.filter((p) => p.name === 'Rentals' || p.name === smaName);
+                  if (rows.length === 0) return null;
                   return (
                     <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm space-y-1">
                       <p className="font-bold text-gray-900">{month?.full || label}</p>
-                      {payload.map((p, i) => (
-                        p.value !== null && <p key={i} className="text-gray-600" style={{ color: p.color }}>
+                      {rows.map((p, i) => (
+                        <p key={i} className="text-gray-600" style={{ color: p.color }}>
                           {p.name}: {p.name === smaName ? Number(p.value).toFixed(1) : p.value}
                         </p>
                       ))}
@@ -85,6 +108,11 @@ export default function DemandForecast({
                 }}
               />
               <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={48} fill="#1f2937" fillOpacity={0.35} />
+              {/* Expected-range band: invisible base + visible span stack into
+                  the shaded polygon behind the trend line. Zero-span when the
+                  error is unknown, so nothing renders then. */}
+              <Area dataKey="bandLo" stackId="band" stroke="none" fill="none" legendType="none" />
+              <Area dataKey="bandSpan" name="Expected range" stackId="band" stroke="none" fill="rgba(191,74,83,.18)" legendType="none" />
               <Line type="monotone" dataKey="sma" name={smaName} stroke="#bf4a53" strokeWidth={3}
                 dot={{ r: 5, fill: '#bf4a53', strokeWidth: 0 }}
                 activeDot={{ r: 8, fill: '#bf4a53', stroke: '#fff', strokeWidth: 2 }}
@@ -95,6 +123,20 @@ export default function DemandForecast({
               ))}
             </ComposedChart>
           </ResponsiveContainer>
+
+          <div className="flex items-center justify-center gap-4 pb-1 text-xs text-gray-700 font-semibold">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded bg-gray-800/60" aria-hidden="true" /> Rentals
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-[3px] rounded-full bg-[#bf4a53]" aria-hidden="true" /> Average trend
+            </span>
+            {forecastErrorPct !== null && forecastErrorPct !== undefined && (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-3 h-2.5 rounded-sm border border-[#bf4a53] bg-[#bf4a53]/25" aria-hidden="true" /> Expected range
+              </span>
+            )}
+          </div>
 
           {seasonDots.length > 0 && (
             <p className="text-[11px] text-gray-400 text-center px-7 -mt-1">
@@ -123,7 +165,7 @@ export default function DemandForecast({
 
           {/* 3-period outlook table (projected rentals + peso estimate) */}
           {projections.length > 0 && (
-            <div className="px-5 md:px-7 pb-5 md:pb-6">
+            <div className="px-5 md:px-7 pb-2 md:pb-3">
               <div className="border border-dashed border-[#bf4a53]/30 rounded-2xl overflow-hidden">
                 <p className="text-[11px] font-bold text-[#bf4a53] uppercase tracking-wide px-4 pt-3">Next 3 periods · projected</p>
                 <table className="w-full text-sm mt-1">
@@ -149,6 +191,10 @@ export default function DemandForecast({
               </div>
             </div>
           )}
+          <p className="text-[11px] text-gray-400 italic px-5 md:px-7 pb-5 md:pb-6">
+            Counts are actual rentals; the trend line averages them
+            {forecastErrorPct !== null && forecastErrorPct !== undefined ? ` — shaded band shows the expected range (±${forecastErrorPct}%, backtested)` : ''}.
+          </p>
         </div>
       )}
     </div>

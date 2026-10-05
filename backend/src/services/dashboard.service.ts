@@ -1,6 +1,6 @@
 import { prisma } from '../config/database.js';
 import { TransactionStatus } from '@prisma/client';
-import { sma } from '../utils/sma.js';
+import { sma, smaCapped, mape } from '../utils/sma.js';
 import { cacheOrCompute, setDataCacheWarmer } from '../utils/ttlCache.js';
 import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
 
@@ -238,6 +238,37 @@ function forecastConfidence(historyMonths: number): 'low' | 'medium' | 'high' {
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+// One honest series builder shared by the monthly and weekly forecast paths:
+// adaptive window (thin histories average over what exists), spike-capped
+// values with user-facing flags, and a backtested error band. Bars elsewhere
+// always show TRUE counts — only the average uses capped values.
+function buildForecastSeries(counts: number[], requestedPeriod: number) {
+  const nNonZero = counts.filter((c) => c > 0).length;
+  const effectivePeriod = Math.max(1, Math.min(requestedPeriod, Math.max(1, nNonZero)));
+  const provisional = nNonZero < 3;
+  const { values, flags } = smaCapped(counts, effectivePeriod);
+
+  // Backtest: one-step-ahead residuals over the trailing min(8, n) points —
+  // each point predicted by the average known *before* it. Zero-actual
+  // periods are skipped (no division by zero).
+  const k = Math.min(8, counts.length);
+  const actual: number[] = [];
+  const predicted: (number | null)[] = [];
+  for (let i = Math.max(1, counts.length - k); i < counts.length; i++) {
+    actual.push(counts[i]);
+    predicted.push(values[i - 1] ?? null);
+  }
+  const errorPct = mape(actual, predicted);
+
+  // Expected-range band: ±error around each average point (null where the
+  // average itself is null). Rendered as the shaded polygon behind the line.
+  const e = errorPct === null ? 0 : errorPct / 100;
+  const lo = values.map((v) => (v === null ? null : round1(v * (1 - e))));
+  const hi = values.map((v) => (v === null ? null : round1(v * (1 + e))));
+
+  return { values, flags, errorPct, band: { lo, hi }, provisional, effectivePeriod };
+}
+
 // Flat-SMA projection: the last complete moving average carried forward.
 // Honest for an SMA model (it predicts "about the recent average") and the
 // UI labels it as projected, never as observed data.
@@ -304,7 +335,7 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
         const end = i + 1 < weeks.length ? weeks[i + 1].start : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         return rows.filter(t => t.createdAt >= w.start && t.createdAt < end).length;
       });
-      const smaValues = sma(weeklyCounts, period);
+      const series = buildForecastSeries(weeklyCounts, period);
       const nextLabels = [1, 2, 3].map(i => {
         const d = new Date(weeks[weeks.length - 1].start);
         d.setDate(d.getDate() + i * 7);
@@ -315,14 +346,18 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       return {
         labels: weeks.map(w => w.label),
         counts: weeklyCounts,
-        sma: smaValues,
-        period,
+        sma: series.values,
+        flags: series.flags,
+        errorPct: series.errorPct,
+        band: series.band,
+        provisional: series.provisional,
+        period: series.effectivePeriod,
         granularity,
-        projections: projectForward(smaValues, weeks.map(w => w.label), nextLabels),
+        projections: projectForward(series.values, weeks.map(w => w.label), nextLabels),
         byCategory: [],
         historyMonths,
         confidence,
-        confidenceNote: `Based on ${historyMonths} month${historyMonths === 1 ? '' : 's'} of history · ${confidence} confidence`,
+        confidenceNote: `Based on ${historyMonths} month${historyMonths === 1 ? '' : 's'} of history · ${confidence} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
       };
     }
 
@@ -330,10 +365,10 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       rows.filter(t => t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1).length
     );
 
-    const smaValues = sma(monthlyCounts, period);
+    const series = buildForecastSeries(monthlyCounts, period);
     const last = months[months.length - 1];
     const projections = projectForward(
-      smaValues,
+      series.values,
       months.map(m => m.label),
       last ? nextMonthLabels(last.year, last.month, FORECAST_HORIZON).map(x => x.label) : []
     );
@@ -376,14 +411,18 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
     return {
       labels: months.map(m => m.label),
       counts: monthlyCounts,
-      sma: smaValues,
-      period,
+      sma: series.values,
+      flags: series.flags,
+      errorPct: series.errorPct,
+      band: series.band,
+      provisional: series.provisional,
+      period: series.effectivePeriod,
       granularity,
       projections,
       byCategory,
       historyMonths: months.length,
       confidence: forecastConfidence(months.length),
-      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${forecastConfidence(months.length)} confidence`,
+      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${forecastConfidence(months.length)} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
     };
   });
 }

@@ -23,7 +23,9 @@ export const CustomTooltip = ({ active, payload, label }) => {
 };
 
 // Revenue-chart tooltip: shows the full "Mar 2026" label and clearly marks the
-// projection bar so it isn't mistaken for actual revenue.
+// projection bar so it isn't mistaken for actual revenue. In-progress weeks
+// get their own line so a partial week never reads as a slow week, and
+// projections with a range show it in plain words ("usually between ₱X–₱Y").
 export const RevenueTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
@@ -31,6 +33,10 @@ export const RevenueTooltip = ({ active, payload }) => {
     <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
       <p className="font-bold text-gray-900">{p.full}{p.forecast ? ' (projected)' : ''}</p>
       <p className="text-gray-600">{p.rev <= 0 && !p.forecast ? 'No revenue' : fmt(p.rev)}</p>
+      {p.wip && !p.forecast && <p className="text-[11px] text-gray-400 italic">Still ongoing — naturally lower</p>}
+      {p.forecast && Array.isArray(p.whisker) && p.whisker.length === 2 && (
+        <p className="text-[11px] text-gray-400 italic">Usually between {fmt(p.whisker[0])}–{fmt(p.whisker[1])}</p>
+      )}
     </div>
   );
 };
