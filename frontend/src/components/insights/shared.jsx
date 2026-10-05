@@ -54,6 +54,19 @@ export const SEASON_MARKERS = {
   0: 'New Year', 1: "Valentine's", 2: 'Graduation', 5: 'Wedding season',
   9: 'Halloween', 11: 'Christmas · Wedding season',
 };
+
+// Next seasonal trend at or after the current month (wraps to January when
+// past December). Used so the chart caption + explainer show only the one
+// upcoming trend instead of every marker on the chart.
+export function getUpcomingSeason(now = new Date()) {
+  const m = now.getMonth();
+  const keys = Object.keys(SEASON_MARKERS).map(Number).sort((a, b) => a - b);
+  for (const k of keys) {
+    if (k >= m) return { monthIndex: k, monthName: SHORT_MONTHS[k], label: SEASON_MARKERS[k], isNow: k === m };
+  }
+  const first = keys[0];
+  return { monthIndex: first, monthName: SHORT_MONTHS[first], label: SEASON_MARKERS[first], isNow: false };
+}
 export const CONFIDENCE_STYLES = {
   low: 'bg-amber-50 text-amber-700',
   medium: 'bg-blue-50 text-blue-700',

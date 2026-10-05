@@ -9,7 +9,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceDot,
 } from 'recharts';
 import { Sparkles } from 'lucide-react';
-import { CustomTooltip, CONFIDENCE_STYLES, SEASON_MARKERS, SHORT_MONTHS, fmt } from './shared';
+import { CustomTooltip, CONFIDENCE_STYLES, SHORT_MONTHS, fmt, getUpcomingSeason } from './shared';
 
 export default function DemandForecast({
   granularity, setGranularity, loadWeeklyForecast, weeklyLoading, showingWeekly,
@@ -225,12 +225,15 @@ export default function DemandForecast({
             )}
           </div>
 
-          {seasonDots.length > 0 && (
+          {seasonDots.length > 0 && (() => {
+            const upcoming = getUpcomingSeason();
+            return (
             <p className="text-[11px] text-gray-400 text-center px-7 -mt-1">
               <span className="inline-block w-2 h-2 rounded-full bg-[#bf4a53] mr-1.5" aria-hidden="true" />
-              {[...new Set(seasonDots.map((d) => SEASON_MARKERS[SHORT_MONTHS.indexOf(d.full.split(' ')[0])]))].join(' · ')}
+              Upcoming trend{upcoming.isNow ? ' this month' : ` (${upcoming.monthName})`}: {upcoming.label}
             </p>
-          )}
+            );
+          })()}
 
           {/* SMA Summary — hidden while explaining (the words below say it) */}
           {!explaining && (
@@ -327,6 +330,22 @@ export default function DemandForecast({
                     </p>
                   </li>
                 )}
+                {(() => {
+                  const upcoming = getUpcomingSeason();
+                  const seasonNum = 2 + (projRows.length > 0 ? 1 : 0) + (forecastErrorPct !== null && forecastErrorPct !== undefined ? 1 : 0);
+                  if (!upcoming) return null;
+                  return (
+                  <li className="flex gap-3">
+                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">{seasonNum}</span>
+                    <p className="text-sm text-gray-700 leading-relaxed">
+                      <strong className="text-gray-900">
+                        Upcoming trend{upcoming.isNow ? ' this month' : ` (${upcoming.monthName})`}: {upcoming.label}.
+                      </strong>{' '}
+                      Expect more requests for themed outfits around this season — keep matching pieces clean and ready.
+                    </p>
+                  </li>
+                  );
+                })()}
                 {spikeNotes?.length > 0 && (
                   <li className="flex gap-3">
                     <span className="shrink-0 w-6 h-6 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center">!</span>
