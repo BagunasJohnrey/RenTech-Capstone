@@ -569,6 +569,14 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     count: null,
     sma: latestSmaVal,
     forecast: true,
+    // Carry the band forward so the shaded range reaches the projection
+    // point too — otherwise the ribbon visibly stops one tick early.
+    ...(latestSmaVal !== null && latestSmaVal !== undefined && forecastErrorPct !== null && forecastErrorPct !== undefined
+      ? {
+          bandLo: Math.max(0, Math.round(latestSmaVal * (1 - forecastErrorPct / 100) * 100) / 100),
+          bandSpan: Math.round(latestSmaVal * (2 * forecastErrorPct / 100) * 100) / 100,
+        }
+      : { bandLo: null, bandSpan: null }),
   });
   const validSmaCount = forecastData.filter(d => d.sma !== null && !d.forecast).length;
   const hasSma = validSmaCount >= 2;

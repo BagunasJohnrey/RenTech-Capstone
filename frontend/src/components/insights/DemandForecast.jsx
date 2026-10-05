@@ -8,6 +8,7 @@ import {
   ComposedChart, BarChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceDot,
 } from 'recharts';
+import { Sparkles } from 'lucide-react';
 import { CustomTooltip, CONFIDENCE_STYLES, SEASON_MARKERS, SHORT_MONTHS, fmt } from './shared';
 
 export default function DemandForecast({
@@ -59,6 +60,9 @@ export default function DemandForecast({
   );
   const maxProj = projRows.length > 0 ? Math.max(...projRows.map((p) => p.value)) : 0;
   const trendWord = smaTrend === 'up' ? 'rising' : smaTrend === 'down' ? 'slowing a little' : 'steady';
+  // History depth in the active unit: weekly spans 12 weeks, monthly spans
+  // the real month count — never "4 months of history" for a weekly view.
+  const histDepth = showingWeekly ? 'the last 12 weeks' : histMonths ? `${histMonths} month${histMonths === 1 ? '' : 's'}` : null;
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2">
       <div className="flex items-center justify-between gap-3 px-5 md:px-7 pt-5 md:pt-7 pb-2">
@@ -68,11 +72,11 @@ export default function DemandForecast({
             type="button"
             onClick={() => setExplaining((v) => !v)}
             aria-pressed={explaining}
-            className={`inline-flex items-center gap-1 px-3 min-h-[32px] rounded-full text-[11px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
-              explaining ? 'bg-gray-900 text-white' : 'bg-[#bf4a53]/10 text-[#bf4a53] hover:bg-[#bf4a53]/15'
+            className={`inline-flex items-center gap-1.5 px-3.5 min-h-[32px] rounded-full text-[11px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
+              explaining ? 'bg-gray-900 text-white hover:bg-gray-700' : 'bg-gray-900 text-white hover:bg-gray-700'
             }`}
           >
-            ✨ {explaining ? 'Show details' : 'Explain'}
+            <Sparkles size={13} /> {explaining ? 'Hide explanation' : 'Explain this forecast'}
           </button>
           <div role="tablist" aria-label="Forecast granularity" className="flex gap-1 bg-gray-100 rounded-xl p-1 shrink-0">
             {['monthly', 'weekly'].map((g) => (
@@ -278,47 +282,71 @@ export default function DemandForecast({
           )}
           </>)}
           {/* Plain-words explainer — deterministic template over the numbers
-              already on screen (no AI call, nothing to hallucinate). */}
+              already on screen (no AI call, nothing to hallucinate). Numbered
+              rows mirror the tiles + table above so each line is checkable. */}
           {explaining && (
-            <div className="mx-5 md:mx-7 mb-5 md:mb-6 rounded-2xl bg-blue-50/70 border border-blue-100 p-5 space-y-3">
-              <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">In plain words</p>
-              <div className="space-y-2.5 text-sm text-gray-700 leading-relaxed">
-                <p>
-                  <strong className="text-gray-900">Demand is {trendWord}.</strong>{' '}
-                  Recent {showingWeekly ? 'weeks' : 'months'} average {latestSmaVal.toFixed(1)} rentals,{' '}
-                  {smaTrend === 'stable'
-                    ? 'about the same as before.'
-                    : `${smaTrend === 'up' ? 'up' : 'down'} from ${prevSmaVal.toFixed(1)} before that.`}
-                  {histMonths ? ` Based on ${histMonths} month${histMonths === 1 ? '' : 's'} of history.` : ''}
-                </p>
-                {projRows.length > 0 && (
-                  <p>
-                    <strong className="text-gray-900">
-                      Expect about {maxProj} rental{maxProj === 1 ? '' : 's'}
-                      {projRows.length > 1 ? ` per period (${projRows.map((p) => p.label).join(', ')})` : ` in ${projRows[0].label}`}
-                    </strong>
-                    {avgPriceKnown && `, worth roughly ${fmt(maxProj * avgPrice)} each`}.
+            <div className="mx-5 md:mx-7 mb-5 md:mb-6 rounded-2xl border border-gray-100 bg-gray-50/60 p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center">
+                  <Sparkles size={15} />
+                </span>
+                <p className="font-bold text-sm text-gray-900">What this forecast means</p>
+              </div>
+              <ol className="space-y-3">
+                <li className="flex gap-3">
+                  <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">1</span>
+                  <p className="text-sm text-gray-700 leading-relaxed">
+                    <strong className="text-gray-900">Demand is {trendWord}.</strong>{' '}
+                    The last {showingWeekly ? 'few weeks' : 'few months'} average {latestSmaVal.toFixed(1)} rentals,{' '}
+                    {smaTrend === 'stable'
+                      ? 'about the same as before — no real direction.'
+                      : `${smaTrend === 'up' ? 'up' : 'down'} from ${prevSmaVal.toFixed(1)} the window before.`}{' '}
+                    {histDepth ? `Based on ${histDepth} of history.` : ''}
                   </p>
+                </li>
+                {projRows.length > 0 && (
+                  <li className="flex gap-3">
+                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">2</span>
+                    <p className="text-sm text-gray-700 leading-relaxed">
+                      <strong className="text-gray-900">
+                        Expect about {maxProj} rental{maxProj === 1 ? '' : 's'} per upcoming period
+                      </strong>{' '}
+                      ({projRows.map((p) => p.label).join(' · ')})
+                      {avgPriceKnown ? ` — roughly ${fmt(maxProj * avgPrice)} in revenue each.` : '.'}
+                    </p>
+                  </li>
                 )}
                 {forecastErrorPct !== null && forecastErrorPct !== undefined && (
-                  <p>
-                    <strong className="text-gray-900">Take the shaded band seriously{forecastErrorPct >= 50 ? ' — it is wide' : ''}.</strong>{' '}
-                    Past forecasts were off by ±{forecastErrorPct}%, so the real number could land much higher or lower. Plan stock for the top of the range, not the middle.
-                  </p>
+                  <li className="flex gap-3">
+                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">3</span>
+                    <p className="text-sm text-gray-700 leading-relaxed">
+                      <strong className="text-gray-900">
+                        Reality usually lands within ±{forecastErrorPct}% of that number{forecastErrorPct >= 50 ? ' — a wide band' : ''}.
+                      </strong>{' '}
+                      That range comes from backtesting past forecasts, not guessing. Plan stock for the top of it, not the middle.
+                    </p>
+                  </li>
                 )}
                 {spikeNotes?.length > 0 && (
-                  <p>
-                    <strong className="text-gray-900">{spikeNotes.length === 1 ? 'That spike doesn’t count.' : 'Those spikes don’t count.'}</strong>{' '}
-                    {spikeNotes.map((s) => s.label).join(', ')} {spikeNotes.length === 1 ? 'was' : 'were'} one-time bulk
-                    booking{spikeNotes.length === 1 ? '' : 's'}, left out of the average — otherwise every future month would look bigger than it really is.
-                  </p>
+                  <li className="flex gap-3">
+                    <span className="shrink-0 w-6 h-6 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center">!</span>
+                    <p className="text-sm text-gray-700 leading-relaxed">
+                      <strong className="text-gray-900">{spikeNotes.map((s) => s.label).join(', ')} doesn’t count.</strong>{' '}
+                      One-time bulk booking{spikeNotes.length === 1 ? '' : 's'}, left out of the average — otherwise every future period would look bigger than it really is.
+                    </p>
+                  </li>
                 )}
-              </div>
-              <div className="bg-white rounded-xl px-4 py-3 text-sm text-gray-700">
-                <strong className="text-gray-900">Suggested action:</strong>{' '}
-                {projRows.length > 0
-                  ? `keep at least ${Math.max(1, Math.ceil(maxProj) + 2)} pieces ready per period${smaTrend === 'down' ? ', and push a promo if weekly bookings dip' : ''}.`
-                  : 'collect a few more periods of bookings first — the forecast is still learning.'}
+              </ol>
+              <div className="bg-white border border-[#bf4a53]/20 rounded-xl px-4 py-3 text-sm text-gray-700 flex items-start gap-2.5">
+                <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
+                  <Sparkles size={14} />
+                </span>
+                <p>
+                  <strong className="text-gray-900">Suggested action: </strong>
+                  {projRows.length > 0
+                    ? `keep at least ${Math.max(1, Math.ceil(maxProj * (1 + (forecastErrorPct ?? 0) / 100)))} pieces ready per period (top of the expected range)${smaTrend === 'down' ? ', and push a promo if bookings dip further' : ''}.`
+                    : 'collect a few more periods of bookings first — the forecast is still learning.'}
+                </p>
               </div>
             </div>
           )}
