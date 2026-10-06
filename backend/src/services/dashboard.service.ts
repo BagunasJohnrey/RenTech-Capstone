@@ -9,6 +9,14 @@ import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
 // return / payment pays the full query cost; with it, that visit is already
 // a warm cache hit. Self-registered here (dashboard.service is loaded by the
 // routes) so ttlCache doesn't have to import us (circular).
+//
+// The staff list queries (transactions + raw inventory full lists) ride the
+// same warmer: they share the clearDataCache() invalidation, so without a
+// refill the first Tasks/Dashboard visit after any mutation would pay the
+// full cold cost again. Warmed through the public functions so the real
+// cache keys (incl. the isHotPath/isFullList gates) are exercised, not
+// bypassed. Guest-catalog (effective-status) lists are NOT warmed — they
+// bypass the cache by design (see listItems).
 setDataCacheWarmer(() => {
   return Promise.allSettled([
     getKpis(),
@@ -16,6 +24,13 @@ setDataCacheWarmer(() => {
     getInsights({}),
     getForecast(3),
     getInventoryAnalytics(),
+    import('./transactions.service.js').then((m) => m.listTransactions({ role: 'Staff' })),
+    import('./inventory.service.js').then((m) =>
+      Promise.all([
+        m.listItems(undefined, undefined, undefined, { rawStatus: true, exclude: ['Deleted'] }),
+        m.listItems(undefined, undefined, undefined, { rawStatus: true }),
+      ])
+    ),
   ]).then(() => {});
 });
 
@@ -54,6 +69,8 @@ export async function getKpis(filter?: { start?: Date; end?: Date }) {
 }
 
 async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
   const [
     activeRentals,
     overdueReturns,
@@ -61,6 +78,7 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     cancelledCount,
     damagedCount,
     periodRevenue,
+    todayRevenue,
     totalItems,
     availableItems,
   ] = await Promise.all([
@@ -70,6 +88,10 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     prisma.transaction.count({ where: { status: 'Cancelled' } }),
     prisma.inventoryItem.count({ where: { status: 'OutOfService' } }),
     filter?.start ? aggregateRevenueFrom(filter.start, filter.end) : aggregateMonthlyRevenue(),
+    // "Collected today" pill (staff Today-at-a-Glance + admin Revenue
+    // Trend header): collected payments since midnight, same ledger
+    // definition as monthlyRevenue — not booked fees.
+    aggregateRevenueFrom(todayStart),
     // Deleted excluded: archived items are not rentable stock, so dashboard
     // totals ("N of M items free") and utilizationRate read on live stock.
     prisma.inventoryItem.count({ where: { status: { not: 'Deleted' } } }),
@@ -98,6 +120,34 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
   const inUseItems = totalItems - availableItems;
   const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
+  // Revenue trend: one collected-payments series over the same month
+  // buckets the admin Revenue Trend chart renders (last 6 months including
+  // the current one). Previously the chart summed booked rental fees from the
+  // transaction list client-side, which disagreed with this payments-based
+  // monthlyRevenue (e.g. card showed a Sept-heavy total while the chart
+  // spiked Oct on unpaid bookings). Same definition everywhere now.
+  const now = new Date();
+  const trendStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+  const trendEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const trendPayments = await prisma.payment.findMany({
+    where: {
+      status: { in: COLLECTED_PAYMENT_STATUS },
+      createdAt: { gte: trendStart, lt: trendEnd },
+    },
+    select: { amount: true, createdAt: true },
+  });
+  const revenueTrend = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const label = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+    const revenue = trendPayments
+      .filter(
+        (p) => p.createdAt.getFullYear() === d.getFullYear() && p.createdAt.getMonth() === d.getMonth()
+      )
+      .reduce((sum, p) => sum + p.amount, 0);
+    revenueTrend.push({ label, revenue });
+  }
+
   return {
     activeRentals,
     overdueReturns,
@@ -106,6 +156,8 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     damagedItems: damagedCount,
     monthlyRevenue: periodRevenue,
     prevMonthRevenue: prevRevenue,
+    todayRevenue,
+    revenueTrend,
     totalRevenue,
     totalItems,
     availableItems,
@@ -195,10 +247,18 @@ async function getTodayTasksUncached() {
     where: { status: 'Cleaning' },
   });
 
+  // Collected-today pill (staff Today-at-a-Glance + admin Revenue Trend
+  // header): same ledger definition as monthlyRevenue. Staff never fetch
+  // /kpis, so it rides the today-digest both roles already load.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayRevenue = await aggregateRevenueFrom(todayStart);
+
   return {
     dueToday,
     overdue,
     inCleaning,
+    todayRevenue,
   };
 }
 

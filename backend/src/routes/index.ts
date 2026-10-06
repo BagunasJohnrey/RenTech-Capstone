@@ -16,8 +16,36 @@ import exportRoutes from './export.routes.js';
 
 const router = Router();
 
-router.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Storage self-check: verifies the LIVE backend's own credentials can list
+// the configured private bucket. Catches the stale-env class of bug fast:
+// the file objects may exist in the bucket while this process signs against
+// a wrong/stale bucket (or with a stale key) and 404s every download.
+// e.g. GET /api/health?check=storage → { status:'ok', storage:{…} }
+router.get('/health', async (req, res) => {
+  const base: Record<string, unknown> = { status: 'ok', timestamp: new Date().toISOString() };
+  if (String(req.query.check ?? '') !== 'storage') {
+    res.json(base);
+    return;
+  }
+  try {
+    const [{ supabaseAdmin }, storageService] = await Promise.all([
+      import('../config/supabase.js'),
+      import('../services/storage.service.js'),
+    ]);
+    const probePath = 'rental/';
+    // Private bucket for `rental/` keys per bucketFor() routing.
+    const probeBucket = storageService.bucketFor(probePath);
+    const { data, error } = await supabaseAdmin.storage.from(probeBucket).list('rental', { limit: 1 });
+    const info = {
+      bucket: probeBucket,
+      configuredBucket: process.env.STORAGE_BUCKET || '(default rentech-images)',
+      listError: error ? String((error as { message?: unknown }).message ?? error) : null,
+      sampleEntries: Array.isArray(data) ? data.length : 0,
+    };
+    res.json({ ...base, storage: info });
+  } catch (err) {
+    res.json({ ...base, storage: { error: (err as Error)?.message ?? String(err) } });
+  }
 });
 
 router.use('/auth', authRoutes);

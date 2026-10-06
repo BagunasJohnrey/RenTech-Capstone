@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 // qrcode.toDataURL promise style
 import { assertItemAvailable } from '../utils/availability.js';
 import { createAuditLog } from '../utils/audit.js';
-import { clearDataCache } from '../utils/ttlCache.js';
+import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
@@ -414,7 +414,7 @@ export async function getTransactionByBookingCode(code: string) {
 
 export async function listTransactions(params: {
   role: string;
-  profileId: string;
+  profileId?: string;
   status?: string;
   limit?: number;
   offset?: number;
@@ -422,6 +422,7 @@ export async function listTransactions(params: {
   const where: Record<string, unknown> = {};
 
   if (params.role === 'Customer') {
+    if (!params.profileId) throw new Error('profileId is required for customer transaction lists');
     where.customerId = params.profileId;
   }
 
@@ -429,23 +430,43 @@ export async function listTransactions(params: {
     where.status = params.status;
   }
 
-  const [transactions, total] = await Promise.all([
-    prisma.transaction.findMany({
-      where,
-        include: {
-          customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
-          item: { select: { id: true, name: true, category: true } },
-          assistedBy: { select: { id: true, name: true } },
-          releasedBy: { select: { id: true, name: true } },
-        },
-      orderBy: { createdAt: 'desc' },
-      take: params.limit ?? 500,
-      skip: params.offset || 0,
-    }),
-    prisma.transaction.count({ where }),
-  ]);
+  // Perf: this is the single heaviest staff-screen query (~10-15s for ~300
+  // rows against the remote pooler — the pooler serializes payloads, so bytes
+  // matter as much as round trips). Three cuts vs the old shape:
+  //   - assistedBy/releasedBy includes dropped: the staff detail timeline
+  //     resolves staff names from /:id/audits, and the detail modal enriches
+  //     via getById — list rows never rendered these objects.
+  //   - customer.email dropped: no list row renders it (call/SMS buttons use
+  //     the phone). The detail modal carries email via its own fetch.
+  //   - the `total` COUNT round-trip is dropped: it scanned the whole table
+  //     for a number no screen renders (pagination is client-side over the
+  //     list); total is now the returned row count.
+  // Unfiltered staff lists (the hot path — Dashboard + Tasks + History all
+  // mount it) are cached with the same TTL discipline as the dashboard data.
+  // Every mutation path (booking/return/cancel/release/payment/status/scheduler
+  // flag flips via clearDataCache) invalidates, so the list is never older
+  // than the latest change. Filtered/paginated/customer views bypass the
+  // cache and hit the DB directly so they stay exact.
+  const isHotPath = params.role !== 'Customer' && !params.status && !params.offset && (params.limit ?? 500) >= 500;
+  const compute = () => listTransactionsUncached(where, params.limit ?? 500, params.offset || 0);
+  const transactions = isHotPath
+    ? await cacheOrCompute('transactions:staff:full', compute)
+    : await compute();
 
-  return { transactions, total };
+  return { transactions, total: transactions.length };
+}
+
+async function listTransactionsUncached(where: Record<string, unknown>, take: number, skip: number) {
+  return prisma.transaction.findMany({
+    where,
+    include: {
+      customer: { select: { id: true, name: true, phone: true, address: true } },
+      item: { select: { id: true, name: true, category: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take,
+    skip,
+  });
 }
 
 export async function processReturn(

@@ -13,7 +13,7 @@ import { sortByCategory } from '../utils/categorySort';
 import { tabPath } from '../utils/routing';
 import { todayYmd } from '../utils/format';
 
-export default function DashboardView({ role, transactions, inventory, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook, onNavigateDetail }) {
+export default function DashboardView({ role, transactions, inventory, transactionsLoading, inventoryLoading, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook, onNavigateDetail }) {
   const navigate = useNavigate();
   // Deep-link a View All into a pre-filtered tab (same ?status= pattern the
   // Tasks queues use) instead of dumping the user on an unfiltered page.
@@ -287,12 +287,25 @@ export default function DashboardView({ role, transactions, inventory, customerI
         tx.status === 'Active' && tx.dueDate && tx.dueDate.split('T')[0] <= todayStr
       ).slice(0, 3);
 
-  // Revenue is rentalFee (transactions have no `amount` field).
-  const revenueToday = transactions
+  // Collected today: server-computed from the payments ledger (same
+  // definition as the Monthly Revenue card). Today-digest first (both staff
+  // + admin load it), then admin KPIs, then the legacy client-side fallback.
+  // The old derivation summed BOOKED fees, which read ₱0 on days with no new
+  // bookings even when cash was collected — and counted unpaid bookings.
+  const revenueToday = todayStats?.todayRevenue ?? kpis?.todayRevenue ?? transactions
     .filter(tx => tx.date && new Date(tx.date).toDateString() === today.toDateString())
     .reduce((sum, tx) => sum + (tx.rentalFee || 0), 0);
 
-  // Staff dashboard
+  // Staff dashboard — same skeleton-gate discipline as the admin branch
+  // below. Without it the first paint derives KPIs from the hooks' initial
+  // empty arrays and flashes "No returns due today / Nothing urgent" before
+  // the server data arrives (false-empty bug).
+  const staffInitialLoad =
+    (transactionsLoading && (!transactions || transactions.length === 0)) ||
+    (inventoryLoading && (!inventory || inventory.length === 0));
+  if (role === 'Staff' && staffInitialLoad) {
+    return <DashboardSkeleton />;
+  }
   if (role === 'Staff') {
     const overdueCount = todayStats ? todayStats.overdue.length : transactions.filter(tx =>
       tx.status === 'Overdue' || (tx.status === 'Active' && new Date(tx.dueDate || tx.date) < dayStart)
@@ -603,16 +616,21 @@ export default function DashboardView({ role, transactions, inventory, customerI
   const overdueRate = k.overdueRate ?? (overdueReturns + returnedCount > 0 ? Math.round((overdueReturns / (overdueReturns + returnedCount)) * 100) : 0);
   const damagedItems = k.damagedItems ?? inventory.filter(i => i.status === 'OutOfService').length;
 
-  const revByMonth = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    const label = d.toLocaleString('en-US', { month: 'short' });
-    const txs = transactions.filter(tx => {
-      const txd = new Date(tx.date);
-      return txd.getFullYear() === d.getFullYear() && txd.getMonth() === d.getMonth();
-    });
-    revByMonth.push({ label, revenue: txs.reduce((s, tx) => s + (tx.rentalFee || 0), 0) });
-  }
+  // Revenue Trend: collected payments only, from the server (same definition
+  // as the Monthly Revenue card). The old client-side sum of booked rental
+  // fees disagreed with the card (fees ≠ money collected) — e.g. Oct spiking
+  // on unpaid bookings while the card showed Sept's real collections.
+  const revByMonth = Array.isArray(k.revenueTrend) && k.revenueTrend.length > 0
+    ? k.revenueTrend
+    : (() => {
+        const fallback = [];
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+          const label = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+          fallback.push({ label, revenue: 0 });
+        }
+        return fallback;
+      })();
   // Cap the visual scale so an extreme outlier month doesn't squash every other
   // month into invisible slivers. =5x the median of non-zero months, the bar
   // is rendered at 60% height and marked as "capped"; the label still shows the
@@ -695,12 +713,12 @@ export default function DashboardView({ role, transactions, inventory, customerI
               <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">₱{revenueToday.toLocaleString()} collected today</span>
             </div>
             <div className="h-36 flex items-end justify-between gap-2">
-              {revByMonth.map((m) => {
+              {revByMonth.map((m, idx) => {
                 const isEmpty = m.revenue <= 0;
                 const capped = isOutlier(m.revenue);
                 const pct = (m.revenue / visualCap) * 100;
                 return (
-                  <div key={m.label} title={capped ? `₱${m.revenue.toLocaleString()} (bar truncated — outlier month)` : `₱${m.revenue.toLocaleString()}`}
+                  <div key={`${m.label}-${idx}`} title={capped ? `₱${m.revenue.toLocaleString()} (bar truncated — outlier month)` : `₱${m.revenue.toLocaleString()}`}
                     className="flex-1 flex flex-col items-center justify-end h-full group">
                     <span className={`text-[10px] font-semibold mb-1 transition-opacity ${
                       isEmpty ? 'text-gray-300' : 'text-gray-500 opacity-0 group-hover:opacity-100'}`}>

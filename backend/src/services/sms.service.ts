@@ -254,6 +254,10 @@ export async function notifyOverdue3Days() {
     }
   }
 
+  // Escalation runs against Active rows too — a status flip to Overdue
+  // changes dashboard KPIs, so refresh cached dashboard data.
+  if (results.length > 0) clearDataCache();
+
   return results;
 }
 

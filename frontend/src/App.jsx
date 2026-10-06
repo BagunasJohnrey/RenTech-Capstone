@@ -941,6 +941,8 @@ export default function RentechApp() {
                 role={viewRole}
                 transactions={transactions}
                 inventory={inventory}
+                transactionsLoading={transactionsLoading}
+                inventoryLoading={inventoryLoading}
                 customerInfo={customerInfo}
                 onOpenNewRental={() => setShowStaffRental(true)}
                 onNavigate={goTab}
@@ -954,6 +956,7 @@ export default function RentechApp() {
               <TasksPage
                 transactions={transactions}
                 inventory={inventory}
+                loading={transactionsLoading}
                 role={viewRole}
                 onReturn={handleReturnClick}
                 onNavigate={goTab}

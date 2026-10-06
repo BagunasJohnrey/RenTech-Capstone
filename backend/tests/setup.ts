@@ -307,6 +307,7 @@ vi.mock('../src/config/database.js', () => {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
+      groupBy: vi.fn().mockResolvedValue([]),
       aggregate: vi.fn().mockResolvedValue({
         _count: { id: 0 },
         _sum: { rentalFee: 0, totalPaid: 0, latePenalty: 0, damageFee: 0 },

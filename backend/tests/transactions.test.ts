@@ -806,6 +806,41 @@ describe('GET /api/dashboard/kpis', () => {
     expect(res.body).toHaveProperty('totalRevenue');
   });
 
+  it('should include a collected-payments revenueTrend (6 months) + todayRevenue', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // Unique period window → unique cache key, so this test always computes
+    // fresh instead of hitting the `kpis:all` entry warmed by the test above.
+    const now = new Date();
+    const thisMonth = now.getMonth() + 1;
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { amount: 1500, createdAt: new Date() },
+    ]);
+
+    const res = await request(app)
+      .get(`/api/dashboard/kpis?period=monthly&year=${now.getFullYear()}&month=${thisMonth}`)
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('todayRevenue');
+    expect(typeof res.body.todayRevenue).toBe('number');
+    expect(Array.isArray(res.body.revenueTrend)).toBe(true);
+    expect(res.body.revenueTrend).toHaveLength(6);
+    for (const m of res.body.revenueTrend) {
+      expect(m).toHaveProperty('label');
+      expect(typeof m.revenue).toBe('number');
+    }
+    // The trend query targets collected ledger rows only (never booked fees).
+    const trendCall = (prisma.payment.findMany as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c?.[0]?.select?.amount === true && Array.isArray(c?.[0]?.where?.status?.in)
+    );
+    expect(trendCall).toBeTruthy();
+    expect(trendCall[0].where.status.in).toEqual(expect.arrayContaining(['succeeded', 'completed']));
+    // This month's collected payment lands in the current-month bucket.
+    const currentLabel = now.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+    const current = res.body.revenueTrend.find((m: { label: string }) => m.label === currentLabel);
+    expect(current?.revenue).toBe(1500);
+  });
+
   it('should reject for customer', async () => {
     const res = await request(app)
       .get('/api/dashboard/kpis')

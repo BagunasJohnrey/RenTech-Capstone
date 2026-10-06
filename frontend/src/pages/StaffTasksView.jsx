@@ -10,6 +10,37 @@ import { isReleased } from '../hooks/useTransactions';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
 
+// Collapsible SMS log that mounts its data-fetching panel only after the
+// first expand — keeps GET /sms/history off the Tasks critical path.
+function SmsLogSection() {
+  const [open, setOpen] = useState(false);
+  const [everOpened, setEverOpened] = useState(false);
+  return (
+    <div className="bg-white rounded-3xl border border-gray-100/50 shadow-sm overflow-hidden">
+      <button
+        type="button"
+        onClick={() => { setOpen((o) => !o); setEverOpened(true); }}
+        aria-expanded={open}
+        className="w-full flex items-center gap-3 p-6 text-left cursor-pointer"
+      >
+        <span className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
+          <MessageCircle size={18} />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block font-bold text-lg text-gray-900">SMS Log</span>
+          <span className="block text-xs text-gray-500 font-medium mt-0.5">Manual + automatic sends and their delivery status</span>
+        </span>
+        <span className={`text-xs font-bold text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
+      </button>
+      {open && (
+        <div className="px-6 pb-6">
+          {everOpened && <SmsLogPanel />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
   const navigate = useNavigate();
   const role = roleProp || 'Staff';
@@ -640,22 +671,10 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
         )}
 
       {/* SMS Log — read-only here (delete is admin-only in the panel).
-          Lets staff verify what actually went out without leaving Tasks. */}
-      <details className="bg-white rounded-3xl border border-gray-100/50 shadow-sm overflow-hidden group">
-        <summary className="flex items-center gap-3 p-6 cursor-pointer list-none">
-          <span className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
-            <MessageCircle size={18} />
-          </span>
-          <span className="flex-1 min-w-0">
-            <span className="block font-bold text-lg text-gray-900">SMS Log</span>
-            <span className="block text-xs text-gray-500 font-medium mt-0.5">Manual + automatic sends and their delivery status</span>
-          </span>
-          <span className="text-xs font-bold text-gray-400 group-open:rotate-180 transition-transform">▾</span>
-        </summary>
-        <div className="px-6 pb-6">
-          <SmsLogPanel />
-        </div>
-      </details>
+          Lets staff verify what actually went out without leaving Tasks.
+          Perf: the panel fires GET /sms/history on mount (limit 200), so it
+          only mounts after first expand — never on the critical Tasks path. */}
+      <SmsLogSection />
 
       {/* SMS Confirmation Modal — message is editable per send.
           z-[9999] matches the other full-screen modals so it always sits on

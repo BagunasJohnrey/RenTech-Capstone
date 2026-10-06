@@ -178,7 +178,7 @@ export async function suggestPromos(req: AuthenticatedRequest, res: Response, ne
       inventory,
       activePromos: promos,
       currentMonth,
-      kpis: kpis as Record<string, number> || {},
+      kpis: kpis as Record<string, number | { label: string; revenue: number }[]> || {},
       revenueByCategory,
       underperforming,
       topRented,

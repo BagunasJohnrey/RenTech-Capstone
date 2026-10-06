@@ -968,7 +968,7 @@ export async function checkAiHealth() {
 }
 
 export async function generateReport(data: {
-  kpis: Record<string, number>;
+  kpis: Record<string, number | { label: string; revenue: number }[]>;
   insights?: Record<string, unknown> & {
     underperforming?: { id: number; name: string; category: string; rentals: number }[];
     topRented?: { id: number; name: string; category: string; rentals: number }[];
@@ -1331,7 +1331,7 @@ export async function suggestPromos(data: {
   inventory: { id: number; name: string; category: string; price: number; rentalCount: number; onSale: boolean; status: string }[];
   activePromos: { code: string; discountPct: number }[];
   currentMonth: string;
-  kpis?: Record<string, number>;
+  kpis?: Record<string, number | { label: string; revenue: number }[]>;
   revenueByCategory?: Record<string, number>;
   underperforming?: { name: string; category: string; rentals: number }[];
   topRented?: { name: string; category: string; rentals: number }[];

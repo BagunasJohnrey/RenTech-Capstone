@@ -1,7 +1,7 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
-import { clearDataCache } from '../utils/ttlCache.js';
+import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
 import { ItemStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -10,6 +10,39 @@ import { ItemStatus, Prisma } from '@prisma/client';
 const CLEANING_DELAY_DAYS = 1;
 
 export async function listItems(
+  statusFilter?: string,
+  category?: string,
+  search?: string,
+  opts: { rawStatus?: boolean; exclude?: string[]; occasion?: string } = {}
+) {
+  // Perf: this endpoint backs every staff catalog render. The old query
+  // joined ALL transactions per item + a per-row _count aggregate subquery
+  // (~1.9s for 116 items against the remote pooler). Two changes:
+  //   1. rentalCount comes from ONE groupBy aggregate (single indexed pass)
+  //      merged in JS, instead of N per-row _count subqueries.
+  //   2. Cache the unfiltered full list (same TTL discipline as the
+  //      dashboard cache; every mutation calls clearDataCache()). Filtered
+  //      views (search/category/status) still hit the DB directly so they
+  //      stay exact — only the hot full-list path is cached. The key covers
+  //      raw/eff + exclude, which are the only two shapes optionalAuth
+  //      produces (staff/admin raw, guest effective), so all three callers
+  //      (staff, admin, guest catalog) share the cache safely.
+  //     NOTE: the cache warmer (dashboard.service) pre-fills the two raw
+  //     keys — keep the key format in sync if this changes.
+  const isFullList = !statusFilter && !category && !search && !opts.occasion;
+  if (isFullList) {
+    // Key must include raw/eff + the exclude set: admin (raw, no exclude),
+    // staff (raw, exclude Deleted), and guest (eff, fixed exclude) each see
+    // a different list.
+    const excl = (opts.exclude ?? []).slice().sort().join(',') || 'none';
+    return cacheOrCompute(`inventory:full:${opts.rawStatus === true ? 'raw' : 'eff'}:excl:${excl}`, () =>
+      listItemsUncached(statusFilter, category, search, opts)
+    );
+  }
+  return listItemsUncached(statusFilter, category, search, opts);
+}
+
+async function listItemsUncached(
   statusFilter?: string,
   category?: string,
   search?: string,
@@ -33,19 +66,26 @@ export async function listItems(
     ];
   }
 
-  const items = await prisma.inventoryItem.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      transactions: {
-        where: { status: { in: ['Active', 'Overdue', 'Reserved'] } },
-        select: { status: true, rentalDate: true, dueDate: true },
+  const [items, rentalCounts] = await Promise.all([
+    prisma.inventoryItem.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        transactions: {
+          where: { status: { in: ['Active', 'Overdue', 'Reserved'] } },
+          select: { status: true },
+        },
       },
-      _count: {
-        select: { transactions: true },
-      },
-    },
-  });
+    }),
+    // One grouped aggregate instead of N per-row _count subqueries.
+    prisma.transaction.groupBy({
+      by: ['itemId'],
+      where: { itemId: { gt: 0 } },
+      _count: { itemId: true },
+    }),
+  ]);
+  const countByItem = new Map<number, number>();
+  for (const row of rentalCounts) countByItem.set(row.itemId, row._count.itemId);
 
   // Authenticated staff/admin want to see every item in its true stored status
   // (nothing collapsed/normalized away). Guests and the public catalog instead
@@ -79,7 +119,7 @@ export async function listItems(
     if (opts.exclude?.includes(displayStatus)) continue;
 
     if (!statusFilter || statusFilter === displayStatus) {
-      results.push({ ...rest, effectiveStatus: displayStatus, rentalCount: item._count.transactions });
+      results.push({ ...rest, effectiveStatus: displayStatus, rentalCount: countByItem.get(item.id) ?? 0 });
     }
   }
 
