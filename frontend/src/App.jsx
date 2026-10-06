@@ -1149,7 +1149,13 @@ export default function RentechApp() {
           />
         )}
 
-        {showOnboarding && <OnboardingTutorial role={viewRole} onComplete={() => setShowOnboarding(false)} />}
+        {showOnboarding && (
+          <OnboardingTutorial
+            role={viewRole}
+            displayName={viewRole === 'Customer' ? customerInfo?.name : profile?.name}
+            onComplete={() => setShowOnboarding(false)}
+          />
+        )}
 
         {/* Routed item detail (logged-in) — URL like /collection/5 or
             /admin/inventory/5; closing navigates back to the parent tab. */}

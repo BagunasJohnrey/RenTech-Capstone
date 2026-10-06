@@ -134,8 +134,10 @@ export default function AppLayout({
         />
 
         <main className="grow flex flex-col min-w-0 h-screen supports-[height:100dvh]:h-[100dvh] overflow-hidden relative pb-24 md:pb-0">
-          {/* PWA install nudge — mobile only, after login, all roles. */}
-          <InstallAppBanner />
+          {/* PWA install nudge — mobile only, after login, all roles.
+              Without a one-tap prompt the Install button jumps to Settings,
+              where the full platform guide lives. */}
+          <InstallAppBanner onOpenGuide={onOpenSettings} />
           <header className="bg-white/70 backdrop-blur-xl border-b border-gray-100/50 px-5 md:px-10 py-4 flex items-center justify-between z-20 shrink-0">
             <div className="flex items-center gap-2 md:hidden">
               <img

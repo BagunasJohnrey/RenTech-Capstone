@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { ShoppingBag, ChevronRight, ChevronLeft, Search, Calendar, User, X, CheckCircle2, CreditCard as PayIcon, FileText, LayoutDashboard, Sparkles, Package } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { ShoppingBag, ChevronRight, ChevronLeft, Search, Calendar, User, CheckCircle2, CreditCard as PayIcon, FileText, LayoutDashboard, Sparkles, Package, Settings, ClipboardList, Tag } from 'lucide-react';
 
 const customerSteps = [
   {
@@ -19,8 +19,8 @@ const customerSteps = [
   },
   {
     icon: PayIcon, title: 'Confirm & Pay',
-    desc: 'Review your booking summary and pay the downpayment via GCash or card.',
-    detail: 'After payment, you will receive a booking confirmation with your transaction ID and QR code. Settle the remaining balance at pickup (cash or online) — pickup and return are locked until fully paid.',
+    desc: 'Review your booking summary and pay the downpayment via e-wallet.',
+    detail: 'After payment, you get a confirmation with your booking details. Settle the balance at pickup — release stays locked until fully paid.',
   },
 ];
 
@@ -41,9 +41,14 @@ const staffSteps = [
     detail: 'Tap "Confirm & Process" to create the rental. A confirmation toast will appear.',
   },
   {
-    icon: CheckCircle2, title: 'Rental Created',
-    desc: 'The rental is now active. The item status changes to Reserved.',
-    detail: 'Collect the full balance before release, and process the return only when fully paid. You can view it in Transactions.',
+    icon: CheckCircle2, title: 'Release & Return',
+    desc: 'Collect the full balance and release the item with a QR scan. On return, snap a condition photo — intact pieces go to Cleaning, damaged ones to Out of Service with a reason.',
+    detail: 'Release and returns stay locked until fully paid. Past rentals live in Logs & Returns.',
+  },
+  {
+    icon: ClipboardList, title: 'Tasks & Reminders',
+    desc: 'Work the queue every shift — the Dashboard and Tasks tab line up pickups, dues, overdues, and cleaning.',
+    detail: 'Send due-today reminders and overdue SMS in one tap. No-shows flag 1 day past pickup; mark cleaned batches in the Cleaning Queue.',
   },
 ];
 
@@ -59,25 +64,41 @@ const adminSteps = [
     detail: 'Add items, attach photos, mark items On Sale, and batch-clean returns from the Cleaning Queue.',
   },
   {
+    icon: Tag, title: 'Promotions',
+    desc: 'Fill slow days on demand — create promo codes with percent or peso discounts, usage caps, and expiry dates.',
+    detail: 'Codes validate at checkout in one tap, with per-customer limits and expiry dates doing the guarding.',
+  },
+  {
     icon: CheckCircle2, title: 'Bookings & Returns',
     desc: 'Process new rentals, scan QR codes, and handle returns — damaged pieces go Out of Service automatically.',
     detail: 'No-shows and overdue rentals are flagged automatically so you can follow up.',
   },
   {
-    icon: Sparkles, title: 'AI Insights & Settings',
-    desc: 'AI Insights builds business reports and suggestions from real transaction data.',
-    detail: 'In Settings: business rules, SMS templates, staff accounts, and secure MFA (two-factor) sign-in.',
+    icon: Sparkles, title: 'Reports',
+    desc: 'Reports turns real transaction data into business reports, forecasts, and suggestions.',
+    detail: 'Top items, revenue trends, and next-month demand — every peso figure is checked against real data before it shows.',
+  },
+  {
+    icon: Settings, title: 'Settings',
+    desc: 'Settings is your control room — rental rules and fees, promo codes, SMS templates, and integrations.',
+    detail: 'Set rental rules and fees, create promo codes, edit SMS templates, manage staff accounts, and secure sign-in with MFA (two-factor).',
   },
 ];
 
-const stepColors = [
-  'bg-blue-50 text-blue-600',
-  'bg-emerald-50 text-emerald-600',
-  'bg-orange-50 text-orange-600',
-  'bg-purple-50 text-purple-600',
-];
+const stepNumbers = ['01', '02', '03', '04', '05', '06', '07'];
 
-const stepNumbers = ['01', '02', '03', '04'];
+// Opening welcome screen. greeting uses the account's full name when known.
+const welcomeStep = (roleKey, fullName) => ({
+  logo: true,
+  title: fullName ? `Welcome, ${fullName}!` : 'Welcome to RenTech',
+  desc:
+    roleKey === 'customer'
+      ? 'Your boutique for gowns, suits, and formal wear rentals across Batangas.'
+      : roleKey === 'admin'
+        ? 'Your command center for inventory, bookings, reports, and settings.'
+        : 'Everything you need to run daily rentals — bookings, tasks, and returns.',
+  detail: 'This quick tour takes under a minute. Use Next and Back, or Skip any time.',
+});
 
 // One storage key per role so staff/admin/customer tutorials are independent.
 const storageKeyFor = (role) => {
@@ -85,17 +106,15 @@ const storageKeyFor = (role) => {
   return r === 'customer' ? 'onboardingDone_Customer' : r === 'admin' ? 'onboardingDone_Admin' : 'onboardingDone_Staff';
 };
 
-// Accent color per step index (tint matching the icon chip).
-const accentFor = (idx) =>
-  idx === 0 ? 'bg-blue-500' : idx === 1 ? 'bg-emerald-500' : idx === 2 ? 'bg-orange-500' : 'bg-purple-500';
-
-export default function OnboardingTutorial({ role, onComplete }) {
+export default function OnboardingTutorial({ role, displayName, onComplete }) {
   const [step, setStep] = useState(0);
   // Slide direction for the content transition: +1 = Next (slides in from
   // the right), -1 = Back (slides in from the left).
   const [dir, setDir] = useState(1);
   const roleKey = (role || '').toLowerCase();
-  const steps = roleKey === 'customer' ? customerSteps : roleKey === 'admin' ? adminSteps : staffSteps;
+  const roleSteps = roleKey === 'customer' ? customerSteps : roleKey === 'admin' ? adminSteps : staffSteps;
+  const fullName = String(displayName || '').trim();
+  const steps = [welcomeStep(roleKey, fullName), ...roleSteps];
   const storageKey = storageKeyFor(role);
   const card = steps[step];
   const Icon = card.icon;
@@ -126,6 +145,21 @@ export default function OnboardingTutorial({ role, onComplete }) {
     setDir(i > step ? 1 : -1);
     setStep(i);
   }, [step]);
+
+  // Swipeable slides: horizontal swipe moves, vertical drift stays a scroll.
+  const swipeRef = useRef({ startX: 0, startY: 0 });
+  const onSwipeStart = (e) => {
+    if (e.touches.length !== 1) return;
+    swipeRef.current = { startX: e.touches[0].clientX, startY: e.touches[0].clientY };
+  };
+  const onSwipeEnd = (e) => {
+    if (e.changedTouches.length !== 1) return;
+    const dx = e.changedTouches[0].clientX - swipeRef.current.startX;
+    const dy = e.changedTouches[0].clientY - swipeRef.current.startY;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > 50) return;
+    if (dx < 0) handleNext();
+    else handlePrev();
+  };
 
   // Keyboard navigation: arrows move, Escape closes.
   useEffect(() => {
@@ -159,23 +193,30 @@ export default function OnboardingTutorial({ role, onComplete }) {
           {/* Colored accent bar + progress fill */}
           <div className="relative h-1.5 bg-gray-100">
             <div
-              className={`absolute inset-y-0 left-0 transition-all duration-300 ease-out ${accentFor(step)}`}
+              className="absolute inset-y-0 left-0 transition-all duration-300 ease-out bg-[#bf4a53]"
               style={{ width: `${((step + 1) / totalSteps) * 100}%` }}
             />
           </div>
 
-          {/* Step number badge + close */}
+          {/* Step number badge + skip (clear escape hatch) */}
           <div className="flex items-center justify-between px-6 pt-4">
             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
               <span className="w-1.5 h-1.5 rounded-full bg-[#bf4a53]" />
               Step {stepNumbers[step]} of {totalSteps}
             </span>
-            <button onClick={finish} aria-label="Close tutorial" className="p-1 -mr-1 text-gray-300 hover:text-gray-500 transition-colors shrink-0">
-              <X size={16} />
+            <button
+              onClick={finish}
+              className="min-h-[44px] px-2 -mr-1 text-xs font-bold text-gray-400 hover:text-gray-600 active:text-gray-700 transition-colors shrink-0"
+            >
+              Skip
             </button>
           </div>
 
-          <div className="p-6 pt-4 sm:p-7 sm:pt-4 overflow-y-auto min-h-0">
+          <div
+            className="p-6 pt-4 sm:p-7 sm:pt-4 overflow-y-auto min-h-0"
+            onTouchStart={onSwipeStart}
+            onTouchEnd={onSwipeEnd}
+          >
             {/* Step body: the ONLY remounting part. Short directional slide
                 (no zoom, no backdrop flash) keeps Next/Back buttery. */}
             <div
@@ -183,8 +224,15 @@ export default function OnboardingTutorial({ role, onComplete }) {
               aria-live="polite"
               className={`animate-in fade-in duration-200 ${dir >= 0 ? 'slide-in-from-right-4' : 'slide-in-from-left-4'}`}
             >
+            {card.logo ? (
+              <div className="flex flex-col items-center text-center px-2">
+                <img src="/RenTech.png" alt="RenTech" className="w-14 h-14 rounded-2xl shadow-lg shadow-red-500/20" />
+                <h3 className="font-extrabold text-xl text-gray-900 leading-snug mt-3">{card.title}</h3>
+                <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xs">{card.desc}</p>
+              </div>
+            ) : (
               <div className="flex items-start gap-4">
-                <div className={`p-3 rounded-2xl shrink-0 transition-colors duration-300 ${stepColors[step]}`}>
+                <div className="p-3 rounded-2xl shrink-0 bg-[#bf4a53]/10 text-[#bf4a53]">
                   <Icon size={24} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -192,6 +240,7 @@ export default function OnboardingTutorial({ role, onComplete }) {
                   <p className="text-sm text-gray-500 mt-1 leading-relaxed">{card.desc}</p>
                 </div>
               </div>
+            )}
 
               {/* Extra detail box */}
               <div className="mt-4 bg-gray-50 rounded-xl p-3.5 border border-gray-100/60">
@@ -229,7 +278,7 @@ export default function OnboardingTutorial({ role, onComplete }) {
                       ? 'bg-[#bf4a53] text-white hover:bg-red-700 active:scale-[0.98]'
                       : 'bg-gray-900 text-white hover:bg-gray-800 active:scale-[0.98]'
                   }`}>
-                  {step < totalSteps - 1 ? <>Next <ChevronRight size={14} /></> : 'Done'}
+                  {step === 0 ? <>Get Started <ChevronRight size={14} /></> : step < totalSteps - 1 ? <>Next <ChevronRight size={14} /></> : 'Done'}
                 </button>
               </div>
             </div>

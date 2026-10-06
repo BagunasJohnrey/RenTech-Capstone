@@ -107,12 +107,12 @@ export default function HelpGuide({ role, onStartTutorial }) {
             <HelpCircle className="text-[#bf4a53]" size={28} />
             <h2 className="text-3xl font-bold tracking-tight">Help Guide</h2>
           </div>
-          {!isCustomer && onStartTutorial && (
+          {onStartTutorial && (
             <button
               onClick={onStartTutorial}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#bf4a53] hover:bg-red-600 text-white text-xs font-bold transition-colors shadow-lg shadow-red-900/40"
             >
-              <Play size={13} /> Start guided tour
+              <Play size={13} /> {isCustomer ? 'Replay guided tour' : 'Start guided tour'}
             </button>
           )}
         </div>
