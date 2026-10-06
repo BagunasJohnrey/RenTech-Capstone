@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ShoppingBag, ChevronRight, ChevronLeft, Search, Calendar, User, X, CheckCircle2, CreditCard as PayIcon, FileText, LayoutDashboard, Sparkles, Package } from 'lucide-react';
 
 const customerSteps = [
@@ -91,6 +91,9 @@ const accentFor = (idx) =>
 
 export default function OnboardingTutorial({ role, onComplete }) {
   const [step, setStep] = useState(0);
+  // Slide direction for the content transition: +1 = Next (slides in from
+  // the right), -1 = Back (slides in from the left).
+  const [dir, setDir] = useState(1);
   const roleKey = (role || '').toLowerCase();
   const steps = roleKey === 'customer' ? customerSteps : roleKey === 'admin' ? adminSteps : staffSteps;
   const storageKey = storageKeyFor(role);
@@ -102,30 +105,64 @@ export default function OnboardingTutorial({ role, onComplete }) {
     onComplete();
   }, [storageKey, onComplete]);
 
-  const handleNext = () => {
-    if (step < steps.length - 1) setStep(s => s + 1);
-    else finish();
-  };
+  const handleNext = useCallback(() => {
+    if (step < steps.length - 1) {
+      setDir(1);
+      setStep(s => s + 1);
+    } else {
+      finish();
+    }
+  }, [step, steps.length, finish]);
 
-  const handlePrev = () => {
-    if (step > 0) setStep(s => s - 1);
-  };
+  const handlePrev = useCallback(() => {
+    if (step > 0) {
+      setDir(-1);
+      setStep(s => s - 1);
+    }
+  }, [step]);
+
+  const goTo = useCallback((i) => {
+    if (i === step) return;
+    setDir(i > step ? 1 : -1);
+    setStep(i);
+  }, [step]);
+
+  // Keyboard navigation: arrows move, Escape closes.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'ArrowRight') handleNext();
+      else if (e.key === 'ArrowLeft') handlePrev();
+      else if (e.key === 'Escape') finish();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [handleNext, handlePrev, finish]);
 
   const totalSteps = steps.length;
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 sm:p-6">
-      <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm" onClick={finish} />
+      <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={finish} />
 
+      {/* Stable card: the entrance zoom plays ONCE on mount. Only the inner
+          content below remounts per step (directional slide), so Next/Back
+          never flashes the whole modal. */}
       <div
-        key={step}
-        className="relative w-full max-w-md animate-in fade-in zoom-in-95 duration-300"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Getting started tutorial"
+        className="relative w-full max-w-md animate-in fade-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
         {/* Card */}
         <div className="bg-white rounded-3xl shadow-2xl border border-gray-100/80 overflow-hidden max-h-[88vh] flex flex-col">
-          {/* Colored accent bar */}
-          <div className={`h-1.5 ${accentFor(step)}`} />
+          {/* Colored accent bar + progress fill */}
+          <div className="relative h-1.5 bg-gray-100">
+            <div
+              className={`absolute inset-y-0 left-0 transition-all duration-300 ease-out ${accentFor(step)}`}
+              style={{ width: `${((step + 1) / totalSteps) * 100}%` }}
+            />
+          </div>
 
           {/* Step number badge + close */}
           <div className="flex items-center justify-between px-6 pt-4">
@@ -139,29 +176,44 @@ export default function OnboardingTutorial({ role, onComplete }) {
           </div>
 
           <div className="p-6 pt-4 sm:p-7 sm:pt-4 overflow-y-auto min-h-0">
-            <div className="flex items-start gap-4">
-              <div className={`p-3 rounded-2xl shrink-0 ${stepColors[step]}`}>
-                <Icon size={24} />
+            {/* Step body: the ONLY remounting part. Short directional slide
+                (no zoom, no backdrop flash) keeps Next/Back buttery. */}
+            <div
+              key={step}
+              aria-live="polite"
+              className={`animate-in fade-in duration-200 ${dir >= 0 ? 'slide-in-from-right-4' : 'slide-in-from-left-4'}`}
+            >
+              <div className="flex items-start gap-4">
+                <div className={`p-3 rounded-2xl shrink-0 transition-colors duration-300 ${stepColors[step]}`}>
+                  <Icon size={24} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-lg text-gray-900">{card.title}</h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed">{card.desc}</p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-lg text-gray-900">{card.title}</h3>
-                <p className="text-sm text-gray-500 mt-1 leading-relaxed">{card.desc}</p>
+
+              {/* Extra detail box */}
+              <div className="mt-4 bg-gray-50 rounded-xl p-3.5 border border-gray-100/60">
+                <div className="flex items-start gap-2.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#bf4a53] mt-1.5 shrink-0" />
+                  <p className="text-xs text-gray-500 leading-relaxed">{card.detail}</p>
+                </div>
               </div>
             </div>
 
-            {/* Extra detail box */}
-            <div className="mt-4 bg-gray-50 rounded-xl p-3.5 border border-gray-100/60">
-              <div className="flex items-start gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#bf4a53] mt-1.5 shrink-0" />
-                <p className="text-xs text-gray-500 leading-relaxed">{card.detail}</p>
-              </div>
-            </div>
-
-            {/* Progress & navigation */}
+            {/* Progress & navigation (stable, never remounts) */}
             <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-100">
-              <div className="flex gap-2">
-                {steps.map((_, i) => (
-                  <div key={i} className={`h-1 rounded-full transition-all duration-300 ${i === step ? 'w-6 bg-[#bf4a53]' : 'w-2 bg-gray-200'}`} />
+              <div className="flex gap-1.5" role="tablist" aria-label="Tutorial steps">
+                {steps.map((s, i) => (
+                  <button
+                    key={i}
+                    role="tab"
+                    aria-selected={i === step}
+                    aria-label={`Go to step ${i + 1}: ${s.title}`}
+                    onClick={() => goTo(i)}
+                    className={`h-1.5 rounded-full transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50 ${i === step ? 'w-6 bg-[#bf4a53]' : i < step ? 'w-2 bg-[#bf4a53]/40 hover:bg-[#bf4a53]/60' : 'w-2 bg-gray-200 hover:bg-gray-300'}`}
+                  />
                 ))}
               </div>
               <div className="flex items-center gap-2">
@@ -174,8 +226,8 @@ export default function OnboardingTutorial({ role, onComplete }) {
                 <button onClick={handleNext}
                   className={`px-5 py-2 text-xs font-bold rounded-full transition-colors flex items-center gap-1 ${
                     step < totalSteps - 1
-                      ? 'bg-[#bf4a53] text-white hover:bg-red-700'
-                      : 'bg-gray-900 text-white hover:bg-gray-800'
+                      ? 'bg-[#bf4a53] text-white hover:bg-red-700 active:scale-[0.98]'
+                      : 'bg-gray-900 text-white hover:bg-gray-800 active:scale-[0.98]'
                   }`}>
                   {step < totalSteps - 1 ? <>Next <ChevronRight size={14} /></> : 'Done'}
                 </button>
