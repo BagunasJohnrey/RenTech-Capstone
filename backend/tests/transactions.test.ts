@@ -892,6 +892,43 @@ describe('GET /api/dashboard/today', () => {
   });
 });
 
+describe('GET /api/dashboard/version', () => {
+  it('should return a tiny freshness fingerprint for staff', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // The mutation cache-warmer is disabled under vitest (see
+    // dashboard.service), so Once mocks below are consumed only by this
+    // request.
+    prisma.transaction.aggregate.mockResolvedValueOnce({ _max: { updatedAt: new Date('2026-10-07T01:00:00Z') } });
+    prisma.transaction.count.mockResolvedValueOnce(290);
+    prisma.inventoryItem.aggregate.mockResolvedValueOnce({ _max: { updatedAt: new Date('2026-10-06T12:00:00Z') } });
+    prisma.inventoryItem.count.mockResolvedValueOnce(116);
+
+    const res = await request(app)
+      .get('/api/dashboard/version')
+      .set('Authorization', 'Bearer staff-token');
+
+    expect(res.status).toBe(200);
+    // Version = max of the two table watermarks (tx wins here).
+    expect(res.body.version).toBe(new Date('2026-10-07T01:00:00Z').getTime());
+    expect(res.body.txCount).toBe(290);
+    expect(res.body.itemCount).toBe(116);
+    expect(typeof res.body.at).toBe('string');
+  });
+
+  it('should reject for customer', async () => {
+    const res = await request(app)
+      .get('/api/dashboard/version')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.status).toBe(403);
+  });
+
+  it('should reject when unauthenticated', async () => {
+    const res = await request(app).get('/api/dashboard/version');
+    expect(res.status).toBe(401);
+  });
+});
+
 describe('Query param validation (500→400)', () => {
   it('GET /transactions with garbage status → 400', async () => {
     const res = await request(app)

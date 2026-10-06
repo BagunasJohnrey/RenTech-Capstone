@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, SIGN_IN_PATH, GUEST_COLLECTION_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
-  ClipboardList, AlertTriangle, Tag
+  ClipboardList, AlertTriangle, Tag, RefreshCw
 } from 'lucide-react';
 
 import { useAuth } from './hooks/useAuth';
@@ -14,6 +14,7 @@ import { useCustomerProfile } from './hooks/useCustomerProfile';
 import { api, API_ORIGIN } from './utils/api';
 import { todayYmd } from './utils/format';
 import { useToast } from './components/Toast';
+import { useDataVersion } from './hooks/useDataVersion';
 
 import LoginPage from './pages/LoginPage';
 import ForgotPasswordView from './pages/ForgotPasswordView';
@@ -503,6 +504,7 @@ export default function RentechApp() {
     // Supabase auth accounts with a known password.
     const created = await doCreate(); // throws naturally on failure → UI shows the error
     toastSuccess('Rental created successfully');
+    noteLocalMutation();
     return created;
   };
 
@@ -534,6 +536,7 @@ export default function RentechApp() {
         markItemStatus(updated.itemId, isDamaged ? 'OutOfService' : 'Cleaning');
       }
       toastSuccess(isDamaged ? 'Return processed — item taken out of rotation' : 'Return processed — item moved to cleaning');
+      noteLocalMutation();
     } catch (err) {
       toastError(err?.message || 'Failed to process return');
     }
@@ -545,6 +548,7 @@ export default function RentechApp() {
     try {
       await removeTransaction(txId);
       toastSuccess('Transaction deleted');
+      noteLocalMutation();
     } catch (err) {
       toastError(err?.message || 'Failed to delete transaction');
     }
@@ -559,6 +563,7 @@ export default function RentechApp() {
       setTransactions((prev) => prev.map((t) => (t.id === txId ? { ...t, status: 'Cancelled' } : t)));
       if (tx?.itemId) markItemStatus(tx.itemId, 'Available');
       toastSuccess('Transaction cancelled');
+      noteLocalMutation();
     } catch (err) {
       toastError(err?.message || 'Failed to cancel transaction');
     }
@@ -568,12 +573,14 @@ export default function RentechApp() {
     releaseTransaction(updated);
     if (updated.itemId) markItemStatus(updated.itemId, 'Rented');
     toastSuccess('Item released');
+    noteLocalMutation();
   };
 
   // Edit-rental save (booking dates/notes or customer profile) — merges the
   // modal's result into the list so History reflects it without a refresh.
   const handleEditRental = (saved) => {
     applyEditTransaction(saved);
+    noteLocalMutation();
   };
 
   // At-pickup item swap — merges the swapped record (same tx id, new item +
@@ -590,6 +597,7 @@ export default function RentechApp() {
       markItemStatus(swapped.itemId, start.getTime() > today.getTime() ? 'Reserved' : 'Rented');
     }
     toastSuccess(`Booking moved to ${swapped.item?.name ?? 'new item'}`);
+    noteLocalMutation();
   };
 
   // Customer booking handler
@@ -608,6 +616,7 @@ export default function RentechApp() {
       markItemStatus(created.itemId, 'Active');
     }
     toastSuccess('Booking confirmed');
+    noteLocalMutation();
     setCustomerRental(null);
     goTab('History');
   };
@@ -629,6 +638,7 @@ export default function RentechApp() {
     });
     setTransactions((prev) => [normalizeTx(created), ...prev]);
     if (created.itemId) markItemStatus(created.itemId, 'Active'); // FIX C
+    noteLocalMutation();
     return created;
   };
 
@@ -647,6 +657,7 @@ export default function RentechApp() {
     try {
       await setItemStatus(itemId, status, outOfServiceReason);
       toastSuccess(status === 'OutOfService' ? 'Item marked as out of service' : `Item marked as ${status}`);
+      noteLocalMutation();
     } catch (err) {
       toastError(err?.message || 'Failed to update item status');
     }
@@ -655,12 +666,14 @@ export default function RentechApp() {
   // Mark a returned item (currently 'Cleaning') as clean/available again.
   const markItemClean = async (itemId) => {
     await setItemStatus(itemId, 'Available');
+    noteLocalMutation();
   };
 
   // Batch "mark cleaned": every selected item in the Cleaning queue becomes
   // Available at once (the boutique cleans in batches).
   const handleBulkClean = async (ids) => {
     await setBulkStatus(ids, 'Available');
+    noteLocalMutation();
   };
 
   // "Mark Out of Service" opens a reason modal; the chosen reason is stored
@@ -669,6 +682,7 @@ export default function RentechApp() {
     try {
       await setItemStatus(item.id, 'OutOfService', reason);
       toastSuccess('Item taken out of service');
+      noteLocalMutation();
       setOutOfServiceItem(null);
     } catch (err) {
       toastError(err?.message || 'Failed to update item status');
@@ -687,6 +701,7 @@ export default function RentechApp() {
     try {
       await addItem(clean);
       toastSuccess('Inventory item added');
+      noteLocalMutation();
     } catch (err) {
       toastError(err?.message || 'Failed to add item');
     }
@@ -703,6 +718,7 @@ export default function RentechApp() {
       }
       await updateItem(clean);
       toastSuccess('Inventory item updated');
+      noteLocalMutation();
     } catch (err) {
       toastError(err?.message || 'Failed to update item');
     }
@@ -722,6 +738,33 @@ export default function RentechApp() {
   };
 
   const currentNav = navItems[viewRole || 'Admin'];
+
+  // Cross-device freshness (staff/admin): poll the tiny version fingerprint;
+  // when it moves, offer Refresh — never silent-swap mid-work. Refreshing
+  // re-pulls inventory + transactions + digest-driven sections.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefreshData = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([loadInventory().catch(() => {}), loadTransactions().catch(() => {})]);
+      clearStale();
+      toastSuccess('Data refreshed');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  const { stale: dataStale, markFresh, clearStale } = useDataVersion({
+    role: viewRole,
+    isLoggedIn,
+    onStale: () => {},
+  });
+  // Own mutations already merge locally — adopt the new version instead of
+  // flagging ourselves stale. Every central mutation handler below calls
+  // this on success (booking/return/cancel/release/swap/item writes).
+  // Modal-direct writes (Record Payment inside the detail/release sheets)
+  // bypass these handlers — for those, the banner may appear once for your
+  // own action; tapping Refresh just re-pulls already-current data.
+  const noteLocalMutation = () => { markFresh(); };
 
   if (loading) {
     return (
@@ -1260,11 +1303,39 @@ export default function RentechApp() {
     </>
   );
 
+  // Non-destructive freshness banner: another device changed data.
+  // Tapping Refresh re-pulls lists; dismissing keeps working on the snapshot.
+  const staleBanner = (dataStale && (viewRole === 'Staff' || viewRole === 'Admin')) ? (
+    <div className="mb-4 flex items-center gap-3 bg-blue-50/80 border border-blue-200/60 rounded-2xl px-4 py-3 animate-in fade-in slide-in-from-top-2">
+      <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+        <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+      </span>
+      <p className="flex-1 min-w-0 text-[13px] font-semibold text-gray-800">
+        New updates from the boutique — refresh to see the latest.
+      </p>
+      <button
+        onClick={handleRefreshData}
+        disabled={refreshing}
+        className="shrink-0 px-4 py-2 rounded-full text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
+      >
+        {refreshing ? 'Refreshing…' : 'Refresh'}
+      </button>
+      <button
+        onClick={clearStale}
+        aria-label="Dismiss refresh notice"
+        className="shrink-0 p-1.5 text-gray-400 hover:text-gray-600 hover:bg-blue-100 rounded-full transition-colors"
+      >
+        ✕
+      </button>
+    </div>
+  ) : null;
+
   return (
     <AppLayout
       viewRole={viewRole}
       activeTab={activeTab}
       setActiveTab={goTab}
+      staleBanner={staleBanner}
       navItems={currentNav}
       onRequestLogout={() => setShowLogoutModal(true)}
       customerInfo={customerInfo}

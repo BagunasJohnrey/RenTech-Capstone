@@ -17,22 +17,29 @@ import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
 // cache keys (incl. the isHotPath/isFullList gates) are exercised, not
 // bypassed. Guest-catalog (effective-status) lists are NOT warmed — they
 // bypass the cache by design (see listItems).
-setDataCacheWarmer(() => {
-  return Promise.allSettled([
-    getKpis(),
-    getTodayTasks(),
-    getInsights({}),
-    getForecast(3),
-    getInventoryAnalytics(),
-    import('./transactions.service.js').then((m) => m.listTransactions({ role: 'Staff' })),
-    import('./inventory.service.js').then((m) =>
-      Promise.all([
-        m.listItems(undefined, undefined, undefined, { rawStatus: true, exclude: ['Deleted'] }),
-        m.listItems(undefined, undefined, undefined, { rawStatus: true }),
-      ])
-    ),
-  ]).then(() => {});
-});
+// Disabled under vitest: the warmer is fire-and-forget, so it races test
+// mocks (a warmer kicked off by clearDataCache consumes mockResolvedValueOnce
+// values meant for the request under test). Production/dev unaffected.
+const isTestEnv = (process.env.NODE_ENV ?? '') === 'test' || (process.env.VITEST ?? '') === 'true';
+if (!isTestEnv) {
+  setDataCacheWarmer(() => {
+    return Promise.allSettled([
+      getKpis(),
+      getTodayTasks(),
+      getInsights({}),
+      getForecast(3),
+      getInventoryAnalytics(),
+      getDataVersion(),
+      import('./transactions.service.js').then((m) => m.listTransactions({ role: 'Staff' })),
+      import('./inventory.service.js').then((m) =>
+        Promise.all([
+          m.listItems(undefined, undefined, undefined, { rawStatus: true, exclude: ['Deleted'] }),
+          m.listItems(undefined, undefined, undefined, { rawStatus: true }),
+        ])
+      ),
+    ]).then(() => {});
+  });
+}
 
 
 function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
@@ -661,6 +668,38 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     totalItems: items.length,
     totalRented: rentedItemIds.size,
   };
+}
+
+// Tiny version fingerprint for cross-device freshness: the frontend polls
+// this every ~15s (~100 bytes) and only refetches the heavy lists when the
+// fingerprint moves — instead of re-pulling ~400KB on a timer. Two cheap
+// aggregates (indexed MAX + COUNTs) instead of full row scans.
+// Cached alongside everything else: ANY mutation clears it via
+// clearDataCache(), including the 1-min scheduler flag flips (overdue
+// status changes move maxTx). Counts ride along so the UI can decide
+// whether a change even affects the visible tab (e.g. inventory-only
+// change while on Tasks still refetches — cheap correctness over cleverness).
+export async function getDataVersion() {
+  return cacheOrCompute('dataVersion', async () => {
+    const [maxTx, txCount, maxItem, itemCount] = await Promise.all([
+      prisma.transaction.aggregate({ _max: { updatedAt: true } }),
+      prisma.transaction.count(),
+      prisma.inventoryItem.aggregate({ _max: { updatedAt: true } }),
+      prisma.inventoryItem.count(),
+    ]);
+    const version = Math.max(
+      maxTx._max.updatedAt?.getTime() ?? 0,
+      maxItem._max.updatedAt?.getTime() ?? 0,
+    );
+    return {
+      version,
+      txCount,
+      itemCount,
+      // ISO for debugging (which write moved the needle); numeric `version`
+      // is what the client compares.
+      at: new Date(version || Date.now()).toISOString(),
+    };
+  });
 }
 
 // One cached round trip for the entire AI Insights page. The frontend used to

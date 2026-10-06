@@ -346,6 +346,9 @@ export async function notifyDueToday() {
 
     results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name, sent });
   }
+  // Flag flips + new notification rows move the data version — refresh
+  // cached dashboard data so the version fingerprint and lists agree.
+  if (results.length > 0) clearDataCache();
   return results;
 }
 
@@ -390,6 +393,9 @@ export async function checkNoShowAndNotify() {
       // leave noShowNotified false so the next tick retries the notification
     }
   }
+
+  // New notification rows + flag flips move the data version too.
+  if (results.length > 0) clearDataCache();
 
   return results;
 }

@@ -549,6 +549,21 @@ function route(method, path, body) {
   // ---- Dashboard ----
   if (P(/^\/dashboard\/kpis/)) return { value: kpis() };
   if (path === '/dashboard/today') return { value: todayDigest() };
+  // Freshness fingerprint: version bumps whenever demo data mutates (all
+  // mutations below touch transactions/items), so the version-poll demo
+  // behaves like the live endpoint.
+  if (path === '/dashboard/version') {
+    let version = 0;
+    for (const t of transactions) {
+      const ts = new Date(t.updatedAt || t.createdAt || 0).getTime();
+      if (Number.isFinite(ts) && ts > version) version = ts;
+    }
+    for (const it of items) {
+      const ts = new Date(it.updatedAt || it.createdAt || 0).getTime();
+      if (Number.isFinite(ts) && ts > version) version = ts;
+    }
+    return { value: { version, txCount: transactions.length, itemCount: items.length, at: new Date(version || Date.now()).toISOString() } };
+  }
   if (P(/^\/dashboard\/forecast/)) return { value: forecast() };
   if (P(/^\/dashboard\/insights/)) return { value: insights() };
   if (P(/^\/dashboard\/bundle/)) return { value: bundle() };

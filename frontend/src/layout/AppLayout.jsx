@@ -80,6 +80,7 @@ export default function AppLayout({
   animateKey,
   children,
   overlays,
+  staleBanner,
 }) {
   // Page content scrolls in THIS div (the window itself is fixed-height and
   // doesn't scroll), so scrolling must target it — window.scrollTo() never
@@ -252,6 +253,7 @@ export default function AppLayout({
             id="app-scroll"
             className="p-5 md:p-10 max-w-7xl mx-auto w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar"
           >
+            {staleBanner}
             {/* Keyed wrapper: the fade plays as the NEW page mounts, so the
                 swap doesn't dip the already-painted content back to opacity 0
                 (that flicker showed the previous page mid-transition). */}

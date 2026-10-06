@@ -298,6 +298,7 @@ vi.mock('../src/config/database.js', () => {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
+      aggregate: vi.fn().mockResolvedValue({ _max: { updatedAt: null } }),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       delete: vi.fn().mockResolvedValue({ id: 1 }),
       findFirst: vi.fn().mockResolvedValue(null),
