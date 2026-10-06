@@ -4,6 +4,11 @@ import { Users, Plus, Trash2, AlertCircle, Key, ShieldCheck, Lock, CheckCircle2,
 import { api } from '../../utils/api';
 import SettingsCard from './SettingsCard';
 import PinInput from './PinInput';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+} from '../../utils/inputLimits';
 
 // Admin Team & Security tab: staff account management + the admin's own TOTP
 // two-factor authentication (setup QR, enable, backup codes, disable).
@@ -202,8 +207,21 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
   };
 
   const saveEditStaff = async () => {
-    if (!editDraft.name.trim()) {
+    const nm = editDraft.name.trim();
+    if (!nm) {
       setEditError('Name is required');
+      return;
+    }
+    if (/\d/.test(nm)) {
+      setEditError('Name must not contain numbers');
+      return;
+    }
+    if (nm.length > INPUT_LIMITS.NAME_MAX) {
+      setEditError(`Name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`);
+      return;
+    }
+    if (editDraft.phone.trim() && editDraft.phone.replace(/\D/g, '').length !== INPUT_LIMITS.PHONE_LENGTH) {
+      setEditError(`Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`);
       return;
     }
     setEditSaving(true);
@@ -239,7 +257,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
             </div>
           )}
           <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
-            <input type="text" placeholder="Name" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} className={inputClass} />
+            <input type="text" placeholder="Name" value={newStaffName} onChange={(e) => setNewStaffName(sanitizeName(e.target.value))} className={inputClass} maxLength={INPUT_LIMITS.NAME_MAX} />
             <input type="text" placeholder="Username (email)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className={inputClass} required />
             <button type="submit" disabled={staffAdding} className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-red-500/20 disabled:opacity-50">
               <Plus size={16} /> {staffAdding ? 'Adding...' : 'Add'}
@@ -529,9 +547,10 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               <input
                 type="text"
                 value={editDraft.name}
-                onChange={(e) => { setEditDraft({ ...editDraft, name: e.target.value }); if (editError) setEditError(''); }}
+                onChange={(e) => { setEditDraft({ ...editDraft, name: sanitizeName(e.target.value) }); if (editError) setEditError(''); }}
                 className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
                 placeholder="Staff name"
+                maxLength={INPUT_LIMITS.NAME_MAX}
                 autoFocus
               />
             </div>
@@ -539,11 +558,13 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               <label className="block text-xs font-semibold text-gray-500 mb-1.5">Phone</label>
               <input
                 type="text"
+                inputMode="numeric"
                 value={editDraft.phone}
-                onChange={(e) => { setEditDraft({ ...editDraft, phone: e.target.value }); if (editError) setEditError(''); }}
+                onChange={(e) => { setEditDraft({ ...editDraft, phone: sanitizePhone(e.target.value) }); if (editError) setEditError(''); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') saveEditStaff(); }}
                 className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
                 placeholder="0917 123 4567"
+                maxLength={INPUT_LIMITS.PHONE_LENGTH}
               />
             </div>
             <div className="flex gap-3 pt-1">

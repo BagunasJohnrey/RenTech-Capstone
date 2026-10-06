@@ -5,15 +5,26 @@ import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
 import { api, API_ORIGIN } from '../utils/api';
 import TermsContent from './TermsContent';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+  sanitizeAddress,
+  sanitizeEmail,
+  validateName,
+  validateEmail,
+  validatePhone,
+  validateAddress,
+} from '../utils/inputLimits';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
 // Real-time field validators. Return `true` when valid, or an error string.
 export const validators = {
-  name: (v) => (v && v.trim().length >= 2) || 'Enter your full name',
-  email: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v || '') || 'Enter a valid email address',
-  phone: (v) => (v && v.replace(/\D/g, '').length === 11) || 'Phone must be exactly 11 digits',
-  address: (v) => (v && v.trim().length >= 5) || 'Enter your full address',
+  name: (v) => validateName(v),
+  email: (v) => validateEmail(v),
+  phone: (v) => validatePhone(v),
+  address: (v) => validateAddress(v),
   // Phase 4: password policy — 12+ chars, upper + lower + digit + symbol
   password: (v) => {
     if (!v || v.length < 12) return 'Must be at least 12 characters';
@@ -414,12 +425,13 @@ export default function Login({ onLogin, onVerifyMfa }) {
                    </p>
                    {!forgotSent ? (
                      <form onSubmit={handleForgotSubmit} className="space-y-4">
-                       <Field
-                         label="Email"
-                         type="email"
-                         required
-                         value={forgotEmail}
-                         onChange={(e) => setForgotEmail(e.target.value)}
+                        <Field
+                          label="Email"
+                          type="email"
+                          required
+                          value={forgotEmail}
+                          maxLength={INPUT_LIMITS.EMAIL_MAX}
+                          onChange={(e) => setForgotEmail(sanitizeEmail(e.target.value))}
                          className={inputClass}
                          placeholder="you@example.com"
                          autoComplete="email"
@@ -465,7 +477,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
                <Divider />
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                <Field label="Email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="you@example.com" autoComplete="email" />
+                <Field label="Email" type="email" required value={email} onChange={(e) => setEmail(sanitizeEmail(e.target.value))} className={inputClass} placeholder="you@example.com" autoComplete="email" maxLength={INPUT_LIMITS.EMAIL_MAX} />
                 <Field label="Password" required className={inputClass + ' pr-10'} placeholder="••••••••"
                   type={showPassword ? 'text' : 'password'}
                   value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
@@ -542,20 +554,24 @@ export default function Login({ onLogin, onVerifyMfa }) {
 
                   <div className="space-y-4">
                     <Field label="Full Name" type="text" required value={signupData.name}
-                      onChange={(e) => updateSignup('name', e.target.value)} onBlur={() => markTouched('name')}
+                      onChange={(e) => updateSignup('name', sanitizeName(e.target.value))} onBlur={() => markTouched('name')}
                       className={inputClass + ' ' + glowClass('name')} placeholder="Juan Dela Cruz" autoComplete="name"
+                      maxLength={INPUT_LIMITS.NAME_MAX}
                       error={touched.name && !fieldState('name').valid ? fieldState('name').error : undefined} />
                     <Field label="Email" type="email" required value={signupData.email}
-                      onChange={(e) => updateSignup('email', e.target.value)} onBlur={() => markTouched('email')}
+                      onChange={(e) => updateSignup('email', sanitizeEmail(e.target.value))} onBlur={() => markTouched('email')}
                       className={inputClass + ' ' + glowClass('email')} placeholder="you@example.com" autoComplete="email"
+                      maxLength={INPUT_LIMITS.EMAIL_MAX}
                       error={touched.email && !fieldState('email').valid ? fieldState('email').error : undefined} />
                     <Field label="Phone" type="tel" required value={signupData.phone}
-                      onChange={(e) => updateSignup('phone', e.target.value)} onBlur={() => markTouched('phone')}
-                      className={inputClass + ' ' + glowClass('phone')} placeholder="0917 123 4567" autoComplete="tel" inputMode="tel"
+                      onChange={(e) => updateSignup('phone', sanitizePhone(e.target.value))} onBlur={() => markTouched('phone')}
+                      className={inputClass + ' ' + glowClass('phone')} placeholder="0917 123 4567" autoComplete="tel" inputMode="numeric"
+                      maxLength={INPUT_LIMITS.PHONE_LENGTH}
                       error={touched.phone && !fieldState('phone').valid ? fieldState('phone').error : undefined} />
                     <Field label="Address" type="text" required value={signupData.address}
-                      onChange={(e) => updateSignup('address', e.target.value)} onBlur={() => markTouched('address')}
+                      onChange={(e) => updateSignup('address', sanitizeAddress(e.target.value))} onBlur={() => markTouched('address')}
                       className={inputClass + ' ' + glowClass('address')} placeholder="123 Rizal St, Balayan, Batangas" autoComplete="street-address"
+                      maxLength={INPUT_LIMITS.ADDRESS_MAX}
                       error={touched.address && !fieldState('address').valid ? fieldState('address').error : undefined} />
                   </div>
 

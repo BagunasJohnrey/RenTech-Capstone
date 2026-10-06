@@ -6,6 +6,12 @@ import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useButtonGuard } from '../hooks/useButtonGuard';
 import { customerLabel, itemLabel } from '../utils/format';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+  sanitizeAddress,
+} from '../utils/inputLimits';
 
 const toYmd = (d) => {
   if (!d) return '';
@@ -150,12 +156,25 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
 
   const handleSave = () => {
     if (!customerId) { toastError('No linked customer record to edit'); return; }
-    if (!form.name || form.name.trim().length < 2) {
+    const nameTrimmed = (form.name || '').trim();
+    if (nameTrimmed.length < INPUT_LIMITS.NAME_MIN) {
       toastError('Full name is required (min 2 characters)');
       return;
     }
-    if (form.phone && form.phone.length !== 11) {
-      toastError('Phone must be exactly 11 digits');
+    if (/\d/.test(nameTrimmed)) {
+      toastError('Name must not contain numbers');
+      return;
+    }
+    if (nameTrimmed.length > INPUT_LIMITS.NAME_MAX) {
+      toastError(`Name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`);
+      return;
+    }
+    if (form.phone && form.phone.length !== INPUT_LIMITS.PHONE_LENGTH) {
+      toastError(`Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`);
+      return;
+    }
+    if (form.address && form.address.trim().length > INPUT_LIMITS.ADDRESS_MAX) {
+      toastError(`Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`);
       return;
     }
     guardSave(async () => {
@@ -176,10 +195,10 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
 
   return (
     <div className="space-y-4">
-      <Field label="Full Name" required value={form.name} onChange={(e) => update('name', e.target.value)} className={inputClass} autoComplete="name" />
-      <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} className={`${inputClass}${form.phone && form.phone.length !== 11 ? ' border-red-300' : ''}`} inputMode="tel" autoComplete="tel" placeholder="09171234567" />
+      <Field label="Full Name" required value={form.name} onChange={(e) => update('name', sanitizeName(e.target.value))} className={inputClass} autoComplete="name" maxLength={INPUT_LIMITS.NAME_MAX} />
+      <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', sanitizePhone(e.target.value))} className={`${inputClass}${form.phone && form.phone.length !== 11 ? ' border-red-300' : ''}`} inputMode="numeric" autoComplete="tel" placeholder="09171234567" maxLength={INPUT_LIMITS.PHONE_LENGTH} />
       {form.phone && form.phone.length !== 11 && <p className="text-[10px] text-red-500 -mt-2">Phone must be exactly 11 digits (e.g. 09171234567)</p>}
-      <Field label="Address" value={form.address} onChange={(e) => update('address', e.target.value)} className={inputClass} autoComplete="street-address" placeholder="Street, Balayan, Batangas" />
+      <Field label="Address" value={form.address} onChange={(e) => update('address', sanitizeAddress(e.target.value))} className={inputClass} autoComplete="street-address" placeholder="Street, Balayan, Batangas" maxLength={INPUT_LIMITS.ADDRESS_MAX} />
 
       <p className="text-[10px] text-gray-400">Item / payment / fee details still require cancel + re-book.</p>
 

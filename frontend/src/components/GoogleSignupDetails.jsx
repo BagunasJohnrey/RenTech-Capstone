@@ -2,13 +2,22 @@ import { useState } from 'react';
 import { ArrowRight, Heart, X, ScrollText, ShieldCheck } from 'lucide-react';
 import { api } from '../utils/api';
 import TermsContent from './TermsContent';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+  sanitizeAddress,
+  validateName,
+  validatePhone,
+  validateAddress,
+} from '../utils/inputLimits';
 
 const ITEM_TYPES = ['Gown', 'Suit', 'Barong', 'Filipiniana', 'Costume'];
 
 const validators = {
-  name: (v) => (v && v.trim().length >= 2) || 'Enter your full name',
-  phone: (v) => (v && v.replace(/\D/g, '').length === 11) || 'Phone must be exactly 11 digits',
-  address: (v) => (v && v.trim().length >= 5) || 'Enter your full address',
+  name: (v) => validateName(v),
+  phone: (v) => validatePhone(v),
+  address: (v) => validateAddress(v),
 };
 
 function FieldError({ show, message }) {
@@ -124,10 +133,11 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
                 type="text"
                 required
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => setName(sanitizeName(e.target.value))}
                 onBlur={() => markTouched('name')}
                 className={inputClass + ' ' + glowClass('name')}
                 placeholder="Juan Dela Cruz"
+                maxLength={INPUT_LIMITS.NAME_MAX}
               />
               <FieldError show={touched.name && !fieldState('name').valid} message={fieldState('name').error} />
             </div>
@@ -141,10 +151,12 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
                 type="tel"
                 required
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => setPhone(sanitizePhone(e.target.value))}
                 onBlur={() => markTouched('phone')}
                 className={inputClass + ' ' + glowClass('phone')}
                 placeholder="0917 123 4567"
+                inputMode="numeric"
+                maxLength={INPUT_LIMITS.PHONE_LENGTH}
               />
               <FieldError show={touched.phone && !fieldState('phone').valid} message={fieldState('phone').error} />
             </div>
@@ -154,10 +166,11 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
                 type="text"
                 required
                 value={address}
-                onChange={(e) => setAddress(e.target.value)}
+                onChange={(e) => setAddress(sanitizeAddress(e.target.value))}
                 onBlur={() => markTouched('address')}
                 className={inputClass + ' ' + glowClass('address')}
                 placeholder="123 Rizal St, Balayan, Batangas"
+                maxLength={INPUT_LIMITS.ADDRESS_MAX}
               />
               <FieldError show={touched.address && !fieldState('address').valid} message={fieldState('address').error} />
             </div>

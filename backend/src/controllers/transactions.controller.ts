@@ -34,10 +34,11 @@ export const createRentalSchema = z.object({
     // is a promise until the gateway webhook credits it.
     downpaymentCash: z.boolean().optional(),
     customerId: z.string().optional(),
-    customerName: z.string().optional(),
-    contact: z.string().optional(),
-    address: z.string().optional(),
-    notes: z.string().optional(),
+    customerName: z.string().min(2).max(50, 'Name must be 50 characters or fewer')
+      .regex(/^\D+$/, 'Name must not contain numbers').optional(),
+    contact: z.string().regex(/^\d{11}$/, 'Phone must be exactly 11 digits').optional(),
+    address: z.string().max(100, 'Address must be 100 characters or fewer').optional(),
+    notes: z.string().max(300, 'Notes must be 300 characters or fewer').optional(),
     conditionPhoto: z.string().optional(),
     size: z.string().optional(),
     measurements: z.record(z.unknown()).optional(),

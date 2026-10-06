@@ -2,6 +2,12 @@ import { useState } from 'react';
 import { User, Pencil, Save, X, Phone, MapPin, Heart, Mail } from 'lucide-react';
 import { api } from '../../utils/api';
 import { ITEM_TYPES } from './constants';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+  sanitizeAddress,
+} from '../../utils/inputLimits';
 
 export default function ProfileHeader({ role, profile, customerInfo, onUpdateCustomer, onProfileUpdated }) {
   const [editCustomer, setEditCustomer] = useState(false);
@@ -15,6 +21,11 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
   const [staffMsg, setStaffMsg] = useState('');
 
   const handleSaveCustomer = () => {
+    const nm = (localCustomer.name || '').trim();
+    if (nm.length < INPUT_LIMITS.NAME_MIN || /\d/.test(nm) || nm.length > INPUT_LIMITS.NAME_MAX) return;
+    const digits = (localCustomer.contact || '').replace(/\D/g, '');
+    if (localCustomer.contact && digits.length !== INPUT_LIMITS.PHONE_LENGTH) return;
+    if ((localCustomer.address || '').trim().length > INPUT_LIMITS.ADDRESS_MAX) return;
     onUpdateCustomer(localCustomer);
     setEditCustomer(false);
     setSaveMessage('Profile updated!');
@@ -29,8 +40,21 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
   };
 
   const saveStaffProfile = async () => {
-    if (!staffDraft.name.trim()) {
+    const nm = staffDraft.name.trim();
+    if (!nm) {
       setStaffError('Name is required');
+      return;
+    }
+    if (/\d/.test(nm)) {
+      setStaffError('Name must not contain numbers');
+      return;
+    }
+    if (nm.length > INPUT_LIMITS.NAME_MAX) {
+      setStaffError(`Name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`);
+      return;
+    }
+    if (staffDraft.phone.trim() && staffDraft.phone.replace(/\D/g, '').length !== INPUT_LIMITS.PHONE_LENGTH) {
+      setStaffError(`Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`);
       return;
     }
     setStaffSaving(true);
@@ -129,16 +153,16 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className={labelClass}>Full Name</label>
-                    <input type="text" value={localCustomer.name} onChange={(e) => setLocalCustomer({ ...localCustomer, name: e.target.value })} className={inputClass} placeholder="Full Name" />
+                    <input type="text" value={localCustomer.name} onChange={(e) => setLocalCustomer({ ...localCustomer, name: sanitizeName(e.target.value) })} className={inputClass} placeholder="Full Name" maxLength={INPUT_LIMITS.NAME_MAX} />
                   </div>
                   <div>
                     <label className={labelClass}>Contact Number</label>
-                    <input type="text" value={localCustomer.contact} onChange={(e) => setLocalCustomer({ ...localCustomer, contact: e.target.value })} className={inputClass} placeholder="Contact Number" />
+                    <input type="text" inputMode="numeric" value={localCustomer.contact} onChange={(e) => setLocalCustomer({ ...localCustomer, contact: sanitizePhone(e.target.value) })} className={inputClass} placeholder="Contact Number" maxLength={INPUT_LIMITS.PHONE_LENGTH} />
                   </div>
                 </div>
                 <div>
                   <label className={labelClass}>Address</label>
-                  <input type="text" value={localCustomer.address} onChange={(e) => setLocalCustomer({ ...localCustomer, address: e.target.value })} className={inputClass} placeholder="Full Address" />
+                  <input type="text" value={localCustomer.address} onChange={(e) => setLocalCustomer({ ...localCustomer, address: sanitizeAddress(e.target.value) })} className={inputClass} placeholder="Full Address" maxLength={INPUT_LIMITS.ADDRESS_MAX} />
                 </div>
                 <div>
                   <label className={labelClass}>Interested In</label>
@@ -217,11 +241,11 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className={labelClass}>Full Name</label>
-                  <input type="text" value={staffDraft.name} onChange={(e) => setStaffDraft({ ...staffDraft, name: e.target.value })} className={inputClass} placeholder="Full Name" />
+                  <input type="text" value={staffDraft.name} onChange={(e) => setStaffDraft({ ...staffDraft, name: sanitizeName(e.target.value) })} className={inputClass} placeholder="Full Name" maxLength={INPUT_LIMITS.NAME_MAX} />
                 </div>
                 <div>
                   <label className={labelClass}>Contact Number</label>
-                  <input type="text" value={staffDraft.phone} onChange={(e) => setStaffDraft({ ...staffDraft, phone: e.target.value })} className={inputClass} placeholder="Contact Number" />
+                  <input type="text" inputMode="numeric" value={staffDraft.phone} onChange={(e) => setStaffDraft({ ...staffDraft, phone: sanitizePhone(e.target.value) })} className={inputClass} placeholder="Contact Number" maxLength={INPUT_LIMITS.PHONE_LENGTH} />
                 </div>
               </div>
               {staffError && <p className="text-[#bf4a53] text-xs font-semibold">{staffError}</p>}

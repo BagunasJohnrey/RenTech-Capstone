@@ -14,6 +14,13 @@ import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { downloadReceiptImage } from '../utils/receiptImage';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { toLocalYmd, todayYmd } from '../utils/format';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+  sanitizeAddress,
+  sanitizeNotes,
+} from '../utils/inputLimits';
 
 const ITEMS_PER_LOAD = 6;
 
@@ -251,9 +258,14 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   const validateStep2 = () => {
     const errs = {};
-    if (!customer.name || customer.name.trim().length < 2) errs.name = 'Full name is required (min 2 characters)';
+    const nameTrimmed = (customer.name || '').trim();
+    if (nameTrimmed.length < INPUT_LIMITS.NAME_MIN) errs.name = 'Full name is required (min 2 characters)';
+    else if (nameTrimmed.length > INPUT_LIMITS.NAME_MAX) errs.name = `Full name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`;
+    else if (/\d/.test(nameTrimmed)) errs.name = 'Name must not contain numbers';
     if (!customer.contact || !/^\d{11}$/.test(customer.contact.trim())) errs.contact = 'Contact number must be exactly 11 digits';
-    if (!customer.address || customer.address.trim().length < 5) errs.address = 'Address is required (min 5 characters)';
+    const addrTrimmed = (customer.address || '').trim();
+    if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
+    else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
     if (new Date(customer.rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
     if (new Date(customer.eventDate) < new Date(customer.rentalDate)) errs.eventDate = 'Event date must be on or after pickup date';
     if (!size) errs.size = 'Please select a size';
@@ -298,9 +310,11 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // Live field validity (green glow when valid)
   const fieldValid = useMemo(() => {
     const v = {};
-    if (customer.name?.trim().length >= 2) v.name = true;
+    const nm = customer.name?.trim() ?? '';
+    if (nm.length >= INPUT_LIMITS.NAME_MIN && nm.length <= INPUT_LIMITS.NAME_MAX && !/\d/.test(nm)) v.name = true;
     if (/^\d{11}$/.test(customer.contact?.trim())) v.contact = true;
-    if (customer.address?.trim().length >= 5) v.address = true;
+    const ad = customer.address?.trim() ?? '';
+    if (ad.length >= INPUT_LIMITS.ADDRESS_MIN && ad.length <= INPUT_LIMITS.ADDRESS_MAX) v.address = true;
     if (customer.rentalDate && new Date(customer.rentalDate) >= new Date(todayStr)) v.rentalDate = true;
     if (customer.eventDate && customer.rentalDate && new Date(customer.eventDate) >= new Date(customer.rentalDate)) v.eventDate = true;
     if (size) v.size = true;
@@ -872,24 +886,27 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Customer</h4>
                 <div>
                   <Field showLabel={false} type="text" placeholder="Full Name" value={customer.name}
-                    onChange={e => { setCustomer({...customer, name: e.target.value}); clearFieldError('name'); touchField('name'); }}
+                    onChange={e => { setCustomer({...customer, name: sanitizeName(e.target.value)}); clearFieldError('name'); touchField('name'); }}
                     onBlur={() => touchField('name')}
                     className={inputClass('name')} aria-label="Customer full name"
+                    maxLength={INPUT_LIMITS.NAME_MAX}
                     error={fieldErrors.name || undefined} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <Field showLabel={false} type="tel" placeholder="Contact No." value={customer.contact}
-                      onChange={e => { setCustomer({...customer, contact: e.target.value.replace(/\D/g, '')}); clearFieldError('contact'); touchField('contact'); }}
+                      onChange={e => { setCustomer({...customer, contact: sanitizePhone(e.target.value)}); clearFieldError('contact'); touchField('contact'); }}
                       onBlur={() => touchField('contact')}
                       className={inputClass('contact')} inputMode="numeric" aria-label="Customer contact number"
+                      maxLength={INPUT_LIMITS.PHONE_LENGTH}
                       error={fieldErrors.contact || undefined} />
                   </div>
                   <div>
                     <Field showLabel={false} type="text" placeholder="Address" value={customer.address}
-                      onChange={e => { setCustomer({...customer, address: e.target.value}); clearFieldError('address'); touchField('address'); }}
+                      onChange={e => { setCustomer({...customer, address: sanitizeAddress(e.target.value)}); clearFieldError('address'); touchField('address'); }}
                       onBlur={() => touchField('address')}
                       className={inputClass('address')} aria-label="Customer address"
+                      maxLength={INPUT_LIMITS.ADDRESS_MAX}
                       error={fieldErrors.address || undefined} />
                   </div>
                 </div>
@@ -984,7 +1001,8 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Documentation</h4>
                 <textarea placeholder="Remarks / Notes" value={customer.notes}
-                  onChange={e => setCustomer({...customer, notes: e.target.value})}
+                  onChange={e => setCustomer({...customer, notes: sanitizeNotes(e.target.value)})}
+                  maxLength={INPUT_LIMITS.NOTES_MAX}
                   className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[80px] focus:outline-none focus:border-[#bf4a53]" />
               </div>
             </div>

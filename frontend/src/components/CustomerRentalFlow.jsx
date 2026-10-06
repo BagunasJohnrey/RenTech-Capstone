@@ -19,6 +19,13 @@ import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
 import { downloadReceiptImage } from '../utils/receiptImage';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { api } from '../utils/api';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+  sanitizeAddress,
+  sanitizeNotes,
+} from '../utils/inputLimits';
 
 // Short booking code for the QR/receipt.
 const bookingCode = (tx) => getBookingCode(tx);
@@ -197,9 +204,14 @@ export default function CustomerRentalFlow({
   const validateStep1 = () => {
     const errs = {};
     if (!selectedItem) errs.item = 'Please select an item.';
-    if (!customer.name || customer.name.trim().length < 2) errs.name = 'Full name is required (min 2 characters)';
+    const nameTrimmed = (customer.name || '').trim();
+    if (nameTrimmed.length < INPUT_LIMITS.NAME_MIN) errs.name = 'Full name is required (min 2 characters)';
+    else if (nameTrimmed.length > INPUT_LIMITS.NAME_MAX) errs.name = `Full name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`;
+    else if (/\d/.test(nameTrimmed)) errs.name = 'Name must not contain numbers';
     if (!customer.contact || !/^\d{11}$/.test(customer.contact.trim())) errs.contact = 'Contact number must be exactly 11 digits';
-    if (!customer.address || customer.address.trim().length < 5) errs.address = 'Address is required (min 5 characters)';
+    const addrTrimmed = (customer.address || '').trim();
+    if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
+    else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
     if (new Date(rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
     if (!eventDate) errs.eventDate = 'Please select an event date.';
     else if (new Date(eventDate) < new Date(rentalDate)) errs.eventDate = 'Event date must be on or after the pickup date';
@@ -709,17 +721,20 @@ export default function CustomerRentalFlow({
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Contact Details</h4>
                 <Field type="text" label="Full Name" placeholder="Full Name" value={customer.name}
-                  onChange={(e) => { setCustomer({ ...customer, name: e.target.value }); clearFieldError('name'); }}
+                  onChange={(e) => { setCustomer({ ...customer, name: sanitizeName(e.target.value) }); clearFieldError('name'); }}
                   className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails}
+                  maxLength={INPUT_LIMITS.NAME_MAX}
                   error={fieldErrors.name || undefined} />
                 <div className="grid grid-cols-2 gap-3">
                   <Field type="tel" label="Contact No." placeholder="Contact No." value={customer.contact}
-                    onChange={(e) => { setCustomer({ ...customer, contact: e.target.value.replace(/\D/g, '') }); clearFieldError('contact'); }}
+                    onChange={(e) => { setCustomer({ ...customer, contact: sanitizePhone(e.target.value) }); clearFieldError('contact'); }}
                     className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.contact ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} inputMode="numeric"
+                    maxLength={INPUT_LIMITS.PHONE_LENGTH}
                     error={fieldErrors.contact || undefined} />
                   <Field type="text" label="Address" placeholder="Address" value={customer.address}
-                    onChange={(e) => { setCustomer({ ...customer, address: e.target.value }); clearFieldError('address'); }}
+                    onChange={(e) => { setCustomer({ ...customer, address: sanitizeAddress(e.target.value) }); clearFieldError('address'); }}
                     className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails}
+                    maxLength={INPUT_LIMITS.ADDRESS_MAX}
                     error={fieldErrors.address || undefined} />
                 </div>
               </div>
@@ -818,7 +833,8 @@ export default function CustomerRentalFlow({
                 )}
 
                 <textarea placeholder="Special notes (e.g. size preference, theme)" value={customer.notes}
-                  onChange={(e) => setCustomer({ ...customer, notes: e.target.value })}
+                  onChange={(e) => setCustomer({ ...customer, notes: sanitizeNotes(e.target.value) })}
+                  maxLength={INPUT_LIMITS.NOTES_MAX}
                   className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[80px] focus:outline-none focus:border-[#bf4a53]" />
               </div>
 
