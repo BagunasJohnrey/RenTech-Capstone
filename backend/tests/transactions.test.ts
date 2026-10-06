@@ -853,6 +853,11 @@ describe('GET /api/dashboard/kpis', () => {
 describe('GET /api/dashboard/today', () => {
   it('should return today tasks for staff', async () => {
     const { prisma } = await import('../src/config/database.js');
+    // The 'today' digest is cached server-side and earlier tests (via the
+    // mutation cache-warmer) may have filled it — clear so this test's mocks
+    // drive a fresh compute and the query-shape assertions below are real.
+    const { clearDataCache } = await import('../src/utils/ttlCache.js');
+    clearDataCache();
     prisma.transaction.findMany.mockResolvedValue([]);
     prisma.inventoryItem.count.mockResolvedValueOnce(0);
 
@@ -864,6 +869,18 @@ describe('GET /api/dashboard/today', () => {
     expect(res.body).toHaveProperty('dueToday');
     expect(res.body).toHaveProperty('overdue');
     expect(res.body).toHaveProperty('inCleaning');
+    // First-paint fast path: the digest carries the pickup queue + revenue
+    // so Tasks paints before the 500-row list lands.
+    expect(res.body).toHaveProperty('pendingPickup');
+    expect(Array.isArray(res.body.pendingPickup)).toBe(true);
+    expect(res.body).toHaveProperty('todayRevenue');
+    // Digest rows are FULL records (all scalars + customer/item names) —
+    // every queue action works directly off them.
+    const pickupCall = (prisma.transaction.findMany as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => Array.isArray(c?.[0]?.where?.status?.in) && c[0].where.status.in.includes('Reserved') && 'releasePhoto' in (c[0].where ?? {})
+    );
+    expect(pickupCall).toBeTruthy();
+    expect(pickupCall[0].include?.customer?.select).toMatchObject({ id: true, name: true, phone: true, address: true });
   });
 
   it('should reject for customer', async () => {

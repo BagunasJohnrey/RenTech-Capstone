@@ -220,43 +220,59 @@ async function getTodayTasksUncached() {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const dueToday = await prisma.transaction.findMany({
-    where: {
-      status: { in: ['Active', 'Overdue'] },
-      dueDate: { gte: today, lt: tomorrow },
-    },
-    include: {
-      customer: { select: { id: true, name: true, phone: true } },
-      item: { select: { id: true, name: true } },
-    },
-    orderBy: { dueDate: 'asc' },
-  });
+  // One batch: the old code awaited these serially (4+ back-to-back pooler
+  // round trips). All five are independent, so they fly together.
+  // Row shape is deliberately FULL (all tx scalars + customer/item names):
+  // the digest doubles as the Tasks first paint (~20 rows ≈ 20KB vs the
+  // 500-row /transactions list at ~330KB), so every action the queue offers
+  // (SMS, release with balance check, edit with phone/address, detail nav)
+  // works directly off digest rows — no partial-row hazards.
+  const taskRow = {
+    customer: { select: { id: true, name: true, phone: true, address: true } },
+    item: { select: { id: true, name: true, category: true } },
+  };
 
-  const overdue = await prisma.transaction.findMany({
-    where: {
-      OR: [{ status: 'Overdue' }, { status: 'Active', dueDate: { lt: today } }],
-    },
-    include: {
-      customer: { select: { id: true, name: true, phone: true } },
-      item: { select: { id: true, name: true } },
-    },
-    orderBy: { dueDate: 'asc' },
-  });
-
-  const inCleaning = await prisma.inventoryItem.count({
-    where: { status: 'Cleaning' },
-  });
-
-  // Collected-today pill (staff Today-at-a-Glance + admin Revenue Trend
-  // header): same ledger definition as monthlyRevenue. Staff never fetch
-  // /kpis, so it rides the today-digest both roles already load.
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayRevenue = await aggregateRevenueFrom(todayStart);
+  const [dueToday, overdue, pendingPickup, inCleaning, todayRevenue] = await Promise.all([
+    prisma.transaction.findMany({
+      where: {
+        status: { in: ['Active', 'Overdue'] },
+        dueDate: { gte: today, lt: tomorrow },
+      },
+      include: taskRow,
+      orderBy: { dueDate: 'asc' },
+    }),
+    prisma.transaction.findMany({
+      where: {
+        OR: [{ status: 'Overdue' }, { status: 'Active', dueDate: { lt: today } }],
+      },
+      include: taskRow,
+      orderBy: { dueDate: 'asc' },
+    }),
+    // Ready-for-Pickup: booked but not yet handed over (no release/condition
+    // photo). Mirrors client isReleased(), so digest rows match the Tasks
+    // queue exactly.
+    prisma.transaction.findMany({
+      where: {
+        status: { in: ['Active', 'Reserved'] },
+        releasePhoto: null,
+        conditionPhoto: null,
+      },
+      include: taskRow,
+      orderBy: { rentalDate: 'asc' },
+    }),
+    prisma.inventoryItem.count({
+      where: { status: 'Cleaning' },
+    }),
+    // Collected-today pill (staff Today-at-a-Glance + admin Revenue Trend
+    // header): same ledger definition as monthlyRevenue. Staff never fetch
+    // /kpis, so it rides the today-digest both roles already load.
+    aggregateRevenueFrom(today),
+  ]);
 
   return {
     dueToday,
     overdue,
+    pendingPickup,
     inCleaning,
     todayRevenue,
   };

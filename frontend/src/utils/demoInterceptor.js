@@ -139,7 +139,11 @@ function todayDigest() {
   return {
     dueToday: clone(dueTodayTxs),
     overdue: clone(overdueTxs),
+    // Ready-for-Pickup: booked but not yet handed over (mirrors the server
+    // digest's pendingPickup + client isReleased()).
+    pendingPickup: clone(transactions.filter((t) => (t.status === 'Active' || t.status === 'Reserved') && !(t.releasePhoto || t.conditionPhoto))),
     inCleaning: items.filter((i) => i.status === 'Cleaning').length,
+    todayRevenue: 0,
     pickups: clone(transactions.filter((t) => (t.rentalDate ?? '').split('T')[0] === day(0) && (t.status === 'Active' || t.status === 'Reserved'))),
   };
 }

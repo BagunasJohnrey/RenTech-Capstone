@@ -41,8 +41,23 @@ function SmsLogSection() {
   );
 }
 
-export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
+export default function StaffTasksView({ transactions, digestTransactions, digestLoading, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
   const navigate = useNavigate();
+  // Fast first paint: action queues render from the tiny today-digest rows
+  // (~20 rows) the moment they land; the full 500-row list merges in behind
+  // and takes over (it covers history + calendar, which the digest doesn't).
+  // Digest rows are FULL records, so every row action works identically.
+  //
+  // Gate discipline (must match TasksPage): a resolved-but-empty digest is
+  // REAL ("quiet day" → honestly "All clear"); only a pending digest fetch
+  // is "unknown" (→ skeletons, never the false "All clear").
+  const digestPending = !!digestLoading;
+  const digestReady = digestTransactions && digestTransactions.length > 0;
+  const queueTxs = digestReady ? digestTransactions : transactions;
+  const queuesKnown = !digestPending || (transactions && transactions.length > 0);
+  // The digest only carries actionable rows — the sections below that need
+  // the full picture (calendar, activity history) wait for the real list.
+  const fullListReady = transactions && transactions.length > 0;
   const role = roleProp || 'Staff';
   const goHistoryFiltered = (status) => {
     const base = tabPath(role, 'History');
@@ -78,19 +93,23 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
   // Full-view modals
   const [sendingSms, setSendingSms] = useState(false);
 
-  // Ready for Pickup
-  const pendingPickup = transactions.filter(tx =>
+  // Ready for Pickup + Overdue queues paint from the digest rows first
+  // (fast), then the full list takes over when it lands. Both shapes are
+  // FULL records, so the merge is seamless.
+  const pendingPickup = queueTxs.filter(tx =>
     (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx)
   );
 
   // Overdue data
-  const overdueItems = transactions.filter(tx => {
+  const overdueItems = queueTxs.filter(tx => {
     if (tx.status === 'Overdue') return true;
     if (tx.status !== 'Active') return false;
     const due = new Date(tx.dueDate || tx.date);
     return due < today;
   });
 
+  // The sections below need the FULL picture (history + future schedule),
+  // which the digest doesn't carry — they render from the real list only.
   const upcoming = transactions.filter(tx => {
     const txDate = new Date(tx.date);
     return txDate >= today;
@@ -253,6 +272,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               ].slice(0, 4);
 
               if (focusItems.length === 0) {
+                if (!queuesKnown) return <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue…</p>;
                 return <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>;
               }
               return <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>;
@@ -288,6 +308,21 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               ].slice(0, 4);
 
               if (focusItems.length === 0) {
+                if (!queuesKnown) {
+                  return (
+                    <div className="space-y-2" aria-label="Loading today's queue">
+                      {[0, 1].map((i) => (
+                        <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 animate-pulse">
+                          <div className="w-4 h-4 rounded-full bg-gray-200 shrink-0" />
+                          <div className="flex-1 space-y-1.5">
+                            <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
+                            <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 return (
                   <div className="text-center py-6 text-gray-400 text-sm font-medium">
                     Nothing urgent today.
@@ -394,9 +429,24 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               </div>
             </div>
 
-            {/* Activity list — flex-1 keeps the card tall even when empty */}
+            {/* Activity list — flex-1 keeps the card tall even when empty.
+                Needs the FULL list (history); while it loads, skeleton rows
+                (never the false "No recent activity"). */}
             <div className="space-y-1 flex-1 flex flex-col">
-              {recentActivity.length === 0 ? (
+              {!fullListReady ? (
+                <div className="space-y-1" aria-label="Loading recent activity">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex items-center gap-3.5 px-1 py-3 animate-pulse">
+                      <div className="w-10 h-10 rounded-full bg-gray-200 shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3.5 w-1/2 bg-gray-200 rounded" />
+                        <div className="h-3 w-1/3 bg-gray-100 rounded" />
+                      </div>
+                      <div className="h-6 w-16 rounded-full bg-gray-100 shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              ) : recentActivity.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center py-8">
                   <p className="text-sm text-gray-400 text-center">No recent activity.</p>
                 </div>
@@ -576,8 +626,31 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
           </div>
         </div>
 
-        {/* Pickup + Overdue — paired action queues (latest 5 each) */}
-        {(pendingPickup.length > 0 || overdueItems.length > 0) && (
+        {/* Pickup + Overdue — paired action queues (latest 5 each).
+            Unknown (digest still pending, list empty) → skeleton cards, never
+            a missing section that reads as "nothing to do". Known-empty
+            (quiet day) → section hidden, same as before. */}
+        {!queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Loading pickup and overdue queues">
+            {[0, 1].map((i) => (
+              <div key={i} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 animate-pulse">
+                <div className="h-5 w-40 bg-gray-200 rounded mb-4" />
+                <div className="space-y-2">
+                  {[0, 1, 2].map((j) => (
+                    <div key={j} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">
+                      <div className="w-9 h-9 rounded-full bg-gray-200 shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
+                        <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+        (pendingPickup.length > 0 || overdueItems.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Ready for Pickup */}
             {pendingPickup.length > 0 ? (
@@ -668,6 +741,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               </div>
             ) : <div className="hidden lg:block" />}
           </div>
+        )
         )}
 
       {/* SMS Log — read-only here (delete is admin-only in the panel).
