@@ -101,14 +101,15 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               <CalendarDays size={14} className="text-gray-400" />
               <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Availability</span>
             </div>
+            {/* Loading skeleton mirrors the Fully Available box below
+                (icon + two lines, same padding) so the card keeps its height
+                when data lands — the old 28-cell grid was far taller and the
+                modal visibly jumped on every open. */}
             {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-1/3" />
-                <div className="grid grid-cols-7 gap-1.5">
-                  {Array.from({ length: 28 }).map((_, i) => (
-                    <Skeleton key={i} className="h-8 rounded-lg" />
-                  ))}
-                </div>
+              <div className="bg-emerald-50/50 rounded-xl py-4 text-center space-y-2" aria-label="Loading availability">
+                <Skeleton className="h-5 w-5 rounded-full mx-auto" />
+                <Skeleton className="h-4 w-32 mx-auto" />
+                <Skeleton className="h-3 w-44 mx-auto" />
               </div>
             ) : blockedRanges.length === 0 ? (
               <div className="bg-emerald-50/50 rounded-xl py-4 text-center">

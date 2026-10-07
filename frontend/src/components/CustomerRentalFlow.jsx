@@ -587,11 +587,13 @@ export default function CustomerRentalFlow({
                 {fieldErrors.item}
               </div>
             )}
-            {/* Mobile list height matches the staff New Rental sheet: the
-                shared BottomSheet sizes to content, and staff's taller
-                chrome (progress steps) is made up here with a taller list
-                window so Select Item fills the sheet the same way. */}
-            <div ref={catalogRef} onScroll={handleCatalogScroll} data-sheet-scroll className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[52vh] sm:max-h-[44vh]">
+            {/* Mobile list height matches the Complete Booking sheet: the
+                shared BottomSheet sizes to content (capped at 92dvh), and
+                Complete Booking always reaches the cap with its long body —
+                so this window is sized to reach the cap too on phones (any
+                overflow scrolls inside the list). Desktop keeps the
+                compact window. */}
+            <div ref={catalogRef} onScroll={handleCatalogScroll} data-sheet-scroll className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[58vh] sm:max-h-[44vh]">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {displayedItems.map((item) => (
                   <button type="button" key={item.id} onClick={() => setSelectedItem(item)}

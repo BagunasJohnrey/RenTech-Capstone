@@ -59,20 +59,13 @@ export default function AvailabilityCalendar({ item, onClose }) {
 
         {/* Body */}
         <div data-sheet-scroll className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-4 overflow-y-auto min-h-0">
+          {/* Same height contract as ItemDetailModal: mirror the Fully
+              Available box so the sheet doesn't jump when data lands. */}
           {loading ? (
-            <div className="space-y-3 py-2">
-              <Skeleton className="h-4 w-1/3" />
-              <div className="grid grid-cols-7 gap-1.5">
-                {Array.from({ length: 28 }).map((_, i) => (
-                  <Skeleton key={i} className="h-8 rounded-lg" />
-                ))}
-              </div>
-              <Skeleton className="h-4 w-1/4 mt-2" />
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 rounded-xl" />
-                ))}
-              </div>
+            <div className="bg-emerald-50/50 rounded-xl py-5 text-center space-y-2" aria-label="Loading availability">
+              <Skeleton className="h-5 w-5 rounded-full mx-auto" />
+              <Skeleton className="h-4 w-32 mx-auto" />
+              <Skeleton className="h-3 w-44 mx-auto" />
             </div>
           ) : (
             <>
