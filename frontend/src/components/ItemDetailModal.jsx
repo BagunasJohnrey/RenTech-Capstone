@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, AlertCircle, CheckCircle2, Search, CalendarDays } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from './Toast';
+import BottomSheet from './BottomSheet';
 import ItemImage from './ItemImage';
 import BookingCalendar from './BookingCalendar';
 import { getSaleInfo } from './ItemCard';
@@ -58,12 +59,11 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
   if (!item) return null;
   const sale = getSaleInfo(item);
 
+  // Bottom-sheet shell (same as the transaction sheet): bottom-anchored on
+  // mobile with swipe-down-to-close, centered card on desktop. The body
+  // carries data-sheet-scroll so a downward drag mid-scroll stays a scroll.
   return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-300 max-h-[90vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <BottomSheet onClose={onClose} labelledby="dialog-title-item-detail">
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-gray-50/50">
           <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0">
@@ -71,14 +71,14 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</p>
-            <h3 className="font-bold text-gray-900 truncate">{item.name}</h3>
+            <h3 id="dialog-title-item-detail" className="font-bold text-gray-900 truncate">{item.name}</h3>
           </div>
           <button onClick={onClose} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors shrink-0">
             <X size={18} />
           </button>
         </div>
 
-        <div className="overflow-y-auto p-4 space-y-4">
+        <div data-sheet-scroll className="overflow-y-auto p-4 space-y-4 min-h-0">
           <div className="flex items-end gap-2">
             {sale.active ? (
               <>
@@ -155,7 +155,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-100">
+        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-gray-100 shrink-0">
           {guest ? (
             <button onClick={onGuestBook}
               className="w-full py-3 rounded-full bg-[#bf4a53] text-white font-bold hover:bg-[#a63f47] transition-colors">
@@ -172,7 +172,6 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

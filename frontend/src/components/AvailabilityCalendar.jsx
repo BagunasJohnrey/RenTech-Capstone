@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, AlertCircle, CheckCircle2, Search } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from './Toast';
+import BottomSheet from './BottomSheet';
 import ItemImage from './ItemImage';
 import { Skeleton } from './Skeleton';
 import { todayYmd } from '../utils/format';
@@ -38,16 +39,17 @@ export default function AvailabilityCalendar({ item, onClose }) {
 
   const today = todayYmd();
 
+  // Bottom-sheet shell (same as the transaction sheet): bottom-anchored on
+  // mobile with swipe-down-to-close, centered card on desktop.
   return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
+    <BottomSheet onClose={onClose} labelledby="dialog-title-check-availability">
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-gray-100/80 bg-gray-50/50">
           <div className="w-10 h-10 rounded-lg bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
             <ItemImage thumb image={item.image} alt="" className="w-full h-full object-cover" placeholderSize={16} />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="font-bold text-sm text-gray-900 truncate">{item.name}</h3>
+            <h3 id="dialog-title-check-availability" className="font-bold text-sm text-gray-900 truncate">{item.name}</h3>
             <p className="text-xs text-gray-400">Availability</p>
           </div>
           <button onClick={onClose} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors shrink-0">
@@ -56,7 +58,7 @@ export default function AvailabilityCalendar({ item, onClose }) {
         </div>
 
         {/* Body */}
-        <div className="p-4 space-y-4">
+        <div data-sheet-scroll className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-4 overflow-y-auto min-h-0">
           {loading ? (
             <div className="space-y-3 py-2">
               <Skeleton className="h-4 w-1/3" />
@@ -143,7 +145,6 @@ export default function AvailabilityCalendar({ item, onClose }) {
             </>
           )}
         </div>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }
