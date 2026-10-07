@@ -632,9 +632,11 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
             (quiet day) → section hidden, same as before. */}
         {!queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Loading pickup and overdue queues">
-            {[0, 1].map((i) => (
-              <div key={i} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 animate-pulse">
-                <div className="h-5 w-40 bg-gray-200 rounded mb-4" />
+            {['Ready for Pickup', 'Overdue Rentals'].map((title) => (
+              <div key={title} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 animate-pulse">
+                <div className="flex items-center mb-4">
+                  <h3 className="font-bold text-lg text-gray-900">{title}</h3>
+                </div>
                 <div className="space-y-2">
                   {[0, 1, 2].map((j) => (
                     <div key={j} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">

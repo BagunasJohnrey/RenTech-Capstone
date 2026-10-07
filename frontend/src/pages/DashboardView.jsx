@@ -4,7 +4,7 @@ import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Dr
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
-import { DashboardSkeleton } from '../components/PageSkeletons';
+import { Skeleton, SkeletonList, FeaturedSkeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { txPill } from '../utils/statusColors';
@@ -99,6 +99,14 @@ export default function DashboardView({ role, transactions, inventory, transacti
       .sort((a, b) => new Date(a.rentalDate) - new Date(b.rentalDate))
       .slice(0, 3);
 
+    // Customer Home — hero ALWAYS renders; only data sections skeleton.
+    // (No full-page skeleton: the greeting + stylist CTA must never be
+    // replaced by gray blocks.) While inventory/transactions load, grids
+    // show card skeletons and rental rows show list skeletons.
+    const customerLoading =
+      (transactionsLoading && (!transactions || transactions.length === 0)) ||
+      (inventoryLoading && (!inventory || inventory.length === 0));
+
     return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         {/* Hero */}
@@ -178,9 +186,9 @@ export default function DashboardView({ role, transactions, inventory, transacti
           </div>
         )}
 
-        {/* Upcoming — a quick heads-up of what to pick up / when, filling the gap
-            when the customer has rentals in flight but nothing else to show. */}
-        {upcoming.length > 0 && (
+        {/* Upcoming — header stays; skeleton rows while loading; hidden on
+            a genuinely quiet account (same as before). */}
+        {(customerLoading || upcoming.length > 0) && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2">
@@ -188,6 +196,9 @@ export default function DashboardView({ role, transactions, inventory, transacti
               </h3>
               <button onClick={() => onNavigate('History')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
             </div>
+            {customerLoading ? (
+              <SkeletonList count={3} />
+            ) : (
             <div className="space-y-3">
               {upcoming.map((tx) => (
                 <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
@@ -202,10 +213,11 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 
-        {/* Recommended for You — personalized */}
+        {/* Recommended for You — header stays; cards skeleton while loading */}
         <div>
           <div className="flex items-center justify-between mb-6">
             <div>
@@ -214,18 +226,22 @@ export default function DashboardView({ role, transactions, inventory, transacti
             </div>
             <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
           </div>
+          {customerLoading ? (
+            <FeaturedSkeleton count={4} />
+          ) : (
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             {recommended.map((item) => (
               <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
             ))}
           </div>
+          )}
         </div>
 
         {/* On Sale items already surfaced inside "Promotions & Offers" above —
             removed the standalone duplicate block. */}
 
-        {/* New Arrivals — helps discovery beyond recommendations */}
-        {newArrivals.length > 0 && (
+        {/* New Arrivals — header stays; cards skeleton while loading */}
+        {(customerLoading || newArrivals.length > 0) && (
           <div>
             <div className="flex items-center justify-between mb-6">
               <div>
@@ -236,21 +252,28 @@ export default function DashboardView({ role, transactions, inventory, transacti
               </div>
               <button onClick={() => onNavigate('Catalog')} className="text-sm font-semibold text-gray-500 hover:text-[#bf4a53] transition-colors">View All</button>
             </div>
+            {customerLoading ? (
+              <FeaturedSkeleton count={4} />
+            ) : (
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
               {newArrivals.map((item) => (
                 <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
               ))}
             </div>
+            )}
           </div>
         )}
 
-        {/* Your Rentals */}
-        {myRentals.length > 0 && (
+        {/* Your Rentals — header stays; rows skeleton while loading */}
+        {(customerLoading || myRentals.length > 0) && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Your Rentals</h3>
               <button onClick={() => onNavigate('History')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
             </div>
+            {customerLoading ? (
+              <SkeletonList count={3} />
+            ) : (
             <div className="space-y-3">
               {myRentals.map((tx) => (
                 <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
@@ -265,6 +288,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 
@@ -296,16 +320,13 @@ export default function DashboardView({ role, transactions, inventory, transacti
     .filter(tx => tx.date && new Date(tx.date).toDateString() === today.toDateString())
     .reduce((sum, tx) => sum + (tx.rentalFee || 0), 0);
 
-  // Staff dashboard — same skeleton-gate discipline as the admin branch
-  // below. Without it the first paint derives KPIs from the hooks' initial
-  // empty arrays and flashes "No returns due today / Nothing urgent" before
-  // the server data arrives (false-empty bug).
-  const staffInitialLoad =
+  // Staff dashboard — headers ALWAYS render; only data slots skeleton.
+  // (No full-page skeleton: the "Staff Dashboard / date" header must never
+  // be replaced by gray blocks.) While loading, numbers become pulse blocks
+  // and lists show skeleton rows — never false "No returns due today".
+  const staffLoading =
     (transactionsLoading && (!transactions || transactions.length === 0)) ||
     (inventoryLoading && (!inventory || inventory.length === 0));
-  if (role === 'Staff' && staffInitialLoad) {
-    return <DashboardSkeleton />;
-  }
   if (role === 'Staff') {
     const overdueCount = todayStats ? todayStats.overdue.length : transactions.filter(tx =>
       tx.status === 'Overdue' || (tx.status === 'Active' && new Date(tx.dueDate || tx.date) < dayStart)
@@ -344,31 +365,40 @@ export default function DashboardView({ role, transactions, inventory, transacti
             more vertical breathing room (iPad trips lg, so bento waits for xl) */}
         <div className="space-y-5 md:space-y-7 pt-2 xl:pt-0 xl:space-y-0 xl:grid xl:grid-cols-12 xl:gap-6 xl:items-start">
 
-        {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop */}
+        {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop.
+            Labels ALWAYS render; only the numbers skeleton while loading. */}
         <div className="xl:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 xl:gap-5">
           <button onClick={() => onNavigate('History')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pickups Today</p>
-            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{pickupsToday.length}</p>
+            {staffLoading
+              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
+              : <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{pickupsToday.length}</p>}
           </button>
           <button onClick={() => onNavigate('Tasks')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
               {overdueCount > 0 ? <span className="text-red-500">Overdue</span> : 'Overdue'}
             </p>
-            <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueCount > 0 ? 'text-red-500' : 'text-gray-900'}`}>{overdueCount}</p>
+            {staffLoading
+              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
+              : <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueCount > 0 ? 'text-red-500' : 'text-gray-900'}`}>{overdueCount}</p>}
           </button>
           <button onClick={() => onNavigate('Catalog')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Available</p>
-            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{availableCount}</p>
+            {staffLoading
+              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
+              : <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{availableCount}</p>}
           </button>
           <button onClick={() => onNavigate('Tasks')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
               {cleaningCount > 0 ? <span className="text-orange-500">In Cleaning</span> : 'In Cleaning'}
             </p>
-            <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${cleaningCount > 0 ? 'text-orange-500' : 'text-gray-900'}`}>{cleaningCount}</p>
+            {staffLoading
+              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
+              : <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${cleaningCount > 0 ? 'text-orange-500' : 'text-gray-900'}`}>{cleaningCount}</p>}
           </button>
         </div>
 
@@ -400,19 +430,29 @@ export default function DashboardView({ role, transactions, inventory, transacti
             )}
           </div>
 
-          {/* Today at a Glance (desktop only) */}
+          {/* Today at a Glance (desktop only) — labels stay, numbers skeleton */}
           <div className="hidden xl:block bg-white rounded-2xl border border-gray-100/80 shadow-sm p-5">
             <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">Today at a Glance</p>
-            <div className="flex items-center gap-2 text-gray-900">
-              <TrendingUp size={18} className="text-emerald-500 shrink-0" />
-              <p className="text-sm font-bold">₱{revenueToday.toLocaleString()}</p>
-              <p className="text-xs text-gray-400 font-medium">collected today</p>
-            </div>
-            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-xs text-gray-500 font-medium">
-              <p><span className="font-bold text-gray-800">{upcomingToday.length}</span> return{upcomingToday.length === 1 ? '' : 's'} due today</p>
-              <p><span className="font-bold text-gray-800">{pickupsToday.length}</span> pickup{pickupsToday.length === 1 ? '' : 's'} scheduled</p>
-              <p><span className="font-bold text-gray-800">{cleaningCount}</span> item{cleaningCount === 1 ? '' : 's'} in cleaning</p>
-            </div>
+            {staffLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-3 w-28" />
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 text-gray-900">
+                  <TrendingUp size={18} className="text-emerald-500 shrink-0" />
+                  <p className="text-sm font-bold">₱{revenueToday.toLocaleString()}</p>
+                  <p className="text-xs text-gray-400 font-medium">collected today</p>
+                </div>
+                <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-xs text-gray-500 font-medium">
+                  <p><span className="font-bold text-gray-800">{upcomingToday.length}</span> return{upcomingToday.length === 1 ? '' : 's'} due today</p>
+                  <p><span className="font-bold text-gray-800">{pickupsToday.length}</span> pickup{pickupsToday.length === 1 ? '' : 's'} scheduled</p>
+                  <p><span className="font-bold text-gray-800">{cleaningCount}</span> item{cleaningCount === 1 ? '' : 's'} in cleaning</p>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Overdue Follow-ups (desktop only) */}
@@ -441,7 +481,8 @@ export default function DashboardView({ role, transactions, inventory, transacti
 
         </aside>
 
-        {/* Upcoming Today — main column */}
+        {/* Upcoming Today — main column. Header ALWAYS renders; only the
+            body skeletons while loading (never false "No returns"). */}
         <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Upcoming Today</h3>
@@ -452,7 +493,9 @@ export default function DashboardView({ role, transactions, inventory, transacti
               </button>
             )}
           </div>
-          {upcomingToday.length === 0 ? (
+          {staffLoading ? (
+            <SkeletonList count={3} />
+          ) : upcomingToday.length === 0 ? (
             <div className="py-8 text-center">
               <p className="text-sm text-gray-400 font-medium">No returns due today.</p>
             </div>
@@ -478,8 +521,17 @@ export default function DashboardView({ role, transactions, inventory, transacti
 
 
 
-        {/* Active Rentals — main column */}
-        {recentRentals.length > 0 && (
+        {/* Active Rentals — main column. Header stays; skeleton rows while
+            loading; hidden on a genuinely quiet day (same as before). */}
+        {staffLoading ? (
+          <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
+            </div>
+            <SkeletonList count={3} />
+          </div>
+        ) : (
+        recentRentals.length > 0 && (
           <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
@@ -510,6 +562,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
               ))}
             </div>
           </div>
+        )
         )}
 
         {/* Needs Attention — sidebar column, row 3 (desktop) / inline (mobile) */}
@@ -571,13 +624,12 @@ export default function DashboardView({ role, transactions, inventory, transacti
   }
 
   // ---------- Admin dashboard ----------
-  // Server-backed KPIs are cached (server + SWR client), so on revisits this
-  // gate resolves instantly. On the very first load it holds the skeleton until
-  // both the KPI numbers and the today-digest arrive, so the cards paint once
-  // with real values instead of client-derived fallbacks that swap in late.
-  if (role === 'Admin' && !serverDataTimedOut && (!kpis || !todayStats)) {
-    return <DashboardSkeleton />;
-  }
+  // Headers ALWAYS render; only data slots skeleton. (No full-page skeleton:
+  // the "Admin Dashboard / date" header must never be replaced by gray
+  // blocks.) While server KPIs/digest are pending, numbers become pulse
+  // blocks and charts/lists show skeletons instead of client-derived
+  // fallbacks that would swap in late.
+  const adminLoading = role === 'Admin' && !serverDataTimedOut && (!kpis || !todayStats);
   // Business KPIs come from the server (/dashboard/today + /dashboard/kpis) with
   // client-side fallbacks; the layout reuses the staff dashboard's visual language.
   const overdueCount = todayStats ? todayStats.overdue.length : transactions.filter(tx =>
@@ -672,46 +724,66 @@ export default function DashboardView({ role, transactions, inventory, transacti
 
       <div className="space-y-5 md:space-y-7 pt-2 xl:pt-0 xl:space-y-0 xl:grid xl:grid-cols-12 xl:gap-6 xl:items-start">
 
-        {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop */}
+        {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop.
+            Labels ALWAYS render; only numbers skeleton while loading. */}
         <div className="xl:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 xl:gap-5">
           <button onClick={() => onNavigate('AI Insights')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Monthly Revenue</p>
-            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">₱{monthlyRevenue.toLocaleString()}</p>
-            <p className={`text-[10px] font-bold mt-0.5 ${revDiff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-              {revDiff >= 0 ? '+' : '-'}₱{Math.abs(revDiff).toLocaleString()} vs last month
-            </p>
+            {adminLoading
+              ? <><Skeleton className="h-8 w-24 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-20 mt-1 mx-auto lg:mx-0" /></>
+              : <><p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">₱{monthlyRevenue.toLocaleString()}</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${revDiff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                {revDiff >= 0 ? '+' : '-'}₱{Math.abs(revDiff).toLocaleString()} vs last month
+              </p></>}
           </button>
           <button onClick={() => goFiltered('History', overdueReturns > 0 ? 'Overdue' : 'Active')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Active Rentals</p>
-            <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueReturns > 0 ? 'text-red-500' : 'text-gray-900'}`}>{activeRentals}</p>
-            <p className={`text-[10px] font-bold mt-0.5 ${overdueReturns > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-              {overdueReturns > 0 ? `${overdueReturns} overdue` : 'all on time'}
-            </p>
+            {adminLoading
+              ? <><Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-16 mt-1 mx-auto lg:mx-0" /></>
+              : <><p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueReturns > 0 ? 'text-red-500' : 'text-gray-900'}`}>{activeRentals}</p>
+              <p className={`text-[10px] font-bold mt-0.5 ${overdueReturns > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                {overdueReturns > 0 ? `${overdueReturns} overdue` : 'all on time'}
+              </p></>}
           </button>
           <button onClick={() => onNavigate('Tasks')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Due Today</p>
-            <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{todayStats ? todayStats.dueToday.length : upcomingToday.length}</p>
-            <p className="text-[10px] font-bold mt-0.5 text-gray-400">returns due</p>
+            {adminLoading
+              ? <><Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-16 mt-1 mx-auto lg:mx-0" /></>
+              : <><p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{todayStats ? todayStats.dueToday.length : upcomingToday.length}</p>
+              <p className="text-[10px] font-bold mt-0.5 text-gray-400">returns due</p></>}
           </button>
           <button onClick={() => onNavigate('Catalog')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Utilization</p>
-            <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${availableItems < 5 ? 'text-orange-500' : 'text-gray-900'}`}>{utilizationRate}%</p>
-            <p className="text-[10px] font-bold mt-0.5 text-gray-400">{availableItems} of {totalItems} items free</p>
+            {adminLoading
+              ? <><Skeleton className="h-8 w-16 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-24 mt-1 mx-auto lg:mx-0" /></>
+              : <><p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${availableItems < 5 ? 'text-orange-500' : 'text-gray-900'}`}>{utilizationRate}%</p>
+              <p className="text-[10px] font-bold mt-0.5 text-gray-400">{availableItems} of {totalItems} items free</p></>}
           </button>
         </div>
 
         {/* Left column — Revenue Trend + Top Items + Overdue follow-ups */}
         <div className="xl:col-span-9 space-y-4 md:space-y-6 xl:space-y-6">
-          {/* Revenue Trend (6 months) */}
+          {/* Revenue Trend (6 months) — header stays, bars skeleton */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Revenue Trend</h3>
-              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">₱{revenueToday.toLocaleString()} collected today</span>
+              {adminLoading
+                ? <Skeleton className="h-6 w-36 rounded-full" />
+                : <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">₱{revenueToday.toLocaleString()} collected today</span>}
             </div>
+            {adminLoading ? (
+              <div className="h-36 flex items-end justify-between gap-2" aria-label="Loading revenue trend">
+                {['h-1/3', 'h-1/2', 'h-2/3', 'h-1/4', 'h-3/5', 'h-2/5'].map((h, i) => (
+                  <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+                    <Skeleton className={`w-full rounded-t-lg ${h}`} />
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div className="h-36 flex items-end justify-between gap-2">
               {revByMonth.map((m, idx) => {
                 const isEmpty = m.revenue <= 0;
@@ -741,12 +813,25 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 );
               })}
             </div>
+            )}
           </div>
 
-          {/* Top Rented Items */}
+          {/* Top Rented Items — header stays, rows skeleton while loading */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4">Top Rented Items</h3>
-            {topItems.length === 0 ? (
+            {adminLoading ? (
+              <div className="space-y-3.5" aria-label="Loading top items">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div key={i}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <Skeleton className="h-3.5 w-1/2" />
+                      <Skeleton className="h-3.5 w-8" />
+                    </div>
+                    <Skeleton className="h-1.5 w-full rounded-full" />
+                  </div>
+                ))}
+              </div>
+            ) : topItems.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-6 font-medium">No rental data yet.</p>
             ) : (
               <div className="space-y-3.5">
@@ -804,9 +889,18 @@ export default function DashboardView({ role, transactions, inventory, transacti
         {/* Right rail — Business Health + Inventory Health + AI Insights */}
         <aside className="xl:col-span-3 xl:self-start space-y-4 md:space-y-6 xl:space-y-6">
 
-          {/* Business Health */}
+          {/* Business Health — labels stay, values skeleton (never false 0s) */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5">
             <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-3">Business Health</p>
+            {adminLoading ? (
+              <div className="space-y-2.5">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+                <Skeleton className="h-4 w-4/6" />
+                <Skeleton className="h-4 w-full" />
+              </div>
+            ) : (
+            <>
             <div className="space-y-2.5 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-gray-500 font-medium">Collected today</span>
@@ -833,14 +927,27 @@ export default function DashboardView({ role, transactions, inventory, transacti
             <p className="mt-3 pt-3 border-t border-gray-100 text-[11px] text-gray-500 font-medium">
               {returnedRate}% returned · {overdueRate}% overdue · {cancellationRate}% cancelled
             </p>
+            </>
+            )}
           </div>
 
-          {/* Inventory Health */}
+          {/* Inventory Health — header stays, values skeleton while loading */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5">
             <div className="flex items-center justify-between mb-3">
               <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Inventory Health</p>
               <button onClick={() => onNavigate('Catalog')} className="text-[11px] font-bold text-[#bf4a53] bg-[#bf4a53]/5 hover:bg-[#bf4a53]/10 active:scale-[0.97] px-3 py-1.5 rounded-full transition-all">Manage</button>
             </div>
+            {adminLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-20 rounded-2xl" />
+                <div className="grid grid-cols-3 gap-2">
+                  <Skeleton className="h-14 rounded-2xl" />
+                  <Skeleton className="h-14 rounded-2xl" />
+                  <Skeleton className="h-14 rounded-2xl" />
+                </div>
+              </div>
+            ) : (
+            <>
             {/* Available hero */}
             <div className="rounded-2xl bg-emerald-50/60 border border-emerald-100/70 p-3.5">
               <div className="flex items-baseline justify-between gap-2">
@@ -873,14 +980,22 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 <p className="text-[10px] font-semibold text-gray-500 leading-tight mt-0.5">On sale</p>
               </div>
             </div>
+            </>
+            )}
           </div>
 
-          {/* AI Insights */}
+          {/* AI Insights — header + button stay; status skeleton (never false "All Clear") */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 flex flex-col">
             <div className="flex items-center gap-2 mb-3">
               <div className="p-2 bg-red-50 text-[#bf4a53] rounded-xl"><Sparkles size={16} /></div>
               <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">AI Insights</p>
             </div>
+            {adminLoading ? (
+              <div className="p-3.5 bg-gray-50/80 rounded-2xl border border-gray-100/50 space-y-2" aria-label="Loading insights status">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-3 w-full" />
+              </div>
+            ) : (
             <div className="p-3.5 bg-gray-50/80 rounded-2xl border border-gray-100/50">
               <div className="flex items-center gap-2 mb-1">
                 <AlertTriangle size={15} className={overdueCount > 0 ? 'text-red-500' : 'text-emerald-500'} />
@@ -892,6 +1007,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 ) : 'All returns are on track.'}
               </p>
             </div>
+            )}
             <button onClick={() => onNavigate('AI Insights')}
               className="w-full mt-4 bg-white border border-gray-200 text-gray-800 font-semibold text-sm py-2.5 rounded-full hover:bg-gray-50 transition-colors shadow-sm">
               Full Report
