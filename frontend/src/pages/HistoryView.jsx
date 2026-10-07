@@ -10,10 +10,9 @@ import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
 import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
-import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
+import { isReleased } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import SmsResultModal from '../components/SmsResultModal';
-import ItemImage from '../components/ItemImage';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 
 const formatDate = (d) => {
@@ -563,7 +562,6 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                   <th className="px-6 py-5">ID</th>
                   {role !== 'Customer' && <th className="px-6 py-5">Customer</th>}
                   <th className="px-6 py-5">Item</th>
-                  <th className="px-6 py-5 w-16">Photo</th>
                   <th className="px-6 py-5">Date</th>
                   <th className="px-6 py-5">Status</th>
                   <th className="px-6 py-5 text-right">Amount</th>
@@ -577,7 +575,6 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       <td className="px-6 py-4"><Skeleton className="h-3 w-12" /></td>
                       {role !== 'Customer' && <td className="px-6 py-4"><Skeleton className="h-3 w-24" /></td>}
                       <td className="px-6 py-4"><Skeleton className="h-3 w-32" /></td>
-                      <td className="px-6 py-4"><Skeleton className="w-10 h-10 rounded-lg" /></td>
                       <td className="px-6 py-4"><Skeleton className="h-3 w-20" /></td>
                       <td className="px-6 py-4"><Skeleton className="h-5 w-16 rounded-full" /></td>
                       <td className="px-6 py-4"><Skeleton className="h-3 w-16 ml-auto" /></td>
@@ -586,7 +583,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                   ))
                 ) : displayedTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={role !== 'Customer' ? 8 : 7} className="px-6 py-12 text-center text-gray-400">
+                    <td colSpan={role !== 'Customer' ? 7 : 6} className="px-6 py-12 text-center text-gray-400">
                       No transactions match your search/filters.
                     </td>
                   </tr>
@@ -607,13 +604,6 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                         <td className="px-6 py-4 text-gray-700 font-medium">{customerLabel(tx.customer) || '—'}</td>
                       )}
                       <td className="px-6 py-4 text-gray-500">{tx.item || '—'}</td>
-                      <td className="px-6 py-4">
-                        {getReleasePhoto(tx) ? (
-                          <ItemImage image={getReleasePhoto(tx)} alt="" className="w-10 h-10 rounded-lg object-cover bg-gray-100" />
-                        ) : (
-                          <span className="text-gray-300 text-xs">—</span>
-                        )}
-                      </td>
                       <td className="px-6 py-4 text-gray-500 text-[13px]">{formatDate(tx.rentalDate || tx.date)}</td>
                       <td className="px-6 py-4">
                         {/* One pill only: an active alteration replaces the
