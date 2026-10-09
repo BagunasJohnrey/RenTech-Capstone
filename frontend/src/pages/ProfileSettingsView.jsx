@@ -8,7 +8,6 @@ import NotificationsTab from '../components/settings/NotificationsTab';
 import IntegrationsTab from '../components/settings/IntegrationsTab';
 import TeamTab from '../components/settings/TeamTab';
 import AccountActions from '../components/settings/AccountActions';
-import InstallAppSetting from '../components/settings/InstallAppSetting';
 import HelpGuide from './HelpGuide';
 import StaffHelpGuide from './StaffHelpGuide';
 
@@ -78,9 +77,6 @@ export default function ProfileSettingsView({
 
       {/* Staff-only Help Guide (Admin has the shared guide as a tab above) */}
       {role === 'Staff' && <StaffHelpGuide />}
-
-      {/* Install App — persistent entry point above Sign Out */}
-      <InstallAppSetting />
 
       {/* Sign Out */}
       <AccountActions onRequestLogout={onRequestLogout} />
