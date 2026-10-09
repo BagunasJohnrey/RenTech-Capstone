@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw } from 'lucide-react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw, Maximize2 } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
 import { usePayments } from '../hooks/usePayments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -237,6 +237,8 @@ export default function CustomerRentalFlow({
   // flow): Back between steps keeps everything and never asks — only
   // LEAVING with unsaved entries confirms.
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  // Full-photo viewer for the step-1 item header.
+  const [photoViewer, setPhotoViewer] = useState(false);
   // First-render snapshot: prefilled profile/size/dates are the baseline,
   // so an untouched form is never "dirty". Pure filter UI (search text,
   // category pills) never counts.
@@ -282,8 +284,9 @@ export default function CustomerRentalFlow({
   const keepEditing = useCallback(() => setShowDiscardConfirm(false), []);
   // Escape leaves through the same guard; a second handler closes just the
   // confirm (Keep Editing) while it's up — same two-level pattern as staff.
-  useEscapeClose(() => requestLeave(), !showDiscardConfirm);
+  useEscapeClose(() => requestLeave(), !showDiscardConfirm && !photoViewer);
   useEscapeClose(() => setShowDiscardConfirm(false), showDiscardConfirm);
+  useEscapeClose(() => setPhotoViewer(false), photoViewer);
   const [availability, setAvailability] = useState({ checking: false, available: null, reason: '' });
   const [bookedRanges, setBookedRanges] = useState([]);
   const [itemStatus, setItemStatus] = useState(null);
@@ -829,17 +832,29 @@ export default function CustomerRentalFlow({
           {step === 1 && (
             <div className="space-y-5">
               <div className="bg-gradient-to-r from-gray-50 to-white rounded-2xl p-4 flex items-center gap-4 border border-gray-100/60">
-                <ItemImage thumb image={selectedItem.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-gray-200 shadow-sm" />
-                <div className="flex-1">
+                <button type="button" onClick={() => setPhotoViewer(true)} aria-label={`View full photo of ${selectedItem.name}`}
+                  className="relative shrink-0 rounded-2xl overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 group/photo">
+                  <ItemImage thumb image={selectedItem.image} alt="" className="w-20 h-20 rounded-2xl object-cover bg-gray-200 shadow-sm" />
+                  <span aria-hidden="true" className="absolute inset-0 bg-gray-900/0 group-hover/photo:bg-gray-900/25 transition-colors flex items-center justify-center">
+                    <Maximize2 size={18} className="text-white opacity-0 group-hover/photo:opacity-100 transition-opacity drop-shadow" />
+                  </span>
+                  <span aria-hidden="true" className="absolute bottom-1 right-1 p-1 rounded-full bg-gray-900/60 text-white">
+                    <Maximize2 size={10} />
+                  </span>
+                </button>
+                <div className="flex-1 min-w-0">
                   <p className="font-bold text-gray-900">{selectedItem.name}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{rentalDate ? `Pickup: ${formatDate(rentalDate)}` : 'Pickup: pick your dates below'}</p>
                   {saleInfo?.active ? (
-                    <p className="text-lg font-bold text-[#bf4a53] mt-1">
+                    <p className="text-xl font-extrabold text-[#bf4a53] mt-1">
                       ₱{saleInfo.price.toLocaleString()} <span className="text-xs text-gray-400 line-through font-medium">₱{selectedItem.price.toLocaleString()}</span>
                     </p>
                   ) : (
-                    <p className="text-lg font-bold text-[#bf4a53] mt-1">₱{selectedItem.price.toLocaleString()}</p>
+                    <p className="text-xl font-extrabold text-[#bf4a53] mt-1">₱{selectedItem.price.toLocaleString()}</p>
                   )}
+                  <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1">
+                    <Maximize2 size={10} /> Tap the photo to view it full size
+                  </p>
                 </div>
               </div>
 
@@ -1308,6 +1323,24 @@ export default function CustomerRentalFlow({
     </>
   );
 
+  // Full-photo viewer (same overlay pattern as Size Guide): full-resolution
+  // image, tap anywhere / X / Escape to close.
+  const photoViewerModal = photoViewer && selectedItem && (
+    <div className="fixed inset-0 z-[300] bg-gray-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setPhotoViewer(false)}>
+      <div className="w-full max-w-lg flex items-center justify-between gap-3 mb-3" onClick={(e) => e.stopPropagation()}>
+        <p className="font-bold text-sm text-white truncate">{selectedItem.name}</p>
+        <button onClick={() => setPhotoViewer(false)} aria-label="Close full photo"
+          className="p-1.5 text-white/80 hover:bg-white/15 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+          <X size={20} />
+        </button>
+      </div>
+      <div className="w-full max-w-lg rounded-2xl overflow-hidden bg-white/10" onClick={(e) => e.stopPropagation()}>
+        <ItemImage image={selectedItem.image} alt={selectedItem.name} eager className="w-full max-h-[75dvh] object-contain bg-gray-950" />
+      </div>
+      <p className="text-white/60 text-xs mt-3 font-medium">Tap anywhere to close</p>
+    </div>
+  );
+
   return inline ? (
     <>
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={requestLeave}>
@@ -1318,6 +1351,7 @@ export default function CustomerRentalFlow({
     {showDiscardConfirm && (
       <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
     )}
+    {photoViewerModal}
     </>
   ) : (
     <>
@@ -1327,6 +1361,7 @@ export default function CustomerRentalFlow({
       {showDiscardConfirm && (
         <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
       )}
+      {photoViewerModal}
 
       {/* Size Guide */}
       {showSizeGuide && (
