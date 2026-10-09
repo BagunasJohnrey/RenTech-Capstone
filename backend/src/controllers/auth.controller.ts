@@ -291,6 +291,41 @@ export async function updateMe(req: AuthenticatedRequest, res: Response, next: N
   }
 }
 
+// Profile photo upload (any authenticated role). Same base64-JSON shape as
+// POST /storage/upload — the browser downsizes via canvas first, the server
+// normalizes to WebP. Rate-limited: photos are retryable, floods are not.
+export const avatarSchema = z.object({
+  body: z.object({
+    fileName: z.string().min(1).max(220),
+    contentType: z.string().min(1).max(100),
+    data: z.string().min(1),
+  }),
+});
+
+export async function setAvatar(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { contentType, data } = req.body;
+    const buffer = Buffer.from(data, 'base64');
+    const profile = await authService.setAvatar(req.user.id, { contentType, buffer });
+    invalidateProfileCache(req.user.userId);
+    res.json(profile);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function removeAvatar(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const profile = await authService.removeAvatar(req.user.id);
+    invalidateProfileCache(req.user.userId);
+    res.json(profile);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function createStaff(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');

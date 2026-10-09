@@ -4,6 +4,7 @@ import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
 import { env } from '../config/env.js';
 import * as brevoService from './brevo.service.js';
+import * as storageService from './storage.service.js';
 import { Role, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 
@@ -217,6 +218,21 @@ export async function loginUser(rawEmail: string, password: string, trustedDevic
   };
 }
 
+// Google account photo: link the provider URL directly. The frontend
+// renders absolute avatar URLs straight into <img> (see resolveAvatarUrl),
+// so no download/re-upload is needed. Only ever SET from Google, never
+// overwrite — a manually uploaded photo always wins on later logins.
+// Provider metadata is not trusted blindly: https-only + length-capped.
+function pickGooglePhoto(meta: unknown): string | null {
+  const m = (meta ?? {}) as { picture?: unknown; avatar_url?: unknown };
+  for (const v of [m.picture, m.avatar_url]) {
+    if (typeof v !== 'string') continue;
+    const url = v.trim();
+    if (url.length > 0 && url.length <= 2000 && /^https:\/\//i.test(url)) return url;
+  }
+  return null;
+}
+
 export async function oauthGetOrCreateProfile(
   accessToken: string,
   details?: { name?: string; phone?: string; address?: string; preferences?: string[] }
@@ -277,6 +293,10 @@ export async function oauthGetOrCreateProfile(
       Array.isArray(details!.preferences) && details!.preferences.length
         ? details!.preferences.join(',')
         : null,
+    // Google photo links on first save only — an existing manual photo is
+    // never overwritten by a later Google login.
+    avatarPath: existing?.avatarPath
+      ?? pickGooglePhoto((user as { user_metadata?: unknown }).user_metadata),
   };
 
   // Update an incomplete existing profile, otherwise create a new one.
@@ -345,6 +365,41 @@ export async function updateProfile(userId: string, data: {
     data: updateData,
   });
   return profile;
+}
+
+// Profile photo (any role). The file lands under `avatars/` — a non-`rental/`
+// prefix, so it lives in the PUBLIC catalog bucket and the frontend resolves
+// it to a stable URL with zero signing round-trips (same as item photos).
+// Uploads go through the same hardened path as every other image
+// (allowlist + server-side WebP normalize in storageService.uploadFile).
+export async function setAvatar(userId: string, file: {
+  contentType: string;
+  buffer: Buffer;
+}) {
+  const profile = await prisma.profile.findUnique({ where: { id: userId } });
+  if (!profile) throw new AppError(404, 'Profile not found');
+  const key = `avatars/${profile.id}-${Date.now()}.jpg`;
+  const { path } = await storageService.uploadFile(key, file.contentType, file.buffer);
+  // Best-effort cleanup of the previous photo — a missing/stale key must not
+  // fail the swap (removeObject already swallows errors, belt and suspenders).
+  const previous = profile.avatarPath;
+  if (previous && previous !== path) {
+    await storageService.removeObject(previous);
+  }
+  await prisma.profile.update({ where: { id: userId }, data: { avatarPath: path } });
+  return getProfile(userId);
+}
+
+// Remove the profile photo (back to the default icon avatar).
+export async function removeAvatar(userId: string) {
+  const profile = await prisma.profile.findUnique({ where: { id: userId } });
+  if (!profile) throw new AppError(404, 'Profile not found');
+  const previous = profile.avatarPath;
+  if (previous) {
+    await storageService.removeObject(previous);
+  }
+  await prisma.profile.update({ where: { id: userId }, data: { avatarPath: null } });
+  return getProfile(userId);
 }
 
 // First-login staff flow: replace the admin-issued one-time password with the

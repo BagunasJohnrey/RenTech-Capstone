@@ -46,6 +46,7 @@ model Profile {
    totpSecret  String?  @map("totp_secret")
    backupCodes Json?    @map("backup_codes")
    mustChangePassword Boolean @default(false) @map("must_change_password")
+   avatarPath String? @map("avatar_path")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
