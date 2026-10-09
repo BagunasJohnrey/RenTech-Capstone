@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, RotateCcw } from 'lucide-react';
+import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, RotateCcw, ChevronRight } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { SkeletonCard } from './Skeleton';
 import { itemPill } from '../utils/statusColors';
@@ -255,16 +255,23 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
             )}
           </div>
         )}
-        <p className="font-extrabold text-lg tracking-tight mt-0.5">
-          {sale.active ? (
-            <>
-              <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
-              <span className="text-gray-400 font-semibold text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
-            </>
-          ) : (
-            <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
+        <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+          <p className="font-extrabold text-xl tracking-tight">
+            {sale.active ? (
+              <>
+                <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
+                <span className="text-gray-400 font-semibold text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
+              </>
+            ) : (
+              <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
+            )}
+          </p>
+          {activate && (
+            <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center group-hover:bg-[#bf4a53] group-hover:text-white transition-colors">
+              <ChevronRight size={16} />
+            </span>
           )}
-        </p>
+        </div>
       </div>
     </div>
   );
