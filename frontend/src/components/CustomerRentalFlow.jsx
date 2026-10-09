@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw, Maximize2, Tag } from 'lucide-react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw, Maximize2, Tag, Wallet } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
 import { usePayments } from '../hooks/usePayments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -16,7 +16,7 @@ import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
-import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
+import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../utils/promoLabel';
 import { promoService } from '../services/promo';
 import BookingQR from './BookingQR';
 import BottomSheet from './BottomSheet';
@@ -198,11 +198,10 @@ export default function CustomerRentalFlow({
   const [promoApplied, setPromoApplied] = useState(null);
   const [promoError, setPromoError] = useState('');
   const [promoApplying, setPromoApplying] = useState(false);
-  // Discoverable codes for the dropdown (active, unexpired, uses left).
-  // Fetched once per payment-step visit; manual entry still works.
+  // Offer picker options (active, unexpired, uses left, not exhausted).
+  // Fetched once per payment-step visit; manual entry works regardless.
   const [availablePromos, setAvailablePromos] = useState([]);
   const [promosLoading, setPromosLoading] = useState(false);
-  const [promoOpen, setPromoOpen] = useState(false);
   useEffect(() => {
     if (step !== 2) return;
     let active = true;
@@ -473,9 +472,6 @@ export default function CustomerRentalFlow({
       setPromoCode(result.code || raw);
       setPromoApplied(result);
       setPromoError('');
-      setPromoListOpen(false);
-      // Collapse the entry card — the totals line + applied chip carry it now.
-      setPromoOpen(false);
     } catch (err) {
       setPromoApplied(null);
       setPromoError(err.message || 'Invalid promo code');
@@ -1132,99 +1128,137 @@ export default function CustomerRentalFlow({
               )}
                 {/* Pay-now vs pay-later: the customer pays ONLY the downpayment
                     now — the rest is settled at pickup (release is locked until ₱0). */}
-                <div className="bg-gray-50 p-5 rounded-2xl space-y-2 border border-gray-100/60">
-                  <div className="flex justify-between text-sm"><span className="text-gray-600">Total rental</span><span className="font-bold text-gray-900">₱{finalFee.toLocaleString()}</span></div>
-                  {promoApplied && (
-                    <div className="flex justify-between text-sm text-emerald-600"><span>Promo discount ({promoApplied.code})</span><span className="font-bold">−₱{promoApplied.discountAmount.toLocaleString()}</span></div>
-                  )}
-                  <div className="flex justify-between text-sm"><span className="text-gray-600">Remaining at pickup</span><span className="font-bold text-gray-900">₱{(finalFee - downpaymentAmount).toLocaleString()}</span></div>
-                  {/* Promo — ticket-styled entry (never shown on the receipt).
-                      Collapses away once a code is applied; only the totals
-                      discount line + compact chip remain. */}
-                  {!promoApplied ? (
-                    <div className="rounded-2xl border-2 border-dashed border-gray-300 bg-white overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => setPromoOpen(o => !o)}
-                        aria-expanded={promoOpen}
-                        className="w-full flex items-stretch text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/50"
-                      >
-                        <span className="flex items-center justify-center px-3.5 bg-[#bf4a53] text-white shrink-0" aria-hidden="true">
-                          <Tag size={18} />
-                        </span>
-                        <span className="w-0 border-l-2 border-dashed border-gray-200 my-2.5 shrink-0" aria-hidden="true" />
-                        <span className="flex-1 min-w-0 px-3.5 py-3">
-                          <span className="block text-sm font-extrabold text-gray-900">Have a promo code?</span>
-                          <span className="block text-[11px] text-gray-500 font-medium truncate">
-                            {availablePromos.length > 0 ? `${availablePromos.length} offer${availablePromos.length === 1 ? '' : 's'} waiting — tap to save` : 'Tap to enter a code'}
-                          </span>
-                        </span>
-                        <span className="flex items-center pr-3 shrink-0" aria-hidden="true">
-                          <ChevronDown size={16} className={`text-gray-400 transition-transform ${promoOpen ? 'rotate-180' : ''}`} />
-                        </span>
-                      </button>
-                      {promoOpen && (
-                        <div className="px-4 pb-4 flex flex-col items-center">
-                          <div className="flex gap-2 w-full justify-center">
-                            <Field showLabel={false} type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                              placeholder="Enter code" maxLength={20} aria-label="Promo code"
-                              className="flex-1 p-2.5 bg-white rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]" />
-                            <button onClick={() => handleApplyPromo()} disabled={!promoCode.trim() || promoApplying}
-                              className="px-4 py-2.5 bg-[#bf4a53] text-white rounded-xl text-xs font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
-                              {promoApplying ? <Loader2 size={14} className="animate-spin" /> : 'Apply'}
-                            </button>
-                          </div>
-                          {promosLoading ? (
-                            <p className="mt-2 text-[11px] text-gray-400 font-medium">Checking available codes…</p>
-                          ) : availablePromos.length > 0 ? (
-                            <div className="mt-2 w-full bg-white border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
-                              {availablePromos.map((p) => (
-                                <button
-                                  key={p.code}
-                                  type="button"
-                                  disabled={promoApplying}
-                                  onClick={() => handleApplyPromo(p.code)}
-                                  className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-red-50/60 transition-colors disabled:opacity-50"
-                                >
-                                  <span className="min-w-0">
-                                    <span className="block text-xs font-bold text-gray-900 truncate">{p.code}</span>
-                                    {promoTermsLabel(p) && (
-                                      <span className="block text-[10px] text-gray-400 font-medium truncate">{promoTermsLabel(p)}</span>
-                                    )}
-                                  </span>
-                                  <span className="text-[11px] font-bold text-emerald-600 shrink-0">−{promoDiscountLabel(p)}</span>
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="mt-2 text-[11px] text-gray-400 font-medium">No promo codes right now</p>
+                <div className="space-y-3">
+                  {/* 1 — Booking summary: total, voucher saving, balance left */}
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
+                    <p className="text-[11px] font-extrabold text-gray-400 uppercase tracking-[0.12em]">Booking summary</p>
+                    <div className="mt-2.5 flex flex-col gap-1.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-sm text-gray-500 font-medium pt-1">Total rental</span>
+                        <span className="text-right shrink-0">
+                          <span className="block text-lg font-extrabold text-gray-900 tabular-nums leading-none">₱{finalFee.toLocaleString()}</span>
+                          {promoApplied && (
+                            <span className="block text-[11px] text-gray-400 line-through tabular-nums mt-1">₱{Number(effectiveItemPrice).toLocaleString()}</span>
                           )}
-                          {promoError && <p className="text-xs text-red-500 font-medium mt-2 text-center">{promoError}</p>}
+                        </span>
+                      </div>
+                      {promoApplied && (
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                          <span className="text-emerald-600 font-semibold truncate">Voucher · {promoApplied.code}</span>
+                          <span className="font-extrabold text-emerald-600 tabular-nums shrink-0">−₱{Number(promoApplied.discountAmount).toLocaleString()}</span>
                         </div>
                       )}
+                      {saleInfo?.active && !promoApplied && (
+                        <p className="text-[11px] font-bold text-[#bf4a53]">Sale price applied</p>
+                      )}
+                      <div className="border-t border-dashed border-gray-200 mt-1.5 pt-2.5 flex items-center justify-between gap-3">
+                        <span className="text-sm text-gray-500 font-medium">Remaining at pickup</span>
+                        <span className="text-sm font-extrabold text-gray-900 tabular-nums">₱{Math.max(0, finalFee - downpaymentAmount).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                  {/* 2 — Voucher ticket: offers lead, manual entry follows (never
+                      shown on the receipt). Once applied only the summary line
+                      above + the applied ticket below remain. */}
+                  {!promoApplied ? (
+                    <div className="overflow-hidden rounded-2xl border border-red-100 bg-white shadow-sm">
+                      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
+                        <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
+                          <Tag size={15} />
+                        </span>
+                        <p className="text-sm font-extrabold text-gray-900">Save with a voucher</p>
+                        {!promosLoading && availablePromos.length > 0 && (
+                          <span className="ml-auto text-[10px] font-extrabold text-[#bf4a53] bg-[#bf4a53]/10 rounded-full px-2.5 py-1 whitespace-nowrap">
+                            {availablePromos.length} available
+                          </span>
+                        )}
+                      </div>
+                      {!promosLoading && availablePromos.length > 0 && (
+                        <div className="mx-4 rounded-xl border border-gray-200 overflow-hidden divide-y divide-dashed divide-gray-200">
+                          {availablePromos.map((p) => (
+                            <button
+                              key={p.code}
+                              type="button"
+                              disabled={promoApplying}
+                              onClick={() => handleApplyPromo(p.code)}
+                              className="w-full flex items-stretch text-left hover:bg-red-50/50 active:bg-red-50 transition-colors disabled:opacity-50"
+                            >
+                              <span className="w-[76px] shrink-0 bg-red-50/80 border-r border-dashed border-red-200 flex flex-col items-center justify-center py-2.5 px-1">
+                                <span className="text-[13px] font-extrabold text-[#bf4a53] tabular-nums leading-none">{promoShortLabel(p)}</span>
+                                <span className="text-[9px] font-bold text-[#bf4a53]/70 uppercase tracking-wide mt-1">off</span>
+                              </span>
+                              <span className="flex-1 min-w-0 px-3 py-2.5">
+                                <span className="block text-xs font-extrabold text-gray-900 font-mono tracking-wide truncate">{p.code}</span>
+                                {promoTermsLabel(p) && (
+                                  <span className="block text-[10px] text-gray-400 font-medium truncate mt-0.5">{promoTermsLabel(p)}</span>
+                                )}
+                              </span>
+                              <span className="self-center mr-3 text-[11px] font-extrabold text-[#bf4a53] border border-[#bf4a53]/30 rounded-full px-3.5 py-1.5 shrink-0">Apply</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="px-4 pb-4 pt-3">
+                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Or enter a code</p>
+                        <div className="flex gap-2">
+                          <input type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
+                            placeholder="Enter a code" maxLength={20} aria-label="Promo code"
+                            className="flex-1 min-w-0 px-4 py-3 bg-gray-50 rounded-xl border border-gray-200 text-sm font-bold uppercase placeholder:normal-case placeholder:font-medium placeholder:text-gray-400 focus:outline-none focus:border-[#bf4a53] focus:bg-white transition-colors" />
+                          <button onClick={() => handleApplyPromo()} disabled={!promoCode.trim() || promoApplying}
+                            className="px-6 py-3 bg-[#bf4a53] text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0">
+                            {promoApplying ? <Loader2 size={15} className="animate-spin" /> : 'Apply'}
+                          </button>
+                        </div>
+                        {promoError && <p className="text-xs text-red-500 font-medium mt-1.5">{promoError}</p>}
+                      </div>
                     </div>
                   ) : (
-                    <div className="rounded-2xl bg-emerald-50 border border-emerald-200 px-4 py-3 flex items-center gap-3">
-                      <span className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
-                        <Check size={15} strokeWidth={3} />
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-emerald-800 truncate">{promoApplied.code} <span className="font-semibold text-emerald-600">· {promoDiscountLabel(promoApplied)}</span></p>
-                        <p className="text-xs font-bold text-emerald-600">−₱{promoApplied.discountAmount.toLocaleString()} saved</p>
+                    <div className="rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/60 px-4 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <span className="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                          <Check size={16} strokeWidth={3} />
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-emerald-600">Voucher applied</p>
+                          <p className="text-sm font-extrabold text-gray-900 truncate">{promoApplied.code} <span className="font-semibold text-emerald-600">· {promoDiscountLabel(promoApplied)}</span></p>
+                          <p className="text-xs font-bold text-emerald-600">−₱{Number(promoApplied.discountAmount).toLocaleString()} saved</p>
+                        </div>
+                        <button onClick={() => { setPromoCode(''); setPromoApplied(null); }}
+                          className="text-[11px] font-extrabold text-gray-400 hover:text-red-500 border border-gray-200 hover:border-red-200 rounded-full px-3 py-1.5 transition-colors shrink-0">
+                          Remove
+                        </button>
                       </div>
-                      <button onClick={() => { setPromoCode(''); setPromoApplied(null); }}
-                        className="text-xs text-gray-400 hover:text-red-500 font-semibold transition-colors shrink-0">
-                        Remove
-                      </button>
                     </div>
                   )}
-                  <div className="bg-white border-2 border-[#bf4a53] rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm">
-                    <span className="text-sm font-bold text-gray-900">Paying now <span className="font-medium text-gray-400">(downpayment)</span></span>
-                    <span className="font-extrabold text-[#bf4a53] text-xl">₱{downpaymentAmount.toLocaleString()}</span>
+                  {/* 3 — Pay-now hero: the one number that matters at this step */}
+                  <div className="overflow-hidden rounded-2xl bg-white border-2 border-[#bf4a53] shadow-[0_4px_14px_-10px_rgba(191,74,83,0.35)]">
+                    <div className="px-5 pt-4 pb-3 flex items-end justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="inline-block text-[9px] font-extrabold uppercase tracking-[0.14em] text-white bg-[#bf4a53] rounded-full px-2 py-0.5">Due now</span>
+                        <p className="text-sm font-bold text-gray-900 mt-1.5">Paying now <span className="font-medium text-gray-400">(downpayment)</span></p>
+                      </div>
+                      <p className="font-extrabold text-[#bf4a53] text-[26px] leading-none tabular-nums shrink-0">₱{Number(downpaymentAmount).toLocaleString()}</p>
+                    </div>
+                    <div className="mx-5 h-1.5 rounded-full bg-gray-100 overflow-hidden" aria-hidden="true">
+                      <div
+                        className="h-full rounded-full bg-[#bf4a53] transition-all"
+                        style={{ width: `${finalFee > 0 ? Math.min(100, Math.round((Number(downpaymentAmount) / finalFee) * 100)) : 0}%` }}
+                      />
+                    </div>
+                    <div className="mt-3 px-5 py-3 bg-red-50/70 border-t border-red-100 flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-gray-500">Balance due at pickup</span>
+                      <span className="text-sm font-extrabold text-gray-900 tabular-nums">₱{Math.max(0, finalFee - downpaymentAmount).toLocaleString()}</span>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 leading-snug">
-                    Please settle the remaining ₱{(finalFee - downpaymentAmount).toLocaleString()} at pickup — the item is released only once fully paid.
-                  </p>
+                  <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white px-4 py-3">
+                    <span className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                      <Wallet size={17} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-extrabold text-amber-800 tabular-nums">₱{Math.max(0, finalFee - downpaymentAmount).toLocaleString()} due at pickup</p>
+                      <p className="text-[11px] text-amber-700 leading-snug mt-0.5">Settle the rest when you pick up — the item is released only once fully paid.</p>
+                    </div>
+                  </div>
                 </div>
             </div>
           )}
@@ -1270,9 +1304,15 @@ export default function CustomerRentalFlow({
                   <span className="font-extrabold text-[#bf4a53] text-xl">₱{txDownpayment(confirmedTx).toLocaleString()}</span>
                 </div>
                 {txBalance(confirmedTx) > 0 && (
-                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 leading-snug">
-                    Please settle the remaining ₱{txBalance(confirmedTx).toLocaleString()} at pickup — the item is released only once fully paid.
-                  </p>
+                  <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white px-4 py-3 text-left">
+                    <span className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                      <Wallet size={17} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-extrabold text-amber-800 tabular-nums">₱{txBalance(confirmedTx).toLocaleString()} due at pickup</p>
+                      <p className="text-[11px] text-amber-700 leading-snug mt-0.5">Settle the rest when you pick up — the item is released only once fully paid.</p>
+                    </div>
+                  </div>
                 )}
                 {flags.qr_codes && (
                   <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-lg">
