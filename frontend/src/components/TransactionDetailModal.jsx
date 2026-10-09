@@ -725,8 +725,20 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   </a>
                 )}
               </div>
-              <div className="bg-white border border-gray-100/80 rounded-2xl p-4 flex items-center justify-center flex-col">
-                <BookingQR tx={tx} size={96} showCode={false} title="Scan to open this booking" onDataUrl={setQrSaveUrl} />
+              <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-md">
+                <div className="flex flex-col sm:flex-row items-stretch">
+                  <div className="p-3.5 flex items-center justify-center shrink-0">
+                    <div className="bg-white p-2.5 rounded-xl">
+                      <BookingQR tx={tx} size={96} showCode={false} title="Scan to open this booking" onDataUrl={setQrSaveUrl} />
+                    </div>
+                  </div>
+                  <div aria-hidden="true" className="border-t sm:border-t-0 sm:border-l border-dashed border-white/20 mx-3.5 sm:mx-0 sm:my-3.5" />
+                  <div className="flex-1 min-w-0 p-3.5 sm:p-4 flex flex-col justify-center text-center sm:text-left">
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/50">Booking QR code</p>
+                    <p className="font-mono text-base font-bold tracking-wider mt-0.5">{getBookingCode(tx)}</p>
+                    <p className="text-[11px] text-white/60 leading-snug mt-1">Customer shows this at pickup — scan it to pull up the order.</p>
+                  </div>
+                </div>
               </div>
             </div>
           )}

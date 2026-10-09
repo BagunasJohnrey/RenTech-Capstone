@@ -86,8 +86,10 @@ export async function downloadReceiptImage({
   const settleH = settleLines.length ? settleLines.length * 20 : 0;
   const headerH = 178;
   const rowsH = measured.reduce((h, r) => h + Math.max(r.lines.length, 1) * LH + 26, 0);
-  const qrH = qrImg ? 216 + 24 : 0;
-  const H = M + headerH + 30 + 64 + 30 + 24 + 30 + rowsH + 20 + 108 + settleH + 30 + qrH + 44 + 30 + 60 + M;
+  // Dark pickup-pass panel (QR plate + code + caption) replaces the old
+  // centered-QR + pill + caption stack.
+  const passH = 248;
+  const H = M + headerH + 30 + 64 + 30 + 24 + 30 + rowsH + 20 + 108 + settleH + 30 + passH + 30 + 60 + M;
   cv.width = W * S;
   cv.height = H * S;
   ctx.scale(S, S);
@@ -220,37 +222,47 @@ export async function downloadReceiptImage({
     y += settleLines.length * 20;
   }
   y += 30;
-  // Scannable QR above the code pill
+  // Pickup-pass panel: dark ticket with a white QR plate, dashed
+  // perforation, booking code and counter note.
+  rr(cardX + PAD, y, cardW - PAD * 2, passH, 20);
+  const dgrad = ctx.createLinearGradient(0, y, 0, y + passH);
+  dgrad.addColorStop(0, '#1f2937');
+  dgrad.addColorStop(1, '#111827');
+  ctx.fillStyle = dgrad;
+  ctx.fill();
+  const qbox = 184;
+  const qx = cardX + PAD + 24, qy = y + (passH - qbox) / 2;
+  let px0 = cardX + PAD + 24;
   if (qrImg) {
-    const box = 216, bx = (W - box) / 2;
-    rr(bx, y, box, box, 20);
+    rr(qx, qy, qbox, qbox, 16);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.strokeStyle = '#eef0f2';
+    ctx.drawImage(qrImg, qx + 14, qy + 14, qbox - 28, qbox - 28);
+    // Perforation between QR and code.
+    const dx = qx + qbox + 24;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 2;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(dx, y + 26);
+    ctx.lineTo(dx, y + passH - 26);
     ctx.stroke();
-    ctx.drawImage(qrImg, bx + 16, y + 16, box - 32, box - 32);
-    y += box + 24;
+    ctx.restore();
+    px0 = dx + 24;
   }
-  // Booking-code pill
-  ctx.font = F(800, 20, true);
-  const pillW = ctx.measureText(code).width + 56;
-  const pillX = (W - pillW) / 2;
-  rr(pillX, y, pillW, 44, 22);
-  const pgrad = ctx.createLinearGradient(pillX, 0, pillX + pillW, 0);
-  pgrad.addColorStop(0, '#b33842');
-  pgrad.addColorStop(0.5, '#bf4a53');
-  pgrad.addColorStop(1, '#d97079');
-  ctx.fillStyle = pgrad;
-  ctx.fill();
-  ctx.textAlign = 'center';
+  const passW = cardX + cardW - PAD - 24 - px0;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = F(800, 13);
+  ctx.fillText('P I C K U P   P A S S', tx0, y + 56);
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(code, W / 2, y + 29);
-  y += 44 + 14;
-  ctx.fillStyle = '#9ca3af';
-  ctx.font = F(500, 15);
-  ctx.fillText('Show this code to staff on pickup.', W / 2, y + 16);
-  y += 30;
+  ctx.font = F(800, 30, true);
+  ctx.fillText(code, px0, y + 96);
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  const passLines = wrap('Show this code at the counter — staff scan it to pull up your order.', F(500, 15), passW);
+  passLines.slice(0, 3).forEach((ln, i) => ctx.fillText(ln, px0, y + 126 + i * 22));
+  y += passH + 30;
   // Footer wordmark
   ctx.fillStyle = '#e5e7eb';
   ctx.fillRect(cardX + PAD, y, cardW - PAD * 2, 1);

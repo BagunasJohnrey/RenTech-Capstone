@@ -614,6 +614,16 @@ export default function CustomerRentalFlow({
   const flags = useFeatureFlags();
   // Data URI of the confirmed receipt QR — lets the customer save/download it.
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
+  // Auto-save: the receipt PNG downloads itself once when the booking
+  // confirms (single shot per mount — the footer button re-saves on demand).
+  const [receiptAutoSaved, setReceiptAutoSaved] = useState(false);
+  useEffect(() => {
+    if (step === 3 && confirmedTx && !receiptAutoSaved) {
+      setReceiptAutoSaved(true);
+      handleSaveReceipt();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, confirmedTx]);
 
   // ---- Step 0: Catalog ----
   if (step === 0) {
@@ -1181,19 +1191,34 @@ export default function CustomerRentalFlow({
 
           {step === 3 && confirmedTx && (
             <div className="space-y-5">
-              <div className="text-center">
-                <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
-                  <CheckCircle2 size={32} className="text-emerald-500" />
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-50 via-white to-white border border-emerald-100 px-5 py-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-emerald-500 text-white flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/30">
+                  <CheckCircle2 size={32} />
                 </div>
-                <h3 className="text-xl font-bold text-gray-900">Booking Confirmed!</h3>
-                <p className="text-gray-500 text-sm mt-1">Your reservation has been secured.</p>
-                <p className="inline-block mt-2 font-mono text-xs font-bold text-white bg-[#bf4a53] rounded-full px-3.5 py-1.5">{bookingCode(confirmedTx)}</p>
+                <h3 className="text-xl font-extrabold text-gray-900 tracking-tight">Booking Confirmed!</h3>
+                <p className="text-gray-500 text-xs font-medium mt-1">Your reservation has been secured.</p>
+                <p className="inline-block mt-3 font-mono text-xs font-bold text-white bg-[#bf4a53] rounded-full px-4 py-1.5 tracking-wider shadow-sm">{bookingCode(confirmedTx)}</p>
               </div>
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
                 <p className="font-bold text-gray-900 text-base mb-2">{selectedItem.name}</p>
-                <div className="flex justify-between"><span className="text-gray-500">Pickup</span><span>{formatDate(rentalDate)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Event Date</span><span className="font-semibold">{formatDate(eventDate)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="text-amber-600 font-semibold">{formatDate(dueDate)}</span></div>
+                {/* Pickup → Event → Return timeline */}
+                <div className="relative px-1 py-2">
+                  <div aria-hidden="true" className="absolute top-[13px] left-8 right-8 h-0.5 bg-gray-100 rounded-full" />
+                  <div className="relative grid grid-cols-3">
+                    {[
+                      { label: 'Pickup', value: formatDate(rentalDate), dot: 'bg-[#bf4a53]' },
+                      { label: 'Event', value: formatDate(eventDate), dot: 'bg-emerald-500' },
+                      { label: 'Return', value: formatDate(dueDate), dot: 'bg-amber-500' },
+                    ].map(({ label, value, dot }) => (
+                      <div key={label} className="flex flex-col items-center text-center min-w-0">
+                        <span aria-hidden="true" className={`w-2.5 h-2.5 rounded-full ${dot} ring-4 ring-white`} />
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-1.5">{label}</span>
+                        <span className="text-xs font-extrabold text-gray-900 mt-0.5 truncate max-w-full">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="border-t border-gray-100" />
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span>{confirmedTx.customer?.name || customer.name}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Size</span><span>{confirmedTx.size}</span></div>
                 {(confirmedTx.notes || customer.notes) && (
@@ -1209,25 +1234,40 @@ export default function CustomerRentalFlow({
                     Please settle the remaining ₱{txBalance(confirmedTx).toLocaleString()} at pickup — the item is released only once fully paid.
                   </p>
                 )}
+                {flags.qr_codes && (
+                  <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-lg">
+                    <div className="flex flex-col sm:flex-row items-stretch">
+                      <div className="p-4 sm:p-5 flex items-center justify-center shrink-0">
+                        <div className="bg-white p-3 rounded-xl shadow-md">
+                          {/* Real, scannable QR (encodes the booking code). Also on
+                              the downloadable receipt. Server-rendered data URI on the
+                              booking response, otherwise generated client-side. */}
+                          <BookingQR tx={confirmedTx} size={120} showCode={false} onDataUrl={setQrSaveUrl} />
+                        </div>
+                      </div>
+                      <div aria-hidden="true" className="border-t sm:border-t-0 sm:border-l border-dashed border-white/20 mx-4 sm:mx-0 sm:my-4" />
+                      <div className="flex-1 min-w-0 p-4 sm:p-5 flex flex-col justify-center text-center sm:text-left">
+                        <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/50">Booking QR code</p>
+                        <p className="font-mono text-lg font-bold tracking-wider mt-1">{bookingCode(confirmedTx)}</p>
+                        <p className="text-[11px] text-white/60 leading-snug mt-1.5">
+                          <span className="font-bold text-white/90">Pickup pass.</span>{' '}
+                          Show this code at the counter — staff scan it to pull up your order.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {simulatedPay && (
                   <p className="text-[11px] text-gray-500 bg-gray-100 rounded-xl px-3 py-2 leading-snug text-center">
                     Test mode — no real payment was processed.
                   </p>
                 )}
               </div>
-              {flags.qr_codes && (
-                <div className="flex flex-col items-center">
-                  <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
-                    {/* Real, scannable QR (encodes the booking code). Already on
-                        the downloadable receipt below — shown here bare, with no
-                        helper text or save link. Server-rendered data URI on the
-                        booking response, otherwise generated client-side. */}
-                    <BookingQR tx={confirmedTx} size={144} showCode={false} onDataUrl={setQrSaveUrl} />
-                  </div>
-                </div>
-              )}
               {confirmError && (
                 <p className="text-xs text-center text-red-500 font-medium bg-red-50 py-2 rounded-lg">{confirmError}</p>
+              )}
+              {receiptAutoSaved && !confirmError && (
+                <p className="text-[11px] text-center text-emerald-600 font-semibold">Receipt picture saved to your downloads.</p>
               )}
             </div>
           )}
