@@ -93,9 +93,10 @@ export function useTransactions() {
   }, []);
 
   const cancel = useCallback(async (txId) => {
-    await transactionsService.cancel(txId);
+    const result = await transactionsService.cancel(txId);
     invalidateTxCache(txId);
     setTransactions((prev) => prev.map((t) => (t.id === txId ? { ...t, status: 'Cancelled' } : t)));
+    return result ?? null;
   }, []);
 
   const remove = useCallback(async (txId) => {

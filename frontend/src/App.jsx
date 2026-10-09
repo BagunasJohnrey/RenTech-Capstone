@@ -559,13 +559,15 @@ export default function RentechApp() {
   };
 
   // Cancel transaction (FIX D: surface errors) — syncs local state so the
-  // list + item card update immediately (frees the item to Available).
+  // list + item card update immediately. The item takes the status the
+  // server recomputed (a second live hold can keep it Rented/Reserved).
   const handleCancelTransaction = async (txId) => {
     try {
-      await cancelTransaction(txId);
+      const result = await cancelTransaction(txId);
       const tx = transactions.find((t) => t.id === txId);
       setTransactions((prev) => prev.map((t) => (t.id === txId ? { ...t, status: 'Cancelled' } : t)));
-      if (tx?.itemId) markItemStatus(tx.itemId, 'Available');
+      if (tx?.itemId && result?.itemStatus) markItemStatus(tx.itemId, result.itemStatus);
+      else if (tx?.itemId) markItemStatus(tx.itemId, 'Available');
       toastSuccess('Transaction cancelled');
       noteLocalMutation();
     } catch (err) {

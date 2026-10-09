@@ -618,6 +618,67 @@ describe('PUT /api/transactions/:id/cancel', () => {
     expect(res.status).toBe(200);
   });
 
+  it('keeps the item Reserved when a second live hold remains', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Reserved',
+      item: { id: 1, name: 'Test', status: 'Reserved' },
+    });
+    prisma.transaction.findFirst.mockResolvedValue({ id: 'tx-2', status: 'Reserved' });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-1/cancel')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ itemId: 1, itemStatus: 'Reserved' });
+    expect(prisma.inventoryItem.update).not.toHaveBeenCalled();
+  });
+
+  it('frees the item to Available when no other hold remains', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Rented' },
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .put('/api/transactions/tx-1/cancel')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ itemId: 1, itemStatus: 'Available' });
+    expect(prisma.inventoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1 },
+        data: expect.objectContaining({ status: 'Available', outOfServiceReason: null }),
+      })
+    );
+  });
+
+  it('never touches Cleaning/OutOfService items on cancel', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Cleaning' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-1/cancel')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ itemStatus: 'Cleaning' });
+    expect(prisma.inventoryItem.update).not.toHaveBeenCalled();
+  });
+
   // SECURITY: a customer may only REQUEST a cancellation (with a written
   // explanation, via the messages inbox). Cancelling is staff/admin-only, so a
   // paid Reserved booking can never be voided unilaterally over the API.

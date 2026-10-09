@@ -921,12 +921,43 @@ export async function swapBookingItem(
   };
 }
 
+// Recomputes a transaction-derived item status (Rented/Reserved/Available)
+// from the remaining live holds after a booking leaves the pool (cancel or
+// delete). A second live hold keeps the item out; manual states (Cleaning
+// batch, OutOfService damage, Deleted) are never touched. Returns the
+// resulting status so callers can sync the UI to the same value.
+async function recomputeItemStatusAfterRelease(
+  itemId: number,
+  excludeTxId: string | null,
+  currentStatus: ItemStatus
+): Promise<ItemStatus> {
+  if (currentStatus !== ItemStatus.Rented && currentStatus !== ItemStatus.Reserved) {
+    return currentStatus;
+  }
+  const otherHold = await prisma.transaction.findFirst({
+    where: {
+      itemId,
+      ...(excludeTxId ? { id: { not: excludeTxId } } : {}),
+      status: { in: ['Active', 'Overdue', 'Reserved'] },
+    },
+    select: { status: true },
+  });
+  const next = !otherHold
+    ? ItemStatus.Available
+    : otherHold.status === 'Reserved' ? ItemStatus.Reserved : ItemStatus.Rented;
+  if (next === currentStatus) return currentStatus;
+  await prisma.inventoryItem.update({
+    where: { id: itemId },
+    data: { status: next, ...(next === ItemStatus.Available ? { outOfServiceReason: null } : {}) },
+  });
+  return next;
+}
+
 export async function cancelTransaction(transactionId: string, performedById: string) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
     include: { item: true },
   });
-
   if (!tx) throw new AppError(404, 'Transaction not found');
   if (tx.status === 'Returned') throw new AppError(400, 'Cannot cancel a returned transaction');
   if (tx.status === 'Cancelled') throw new AppError(400, 'Transaction already cancelled');
@@ -936,10 +967,11 @@ export async function cancelTransaction(transactionId: string, performedById: st
     data: { status: TransactionStatus.Cancelled },
   });
 
-  await prisma.inventoryItem.update({
-    where: { id: tx.itemId },
-    data: { status: ItemStatus.Available, outOfServiceReason: null },
-  });
+  // Recompute the item's derived status instead of blindly freeing it: a
+  // second live hold (e.g. a future reservation beside the active rental)
+  // keeps the item out, and manual states (Cleaning batch, OutOfService
+  // damage) are never touched by a cancellation.
+  const itemStatus = await recomputeItemStatusAfterRelease(tx.itemId, transactionId, tx.item.status);
 
   // Tell the customer in-app (their bell + History tab). Best-effort so a
   // notification write can never break the cancellation itself; the email
@@ -977,7 +1009,7 @@ export async function cancelTransaction(transactionId: string, performedById: st
 
   clearDataCache();
 
-  return { message: 'Transaction cancelled' };
+  return { message: 'Transaction cancelled', itemId: tx.itemId, itemStatus };
 }
 
 export async function deleteTransaction(transactionId: string) {
@@ -995,12 +1027,11 @@ export async function deleteTransaction(transactionId: string) {
     prisma.transaction.delete({ where: { id: transactionId } }),
   ]);
 
-  const nonReturnedStatuses = ['Active', 'Overdue'];
-  if (nonReturnedStatuses.includes(tx.status) && tx.item.status !== ItemStatus.OutOfService) {
-    await prisma.inventoryItem.update({
-      where: { id: tx.itemId },
-      data: { status: ItemStatus.Available, outOfServiceReason: null },
-    });
+  const nonReturnedStatuses = ['Active', 'Overdue', 'Reserved'];
+  if (nonReturnedStatuses.includes(tx.status)) {
+    // The row is already gone, so no exclusion is needed — recompute from
+    // whatever live holds remain (and never touch Cleaning/OutOfService).
+    await recomputeItemStatusAfterRelease(tx.itemId, null, tx.item.status);
   }
 
   clearDataCache();
