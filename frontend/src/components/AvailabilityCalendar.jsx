@@ -81,7 +81,7 @@ export default function AvailabilityCalendar({ item, onClose }) {
                     <p className="text-[11px] text-emerald-600 mt-0.5">No bookings block this item.</p>
                   </div>
                 ) : (
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                  <div data-sheet-scroll className="space-y-1.5 max-h-36 overflow-y-auto">
                     {blockedRanges.map((range, i) => (
                       <div key={range.transactionId || i} className="flex items-center justify-between px-3 py-2 bg-red-50/70 rounded-lg">
                         <div className="flex items-center gap-2 min-w-0">
