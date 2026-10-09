@@ -14,7 +14,8 @@ const toYmd = (d) => {
 };
 
 // Edit booking dates + internal notes only. Fee follows the item via the
-// at-pickup Swap flow (promo voided, downpayment kept — no cancel+rebook).
+// at-pickup Swap flow (promo carried over when still valid, else voided;
+// downpayment kept — no cancel+rebook).
 // Re-runs the same availability overlap check server-side; shows the
 // friendly 409 when it collides.
 export default function EditBookingModal({ transaction, onClose, onSaved }) {

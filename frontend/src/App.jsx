@@ -489,6 +489,10 @@ export default function RentechApp() {
       downpayment: data.downpayment || 0,
       downpaymentCash: data.downpaymentCash ?? false,
       notes: data.notes || '',
+      // Counter voucher + PIN-approved staff discount (server-verified).
+      promoCode: data.promoCode || undefined,
+      staffDiscountPct: data.staffDiscountPct || 0,
+      staffDiscountPin: data.staffDiscountPin || undefined,
       conditionPhoto: data.conditionPhoto || undefined,
       size: data.size || undefined,
       measurements: data.measurements || undefined,

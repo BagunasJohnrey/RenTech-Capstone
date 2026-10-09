@@ -11,6 +11,8 @@ import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
 import BottomSheet from '../components/BottomSheet';
 import { inventoryService } from '../services/inventory';
+import { promoService } from '../services/promo';
+import { promoDiscountLabel } from '../utils/promoLabel';
 import { paymentsService } from '../services/payments';
 import { usePaymongo } from '../hooks/usePaymongo';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
@@ -135,7 +137,30 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // item — any change after approval voids it and forces re-approval, so
   // staff can't get a blank approval and inflate the discount afterwards.
   const [discountPct, setDiscountPct] = useState(0);
-  const [discountAuthorized, setDiscountAuthorized] = useState(null); // { admin, pct, itemId } | null
+  const [discountAuthorized, setDiscountAuthorized] = useState(null); // { admin, pct, itemId, pin } | null
+  // Counter voucher code (same server-side vouchers as the customer flow).
+  const [promoCode, setPromoCode] = useState('');
+  const [promoApplied, setPromoApplied] = useState(null);
+  const [promoError, setPromoError] = useState('');
+  const [promoApplying, setPromoApplying] = useState(false);
+  const handleApplyPromo = async (codeOverride) => {
+    const raw = (codeOverride ?? promoCode).trim().toUpperCase();
+    if (!raw || !selectedItem || promoApplying) return;
+    setPromoApplying(true);
+    setPromoError('');
+    try {
+      const result = await promoService.validate({
+        code: raw, rentalFee: selectedItem.price || 0, itemCategory: selectedItem.category,
+      });
+      setPromoCode(result.code || raw);
+      setPromoApplied(result);
+    } catch (err) {
+      setPromoApplied(null);
+      setPromoError(err?.message || 'Invalid promo code');
+    }
+    setPromoApplying(false);
+  };
+  const clearPromo = () => { setPromoCode(''); setPromoApplied(null); setPromoError(''); };
   const [showAdminAuth, setShowAdminAuth] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
@@ -153,11 +178,13 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     if (discountAuthorized && discountAuthorized.pct !== pct) setDiscountAuthorized(null);
   };
 
-  // Switching items voids the approval (the peso amount changed).
+  // Switching items voids the approval (the peso amount changed) and any
+  // applied voucher (it was validated against the old item's price).
   useEffect(() => {
     if (discountAuthorized && discountAuthorized.itemId !== selectedItem?.id) {
       setDiscountAuthorized(null);
     }
+    setPromoCode(''); setPromoApplied(null); setPromoError('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItem?.id]);
 
@@ -281,16 +308,18 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     return Object.keys(errs).length === 0;
   };
 
-  // Derived totals — always reflect the selected % so the admin sees the
-  // exact amount they are approving. The booking itself only carries the
+  // Derived totals — voucher first, then the PIN-approved staff % on top
+  // (mirrors the server order in createRental). The booking only carries the
   // discount when it is approved (see submitBooking).
   const totals = useMemo(() => {
     const base = selectedItem?.price || 0;
-    const discountAmt = Math.round(base * (discountPct / 100));
-    const afterDiscount = base - discountAmt;
+    const promoFee = promoApplied?.finalFee ?? base;
+    const promoDiscount = Math.max(0, base - promoFee);
+    const discountAmt = Math.round(promoFee * (discountPct / 100));
+    const afterDiscount = promoFee - discountAmt;
     const dp = Number(downpaymentAmount) || 0;
-    return { baseRate: base, discount: discountAmt, discountedRate: afterDiscount, downpayment: dp, balance: afterDiscount - dp };
-  }, [selectedItem, downpaymentAmount, discountPct]);
+    return { baseRate: base, promoDiscount, promoCode: promoApplied?.code || null, discount: discountAmt, discountedRate: afterDiscount, downpayment: dp, balance: afterDiscount - dp };
+  }, [selectedItem, downpaymentAmount, discountPct, promoApplied]);
 
   // Live field validity (green glow when valid)
   const fieldValid = useMemo(() => {
@@ -311,13 +340,14 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     }
     {
       const base = selectedItem?.price || 0;
-      const fee = base - Math.round(base * (discountPct / 100));
+      const promoFee = promoApplied?.finalFee ?? base;
+      const fee = promoFee - Math.round(promoFee * (discountPct / 100));
       const min = Math.min(minDownpayment || 200, fee);
       const dp = Number(downpaymentAmount) || 0;
       if (dp >= min && dp <= fee && fee > 0) v.downpayment = true;
     }
     return v;
-  }, [customer, todayStr, size, measurementsExpanded, measurements, measurementFields, downpaymentAmount, selectedItem, discountPct, minDownpayment]);
+  }, [customer, todayStr, size, measurementsExpanded, measurements, measurementFields, downpaymentAmount, selectedItem, discountPct, promoApplied, minDownpayment]);
 
   // Category tabs (with live counts) built from the actual inventory so every
   // category (Gown, Barong, Filipiniana, Suit, Costume, …) always appears —
@@ -410,8 +440,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     if (size || Object.keys(measurements || {}).some(k => String(measurements[k] ?? '').trim() !== '')) return true;
     if (String(downpaymentAmount ?? '').trim() !== '') return true;
     if ((Number(discountPct) || 0) > 0 || discountAuthorized) return true;
+    if ((promoCode || '').trim() !== '' || promoApplied) return true;
     return false;
-  }, [step, createdTx, selectedItem, customer, size, measurements, downpaymentAmount, discountPct, discountAuthorized]);
+  }, [step, createdTx, selectedItem, customer, size, measurements, downpaymentAmount, discountPct, discountAuthorized, promoCode, promoApplied]);
 
   // Back / close go through here: with unsaved entries the user gets a
   // "Discard changes?" confirm instead of silently losing the rental.
@@ -463,7 +494,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     setAuthLoading(true); setAuthError('');
     try {
       const res = await api.post('/auth/verify-admin', { pin: adminPin });
-      setDiscountAuthorized({ admin: res.admin, pct: discountPct, itemId: selectedItem?.id });
+      // The PIN itself is retained in memory (never persisted/logged) so the
+      // server can re-verify it at booking time; it dies with this form.
+      setDiscountAuthorized({ admin: res.admin, pct: discountPct, itemId: selectedItem?.id, pin: adminPin });
       setShowAdminAuth(false);
       setAdminPin('');
     } catch (err) {
@@ -625,6 +658,12 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     balance: totals.balance,
     discountPct: isDiscountApproved ? discountPct : 0,
     discountApprovedBy: isDiscountApproved ? discountAuthorized?.admin?.name || null : null,
+    // Server-verified at booking (ignored without a staff session): the PIN
+    // approval + the voucher code. Previously the counter discount never
+    // reached the server at all (validation strips unknown fields).
+    staffDiscountPct: isDiscountApproved ? discountPct : 0,
+    staffDiscountPin: isDiscountApproved ? discountAuthorized?.pin || undefined : undefined,
+    promoCode: promoApplied?.code || undefined,
     size,
     measurements,
     notes: customer.notes,
@@ -1062,10 +1101,13 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   <div className="flex justify-between"><span className="text-gray-500">Event Date</span><span className="font-semibold">{new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="font-semibold">{new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
                   <div className="flex justify-between font-bold"><span>{selectedItem?.name}</span><span>₱{totals.baseRate.toLocaleString()}</span></div>
+                  {totals.promoDiscount > 0 && (
+                    <div className="flex justify-between text-emerald-600"><span>Voucher ({totals.promoCode})</span><span>-₱{totals.promoDiscount.toLocaleString()}</span></div>
+                  )}
                   {totals.discount > 0 && (
                     <div className="flex justify-between text-emerald-600"><span>Discount ({discountPct}%)</span><span>-₱{totals.discount.toLocaleString()}</span></div>
                   )}
-                  {totals.discount > 0 && (
+                  {(totals.discount > 0 || totals.promoDiscount > 0) && (
                     <div className="flex justify-between text-sm"><span className="text-gray-500">After Discount</span><span className="font-semibold">₱{totals.discountedRate.toLocaleString()}</span></div>
                   )}
                   <div className="flex justify-between border-t pt-3 mt-2"><span className="text-gray-500">Balance (remaining)</span><span className="font-bold text-gray-900">₱{totals.balance.toLocaleString()}</span></div>
@@ -1200,6 +1242,35 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                         {discountPct}% (₱{totals.discount.toLocaleString()} off) — an admin will approve this exact amount when you confirm the order.
                       </p>
                     )
+                  )}
+                </div>
+                {/* Voucher — same server-side codes as the customer flow,
+                    validated against this item's price + category. */}
+                <div className="pt-3 border-t border-gray-100">
+                  {!promoApplied ? (
+                    <>
+                      <div className="flex gap-2">
+                        <input type="text" value={promoCode}
+                          onChange={e => { setPromoCode(e.target.value.toUpperCase()); if (promoError) setPromoError(''); }}
+                          placeholder="Voucher code (optional)" maxLength={20}
+                          aria-label="Voucher code"
+                          className="flex-1 min-w-0 p-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm font-bold uppercase placeholder:normal-case placeholder:font-medium placeholder:text-gray-400 focus:outline-none focus:border-[#bf4a53]" />
+                        <button type="button" onClick={() => handleApplyPromo()} disabled={!promoCode.trim() || promoApplying}
+                          className="px-4 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800 transition-colors disabled:opacity-50 shrink-0">
+                          {promoApplying ? '…' : 'Apply'}
+                        </button>
+                      </div>
+                      {promoError && <p className="text-xs text-red-500 font-medium mt-1.5">{promoError}</p>}
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
+                      <p className="flex-1 min-w-0 text-xs font-bold text-emerald-800 truncate">
+                        {promoApplied.code} <span className="font-semibold text-emerald-600">· {promoDiscountLabel(promoApplied)}</span>
+                      </p>
+                      <button type="button" onClick={clearPromo} className="text-xs text-gray-400 hover:text-red-500 font-semibold shrink-0">
+                        Remove
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
