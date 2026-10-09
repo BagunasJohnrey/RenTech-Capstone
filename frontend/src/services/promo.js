@@ -13,15 +13,18 @@ export const promoService = {
 
   get: (id) => api.get(`/promo-codes/${id}`),
 
-  create: ({ code, discountPct, maxUses, expiresAt }) =>
-    api.post('/promo-codes', { code, discountPct, maxUses, expiresAt }),
+  create: ({ code, discountPct, discountAmount, minSpend, startsAt, maxUsesPerCustomer, firstBookingOnly, appliesToCategories, maxUses, expiresAt }) =>
+    api.post('/promo-codes', {
+      code, discountPct, discountAmount, minSpend, startsAt,
+      maxUsesPerCustomer, firstBookingOnly, appliesToCategories, maxUses, expiresAt,
+    }),
 
   update: (id, patch) => api.put(`/promo-codes/${id}`, patch),
 
   remove: (id) => api.delete(`/promo-codes/${id}`),
 
-  validate: ({ code, rentalFee }) =>
-    api.post('/promo-codes/validate', { code, rentalFee }),
+  validate: ({ code, rentalFee, itemCategory }) =>
+    api.post('/promo-codes/validate', { code, rentalFee, itemCategory }),
 
   // Customer-facing: currently-usable codes (active, unexpired, has uses left).
   // Cached 60s so the dashboard doesn't refetch on every Home mount.
