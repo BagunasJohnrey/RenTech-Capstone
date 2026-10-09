@@ -213,11 +213,13 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
   }
 
   const sale = getSaleInfo(item);
-  // Whole card taps through: details when a detail handler exists (catalog),
-  // straight to booking otherwise (home grids, chatbot). The detail modal
-  // owns availability gating (its Rent button disables itself when the
-  // piece can't be booked), so no per-status button row is needed here.
-  const activate = onViewDetail ? () => onViewDetail(item) : (onBook ? () => onBook() : undefined);
+  // Whole card taps straight into booking for signed-in customers (the
+  // booking flow checks availability itself as part of the wizard).
+  // Guests can't book, so their tap still opens details (Sign In to Rent).
+  // When no book handler exists, fall back to details.
+  const book = onBook ? () => onBook() : undefined;
+  const view = onViewDetail ? () => onViewDetail(item) : undefined;
+  const activate = guest ? view : (book ?? view);
   return (
     <div
       data-tour="book"
@@ -226,7 +228,7 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
       tabIndex={activate ? 0 : undefined}
       role={activate ? 'button' : undefined}
       aria-label={activate ? `${item.name}, ₱${item.price.toLocaleString()}` : undefined}
-      title={activate ? (onViewDetail ? `View ${item.name}` : `Book ${item.name}`) : undefined}
+      title={activate ? (book && activate === book ? `Book ${item.name}` : `View ${item.name}`) : undefined}
       className={`bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col ${activate ? 'cursor-pointer' : ''}`}>
       <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
         <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
