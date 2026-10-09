@@ -1802,3 +1802,70 @@ describe('OAuth staff sign-in (email match)', () => {
     expect(result.needsDetails).toBe(true);
   });
 });
+
+// Google sign-up links the Google account photo (URL only — the frontend
+// renders absolute avatar URLs directly). A manually uploaded photo is never
+// overwritten by a later Google login.
+describe('OAuth Google photo link', () => {
+  const GOOGLE_PHOTO = 'https://lh3.googleusercontent.com/a-/photo123';
+  const details = { name: 'G User', phone: '09170000000', address: 'Balayan' };
+
+  it('saves the Google photo URL on first profile creation', async () => {
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'photo-new-user', email: 'photo.new@example.com', user_metadata: { picture: GOOGLE_PHOTO } } },
+      error: null,
+    } as never);
+    // New userId + new email → falls through to create.
+    vi.mocked(prisma.profile.findUnique).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+
+    const result = await authService.oauthGetOrCreateProfile('photo-token', details);
+    expect(result.needsDetails).toBe(false);
+    expect(prisma.profile.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ avatarPath: GOOGLE_PHOTO }) })
+    );
+    expect(result.user.avatarPath).toBe(GOOGLE_PHOTO);
+  });
+
+  it('accepts avatar_url when picture is absent', async () => {
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'photo-new-user-2', email: 'photo.new2@example.com', user_metadata: { avatar_url: GOOGLE_PHOTO } } },
+      error: null,
+    } as never);
+    vi.mocked(prisma.profile.findUnique).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+
+    const result = await authService.oauthGetOrCreateProfile('photo-token-2', details);
+    expect(result.user.avatarPath).toBe(GOOGLE_PHOTO);
+  });
+
+  it('ignores non-https / overlong photo values', async () => {
+    for (const bad of ['http://evil.example/x.jpg', 'javascript:alert(1)', `https://${'x'.repeat(2100)}`]) {
+      vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+        data: { user: { id: `photo-bad-${bad.length}`, email: `photo.bad${bad.length}@example.com`, user_metadata: { picture: bad } } },
+        error: null,
+      } as never);
+      vi.mocked(prisma.profile.findUnique).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+
+      const result = await authService.oauthGetOrCreateProfile('photo-token-bad', details);
+      expect(result.user.avatarPath).toBeNull();
+    }
+  });
+
+  it('never overwrites a manually uploaded photo', async () => {
+    const manual = 'avatars/profile-manual-1.webp';
+    // Finishing an incomplete profile (missing phone/address): update path.
+    vi.mocked(supabaseAdmin.auth.getUser).mockResolvedValueOnce({
+      data: { user: { id: 'photo-keep-user', email: 'photo.keep@example.com', user_metadata: { picture: GOOGLE_PHOTO } } },
+      error: null,
+    } as never);
+    vi.mocked(prisma.profile.findUnique)
+      .mockResolvedValueOnce({ id: 'p-keep', userId: 'photo-keep-user', email: 'photo.keep@example.com', role: 'Customer', name: 'Keep', phone: null, address: null, avatarPath: manual })
+      .mockResolvedValueOnce(null);
+
+    const result = await authService.oauthGetOrCreateProfile('photo-token-keep', details);
+    expect(result.needsDetails).toBe(false);
+    expect(prisma.profile.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ avatarPath: manual }) })
+    );
+    expect(result.user.avatarPath).toBe(manual);
+  });
+});
