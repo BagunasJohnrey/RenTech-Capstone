@@ -4,6 +4,8 @@ import { transactionsService } from '../services';
 // Shared normalizer (also imported by App for optimistic updates).
 // `customer` stays a display string for compatibility; `customerProfile`
 // carries the full profile object (phone/address) for edit/detail views.
+// Digest rows (/dashboard/today) are FULL records, so they normalize
+// identically to list rows — Tasks paints from the digest first.
 export const normalizeTx = (tx) => ({
   ...tx,
   customer: tx.customer?.name ?? tx.customer ?? '',
@@ -91,9 +93,10 @@ export function useTransactions() {
   }, []);
 
   const cancel = useCallback(async (txId) => {
-    await transactionsService.cancel(txId);
+    const result = await transactionsService.cancel(txId);
     invalidateTxCache(txId);
     setTransactions((prev) => prev.map((t) => (t.id === txId ? { ...t, status: 'Cancelled' } : t)));
+    return result ?? null;
   }, []);
 
   const remove = useCallback(async (txId) => {

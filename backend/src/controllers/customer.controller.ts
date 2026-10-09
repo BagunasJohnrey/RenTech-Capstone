@@ -15,7 +15,7 @@ export const createBookingSchema = z.object({
     rentalDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid rental date'),
     dueDate: z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid due date'),
     downpayment: z.number().min(0).optional(),
-    notes: z.string().optional(),
+    notes: z.string().max(300, 'Notes must be 300 characters or fewer').optional(),
     promoCode: z.string().optional(),
     size: z.string().optional(),
     measurements: z.record(z.any()).optional(),
@@ -116,9 +116,10 @@ export async function getBookingDetail(req: AuthenticatedRequest, res: Response,
 // Scoped to non-fee contact fields only — item/fee changes stay cancel+rebook.
 export const updateCustomerSchema = z.object({
   body: z.object({
-    name: z.string().min(2).optional(),
-    phone: z.string().optional().nullable(),
-    address: z.string().optional().nullable(),
+    name: z.string().min(2).max(50, 'Name must be 50 characters or fewer')
+      .regex(/^\D+$/, 'Name must not contain numbers').optional(),
+    phone: z.string().regex(/^\d{11}$/, 'Phone must be exactly 11 digits').optional().nullable(),
+    address: z.string().max(100, 'Address must be 100 characters or fewer').optional().nullable(),
     preferences: z.array(z.string()).optional().nullable(),
   }),
 });

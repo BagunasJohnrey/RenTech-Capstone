@@ -37,6 +37,7 @@ export async function sendManualSms(params: {
         item: tx.item.name,
         date: tx.dueDate.toLocaleDateString('en-PH'),
         days: String(Math.max(1, Math.ceil((new Date().getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)))),
+        balance: formatPhpAmount(tx.balance),
       });
     }
   }
@@ -82,9 +83,18 @@ export async function sendManualSms(params: {
 //    escalation text (overdueEscalationSent once-guard).
 //  - Customers with no phone are marked sent immediately (nothing to send) so
 //    the scheduler doesn't retry every minute; staff still get the in-app alert.
-// Message text deliberately carries NO late-fee/penalty amounts.
+// Message text carries the outstanding rental balance (ASCII "PHP 1,250")
+// but NEVER per-day late-fee/penalty rates or the ₱ glyph (non-GSM-7).
 
-const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return it as soon as possible.';
+// PHP-notation amounts use plain ASCII "PHP 1,250" — the ₱ glyph is not
+// GSM-7 and a single one flips the whole SMS into 70-char Unicode mode,
+// doubling its segment cost. Templates carry the "PHP " prefix; this var is
+// just the grouped number.
+export function formatPhpAmount(n: number | null | undefined): string {
+  return Number(n || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 });
+}
+
+const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your {item} rental is overdue ({days} day(s)). Balance: PHP {balance}. Please return soon. Thank you!';
 
 export async function autoNotifyOverdue() {
   const now = new Date();
@@ -139,6 +149,7 @@ export async function autoNotifyOverdue() {
         item: tx.item.name,
         date: tx.dueDate.toLocaleDateString('en-PH'),
         days: String(daysOverdue),
+        balance: formatPhpAmount(tx.balance),
       });
 
       try {
@@ -225,7 +236,7 @@ export async function notifyOverdue3Days() {
 
     let sent = false;
     if (tx.customer.phone && wantsSms) {
-      const message = `Hi ${tx.customer.name}, your rental of ${tx.item.name} is now ${daysOverdue} day(s) overdue. Please contact Mylene's Boutique to arrange a return.`;
+      const message = `Hi ${tx.customer.name}, your ${tx.item.name} rental is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Contact Mylene's Boutique.`;
       try {
         await sendSms(tx.customer.phone, message);
         await prisma.sentSms.create({
@@ -242,6 +253,10 @@ export async function notifyOverdue3Days() {
       results.push({ transactionId: tx.id, customerName: tx.customer.name, sent });
     }
   }
+
+  // Escalation runs against Active rows too — a status flip to Overdue
+  // changes dashboard KPIs, so refresh cached dashboard data.
+  if (results.length > 0) clearDataCache();
 
   return results;
 }
@@ -331,6 +346,9 @@ export async function notifyDueToday() {
 
     results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name, sent });
   }
+  // Flag flips + new notification rows move the data version — refresh
+  // cached dashboard data so the version fingerprint and lists agree.
+  if (results.length > 0) clearDataCache();
   return results;
 }
 
@@ -376,6 +394,9 @@ export async function checkNoShowAndNotify() {
     }
   }
 
+  // New notification rows + flag flips move the data version too.
+  if (results.length > 0) clearDataCache();
+
   return results;
 }
 
@@ -388,4 +409,20 @@ export async function getSmsHistory(params: { limit?: number; offset?: number })
     take: params.limit || 50,
     skip: params.offset || 0,
   });
+}
+
+// Admin-only SMS log cleanup. Rows are delivery records (the message already
+// left via Semaphore), so deleting only clears the log — it never unsends.
+// Audited like manual sends; retention still purges old rows automatically.
+export async function deleteSmsHistory(id: string, performedById: string) {
+  const row = await prisma.sentSms.findUnique({ where: { id } });
+  if (!row) throw new AppError(404, 'SMS record not found');
+  await prisma.sentSms.delete({ where: { id } });
+  try {
+    await createAuditLog({
+      action: 'sms.delete', entity: 'sms', entityId: id,
+      performedById,
+    });
+  } catch { /* audit is non-critical */ }
+  return { id };
 }

@@ -21,7 +21,7 @@ const inRange = (dateStr, start, end) => start && end && dateStr >= start && dat
  * unavailable (red) and lets staff pick a pickup date then an event date.
  * Booked ranges come from the item's active/overdue transactions.
  */
-export default function BookingCalendar({ pickup, event, onChange, bookedRanges = [], minDate, disabled = false, returnDays = 1 }) {
+export default function BookingCalendar({ pickup, event, onChange, bookedRanges = [], minDate, disabled = false, returnDays = 1, hideSummary = false }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const min = minDate || ymd(today);
@@ -30,6 +30,16 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
 
   const isBooked = (ds) => bookedRanges.some((r) => inRange(ds, r.start, r.end));
   const isPast = (ds) => ds < min;
+
+  // Highlight the auto-computed return day (event + returnDays) in amber so
+  // it matches step 3 of the picking guide and the Return chip.
+  const returnDs = (() => {
+    if (!event) return null;
+    const d = new Date(`${event}T00:00`);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() + returnDays);
+    return ymd(d);
+  })();
 
   // Does the currently selected window overlap any booking?
   const selectedOverlaps = !!(
@@ -78,17 +88,19 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
           type="button"
           disabled={!canPrev}
           onClick={() => setView(addMonths(view, -1))}
-          className="p-1.5 rounded-full hover:bg-gray-100 disabled:opacity-30 transition-colors"
+          aria-label="Previous month"
+          className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 disabled:opacity-30 transition-colors"
         >
           <ChevronLeft size={18} />
         </button>
-        <p className="font-bold text-sm text-gray-900">
+        <p className="font-bold text-sm sm:text-[15px] text-gray-900">
           {MONTHS[view.getMonth()]} {view.getFullYear()}
         </p>
         <button
           type="button"
           onClick={() => setView(addMonths(view, 1))}
-          className="p-1.5 rounded-full hover:bg-gray-100 transition-colors"
+          aria-label="Next month"
+          className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
         >
           <ChevronRight size={18} />
         </button>
@@ -102,7 +114,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
         ))}
       </div>
 
-      <div className="grid grid-cols-7 gap-1">
+      <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
         {cells.map((date, i) => {
           if (!date) return <div key={i} />;
           const ds = ymd(date);
@@ -110,14 +122,16 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
           const booked = isBooked(ds);
           const isPickup = ds === pickup;
           const isEvent = ds === event;
+          const isReturn = returnDs !== null && ds === returnDs;
           const inSel = pickup && event && ds > pickup && ds < event;
           const dayDisabled = past || booked || disabled;
 
-          let cls = 'aspect-square rounded-lg text-[11px] flex items-center justify-center font-medium transition-colors ';
+          let cls = 'aspect-square rounded-lg sm:rounded-xl text-[11px] sm:text-[13px] flex items-center justify-center font-medium transition-colors ';
           if (booked) cls += 'bg-red-50 text-red-400 line-through cursor-not-allowed';
           else if (past) cls += 'text-gray-300 cursor-not-allowed';
           else if (isPickup) cls += 'bg-[#bf4a53] text-white';
           else if (isEvent) cls += 'bg-emerald-500 text-white';
+          else if (isReturn) cls += 'bg-amber-100 text-amber-700 font-bold ring-1 ring-amber-300 cursor-pointer';
           else if (inSel) cls += 'bg-red-50 text-[#bf4a53]';
           else cls += 'text-gray-700 hover:bg-gray-100 cursor-pointer';
 
@@ -141,6 +155,9 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
         </span>
         <span className="flex items-center gap-1">
           <span className="w-3 h-3 rounded bg-red-100" /> In range
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded bg-amber-100 border border-amber-300" /> Return
         </span>
       </div>
 
@@ -167,7 +184,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
         </p>
       )}
 
-      {(pickup || event) && (
+      {(pickup || event) && !hideSummary && (
         <div className="mt-2 text-[11px] text-gray-600 flex flex-wrap justify-center gap-x-3">
           {pickup && (
             <span>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, cloneElement } from 'react';
+import { useState, useEffect, useCallback, useRef, cloneElement } from 'react';
 import AIReportModal from '../components/AIReportModal';
 import SaleModal from '../components/SaleModal';
 import CleaningQueueModal from '../components/CleaningQueueModal';
@@ -13,8 +13,9 @@ import CategoryPerformance from '../components/insights/CategoryPerformance';
 import InsightsPanel from '../components/insights/InsightsPanel';
 import ReportSection from '../components/insights/ReportSection';
 import SmartListModal from '../components/insights/SmartListModal';
-import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS } from '../components/insights/shared';
+import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS, fmt } from '../components/insights/shared';
 import { api } from '../utils/api';
+import { formatCheckedAgo } from '../utils/cache';
 import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
 import { useToast } from '../components/Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -88,7 +89,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
-  const { error: toastError } = useToast();
+  const { error: toastError, info: toastInfo } = useToast();
   // Last saved AI reports (server history, admin-only) — reopenable from here
   // and from Settings → Data & Backups.
   const [recentReports, setRecentReports] = useState([]);
@@ -113,11 +114,40 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
       .catch(() => toastError('Could not open that report.'))
       .finally(() => setOpeningReportId(null));
   };
+  // Deep-link from the weekly-report notification: the dropdown/page tap
+  // stores the saved report id in `rentech_open_report` before navigating
+  // here. Consume + clear it on arrival so later visits start normally.
+  useEffect(() => {
+    if (role !== 'Admin') return;
+    let hint = null;
+    try {
+      hint = sessionStorage.getItem('rentech_open_report');
+      sessionStorage.removeItem('rentech_open_report');
+    } catch { /* private mode — no hint */ }
+    if (hint) openSavedReport(hint);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
   const [activePie, setActivePie] = useState(null);
   const [timeRange, setTimeRange] = useState('Monthly');
   const now0 = new Date();
   const [selYear, setSelYear] = useState(now0.getFullYear());
   const [selMonth, setSelMonth] = useState(now0.getMonth() + 1); // 1-12
+  // Years that actually have bookings (drives the year picker — no empty
+  // decades). Fetched once; the applied year is always selectable regardless.
+  const [availableYears, setAvailableYears] = useState(null);
+  useEffect(() => {
+    let active = true;
+    api.get('/dashboard/years')
+      .then((r) => { if (active && Array.isArray(r?.years)) setAvailableYears(r.years); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+  // Manual refresh: re-runs the bundle effect below (cache-hit repaints
+  // instantly AND triggers the background refresh, so this always fetches).
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const handleRefresh = () => { setFetchError(null); setRefreshTick((t) => t + 1); };
   const isCurrentMonth = (y, m) => now0.getFullYear() === y && now0.getMonth() + 1 === m;
   const isCurrentYear = (y) => now0.getFullYear() === y;
   // Clamp the *applied* month/year so picking a future value can't leak into
@@ -165,6 +195,8 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // Forecast granularity: monthly comes with the bundle; weekly is fetched
   // on demand from /dashboard/forecast?granularity=weekly (admin-only).
   const [granularity, setGranularity] = useState('monthly');
+  const granularityRef = useRef('monthly');
+  const changeGranularity = (g) => { granularityRef.current = g; setGranularity(g); };
   const [weeklyForecast, setWeeklyForecast] = useState(null);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
   // Full-list modal for the smart-action cards: 'restock' | 'clearance' | 'cleaning' | 'never' | null
@@ -197,10 +229,15 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
       .catch(() => {})
       .finally(() => setWeeklyLoading(false));
   };
+  // B2 weekly-default: when the monthly series is too thin for a trend,
+  // switch to weeks once (the user can still toggle back manually).
+  const autoSwitched = useRef(false);
 
   useEffect(() => {
     const range = timeRange;
     let active = true;
+    setFetching(true);
+    setFetchError(null);
     const periodParam = range === 'Overall' ? '' : `period=${range.toLowerCase()}`;
     // Month/year selectors pin the window for both KPI cards and the revenue
     // chart. Only the SMA forecast stays global (a full-history trend is the
@@ -231,6 +268,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     const settle = () => { if (!settled) { settled = true; if (active) { setLoaded(true); setEverRendered(true); } } };
     const fail = (err) => {
       if (!active) return;
+      setFetchError(err?.message || 'Failed to load dashboard data');
       toastError(err?.message || 'Failed to load dashboard data');
       settle();
     };
@@ -247,12 +285,23 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         if (!active) return r;
         setKpis(r?.kpis ?? null);
         setForecast(r?.forecast ?? null);
+        // Thin monthly history → weeks carry the trend better. One-time
+        // auto-switch; the toggle stays fully manual afterwards.
+        if (!autoSwitched.current && granularityRef.current === 'monthly') {
+          const s = (r?.forecast?.sma || []).filter(v => v !== null && v !== undefined);
+          if (r?.forecast && s.length < 2) {
+            autoSwitched.current = true;
+            changeGranularity('weekly');
+            loadWeeklyForecast();
+          }
+        }
         setInsightsData(r?.insights ?? null);
         setRevenueChartData(r?.insights?.revenueByMonth || []);
         setRevenueWeeklyData(r?.insights?.revenueByWeek || null);
         setInventoryAnalytics(r?.analytics ?? null);
         setAnalyticsSummary(r?.analytics?.summary ?? null);
         setDataAt(Date.now());
+        setFetchError(null);
         settle();
         return r;
       });
@@ -266,11 +315,13 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
       settle();
     }).catch(() => {
       if (active) fail(new Error('Failed to load dashboard data'));
+    }).finally(() => {
+      if (active) setFetching(false);
     });
 
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange, appliedYear, appliedMonth]);
+  }, [timeRange, appliedYear, appliedMonth, refreshTick]);
 
   // FIX D: surface export failures instead of throwing unhandled.
   const handleExport = async (url, filename) => {
@@ -319,6 +370,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           return;
         }
         setAiReport(r.report || r); setShowReportModal(true); loadRecentReports();
+        // Identical content to the latest saved report → the server reused
+        // that entry instead of stacking a duplicate row.
+        if (r?.deduped) toastInfo('Report unchanged since the last one — showing the existing entry.');
       })
       .catch((err) => { setAiReport(null); alert(err?.message || 'Failed to generate AI report.'); })
       .finally(() => setReportLoading(false));
@@ -390,7 +444,32 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const revByWeek = revenueWeeklyData || insightsData?.revenueByWeek || null;
   const thisMonthRev = kpis?.monthlyRevenue || 0;
   const prevMonthRev = kpis?.prevMonthRevenue || 0;
+  // Overall answers "all time": show lifetime collected with no comparison
+  // badge. Windowed tabs show the window's collected vs the previous window.
+  const isOverallView = timeRange === 'Overall';
+  const displayRev = isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev;
+  const displayPrev = isOverallView ? 0 : prevMonthRev;
   const revChange = prevMonthRev > 0 ? ((thisMonthRev - prevMonthRev) / prevMonthRev) * 100 : 0;
+  // The revenue KPI follows the active tab (the backend already scopes the
+  // figure to the window) — so the label must follow it too instead of always
+  // reading "Monthly Revenue".
+  const revMonLabel = `${SHORT_MONTHS[(appliedMonth ?? now0.getMonth() + 1) - 1]} ${appliedYear ?? now0.getFullYear()}`;
+  const revLabel = timeRange === 'Yearly' ? `${appliedYear} Revenue`
+    : timeRange === 'Monthly' ? `${revMonLabel} Revenue`
+    : 'Total Revenue';
+  const revSub = timeRange === 'Yearly' ? `Collected Jan–Dec ${appliedYear}`
+    : timeRange === 'Monthly' ? `Collected ${revMonLabel}`
+    : 'All-time collected';
+  // Short "vs" label for the change pill (null = no comparison shown).
+  // Monthly walks back one month (Jan wraps to last Dec).
+  const revVsLabel = timeRange === 'Yearly' ? `vs ${appliedYear - 1}`
+    : timeRange === 'Monthly'
+      ? (() => {
+          const d = new Date(appliedYear, (appliedMonth ?? now0.getMonth() + 1) - 2, 1);
+          return `vs ${SHORT_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+        })()
+      : null;
+  const revCompare = timeRange === 'Yearly' ? 'the previous year' : 'last month';
   const rentedCount = insightsData?.totalRented || 0;
   const totalItems = kpis?.totalItems ?? 0;
 
@@ -426,7 +505,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const prevSmaVal = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
   const smaTrend = latestSmaVal > prevSmaVal ? 'up' : latestSmaVal < prevSmaVal ? 'down' : 'stable';
   const showingWeekly = granularity === 'weekly';
-  const smaName = showingWeekly ? 'SMA (3wk)' : 'SMA (3mo)';
+  const smaName = 'Average trend';
 
   // -- Revenue projection math stays monthly no matter the toggle: weekly
   // rental counts must never divide a full month's revenue.
@@ -434,10 +513,18 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const mSmaVals = (forecast?.sma || []).filter(v => v !== null && v !== undefined);
   const mLatestSma = mSmaVals.length > 0 ? mSmaVals[mSmaVals.length - 1] : 0;
   const mPrevSma = mSmaVals.length >= 2 ? mSmaVals[mSmaVals.length - 2] : 0;
-  const avgPriceKnown = mCounts.length > 0 && mCounts[mCounts.length - 1] > 0;
-  const avgPrice = avgPriceKnown
-    ? (revByMonth[revByMonth.length - 1]?.revenue || 0) / mCounts[mCounts.length - 1]
-    : 1500;
+  // Average ticket: last month's revenue ÷ its bookings — but a stale/empty
+  // series (or a genuinely zero month) must not zero every projection
+  // forever. Fall back to the window average (same scope top and bottom),
+  // and only then admit the price is unknown.
+  const lastRev = revByMonth.length > 0 ? (revByMonth[revByMonth.length - 1]?.revenue || 0) : 0;
+  const lastCount = mCounts.length > 0 ? mCounts[mCounts.length - 1] : 0;
+  const summaryRev = analyticsSummary?.totalRevenue || 0;
+  const summaryRentals = analyticsSummary?.totalRentals || 0;
+  const avgPriceKnown = (lastCount > 0 && lastRev > 0) || (summaryRentals > 0 && summaryRev > 0);
+  const avgPrice = (lastCount > 0 && lastRev > 0)
+    ? lastRev / lastCount
+    : (summaryRentals > 0 && summaryRev > 0 ? summaryRev / summaryRentals : 1500);
   const forecastRev = mLatestSma * avgPrice;
   // With < 2 real months of revenue, a peso projection is a guess (avg price falls
   // back to a hard-coded 1500), so show the SMA direction rather than an inflated bar.
@@ -461,24 +548,55 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // monthly series even while the forecast card shows weeks.
   const monthlyNextLabel = nextLabelFrom(forecast?.labels || []);
 
+  // Spike flags → human rows ("May 2026: bulk booking — excluded from the
+  // average"), resolved against the active series' labels.
+  const spikeNotes = (activeForecast?.flags || [])
+    .map((f) => ({ ...(fLabels[f.index] ? { label: fLabels[f.index] } : {}), reason: f.reason }))
+    .filter((f) => f.label);
+  const forecastErrorPct = activeForecast?.errorPct ?? null;
+  const forecastProvisional = !!activeForecast?.provisional;
+
   // -- Chart data (weekly labels shown in full — shortMonth would
-  // collapse every week of a month onto one tick) --
+  // collapse every week of a month onto one tick). bandLo/bandSpan stack
+  // into the shaded expected-range polygon behind the trend line.
+  const bandLo = activeForecast?.band?.lo || [];
+  const bandHi = activeForecast?.band?.hi || [];
+  // X-axis ticks must be UNIQUE: recharts matches duplicate categories by
+  // label, so two bare "Apr" ticks (2025 vs 2026) make every hover resolve to
+  // the first match — April 2026 kept showing April 2025's numbers no matter
+  // what the tooltip read. Every monthly tick carries its year instead.
+  const shortMonthYear = (l) => {
+    const parts = String(l || '').split(' ');
+    if (!parts[0]) return '';
+    if (parts[1]) return `${parts[0]} ’${parts[1].slice(2)}`;
+    return parts[0];
+  };
   const forecastData = fLabels.map((l, i) => ({
-    label: showingWeekly ? l : shortMonth(l),
+    label: showingWeekly ? l : shortMonthYear(l),
     full: l,
     count: fCounts[i] || 0,
     sma: fSma[i] ?? null,
+    bandLo: bandLo[i] ?? null,
+    bandSpan: bandLo[i] == null || bandHi[i] == null ? null : Math.max(0, Math.round((bandHi[i] - bandLo[i]) * 100) / 100),
   }));
   forecastData.push({
-    label: showingWeekly ? nextLabel : shortMonth(nextLabel),
+    label: showingWeekly ? nextLabel : shortMonthYear(nextLabel),
     full: nextLabel,
     count: null,
     sma: latestSmaVal,
     forecast: true,
+    // Carry the band forward so the shaded range reaches the projection
+    // point too — otherwise the ribbon visibly stops one tick early.
+    ...(latestSmaVal !== null && latestSmaVal !== undefined && forecastErrorPct !== null && forecastErrorPct !== undefined
+      ? {
+          bandLo: Math.max(0, Math.round(latestSmaVal * (1 - forecastErrorPct / 100) * 100) / 100),
+          bandSpan: Math.round(latestSmaVal * (2 * forecastErrorPct / 100) * 100) / 100,
+        }
+      : { bandLo: null, bandSpan: null }),
   });
   const validSmaCount = forecastData.filter(d => d.sma !== null && !d.forecast).length;
   const hasSma = validSmaCount >= 2;
-  const countChart = fLabels.map(l => ({ label: shortMonth(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
+  const countChart = fLabels.map(l => ({ label: shortMonthYear(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
 
   // Season markers on observed monthly points only (never on projections,
   // never on weekly view).
@@ -516,9 +634,12 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     if (viewingCurrentMonth) {
       // Only elapsed weeks are real — weeks that haven't started yet would
       // render as misleading zero bars ahead of the current week (and push
-      // the Next Wk projection to the far end), so trim them.
+      // the Next Wk projection to the far end), so trim them. The last kept
+      // week is still in progress: mark it so the chart renders it lighter,
+      // labels it, and never compares it 1:1 in deltas.
       const weekIdx = Math.min(4, Math.floor((new Date().getDate() - 1) / 7));
       revChart = revChart.slice(0, weekIdx + 1);
+      if (revChart.length > 0) revChart[revChart.length - 1] = { ...revChart[revChart.length - 1], wip: true };
     } else if (appliedMonth) {
       // A 28-day February has no days 29–31, so Wk 5 can never exist there.
       const daysInMonth = new Date(appliedYear, appliedMonth, 0).getDate();
@@ -534,17 +655,65 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   //    "Next Wk" bar (days-left × daily pace). Past pinned months and the
   //    Yearly/Overall monthly series keep the full-month SMA->peso projection
   //    appended as next month's bar.
+  // Blended Next Wk (C1): 0.5 × this month's daily pace + 0.5 × weekly-trend
+  // demand (weekly SMA × average ticket). The demand half needs the weekly
+  // forecast (fetched when the card toggles to weeks); without it the bar is
+  // pace-only rather than guessed. Range whisker = ±1 sample stddev of the
+  // last 4 COMPLETED weeks (hidden with < 2). At month-end there is no pace
+  // left, so the bar becomes the full trend projection — never hidden (C2).
+  const sampleStd = (xs) => {
+    if (xs.length < 2) return 0;
+    const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+    return Math.sqrt(xs.reduce((a, b) => a + (b - m) * (b - m), 0) / (xs.length - 1));
+  };
+  let revFootnote = null;
   if (isMonthlyView) {
     if (viewingCurrentMonth && revChart.length > 0 && thisMonthRev > 0) {
       const now = new Date();
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
       const daysLeft = Math.max(0, Math.ceil((endOfMonth.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-      const dailyPace = thisMonthRev / now.getDate();
-      const projectedNextWeek = Math.round(dailyPace * Math.min(7, daysLeft));
-      if (projectedNextWeek > 0)
-        revChart = [...revChart, { label: 'Next Wk', full: 'Projected · next week', rev: projectedNextWeek, forecast: true }];
+      const completedWeeks = revChart.filter(e => !e.forecast && !e.wip && e.rev > 0).slice(-4).map(e => e.rev);
+      const whiskerOf = (v) => {
+        if (completedWeeks.length < 2) return null;
+        const sd = sampleStd(completedWeeks);
+        if (!(sd > 0)) return null;
+        return [Math.max(0, Math.round(v - sd)), Math.round(v + sd)];
+      };
+      if (daysLeft > 0) {
+        const dailyPace = thisMonthRev / now.getDate();
+        const paceRest = Math.round(dailyPace * Math.min(7, daysLeft));
+        const wSma = ((weeklyForecast?.sma || []).filter(v => v !== null && v !== undefined));
+        const wLatest = wSma.length > 0 ? wSma[wSma.length - 1] : null;
+        const demand = (wLatest !== null && avgPriceKnown) ? Math.round(wLatest * avgPrice) : null;
+        const blended = demand !== null ? Math.round(0.5 * paceRest + 0.5 * demand) : paceRest;
+        if (blended > 0) {
+          const whisker = whiskerOf(blended);
+          revChart = [...revChart, {
+            label: 'Next Wk', full: 'Projected · next week', rev: blended, forecast: true,
+            ...(whisker ? { whisker } : {}),
+          }];
+          revFootnote = demand !== null
+            ? `Next week blends this month's daily pace with the rental trend × ${fmt(avgPrice)} average ticket.`
+            : null;
+        }
+      } else if (avgPriceKnown && forecastRevValue > 0) {
+        // Month-end: pace is zero by definition — project next month's first
+        // week from the trend instead of hiding the bar. Weekly-scale share
+        // of the monthly peso projection (A1: skipped when price unknown).
+        const wkShare = Math.round(forecastRevValue / 4.33);
+        if (wkShare > 0) {
+          const whisker = whiskerOf(wkShare);
+          revChart = [...revChart, {
+            label: 'Next Wk', full: 'Projected · next month week 1', rev: wkShare, forecast: true,
+            ...(whisker ? { whisker } : {}),
+          }];
+        }
+      }
     }
-  } else if (forecastRevValue > 0 && revChart.length > 0) {
+  // A1 unit-mix guard: forecastRevValue is a rental COUNT when the average
+  // ticket is unknown (avg price falls back to a hard-coded 1500), so it must
+  // never render as a peso bar. The outlook table already shows '—' there.
+  } else if (avgPriceKnown && forecastRevValue > 0 && revChart.length > 0) {
     revChart = [...revChart, { label: monthlyNextLabel, full: monthlyNextLabel, rev: forecastRevValue, forecast: true }];
   }
 
@@ -562,9 +731,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   if (kpis?.overdueReturns > 0)
     insights.push(`${kpis.overdueReturns} overdue rental(s) need immediate attention.`);
   if (revChange > 0)
-    insights.push(`Monthly revenue is up ${revChange.toFixed(0)}% compared to last month.`);
+    insights.push(`Revenue is up ${revChange.toFixed(0)}% compared to ${revCompare}.`);
   else if (revChange < 0)
-    insights.push(`Monthly revenue is down ${Math.abs(revChange).toFixed(0)}% compared to last month.`);
+    insights.push(`Revenue is down ${Math.abs(revChange).toFixed(0)}% compared to ${revCompare}.`);
 
 
 
@@ -590,15 +759,21 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           timeRange={timeRange} setTimeRange={setTimeRange}
           appliedMonth={appliedMonth} appliedYear={appliedYear}
           setSelMonth={setSelMonth} setSelYear={setSelYear} now0={now0}
+          availableYears={availableYears}
+          refreshState={fetching ? 'loading' : fetchError ? 'error' : 'idle'}
+          onRefresh={handleRefresh}
+          statusText={fetching ? 'Refreshing…' : fetchError ? 'Failed to load — tap ⟳ to retry' : dataAt ? `Updated ${formatCheckedAgo(dataAt)}` : ''}
           workbookScopeLabel={workbookScopeLabel} handleWorkbookExport={handleWorkbookExport}
         />
 
         {/* KPI Cards — 2-up on phones, 3-up on tablets/iPads, 6-up on desktop */}
         <div key={cacheKey} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <KpiCards
-          thisMonthRev={thisMonthRev} prevMonthRev={prevMonthRev} revChange={revChange}
+          thisMonthRev={displayRev} prevMonthRev={displayPrev} revChange={revChange}
+          revLabel={revLabel} revSub={revSub} revVsLabel={revVsLabel}
           rentedCount={rentedCount} totalItems={totalItems}
           smaVals={smaVals} latestSmaVal={latestSmaVal} forecastRev={forecastRev}
+          avgPriceKnown={avgPriceKnown}
           analyticsSummary={analyticsSummary}
         />
 
@@ -615,6 +790,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
             appliedYear={appliedYear} appliedMonth={appliedMonth}
             viewingCurrentMonth={viewingCurrentMonth}
             revChart={revChart} revChartEmptyLabel={revChartEmptyLabel}
+            revFootnote={revFootnote}
             stepMonth={stepMonth} goCurrentMonth={goCurrentMonth}
           />
           <StatusDistribution
@@ -626,13 +802,14 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         {/* Row 2: Demand Forecast + Top Items */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <DemandForecast
-            granularity={granularity} setGranularity={setGranularity}
+            granularity={granularity} setGranularity={changeGranularity}
             loadWeeklyForecast={loadWeeklyForecast} weeklyLoading={weeklyLoading}
             showingWeekly={showingWeekly} activeForecast={activeForecast}
             hasSma={hasSma} countChart={countChart} validSmaCount={validSmaCount}
             forecastData={forecastData} latestSmaVal={latestSmaVal} prevSmaVal={prevSmaVal}
             smaTrend={smaTrend} smaName={smaName} seasonDots={seasonDots}
             projections={projections} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice}
+            spikeNotes={spikeNotes} forecastProvisional={forecastProvisional} forecastErrorPct={forecastErrorPct}
           />
           <TopRented
             popularItems={popularItems} underperforming={underperforming}

@@ -21,10 +21,17 @@ const publicBase = () => {
 // network. Safe for <img src> directly.
 export const publicUrlFor = (path) => `${publicBase()}/${path}`;
 
-// Must stay identical to backend thumbKeyFor() in imageCompress.ts.
 export const thumbKeyFor = (path) => `thumbs/${path.replace(/\.[^.]+$/, '.webp')}`;
 
 export const thumbUrlFor = (path) => publicUrlFor(thumbKeyFor(path));
+
+// Profile photos (`avatars/` keys) live in the PUBLIC catalog bucket like
+// item photos — stable URL, no signing. Absolute URLs pass through.
+export const resolveAvatarUrl = (p) => {
+  if (!p) return null;
+  if (isAbsoluteUrl(p)) return p;
+  return publicUrlFor(p);
+};
 
 // Single entry point for display URLs:
 //   absolute/blob/empty -> as-is (caller handles placeholders)

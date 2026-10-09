@@ -2,18 +2,29 @@ import { useState, useEffect } from 'react';
 import { Plus, Trash2, Percent, CheckCircle2, XCircle } from 'lucide-react';
 import { api } from '../utils/api';
 import { SkeletonList } from '../components/Skeleton';
+import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
+
+const EMPTY_FORM = {
+  code: '', discountType: 'pct', discountPct: 10, discountAmount: '',
+  minSpend: '', startsAt: '', maxUsesPerCustomer: '', firstBookingOnly: false,
+  appliesToCategories: '', maxUses: '', expiresAt: '',
+};
 
 export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
   const [codes, setCodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ code: '', discountPct: 10, maxUses: '', expiresAt: '' });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [msg, setMsg] = useState('');
 
   // When an AI suggestion is applied, open the form pre-filled
   useEffect(() => {
     if (initialForm) {
-      setForm(prev => ({ ...prev, ...initialForm }));
+      setForm(prev => ({
+        ...prev,
+        ...initialForm,
+        discountType: initialForm.discountAmount != null ? 'amount' : 'pct',
+      }));
       setShowForm(true);
       if (onClearInitialForm) onClearInitialForm();
     }
@@ -28,13 +39,24 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
+      const isAmount = form.discountType === 'amount';
+      const categories = String(form.appliesToCategories || '')
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
       await api.post('/promo-codes', {
         code: form.code,
-        discountPct: form.discountPct,
+        discountPct: isAmount ? undefined : Number(form.discountPct),
+        discountAmount: isAmount ? Number(form.discountAmount) : undefined,
+        minSpend: form.minSpend === '' ? undefined : Number(form.minSpend),
+        startsAt: form.startsAt || undefined,
+        maxUsesPerCustomer: form.maxUsesPerCustomer === '' ? undefined : parseInt(form.maxUsesPerCustomer),
+        firstBookingOnly: !!form.firstBookingOnly,
+        appliesToCategories: categories.length ? categories : undefined,
         maxUses: form.maxUses ? parseInt(form.maxUses) : undefined,
         expiresAt: form.expiresAt || undefined,
       });
-      setForm({ code: '', discountPct: 10, maxUses: '', expiresAt: '' });
+      setForm(EMPTY_FORM);
       setShowForm(false);
       setMsg('Promo code created!');
       fetchCodes();
@@ -95,10 +117,36 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
                 className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
             </div>
             <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount %</label>
-              <input type="number" min={1} max={100} value={form.discountPct}
-                onChange={e => setForm({ ...form, discountPct: Math.min(100, Math.max(1, parseInt(e.target.value) || 1)) })}
-                className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount type</label>
+              <div className="grid grid-cols-2 gap-1 p-1 bg-white border border-gray-200/80 rounded-xl">
+                {['pct', 'amount'].map((t) => (
+                  <button key={t} type="button" onClick={() => setForm({ ...form, discountType: t })}
+                    className={`py-1.5 rounded-lg text-xs font-bold transition-colors ${form.discountType === t ? 'bg-emerald-500 text-white' : 'text-gray-400'}`}>
+                    {t === 'pct' ? '% off' : '₱ off'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {form.discountType === 'pct' ? (
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount %</label>
+                <input type="number" min={1} max={100} value={form.discountPct}
+                  onChange={e => setForm({ ...form, discountPct: Math.min(100, Math.max(1, parseInt(e.target.value) || 1)) })}
+                  className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+              </div>
+            ) : (
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Amount off (₱)</label>
+                <input type="number" min={1} value={form.discountAmount}
+                  onChange={e => setForm({ ...form, discountAmount: e.target.value })}
+                  placeholder="200" required
+                  className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+              </div>
+            )}
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Min. spend (₱)</label>
+              <input type="number" min={0} value={form.minSpend} onChange={e => setForm({ ...form, minSpend: e.target.value })}
+                placeholder="No minimum" className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
             </div>
             <div>
               <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Max Uses</label>
@@ -106,10 +154,31 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
                 placeholder="Unlimited" className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
             </div>
             <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Uses per customer</label>
+              <input type="number" min={1} value={form.maxUsesPerCustomer} onChange={e => setForm({ ...form, maxUsesPerCustomer: e.target.value })}
+                placeholder="Once (default)" className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Starts</label>
+              <input type="date" value={form.startsAt} onChange={e => setForm({ ...form, startsAt: e.target.value })}
+                className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+            </div>
+            <div>
               <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Expires</label>
               <input type="date" value={form.expiresAt} onChange={e => setForm({ ...form, expiresAt: e.target.value })}
                 className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
             </div>
+            <div className="sm:col-span-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Only these categories (blank = all)</label>
+              <input type="text" value={form.appliesToCategories} onChange={e => setForm({ ...form, appliesToCategories: e.target.value })}
+                placeholder="Gown, Debut" maxLength={120}
+                className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+            </div>
+            <label className="sm:col-span-2 flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" checked={form.firstBookingOnly} onChange={e => setForm({ ...form, firstBookingOnly: e.target.checked })}
+                className="h-4 w-4 accent-emerald-500" />
+              <span className="text-xs font-bold text-gray-600">First booking only (new customers)</span>
+            </label>
           </div>
           <button type="submit" className="px-5 py-2 bg-emerald-500 text-white rounded-full text-sm font-bold hover:bg-emerald-600 transition-colors">
             Create Code
@@ -126,10 +195,13 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
       ) : (
         <div className="space-y-3">
           {codes.map(code => {
-            const expired = code.expiresAt && new Date(code.expiresAt) < new Date();
+            const now = new Date();
+            const expired = code.expiresAt && new Date(code.expiresAt) < now;
+            const notStarted = code.startsAt && new Date(code.startsAt) > now;
             const maxedOut = code.maxUses !== null && code.currentUses >= code.maxUses;
-            const isUsable = code.isActive && !expired && !maxedOut;
-            const statusText = expired ? 'Expired' : maxedOut ? 'Maxed out' : code.isActive ? 'Active' : 'Inactive';
+            const isUsable = code.isActive && !expired && !notStarted && !maxedOut;
+            const statusText = expired ? 'Expired' : notStarted ? 'Scheduled' : maxedOut ? 'Maxed out' : code.isActive ? 'Active' : 'Inactive';
+            const terms = promoTermsLabel(code);
             return (
               <div key={code.id} className={`flex items-center justify-between gap-3 p-4 rounded-2xl border ${isUsable ? 'bg-emerald-50/40 border-emerald-100' : 'bg-gray-50/70 border-gray-100'}`}>
                 <div className="flex items-center gap-3 min-w-0">
@@ -139,17 +211,19 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-gray-900 font-mono">{code.code}</p>
                     <p className="text-xs text-gray-500">
-                      {code.discountPct}% off &middot; {code.currentUses}{code.maxUses !== null ? `/${code.maxUses}` : ''} used
+                      {promoDiscountLabel(code)} &middot; {code.currentUses}{code.maxUses !== null ? `/${code.maxUses}` : ''} used
+                      {(code.maxUsesPerCustomer ?? 1) > 1 && ` · ${code.maxUsesPerCustomer}x per customer`}
+                      {terms && ` · ${terms}`}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
-                    expired || maxedOut ? 'bg-amber-50 text-amber-600' : isUsable ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'
+                    expired || maxedOut ? 'bg-amber-50 text-amber-600' : notStarted ? 'bg-blue-50 text-blue-600' : isUsable ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'
                   }`}>
                     {statusText}
                   </span>
-                  <button onClick={() => handleDelete(code.id)} className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-full transition-colors">
+                  <button onClick={() => handleDelete(code.id)} title="Delete code (blocked when it has booking history)" className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-full transition-colors">
                     <Trash2 size={14} />
                   </button>
                 </div>

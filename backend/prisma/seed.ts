@@ -11,6 +11,7 @@ async function main() {
     { key: 'min_downpayment', value: '200', description: 'Minimum downpayment in PHP' },
     { key: 'overdue_escalation_days', value: '3', description: 'Days a rental must stay overdue before the escalation SMS fires' },
     { key: 'data_retention_months', value: '12', description: 'Months of notifications/SMS/audit history to keep before the scheduled purge deletes it' },
+    { key: 'payment_gateway', value: 'paymongo', description: 'Gateway for booking downpayments: paymongo | maya' },
   ];
 
   for (const rule of rules) {
@@ -25,17 +26,17 @@ async function main() {
   const templates = [
     {
       name: 'booking_confirmation',
-      content: 'Hi {customer}, your booking for {item} is confirmed! Pickup date: {date}. Rental period: 3 days. Thank you for choosing Mylene\'s Boutique!',
+      content: 'Hi {customer}, {item} booking confirmed! Pickup: {date} at Mylene\'s Boutique. Thank you!',
       isDefault: true,
     },
     {
       name: 'due_reminder',
-      content: 'Hi {customer}, this is a reminder that your rental of {item} is due on {date}. Please return on time. Thank you!',
+      content: 'Hi {customer}, reminder: your {item} rental is due {date}. Please return on time. Thank you!',
       isDefault: true,
     },
     {
       name: 'late_return',
-      content: 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return as soon as possible. Thank you!',
+      content: 'Hi {customer}, your {item} rental is overdue ({days} day(s)). Balance: PHP {balance}. Please return soon. Thank you!',
       isDefault: true,
     },
   ];

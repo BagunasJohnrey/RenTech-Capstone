@@ -29,14 +29,26 @@ export const createRentalSchema = z.object({
     // derived server-side from the item (sale-aware). Downpayment may be
     // supplied by staff (0 allowed for walk-ins) but is capped server-side.
     downpayment: z.number().min(0).optional(),
+    // Staff-only: cash physically collected with the booking (written as a
+    // completed Payment row). Forced false for customers — their downpayment
+    // is a promise until the gateway webhook credits it.
+    downpaymentCash: z.boolean().optional(),
     customerId: z.string().optional(),
-    customerName: z.string().optional(),
-    contact: z.string().optional(),
-    address: z.string().optional(),
-    notes: z.string().optional(),
+    customerName: z.string().min(2).max(50, 'Name must be 50 characters or fewer')
+      .regex(/^\D+$/, 'Name must not contain numbers').optional(),
+    contact: z.string().regex(/^\d{11}$/, 'Phone must be exactly 11 digits').optional(),
+    address: z.string().max(100, 'Address must be 100 characters or fewer').optional(),
+    notes: z.string().max(300, 'Notes must be 300 characters or fewer').optional(),
     conditionPhoto: z.string().optional(),
     size: z.string().optional(),
     measurements: z.record(z.unknown()).optional(),
+    // Voucher code for counter bookings (resolved + consumed server-side in
+    // createRental, same as the customer flow).
+    promoCode: z.string().min(1).max(50).optional(),
+    // Staff counter discount: percent + the admin PIN that approved it.
+    // Re-verified server-side in createRental; ignored without processedById.
+    staffDiscountPct: z.number().min(0).max(50).optional(),
+    staffDiscountPin: z.string().min(4).max(12).optional(),
   }),
 });
 
@@ -109,7 +121,13 @@ export async function createRental(req: AuthenticatedRequest, res: Response, nex
     }
 
     const tx = await transactionService.createRental(
-      { ...req.body, customerId },
+      {
+        ...req.body,
+        customerId,
+        // This route is staff/admin-only, but force the flag off for any
+        // customer-shaped call so a crafted body can't fake a cash payment.
+        downpaymentCash: req.user.role !== Role.Customer ? (req.body.downpaymentCash ?? false) : false,
+      },
       req.user.role !== Role.Customer ? req.user.id : undefined
     );
 

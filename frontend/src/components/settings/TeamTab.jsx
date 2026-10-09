@@ -2,8 +2,13 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, Plus, Trash2, AlertCircle, Key, ShieldCheck, Lock, CheckCircle2, Pencil, X } from 'lucide-react';
 import { api } from '../../utils/api';
-import SettingsCard from './SettingsCard';
+import CollapsibleCard from './CollapsibleCard';
 import PinInput from './PinInput';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+} from '../../utils/inputLimits';
 
 // Admin Team & Security tab: staff account management + the admin's own TOTP
 // two-factor authentication (setup QR, enable, backup codes, disable).
@@ -202,8 +207,21 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
   };
 
   const saveEditStaff = async () => {
-    if (!editDraft.name.trim()) {
+    const nm = editDraft.name.trim();
+    if (!nm) {
       setEditError('Name is required');
+      return;
+    }
+    if (/\d/.test(nm)) {
+      setEditError('Name must not contain numbers');
+      return;
+    }
+    if (nm.length > INPUT_LIMITS.NAME_MAX) {
+      setEditError(`Name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`);
+      return;
+    }
+    if (editDraft.phone.trim() && editDraft.phone.replace(/\D/g, '').length !== INPUT_LIMITS.PHONE_LENGTH) {
+      setEditError(`Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`);
       return;
     }
     setEditSaving(true);
@@ -227,11 +245,19 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
     <>
       {/* Staff Management */}
       {staffList !== undefined && (
-        <SettingsCard
+        <CollapsibleCard
           icon={Users}
           iconClass="bg-red-50 text-[#bf4a53]"
           title="Staff Management"
-          desc="Create and manage staff accounts"
+          subtitle="Create and manage staff accounts"
+          storageKey="settings-team-staff-open"
+          badge={
+            staffList.length > 0 ? (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+                {staffList.length} staff
+              </span>
+            ) : null
+          }
         >
           {staffError && (
             <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
@@ -239,7 +265,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
             </div>
           )}
           <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
-            <input type="text" placeholder="Name" value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} className={inputClass} />
+            <input type="text" placeholder="Name" value={newStaffName} onChange={(e) => setNewStaffName(sanitizeName(e.target.value))} className={inputClass} maxLength={INPUT_LIMITS.NAME_MAX} />
             <input type="text" placeholder="Username (email)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className={inputClass} required />
             <button type="submit" disabled={staffAdding} className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-red-500/20 disabled:opacity-50">
               <Plus size={16} /> {staffAdding ? 'Adding...' : 'Add'}
@@ -296,7 +322,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
           ) : staffList.length === 0 ? (
             <p className="text-sm text-gray-500 py-4">No staff accounts yet.</p>
           ) : (
-            <div className="space-y-3">
+            <div className="grid gap-3 md:grid-cols-2">
               {staffList.map((staff) => (
                 <div key={staff.id} className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-gray-50/70 border border-gray-100">
                   <div className="flex items-center gap-3 min-w-0">
@@ -331,15 +357,22 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               ))}
             </div>
           )}
-        </SettingsCard>
+        </CollapsibleCard>
       )}
 
       {/* Two-Factor Authentication */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Key}
         iconClass="bg-gray-900 text-white"
         title="Two-Factor Authentication"
-        desc="Protect this admin account with a TOTP authenticator app"
+        subtitle="Protect this admin account with a TOTP authenticator app"
+        storageKey="settings-team-mfa-open"
+        defaultOpen={false}
+        badge={
+          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${profile?.mfaEnabled || mfaStep === 'enabled' || mfaStep === 'backupCodes' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>
+            {profile?.mfaEnabled || mfaStep === 'enabled' || mfaStep === 'backupCodes' ? 'Active' : 'Off'}
+          </span>
+        }
       >
         {mfaError && (
           <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
@@ -367,40 +400,44 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
         )}
 
         {mfaStep === 'setup' && mfaQrUri && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-500">
-              Scan the QR code below with your authenticator app (Google Authenticator, Authy, etc.),
-              then enter the 6-digit code it generates.
-            </p>
-            <div className="flex items-center justify-center p-4 bg-gray-50 rounded-2xl">
-              {mfaQrDataUri ? (
-                <img src={mfaQrDataUri} alt="MFA QR Code" className="w-48 h-48 object-contain" />
-              ) : (
-                /* Fallback: show the typed-out setup key if the QR image is unavailable */
-                <div className="text-center p-4">
-                  <p className="text-xs text-gray-500 mb-2">QR unavailable — enter this key manually:</p>
-                  <p className="font-mono text-sm font-semibold text-gray-900 break-all">{mfaSecret}</p>
-                </div>
-              )}
-            </div>
+          <div className="grid gap-4 md:grid-cols-2 md:items-start">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Authentication Code</label>
-              <input
-                type="text"
-                value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="000000"
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono text-center text-gray-900 focus:outline-none focus:bg-white focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
-                maxLength={6}
-              />
+              <p className="text-sm text-gray-500 mb-3">
+                Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.),
+                then enter the 6-digit code it generates.
+              </p>
+              <div className="flex items-center justify-center p-4 bg-gray-50 rounded-2xl">
+                {mfaQrDataUri ? (
+                  <img src={mfaQrDataUri} alt="MFA QR Code" className="w-44 h-44 md:w-48 md:h-48 object-contain" />
+                ) : (
+                  /* Fallback: show the typed-out setup key if the QR image is unavailable */
+                  <div className="text-center p-4">
+                    <p className="text-xs text-gray-500 mb-2">QR unavailable — enter this key manually:</p>
+                    <p className="font-mono text-sm font-semibold text-gray-900 break-all">{mfaSecret}</p>
+                  </div>
+                )}
+              </div>
             </div>
-            <button
-              onClick={handleMfaEnable}
-              disabled={mfaLoading || mfaCode.length !== 6}
-              className="w-full px-4 py-3 bg-[#bf4a53] text-white font-bold rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50"
-            >
-              {mfaLoading ? 'Enabling...' : 'Enable MFA'}
-            </button>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Authentication Code</label>
+                <input
+                  type="text"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono text-center text-gray-900 focus:outline-none focus:bg-white focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
+                  maxLength={6}
+                />
+              </div>
+              <button
+                onClick={handleMfaEnable}
+                disabled={mfaLoading || mfaCode.length !== 6}
+                className="w-full px-4 py-3 min-h-[48px] bg-[#bf4a53] text-white font-bold rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {mfaLoading ? 'Enabling...' : 'Enable MFA'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -440,14 +477,23 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
             </button>
           </div>
         )}
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* Discount Authorization PIN */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Lock}
         iconClass="bg-red-50 text-[#bf4a53]"
         title="Discount Authorization PIN"
-        desc="Set a 4-digit PIN that staff enter to approve discounts on rentals"
+        subtitle="Set a 4-digit PIN that staff enter to approve discounts on rentals"
+        storageKey="settings-team-pin-open"
+        defaultOpen={false}
+        badge={
+          pinConfigured ? (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600 text-[11px] font-bold">
+              Set
+            </span>
+          ) : null
+        }
       >
         <p className="text-sm text-gray-500">
           When staff apply a discount in the new-rental flow, they'll be asked for this PIN
@@ -497,7 +543,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
             </button>
           </div>
         )}
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* Edit staff modal — portaled to document.body so it sits above every
           component (the settings page wrapper animates transforms, which would
@@ -529,9 +575,10 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               <input
                 type="text"
                 value={editDraft.name}
-                onChange={(e) => { setEditDraft({ ...editDraft, name: e.target.value }); if (editError) setEditError(''); }}
+                onChange={(e) => { setEditDraft({ ...editDraft, name: sanitizeName(e.target.value) }); if (editError) setEditError(''); }}
                 className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
                 placeholder="Staff name"
+                maxLength={INPUT_LIMITS.NAME_MAX}
                 autoFocus
               />
             </div>
@@ -539,11 +586,13 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               <label className="block text-xs font-semibold text-gray-500 mb-1.5">Phone</label>
               <input
                 type="text"
+                inputMode="numeric"
                 value={editDraft.phone}
-                onChange={(e) => { setEditDraft({ ...editDraft, phone: e.target.value }); if (editError) setEditError(''); }}
+                onChange={(e) => { setEditDraft({ ...editDraft, phone: sanitizePhone(e.target.value) }); if (editError) setEditError(''); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') saveEditStaff(); }}
                 className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
                 placeholder="0917 123 4567"
+                maxLength={INPUT_LIMITS.PHONE_LENGTH}
               />
             </div>
             <div className="flex gap-3 pt-1">

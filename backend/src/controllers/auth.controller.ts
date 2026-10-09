@@ -20,29 +20,42 @@ export const passwordSchema = z.string()
   .regex(/[0-9]/, 'Must contain a number')
   .regex(/[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;'`~]/, 'Must contain a symbol');
 
+// Shared contact-field rules: names never contain numbers (max 50 chars),
+// phones are exactly 11 digits, addresses cap at 100 chars.
+const nameField = z.string().min(1).max(50, 'Name must be 50 characters or fewer')
+  .regex(/^\D+$/, 'Name must not contain numbers');
+const phoneField = z.string().regex(/^\d{11}$/, 'Phone must be exactly 11 digits');
+const addressField = z.string().max(100, 'Address must be 100 characters or fewer');
+// Email identity is case-insensitive for delivery/login, but string comparison
+// is not — so every inbound email is trimmed + lowercased BEFORE validation.
+// This stops paste-with-spaces 400s and keeps one canonical form in the DB.
+const emailField = z.string().trim().toLowerCase().email();
+const emailFieldCapped = z.string().trim().toLowerCase().email()
+  .max(100, 'Email must be 100 characters or fewer');
+
 export const signupSchema = z.object({
   body: z.object({
-    email: z.string().email(),
+    email: emailFieldCapped,
     password: passwordSchema,
-    name: z.string().min(1),
-    phone: z.string().optional(),
-    address: z.string().optional(),
+    name: nameField,
+    phone: phoneField.optional(),
+    address: addressField.optional(),
     preferences: z.array(z.string()).optional(),
   }),
 });
 
 export const loginSchema = z.object({
   body: z.object({
-    email: z.string().email(),
+    email: emailField,
     password: z.string().min(1),
   }),
 });
 
 export const updateProfileSchema = z.object({
   body: z.object({
-    name: z.string().min(1).optional(),
-    phone: z.string().optional(),
-    address: z.string().optional(),
+    name: nameField.optional(),
+    phone: phoneField.optional(),
+    address: addressField.optional(),
     preferences: z.array(z.string()).optional(),
     notifyPrefs: z.record(z.boolean()).optional(),
     styleNotes: z.string().max(500).nullable().optional(),
@@ -54,9 +67,9 @@ export const updateProfileSchema = z.object({
 // and the staff member must change it on first login.
 export const createStaffSchema = z.object({
   body: z.object({
-    email: z.string().email(),
-    name: z.string().min(1),
-    phone: z.string().optional(),
+    email: emailFieldCapped,
+    name: nameField,
+    phone: phoneField.optional(),
   }),
 });
 
@@ -71,13 +84,13 @@ export const createStaffSchema = z.object({
 //                 #access_token= in the URL hash
 export const forgotPasswordSchema = z.object({
   body: z.object({
-    email: z.string().email(),
+    email: emailField,
   }),
 });
 
 export const resendVerificationSchema = z.object({
   body: z.object({
-    email: z.string().email(),
+    email: emailField,
   }),
 });
 
@@ -130,9 +143,9 @@ export const oauthSchema = z.object({
     expiresIn: z.number().optional(),
     details: z
       .object({
-        name: z.string().min(1),
-        phone: z.string().min(1),
-        address: z.string().min(1),
+        name: nameField,
+        phone: phoneField,
+        address: z.string().min(1).max(100, 'Address must be 100 characters or fewer'),
         preferences: z.array(z.string()).optional(),
       })
       .optional(),
@@ -271,6 +284,41 @@ export async function updateMe(req: AuthenticatedRequest, res: Response, next: N
     const profile = await authService.updateProfile(req.user.id, req.body);
     // Invalidate the auth middleware's cached profile so the next request
     // re-reads fresh fields (name/phone/etc).
+    invalidateProfileCache(req.user.userId);
+    res.json(profile);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Profile photo upload (any authenticated role). Same base64-JSON shape as
+// POST /storage/upload — the browser downsizes via canvas first, the server
+// normalizes to WebP. Rate-limited: photos are retryable, floods are not.
+export const avatarSchema = z.object({
+  body: z.object({
+    fileName: z.string().min(1).max(220),
+    contentType: z.string().min(1).max(100),
+    data: z.string().min(1),
+  }),
+});
+
+export async function setAvatar(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { contentType, data } = req.body;
+    const buffer = Buffer.from(data, 'base64');
+    const profile = await authService.setAvatar(req.user.id, { contentType, buffer });
+    invalidateProfileCache(req.user.userId);
+    res.json(profile);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function removeAvatar(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const profile = await authService.removeAvatar(req.user.id);
     invalidateProfileCache(req.user.userId);
     res.json(profile);
   } catch (err) {
@@ -417,8 +465,8 @@ export async function setAdminPin(req: AuthenticatedRequest, res: Response, next
 // auth user. The admin's own password re-confirms the change.
 export const updateStaffSchema = z.object({
   body: z.object({
-    name: z.string().min(1).optional(),
-    phone: z.string().nullable().optional(),
+    name: nameField.optional(),
+    phone: phoneField.nullable().optional(),
   }),
 });
 
@@ -998,9 +1046,9 @@ export async function oauthDetails(req: Request, res: Response, next: NextFuncti
 
 export const oauthDetailsSchema = z.object({
   body: z.object({
-    name: z.string().min(1),
-    phone: z.string().min(1),
-    address: z.string().min(1),
+    name: nameField,
+    phone: phoneField,
+    address: z.string().min(1).max(100, 'Address must be 100 characters or fewer'),
     preferences: z.array(z.string()).optional(),
   }),
 });

@@ -4,12 +4,61 @@ import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, 
 import { api } from '../utils/api';
 import { customerLabel, itemLabel, defaultOverdueMessage } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
+import BottomSheet from '../components/BottomSheet';
+import SmsResultModal from '../components/SmsResultModal';
+import SmsLogPanel from '../components/SmsLogPanel';
 import { isReleased } from '../hooks/useTransactions';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
 
-export default function StaffTasksView({ transactions, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
+// Collapsible SMS log that mounts its data-fetching panel only after the
+// first expand — keeps GET /sms/history off the Tasks critical path.
+function SmsLogSection() {
+  const [open, setOpen] = useState(false);
+  const [everOpened, setEverOpened] = useState(false);
+  return (
+    <div className="bg-white rounded-3xl border border-gray-100/50 shadow-sm overflow-hidden">
+      <button
+        type="button"
+        onClick={() => { setOpen((o) => !o); setEverOpened(true); }}
+        aria-expanded={open}
+        className="w-full flex items-center gap-3 p-6 text-left cursor-pointer"
+      >
+        <span className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
+          <MessageCircle size={18} />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block font-bold text-lg text-gray-900">SMS Log</span>
+          <span className="block text-xs text-gray-500 font-medium mt-0.5">Manual + automatic sends and their delivery status</span>
+        </span>
+        <span className={`text-xs font-bold text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
+      </button>
+      {open && (
+        <div className="px-6 pb-6">
+          {everOpened && <SmsLogPanel />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function StaffTasksView({ transactions, digestTransactions, digestLoading, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
   const navigate = useNavigate();
+  // Fast first paint: action queues render from the tiny today-digest rows
+  // (~20 rows) the moment they land; the full 500-row list merges in behind
+  // and takes over (it covers history + calendar, which the digest doesn't).
+  // Digest rows are FULL records, so every row action works identically.
+  //
+  // Gate discipline (must match TasksPage): a resolved-but-empty digest is
+  // REAL ("quiet day" → honestly "All clear"); only a pending digest fetch
+  // is "unknown" (→ skeletons, never the false "All clear").
+  const digestPending = !!digestLoading;
+  const digestReady = digestTransactions && digestTransactions.length > 0;
+  const queueTxs = digestReady ? digestTransactions : transactions;
+  const queuesKnown = !digestPending || (transactions && transactions.length > 0);
+  // The digest only carries actionable rows — the sections below that need
+  // the full picture (calendar, activity history) wait for the real list.
+  const fullListReady = transactions && transactions.length > 0;
   const role = roleProp || 'Staff';
   const goHistoryFiltered = (status) => {
     const base = tabPath(role, 'History');
@@ -26,6 +75,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
   // SMS
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [smsMessage, setSmsMessage] = useState('');
+  const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
   const [releaseTx, setReleaseTx] = useState(null);
 
   const openSmsModal = (tx) => {
@@ -44,19 +94,23 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
   // Full-view modals
   const [sendingSms, setSendingSms] = useState(false);
 
-  // Ready for Pickup
-  const pendingPickup = transactions.filter(tx =>
+  // Ready for Pickup + Overdue queues paint from the digest rows first
+  // (fast), then the full list takes over when it lands. Both shapes are
+  // FULL records, so the merge is seamless.
+  const pendingPickup = queueTxs.filter(tx =>
     (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx)
   );
 
   // Overdue data
-  const overdueItems = transactions.filter(tx => {
+  const overdueItems = queueTxs.filter(tx => {
     if (tx.status === 'Overdue') return true;
     if (tx.status !== 'Active') return false;
     const due = new Date(tx.dueDate || tx.date);
     return due < today;
   });
 
+  // The sections below need the FULL picture (history + future schedule),
+  // which the digest doesn't carry — they render from the real list only.
   const upcoming = transactions.filter(tx => {
     const txDate = new Date(tx.date);
     return txDate >= today;
@@ -141,24 +195,26 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
 
-  // FIX D: surface SMS success/failure; only close on success. Sends the
-  // staff-editable message (pre-filled with the default, tweakable per send).
+  // FIX D: surface the real provider outcome; only close on response.
+  // `sent` = Semaphore returned a message_id; `queued` = accepted but
+  // unconfirmed (check the SMS Log). Never claim success on a 200 alone.
   const handleSendSMS = async (tx) => {
     const message = smsMessage.trim();
     if (!message || sendingSms) return;
     setSendingSms(true);
     try {
-      await api.post('/sms/send', {
+      const res = await api.post('/sms/send', {
         profileId: tx.customerId,
         transactionId: tx.id,
         message,
       });
       setSendingSms(false);
       closeSmsModal();
-      alert('SMS sent successfully.');
+      setSmsResult({ status: res?.status || 'sent', to: customerLabel(tx.customer), message });
     } catch (err) {
       setSendingSms(false);
-      alert(err?.message || 'Failed to send SMS.');
+      closeSmsModal();
+      setSmsResult({ status: 'error', to: customerLabel(tx?.customer), error: err?.message || 'Failed to send SMS.' });
     }
   };
 
@@ -217,6 +273,7 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               ].slice(0, 4);
 
               if (focusItems.length === 0) {
+                if (!queuesKnown) return <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue…</p>;
                 return <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>;
               }
               return <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>;
@@ -252,6 +309,21 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               ].slice(0, 4);
 
               if (focusItems.length === 0) {
+                if (!queuesKnown) {
+                  return (
+                    <div className="space-y-2" aria-label="Loading today's queue">
+                      {[0, 1].map((i) => (
+                        <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 animate-pulse">
+                          <div className="w-4 h-4 rounded-full bg-gray-200 shrink-0" />
+                          <div className="flex-1 space-y-1.5">
+                            <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
+                            <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 return (
                   <div className="text-center py-6 text-gray-400 text-sm font-medium">
                     Nothing urgent today.
@@ -358,9 +430,24 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               </div>
             </div>
 
-            {/* Activity list — flex-1 keeps the card tall even when empty */}
+            {/* Activity list — flex-1 keeps the card tall even when empty.
+                Needs the FULL list (history); while it loads, skeleton rows
+                (never the false "No recent activity"). */}
             <div className="space-y-1 flex-1 flex flex-col">
-              {recentActivity.length === 0 ? (
+              {!fullListReady ? (
+                <div className="space-y-1" aria-label="Loading recent activity">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex items-center gap-3.5 px-1 py-3 animate-pulse">
+                      <div className="w-10 h-10 rounded-full bg-gray-200 shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3.5 w-1/2 bg-gray-200 rounded" />
+                        <div className="h-3 w-1/3 bg-gray-100 rounded" />
+                      </div>
+                      <div className="h-6 w-16 rounded-full bg-gray-100 shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              ) : recentActivity.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center py-8">
                   <p className="text-sm text-gray-400 text-center">No recent activity.</p>
                 </div>
@@ -540,8 +627,33 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
           </div>
         </div>
 
-        {/* Pickup + Overdue — paired action queues (latest 5 each) */}
-        {(pendingPickup.length > 0 || overdueItems.length > 0) && (
+        {/* Pickup + Overdue — paired action queues (latest 5 each).
+            Unknown (digest still pending, list empty) → skeleton cards, never
+            a missing section that reads as "nothing to do". Known-empty
+            (quiet day) → section hidden, same as before. */}
+        {!queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Loading pickup and overdue queues">
+            {['Ready for Pickup', 'Overdue Rentals'].map((title) => (
+              <div key={title} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 animate-pulse">
+                <div className="flex items-center mb-4">
+                  <h3 className="font-bold text-lg text-gray-900">{title}</h3>
+                </div>
+                <div className="space-y-2">
+                  {[0, 1, 2].map((j) => (
+                    <div key={j} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">
+                      <div className="w-9 h-9 rounded-full bg-gray-200 shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
+                        <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+        (pendingPickup.length > 0 || overdueItems.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Ready for Pickup */}
             {pendingPickup.length > 0 ? (
@@ -632,27 +744,31 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
               </div>
             ) : <div className="hidden lg:block" />}
           </div>
+        )
         )}
 
-      {/* SMS Confirmation Modal — message is editable per send.
-          z-[9999] matches the other full-screen modals so it always sits on
-          top (it was getting buried under nav/tutorial layers). */}
+      {/* SMS Log — read-only here (delete is admin-only in the panel).
+          Lets staff verify what actually went out without leaving Tasks.
+          Perf: the panel fires GET /sms/history on mount (limit 200), so it
+          only mounts after first expand — never on the critical Tasks path. */}
+      <SmsLogSection />
+
+      {/* SMS Confirmation Modal — message is editable per send. Bottom-sheet
+          shell (no floating card, no top gap): bottom-anchored on mobile,
+          centered on desktop. z-[9999] keeps it above nav/tutorial layers. */}
       {smsModalTx && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
-          onClick={closeSmsModal}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-            onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center p-6 border-b border-gray-100/80">
-              <div>
-                <h3 className="font-bold text-lg text-gray-900">Confirm SMS</h3>
-                <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
-              </div>
-              <button onClick={closeSmsModal}
-                className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
-                <X size={20} />
-              </button>
+        <BottomSheet onClose={closeSmsModal} labelledby="dialog-title-confirm-sms" z="z-[9999]" maxWidth="sm:max-w-sm" hideHandle>
+          <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
+            <div>
+              <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
+              <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
             </div>
-            <div className="p-6 space-y-4">
+            <button onClick={closeSmsModal}
+              className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+          <div data-sheet-scroll className="p-6 space-y-4 overflow-y-auto min-h-0">
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
                 <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
@@ -686,12 +802,16 @@ export default function StaffTasksView({ transactions, inventory, onReturn, onNa
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </BottomSheet>
       )}
 
       {releaseTx && (
         <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} onSwapItem={(updated, prevItemId) => onSwapItem?.(updated, prevItemId)} />
+      )}
+
+      {/* Post-send outcome — sent vs queued vs failed, stated honestly. */}
+      {smsResult && (
+        <SmsResultModal result={smsResult} onClose={() => setSmsResult(null)} />
       )}
     </div>
   );

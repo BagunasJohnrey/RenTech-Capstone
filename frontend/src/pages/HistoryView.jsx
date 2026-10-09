@@ -10,9 +10,10 @@ import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
 import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
-import { isReleased, getReleasePhoto } from '../hooks/useTransactions';
+import { isReleased } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
-import ItemImage from '../components/ItemImage';
+import BottomSheet from '../components/BottomSheet';
+import SmsResultModal from '../components/SmsResultModal';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 
 const formatDate = (d) => {
@@ -73,6 +74,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [smsMessage, setSmsMessage] = useState('');
   const [sendingSms, setSendingSms] = useState(false);
+  const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
 
   const openSmsModal = (tx) => {
     setSmsMessage(defaultOverdueMessage(tx));
@@ -271,17 +273,18 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     if (!message || sendingSms) return;
     setSendingSms(true);
     try {
-      await api.post('/sms/send', {
+      const res = await api.post('/sms/send', {
         profileId: tx.customerId,
         transactionId: tx.id,
         message,
       });
       setSendingSms(false);
       closeSmsModal();
-      alert('SMS sent successfully.');
+      setSmsResult({ status: res?.status || 'sent', to: customerLabel(tx.customer), message });
     } catch (err) {
       setSendingSms(false);
-      alert(err?.message || 'Failed to send SMS.');
+      closeSmsModal();
+      setSmsResult({ status: 'error', to: customerLabel(tx?.customer), error: err?.message || 'Failed to send SMS.' });
     }
   };
 
@@ -560,7 +563,6 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                   <th className="px-6 py-5">ID</th>
                   {role !== 'Customer' && <th className="px-6 py-5">Customer</th>}
                   <th className="px-6 py-5">Item</th>
-                  <th className="px-6 py-5 w-16">Photo</th>
                   <th className="px-6 py-5">Date</th>
                   <th className="px-6 py-5">Status</th>
                   <th className="px-6 py-5 text-right">Amount</th>
@@ -574,7 +576,6 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       <td className="px-6 py-4"><Skeleton className="h-3 w-12" /></td>
                       {role !== 'Customer' && <td className="px-6 py-4"><Skeleton className="h-3 w-24" /></td>}
                       <td className="px-6 py-4"><Skeleton className="h-3 w-32" /></td>
-                      <td className="px-6 py-4"><Skeleton className="w-10 h-10 rounded-lg" /></td>
                       <td className="px-6 py-4"><Skeleton className="h-3 w-20" /></td>
                       <td className="px-6 py-4"><Skeleton className="h-5 w-16 rounded-full" /></td>
                       <td className="px-6 py-4"><Skeleton className="h-3 w-16 ml-auto" /></td>
@@ -583,7 +584,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                   ))
                 ) : displayedTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={role !== 'Customer' ? 8 : 7} className="px-6 py-12 text-center text-gray-400">
+                    <td colSpan={role !== 'Customer' ? 7 : 6} className="px-6 py-12 text-center text-gray-400">
                       No transactions match your search/filters.
                     </td>
                   </tr>
@@ -604,13 +605,6 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                         <td className="px-6 py-4 text-gray-700 font-medium">{customerLabel(tx.customer) || '—'}</td>
                       )}
                       <td className="px-6 py-4 text-gray-500">{tx.item || '—'}</td>
-                      <td className="px-6 py-4">
-                        {getReleasePhoto(tx) ? (
-                          <ItemImage image={getReleasePhoto(tx)} alt="" className="w-10 h-10 rounded-lg object-cover bg-gray-100" />
-                        ) : (
-                          <span className="text-gray-300 text-xs">—</span>
-                        )}
-                      </td>
                       <td className="px-6 py-4 text-gray-500 text-[13px]">{formatDate(tx.rentalDate || tx.date)}</td>
                       <td className="px-6 py-4">
                         {/* One pill only: an active alteration replaces the
@@ -671,7 +665,23 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             customer (staff only), item, date, status + actions (photo is omitted
             to keep the cards compact). */}
         <div className="lg:hidden space-y-3">
-          {displayedTransactions.length === 0 ? (
+          {loading && transactions.length === 0 ? (
+            <div className="space-y-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-4 space-y-2.5 animate-pulse">
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="space-y-2">
+                      <Skeleton className="h-3 w-16" />
+                      <Skeleton className="h-2.5 w-24" />
+                    </div>
+                    <Skeleton className="h-5 w-16 rounded-md shrink-0" />
+                  </div>
+                  <Skeleton className="h-3 w-3/4" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+              ))}
+            </div>
+          ) : displayedTransactions.length === 0 ? (
             <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 text-center text-gray-500">
               No transactions match your search/filters.
             </div>
@@ -762,23 +772,22 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         />
       )}
 
-      {/* SMS Confirmation Modal — message is editable per send */}
+      {/* SMS Confirmation Modal — message is editable per send. Bottom-sheet
+          shell (no floating card, no top gap): bottom-anchored on mobile,
+          centered on desktop. */}
       {smsModalTx && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-          onClick={closeSmsModal}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-            onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center p-6 border-b border-gray-100/80">
-              <div>
-                <h3 className="font-bold text-lg text-gray-900">Confirm SMS</h3>
-                <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
-              </div>
-              <button onClick={closeSmsModal}
-                className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
-                <X size={20} />
-              </button>
+        <BottomSheet onClose={closeSmsModal} labelledby="dialog-title-confirm-sms" z="z-[100]" maxWidth="sm:max-w-sm" hideHandle>
+          <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
+            <div>
+              <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
+              <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
             </div>
-            <div className="p-6 space-y-4">
+            <button onClick={closeSmsModal}
+              className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+          <div data-sheet-scroll className="p-6 space-y-4 overflow-y-auto min-h-0">
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
                 <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
@@ -812,8 +821,12 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </BottomSheet>
+      )}
+
+      {/* Post-send outcome — sent vs queued vs failed, stated honestly. */}
+      {smsResult && (
+        <SmsResultModal result={smsResult} onClose={() => setSmsResult(null)} />
       )}
 
       {/* Cancel Booking Modal (proper dialog + message-the-boutique) */}

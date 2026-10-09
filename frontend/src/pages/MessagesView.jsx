@@ -6,6 +6,7 @@ import { Skeleton } from '../components/Skeleton';
 import { mapNotification, timeAgo } from '../components/NotificationsDropdown';
 import ConfirmModal from '../components/ConfirmModal';
 import MessageReaderModal from '../components/MessageReaderModal';
+import SmsLogPanel from '../components/SmsLogPanel';
 import { useHandledMessages } from '../hooks/useHandledMessages';
 import { useBookingStatus } from '../hooks/useBookingStatus';
 
@@ -16,6 +17,7 @@ import { useBookingStatus } from '../hooks/useBookingStatus';
 export default function MessagesView({ onOpenBooking }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState('inbox'); // 'inbox' | 'sms'
   const [filter, setFilter] = useState('all'); // 'all' | 'new'
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [detail, setDetail] = useState(null); // message open in the reader
@@ -121,11 +123,13 @@ export default function MessagesView({ onOpenBooking }) {
               <div className="min-w-0">
                 <h1 className="font-bold text-white text-base leading-tight">Customer Messages</h1>
                 <p className="text-xs text-white/80 leading-tight mt-0.5">
-                  {unread.length > 0
-                    ? `${unread.length} unread · cancellation requests land here`
-                    : messages.length > 0
-                      ? 'You are all caught up'
-                      : 'No messages yet'}
+                  {view === 'sms'
+                    ? 'Every SMS in one place — manual and automatic'
+                    : unread.length > 0
+                      ? `${unread.length} unread · cancellation requests land here`
+                      : messages.length > 0
+                        ? 'You are all caught up'
+                        : 'No messages yet'}
                 </p>
               </div>
             </div>
@@ -139,8 +143,32 @@ export default function MessagesView({ onOpenBooking }) {
             )}
           </div>
 
-          {/* Filter tabs */}
+          {/* View tabs: inbox vs SMS log */}
           <div className="relative flex items-center gap-1.5 mt-4">
+            {[
+              { key: 'inbox', label: 'Inbox', count: messages.length },
+              { key: 'sms', label: 'SMS Log', count: null },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setView(tab.key)}
+                className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold backdrop-blur transition-colors ${
+                  view === tab.key
+                    ? 'bg-white text-[#bf4a53] shadow-sm'
+                    : 'bg-white/15 text-white/80 hover:bg-white/25'
+                }`}
+              >
+                {tab.label}
+                {tab.count > 0 && (
+                  <span className={`ml-1.5 ${view === tab.key ? 'text-[#bf4a53]/70' : 'text-white/70'}`}>{tab.count}</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Filter tabs */}
+          {view === 'inbox' && (
+          <div className="relative flex items-center gap-1.5 mt-2">
             {[
               { key: 'all', label: 'All', count: messages.length },
               { key: 'new', label: 'New', count: unread.length },
@@ -161,11 +189,15 @@ export default function MessagesView({ onOpenBooking }) {
               </button>
             ))}
           </div>
+          )}
         </div>
       </div>
 
       {/* List */}
       <div className="bg-white rounded-3xl shadow-sm ring-1 ring-black/5 overflow-hidden">
+        {view === 'sms' ? (
+          <div className="p-3"><SmsLogPanel /></div>
+        ) : (
         <div className="p-3 space-y-1.5">
           {loading ? (
             <div className="space-y-1.5 py-4">
@@ -247,6 +279,7 @@ export default function MessagesView({ onOpenBooking }) {
             </div>
           )}
         </div>
+        )}
       </div>
 
       <MessageReaderModal

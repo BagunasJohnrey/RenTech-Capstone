@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, Lock, RotateCcw } from 'lucide-react';
+import { Edit3, Trash2, Calendar, CheckCircle2, Wrench, RotateCcw, ChevronRight } from 'lucide-react';
 import ItemImage from './ItemImage';
 import { SkeletonCard } from './Skeleton';
 import { itemPill } from '../utils/statusColors';
@@ -68,24 +68,34 @@ function useImageGate(item) {
   return { ready, skeleton };
 }
 
-function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService, showBook }) {
+function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore, onCheckAvailability, onStatusChange, onMarkOutOfService }) {
   const sale = getSaleInfo(item);
   const gate = useImageGate(item);
   if (!gate.ready) return gate.skeleton;
+  // Only bookable statuses go straight to booking on tap — the backend
+  // rejects Cleaning (409) and OutOfService (400), and Deleted items are
+  // archived, so those cards stay non-clickable with their lifecycle action.
+  const bookable = !!onBook && (item.status === 'Available' || item.status === 'Rented' || item.status === 'Reserved');
+  const stop = (e) => e.stopPropagation();
+  const activateBooking = (e) => { if (bookable) { e?.stopPropagation?.(); onBook(); } };
   return (
-    <div className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
+    <div onClick={bookable ? () => onBook() : undefined} title={bookable ? 'Tap to book for customer' : undefined}
+      className={`bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col ${bookable ? 'cursor-pointer' : ''}`}>
       <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
-        <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+        <button type="button" onClick={activateBooking} disabled={!bookable} aria-label={bookable ? `Book ${item.name} for customer` : item.name}
+          className={`absolute inset-0 w-full h-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${bookable ? 'cursor-pointer' : 'cursor-default'}`}>
+          <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+        </button>
         {sale.active && (
-          <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] sm:text-[10px] font-bold shadow-sm text-[#bf4a53]">
+          <div className="absolute top-2 right-2 sm:top-2.5 sm:right-2.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] sm:text-[10px] font-bold shadow-sm text-[#bf4a53] pointer-events-none">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
           </div>
         )}
-        <div className={`absolute ${sale.active ? 'top-9 sm:top-10' : 'top-2 sm:top-2.5'} right-2 sm:right-2.5 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border text-[9px] sm:text-[10px] font-bold shadow-sm ${meta.bg} ${meta.border} ${meta.text}`}>
+        <div className={`absolute ${sale.active ? 'top-9 sm:top-10' : 'top-2 sm:top-2.5'} right-2 sm:right-2.5 inline-flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border text-[9px] sm:text-[10px] font-bold shadow-sm pointer-events-none ${meta.bg} ${meta.border} ${meta.text}`}>
           <StatusIcon size={10} />
           {meta.label}
         </div>
-        <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 flex items-center gap-1">
+        <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 flex items-center gap-1" onClick={stop}>
           <button onClick={onEdit} aria-label={`Edit ${item.name}`}
             className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-gray-800 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50" title="Edit item">
             <Edit3 size={13} />
@@ -107,6 +117,37 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
             </button>
           )}
         </div>
+        {/* Lifecycle — highlighted pill overlaid at the bottom of the photo.
+            Taps stop here and never fall through to the card's booking tap.
+            Rented/Reserved need no action (derived from bookings); Deleted
+            has its restore icon top-left. */}
+        {onStatusChange && item.status !== 'Deleted' &&
+          ((item.status === 'Available' && onMarkOutOfService) || item.status === 'Cleaning' || item.status === 'OutOfService') && (
+          <div className="absolute bottom-2 inset-x-2 z-10 flex justify-center pointer-events-none">
+            {item.status === 'Available' && onMarkOutOfService ? (
+              <button onClick={(e) => { e.stopPropagation(); onMarkOutOfService(item); }}
+                title="Item is damaged or needs repair — remove it from the catalog until restored"
+                className="pointer-events-auto inline-flex items-center justify-center gap-1.5 px-5 py-2 text-[11px] font-bold text-red-600 bg-white/95 backdrop-blur-sm border border-red-200 hover:bg-red-50 rounded-full shadow-lg shadow-black/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50">
+                <Wrench size={12} />
+                Pull from rental
+              </button>
+            ) : item.status === 'Cleaning' ? (
+              <button onClick={(e) => { e.stopPropagation(); onStatusChange(item.id, 'Available'); }}
+                title="Washed and ready — put the item back in the catalog"
+                className="pointer-events-auto inline-flex items-center justify-center gap-1.5 px-5 py-2 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-full shadow-lg shadow-emerald-900/30 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50">
+                <CheckCircle2 size={12} />
+                Mark as clean
+              </button>
+            ) : (
+              <button onClick={(e) => { e.stopPropagation(); onStatusChange(item.id, 'Available'); }}
+                title="Repair complete — put the item back in the catalog"
+                className="pointer-events-auto inline-flex items-center justify-center gap-1.5 px-5 py-2 text-[11px] font-bold text-emerald-700 bg-white/95 backdrop-blur-sm border border-emerald-300 hover:bg-emerald-50 rounded-full shadow-lg shadow-black/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50">
+                <RotateCcw size={12} />
+                Restore to Available
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="p-3 sm:p-4 space-y-2 flex flex-col flex-1">
@@ -114,7 +155,10 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
           <div className="flex items-center gap-1">
             <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</span>
           </div>
-          <h3 className="font-bold text-gray-900 text-[13px] leading-tight truncate">{item.name}</h3>
+          <button type="button" onClick={activateBooking} disabled={!bookable}
+            className={`font-bold text-gray-900 text-[13px] leading-tight truncate block max-w-full ${bookable ? 'hover:text-[#bf4a53] transition-colors text-left' : 'text-left cursor-default'}`}>
+            {item.name}
+          </button>
           {normalizeOccasions(item.occasions).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {normalizeOccasions(item.occasions).slice(0, 2).map((occ) => (
@@ -140,69 +184,6 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
             )}
           </p>
         </div>
-
-        {showBook && item.status !== 'Deleted' && (
-          <button onClick={onBook}
-            className="w-full flex items-center justify-center gap-1.5 py-2 bg-[#bf4a53] text-white text-[11px] font-semibold rounded-lg hover:bg-red-700 transition-colors shadow-sm">
-            <Calendar size={12} />
-            Book for Customer
-          </button>
-        )}
-
-        {/* Lifecycle — exactly one surface per status so an Available card
-            never sits next to a red pill. All pills stretch full width
-            (max-w-xs, centered) so the tap target is obvious and the row
-            doesn't collapse to slivers on narrow cards. */}
-        {onStatusChange && item.status !== 'Deleted' && (
-          <div className="pt-0.5 flex justify-center">
-            {(() => {
-              const base = 'inline-flex items-center justify-center gap-1.5 w-full max-w-xs px-4 py-2.5 text-[11px] font-bold rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
-
-              if (item.status === 'Available' && onMarkOutOfService) {
-                return (
-                  <button onClick={() => onMarkOutOfService(item)}
-                    title="Item is damaged or needs repair — remove it from the catalog until restored"
-                    className={`${base} bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 focus-visible:ring-red-400/50`}>
-                    <Wrench size={12} />
-                    Pull from rental
-                  </button>
-                );
-              }
-
-              if (item.status === 'Cleaning') {
-                return (
-                  <button onClick={() => onStatusChange(item.id, 'Available')}
-                    className={`${base} bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm focus-visible:ring-emerald-400/50`}>
-                    <CheckCircle2 size={13} />
-                    Mark as clean
-                  </button>
-                );
-              }
-
-              if (item.status === 'OutOfService') {
-                return (
-                  <button onClick={() => onStatusChange(item.id, 'Available')}
-                    title="Repair complete — put the item back in the catalog"
-                    className={`${base} bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 focus-visible:ring-emerald-400/50`}>
-                    <CheckCircle2 size={12} />
-                    Restore to Available
-                  </button>
-                );
-              }
-
-              if (item.status === 'Rented' || item.status === 'Reserved') {
-                return (
-                  // Derived from bookings — no destructive action available.
-                  <span className={`${base} bg-gray-50 text-gray-400 border border-gray-200/60`}>
-                    <Lock size={11} />
-                    Managed by bookings
-                  </span>
-                );
-              }
-              return null;
-            })()}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -220,30 +201,43 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
     if (isAdmin) {
       return (
         <StaffCard item={item} meta={meta} StatusIcon={StatusIcon}
-          onBook={() => {}} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore}
-          onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} onMarkOutOfService={onMarkOutOfService} showBook={false} />
+          onBook={undefined} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore}
+          onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} onMarkOutOfService={onMarkOutOfService} />
       );
     }
     return (
       <StaffCard item={item} meta={meta} StatusIcon={StatusIcon}
         onBook={onBook} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore}
-        onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} onMarkOutOfService={onMarkOutOfService} showBook={true} />
+        onCheckAvailability={onCheckAvailability} onStatusChange={onStatusChange} onMarkOutOfService={onMarkOutOfService} />
     );
   }
 
   const sale = getSaleInfo(item);
+  // Whole card taps straight into booking for signed-in customers (the
+  // booking flow checks availability itself as part of the wizard).
+  // Guests can't book, so their tap still opens details (Sign In to Rent).
+  // When no book handler exists, fall back to details.
+  const book = onBook ? () => onBook() : undefined;
+  const view = onViewDetail ? () => onViewDetail(item) : undefined;
+  const activate = guest ? view : (book ?? view);
   return (
     <div
-      className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
-      <button type="button" onClick={() => onViewDetail?.(item)} aria-label={`View ${item.name}`}
-        className="relative aspect-[4/5] bg-gray-50 overflow-hidden w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60">
+      data-tour="book"
+      onClick={activate}
+      onKeyDown={activate ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } } : undefined}
+      tabIndex={activate ? 0 : undefined}
+      role={activate ? 'button' : undefined}
+      aria-label={activate ? `${item.name}, ₱${item.price.toLocaleString()}` : undefined}
+      title={activate ? (book && activate === book ? `Book ${item.name}` : `View ${item.name}`) : undefined}
+      className={`bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col ${activate ? 'cursor-pointer' : ''}`}>
+      <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
         <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
-          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] font-bold shadow-sm text-[#bf4a53]">
+          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] font-bold shadow-sm text-[#bf4a53] pointer-events-none">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
           </span>
         )}
-      </button>
+      </div>
       <div className="p-4 flex flex-col flex-1 gap-1">
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</div>
         <h3 className="font-bold text-gray-900 text-sm leading-tight line-clamp-2">{item.name}</h3>
@@ -261,62 +255,23 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
             )}
           </div>
         )}
-        <p className="font-bold text-sm">
-          {sale.active ? (
-            <>
-              <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
-              <span className="text-gray-400 font-medium text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
-            </>
-          ) : (
-            <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
+        <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+          <p className="font-extrabold text-xl tracking-tight">
+            {sale.active ? (
+              <>
+                <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
+                <span className="text-gray-400 font-semibold text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
+              </>
+            ) : (
+              <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
+            )}
+          </p>
+          {activate && (
+            <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center group-hover:bg-[#bf4a53] group-hover:text-white transition-colors">
+              <ChevronRight size={16} />
+            </span>
           )}
-        </p>
-        {(() => {
-          const disabled = !guest && (item.status === 'OutOfService' || item.status === 'Deleted');
-          const sizingCls = 'w-full font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-1.5 whitespace-nowrap';
-          // Guests tap the photo itself to open details (same modal) — no
-          // separate button needed on the card.
-          if (guest) {
-            return null;
-          }
-          if (disabled) {
-            return (
-              <div className="mt-auto pt-3">
-                <button data-tour="book" type="button" disabled
-                  className={`${sizingCls} bg-gray-100 text-gray-400 cursor-not-allowed shadow-none`}>
-                  Unavailable
-                </button>
-              </div>
-            );
-          }
-          // Currently rented out (incl. overdue) — still bookable in advance
-          // for other dates. Show a distinct "Advance Book" action instead of
-          // the loud Rent Now so customers know the piece is currently out.
-          if (item.status === 'Rented' || item.status === 'Overdue') {
-            return (
-              <div className="mt-auto pt-3">
-                <button data-tour="book" type="button"
-                  onClick={(e) => { e.stopPropagation(); onBook?.(); }}
-                  className={`${sizingCls} bg-white border border-gray-300 text-gray-700 hover:border-gray-900 hover:text-gray-900 hover:shadow-md active:scale-[0.98]`}
-                >
-                  <Calendar size={14} />
-                  <span>Advance Book</span>
-                </button>
-              </div>
-            );
-          }
-          return (
-            <div className="mt-auto pt-3">
-              <button data-tour="book" type="button"
-                onClick={(e) => { e.stopPropagation(); onBook?.(); }}
-                className={`${sizingCls} bg-gradient-to-r from-[#b33842] via-[#bf4a53] to-[#d97079] text-white shadow-md shadow-[#bf4a53]/30 hover:shadow-lg hover:shadow-[#bf4a53]/40 hover:brightness-110 active:scale-[0.98]`}
-              >
-                <Calendar size={14} />
-                <span>Rent Now</span>
-              </button>
-            </div>
-          );
-        })()}
+        </div>
       </div>
     </div>
   );

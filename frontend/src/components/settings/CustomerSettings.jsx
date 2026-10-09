@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Ruler, Bell, Tag, Sparkles, NotebookPen, Check, RotateCcw, Save } from 'lucide-react';
+import { Ruler, Bell, Tag, Sparkles, NotebookPen, Check, RotateCcw, Save, Mail, BellRing, TriangleAlert, Copy, CalendarClock } from 'lucide-react';
 import { api } from '../../utils/api';
 import { promoService } from '../../services/promo';
+import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../../utils/promoLabel';
 import { SIZE_PRESETS } from '../../utils/sizePresets';
 import Toggle from './Toggle';
+import StoreContactCard from './StoreContactCard';
+import CollapsibleCard from './CollapsibleCard';
 import { LS_SIZES, LS_NOTIF, DEFAULT_NOTIF, loadJSON } from './constants';
 
 // Customer-only settings: preferred sizes (device-local), measurement/style
@@ -18,7 +21,9 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
       ? { ...DEFAULT_NOTIF, ...profile.notifyPrefs }
       : loadJSON(LS_NOTIF, DEFAULT_NOTIF));
   const [notifMsg, setNotifMsg] = useState('');
+  const [notifError, setNotifError] = useState('');
   const [myPromos, setMyPromos] = useState([]);
+  const [copiedCode, setCopiedCode] = useState('');
 
   // Load active promo codes for customers to discover available discounts.
   useEffect(() => {
@@ -53,13 +58,37 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
   };
 
   const toggleNotif = (key) => {
-    const next = { ...notifPrefs, [key]: !notifPrefs[key] };
+    const prev = notifPrefs;
+    const next = { ...prev, [key]: !prev[key] };
     localStorage.setItem(LS_NOTIF, JSON.stringify(next));
     setNotifPrefs(next);
+    setNotifError('');
     setNotifMsg('Preferences updated!');
-    api.put('/auth/me', { notifyPrefs: next }).catch(() => {});
+    api.put('/auth/me', { notifyPrefs: next }).catch(() => {
+      // Roll back the optimistic flip so the switch never lies.
+      localStorage.setItem(LS_NOTIF, JSON.stringify(prev));
+      setNotifPrefs(prev);
+      setNotifMsg('');
+      setNotifError('Could not save. Check your connection and try again.');
+    });
     setTimeout(() => setNotifMsg(''), 2000);
   };
+
+  const copyPromo = async (code) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(code);
+      setTimeout(() => setCopiedCode(''), 2000);
+    } catch {
+      // clipboard unavailable — code text remains selectable
+    }
+  };
+
+  const NOTIF_ROWS = [
+    { key: 'email', label: 'Emails', desc: 'Booking, pickup, return and reminder emails.', icon: Mail, channel: 'Email' },
+    { key: 'reminder', label: 'Due Date Reminders', desc: 'SMS the day before your rental is due.', icon: BellRing, channel: 'SMS' },
+    { key: 'lateReturn', label: 'Late Return Alerts', desc: 'SMS if a rental becomes overdue.', icon: TriangleAlert, channel: 'SMS' },
+  ];
 
   return (
     <>
@@ -172,51 +201,131 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
         </div>
       </div>
 
-      {/* Notifications (customer) */}
-      <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8">
-        <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base mb-4 md:mb-6">
-          <Bell size={18} className="text-gray-500" /> Notification Preferences
-        </h3>
-        <div className="space-y-3 max-w-lg">
-          {[
-            { key: 'email', label: 'Emails', desc: 'Booking, pickup, return and reminder emails.' },
-            { key: 'reminder', label: 'Due Date Reminders', desc: 'SMS the day before your rental is due.' },
-            { key: 'lateReturn', label: 'Late Return Alerts', desc: 'SMS if a rental becomes overdue.' },
-          ].map(({ key, label, desc }) => (
-            <div key={key} className="flex items-center justify-between p-3.5 bg-gray-50 rounded-xl">
-              <div>
-                <p className="text-sm font-semibold text-gray-900">{label}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-              </div>
-              <Toggle on={notifPrefs[key]} onClick={() => toggleNotif(key)} />
-            </div>
-          ))}
-        </div>
-        {notifMsg && <p className="text-xs text-emerald-600 font-bold mt-3">{notifMsg}</p>}
-      </div>
+      {/* Inquiries & Contact — store's fixed inquiry number (read-only) */}
+      <StoreContactCard />
 
-      {/* My Offers */}
-      {myPromos.length > 0 && (
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8">
-          <h3 className="font-bold text-gray-900 flex items-center gap-2 text-base mb-4 md:mb-6">
-            <Tag size={18} className="text-gray-500" /> My Offers
-          </h3>
-          <div className="space-y-2 max-w-lg">
-            {myPromos.map((p) => (
-              <div key={p.code} className="flex items-center justify-between p-3.5 bg-red-50 border border-[#bf4a53]/20 rounded-xl">
-                <div>
-                  <p className="text-sm font-bold text-gray-900 font-mono">{p.code}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {p.discountPct}% off rental
-                    {p.expiresAt ? ` · until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}
-                  </p>
+      {/* Notifications (customer) — collapsible; 1 column on mobile, 3 cards on desktop */}
+      <CollapsibleCard
+        icon={Bell}
+        title="Notification Preferences"
+        subtitle="Choose how the boutique reaches you"
+        storageKey="settings-notif-open"
+      >
+        <div className="grid gap-2.5 lg:grid-cols-3">
+          {NOTIF_ROWS.map(({ key, label, desc, icon: Icon, channel }) => {
+            const on = !!notifPrefs[key];
+            return (
+              <div
+                key={key}
+                className={`rounded-2xl border p-3.5 sm:p-4 flex items-center gap-3 transition-colors lg:flex-col lg:items-stretch ${
+                  on ? 'bg-[#fafafa] border-gray-100' : 'bg-gray-50/60 border-gray-100'
+                }`}
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-white border border-gray-100 flex items-center justify-center shrink-0">
+                    <Icon size={17} className={on ? 'text-[#bf4a53]' : 'text-gray-300'} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+                      {label}
+                      <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wide ${
+                        channel === 'Email' ? 'bg-sky-50 text-sky-600' : 'bg-emerald-50 text-emerald-600'
+                      }`}>
+                        {channel}
+                      </span>
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                  </div>
                 </div>
-                <span className="text-sm font-extrabold text-[#bf4a53]">-{p.discountPct}%</span>
+                <div className="shrink-0 lg:w-full lg:flex lg:items-center lg:justify-between lg:pt-3 lg:border-t lg:border-gray-100">
+                  <span className={`hidden lg:block text-[11px] font-extrabold uppercase tracking-wide ${on ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    {on ? 'On' : 'Off'}
+                  </span>
+                  {/* Padded hit area keeps the 44px touch target without shifting layout */}
+                  <span className="inline-flex p-2 -m-2">
+                    <Toggle on={on} onClick={() => toggleNotif(key)} label={label} />
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="min-h-[1.25rem] mt-3">
+          {notifMsg && <p className="text-xs text-emerald-600 font-bold">{notifMsg}</p>}
+          {notifError && <p className="text-xs text-red-500 font-bold">{notifError}</p>}
+        </div>
+      </CollapsibleCard>
+
+      {/* My Offers — collapsible; stacks on mobile, ticket grid + redeem strip on desktop */}
+      {myPromos.length > 0 && (
+        <CollapsibleCard
+          icon={Tag}
+          title="My Offers"
+          subtitle="Discount codes you can use at checkout"
+          storageKey="settings-offers-open"
+        >
+          {/* Full-width long tickets on every screen; content spreads out on desktop */}
+          <div className="grid gap-2.5">
+            {myPromos.map((p) => (
+              <div key={p.code} className="flex items-stretch rounded-2xl border border-[#bf4a53]/20 bg-red-50/60 overflow-hidden min-w-0">
+                {/* Discount stub — larger on desktop */}
+                <div className="flex flex-col items-center justify-center px-3 sm:px-4 md:px-7 py-3.5 md:py-5 bg-[#bf4a53] text-white shrink-0 min-w-[4rem] md:min-w-[7rem]">
+                  <span className="text-base sm:text-lg md:text-2xl font-extrabold leading-none tabular-nums">{promoShortLabel(p)}</span>
+                  <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider opacity-80 mt-1">off</span>
+                </div>
+                {/* Perforation */}
+                <div className="w-0 border-l-2 border-dashed border-[#bf4a53]/25 my-2 md:my-3 shrink-0" aria-hidden="true" />
+                {/* Code + meta — stacked on mobile, spread left/right on desktop */}
+                <div className="flex-1 min-w-0 px-3.5 py-3 md:px-6 md:py-4 md:flex md:items-center md:gap-6">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm md:text-lg font-extrabold text-gray-900 font-mono tracking-wide select-all">{p.code}</p>
+                    <p className="text-xs md:text-sm text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                      {promoDiscountLabel(p)} rental
+                      {promoTermsLabel(p) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white border border-gray-200 text-[10px] md:text-[11px] font-bold text-gray-500">
+                          {promoTermsLabel(p)}
+                        </span>
+                      )}
+                      {p.expiresAt && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white border border-gray-200 text-[10px] md:text-[11px] font-bold text-gray-500">
+                          <CalendarClock size={10} />
+                          until {new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyPromo(p.code)}
+                    className="mt-2.5 md:mt-0 inline-flex items-center gap-1.5 px-4 py-1.5 md:px-6 md:py-2.5 min-h-[32px] md:min-h-[44px] bg-white border border-gray-200 rounded-full text-[10px] md:text-xs font-bold text-gray-600 hover:border-[#bf4a53]/50 hover:text-[#bf4a53] hover:bg-white transition-all shrink-0"
+                    aria-label={`Copy code ${p.code}`}
+                  >
+                    {copiedCode === p.code ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                    {copiedCode === p.code ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-gray-400 mt-3">Apply a code at checkout to get the discount.</p>
-        </div>
+          {/* Mobile hint */}
+          <p className="text-[11px] text-gray-400 mt-3 md:hidden">Tap Copy, then paste the code at checkout to get the discount.</p>
+          {/* Desktop: how-to-redeem strip fills the wide card */}
+          <div className="hidden md:grid md:grid-cols-3 gap-2.5 mt-4 pt-4 border-t border-gray-100">
+            {[
+              { n: '1', t: 'Copy a code', d: 'Use the Copy button on any offer above.' },
+              { n: '2', t: 'Rent an item', d: 'Pick an available piece and start checkout.' },
+              { n: '3', t: 'Paste at checkout', d: 'Enter the code to apply the discount.' },
+            ].map(({ n, t, d }) => (
+              <div key={n} className="flex items-start gap-2.5 p-3 bg-[#fafafa] rounded-2xl border border-gray-100">
+                <span aria-hidden="true" className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">{n}</span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-extrabold text-gray-900">{t}</span>
+                  <span className="block text-[11px] text-gray-500 mt-0.5 leading-relaxed">{d}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </CollapsibleCard>
       )}
     </>
   );

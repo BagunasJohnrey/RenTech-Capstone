@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Bell, ShoppingBag, CalendarClock, Clock, CheckCircle2,
-  AlertTriangle, Smartphone, MessageCircle, XCircle, X, Circle, Trash2, CheckCheck, Inbox,
+  AlertTriangle, Smartphone, MessageCircle, XCircle, X, Circle, Trash2, CheckCheck, Inbox, FileText,
 } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
@@ -21,6 +21,7 @@ export const TYPE_CONFIG = {
   no_show: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-600', chip: 'No-Show' },
   reminder: { icon: Smartphone, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Reminder' },
   customer_message: { icon: MessageCircle, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Customer Message' },
+  ai_report: { icon: FileText, iconBg: 'bg-violet-50', iconColor: 'text-violet-600', chip: 'Report' },
   default: { icon: Bell, iconBg: 'bg-gray-100', iconColor: 'text-gray-500', chip: 'Notification' },
 };
 
@@ -34,8 +35,20 @@ export const mapNotification = (n) => {
     text: n.message || n.text || '',
     time: n.createdAt,
     transactionId: n.transactionId ?? null,
+    // Weekly auto-report deep-link: the scheduler embeds `report:<id>` in the
+    // message body (see autoReport.service). Extracted once here so both the
+    // dropdown and the Notifications page share the redirect logic.
+    reportId: n.type === 'ai_report' ? reportIdFromMessage(n.message || n.text || '') : null,
     cfg,
   };
+};
+
+// Parses the `report:<id>` trailer the weekly scheduler appends to the
+// notification message. Returns null for anything else (manual rows, other
+// types) so the tap falls back to the normal tab navigation.
+export const reportIdFromMessage = (message) => {
+  const m = String(message || '').match(/report:([A-Za-z0-9][A-Za-z0-9-_]*)/);
+  return m ? m[1] : null;
 };
 
 export const timeAgo = (iso) => {
@@ -54,9 +67,11 @@ export const timeAgo = (iso) => {
 };
 
 // Tab each notification type opens. Staff actionables go to Tasks; admin
-// customer messages go to the Messages inbox; everything record-related
-// goes to History; plain notices go home.
+// customer messages go to the Messages inbox; weekly auto-reports deep-link
+// into the saved report (via the `rentech_open_report` hint consumed by the
+// BI page); everything record-related goes to History; plain notices go home.
 export const targetTabForNotification = (type, role) => {
+  if (type === 'ai_report') return 'AI Insights';
   if (type === 'customer_message') {
     if (role === 'Admin') return 'Messages';
     if (role === 'Staff') return 'Tasks';
@@ -168,12 +183,19 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
 
   // Tapping a notification marks it read and jumps to its page. Customer
   // messages land on the main Notifications page (Messages section) instead
-  // of the standalone inbox.
+  // of the standalone inbox. Weekly auto-reports drop a `rentech_open_report`
+  // hint (the saved report id) that the BI page consumes + clears on arrival
+  // to auto-open the report modal.
   const handleOpen = (n) => {
     if (!n.isRead) handleMarkRead(n.id);
     if (n.type === 'customer_message') {
       goNotificationsSection('messages');
       return;
+    }
+    if (n.type === 'ai_report' && n.reportId) {
+      try {
+        sessionStorage.setItem('rentech_open_report', n.reportId);
+      } catch { /* private mode — still navigates, just no auto-open */ }
     }
     toggle();
     if (onNavigateTab) onNavigateTab(targetTabForNotification(n.type, role));

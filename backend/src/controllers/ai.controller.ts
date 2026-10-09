@@ -96,7 +96,7 @@ export async function generateReport(req: AuthenticatedRequest, res: Response, n
           model: (result as { model?: string }).model ?? null,
           createdBy: req.user?.id ?? null,
         });
-        return res.json({ ...result, reportId: saved.id });
+        return res.json({ ...result, reportId: saved.id, ...(saved.skipped ? { deduped: true } : {}) });
       } catch {
         // fall through — return the report without history
       }
@@ -163,7 +163,9 @@ export async function suggestPromos(req: AuthenticatedRequest, res: Response, ne
 
     const promos = (Array.isArray(activePromos) ? activePromos : [])
       .filter((p: { isActive?: boolean }) => p.isActive !== false)
-      .map((p: { code: string; discountPct: number }) => ({ code: p.code, discountPct: p.discountPct }));
+      .map((p: { code: string; discountPct: number | null; discountAmount: number | null }) => ({
+        code: p.code, discountPct: p.discountPct, discountAmount: p.discountAmount,
+      }));
 
     const now = new Date();
     const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -178,7 +180,7 @@ export async function suggestPromos(req: AuthenticatedRequest, res: Response, ne
       inventory,
       activePromos: promos,
       currentMonth,
-      kpis: kpis as Record<string, number> || {},
+      kpis: kpis as Record<string, number | { label: string; revenue: number }[]> || {},
       revenueByCategory,
       underperforming,
       topRented,
@@ -195,7 +197,7 @@ export async function suggestPromos(req: AuthenticatedRequest, res: Response, ne
           createdBy: req.user?.id ?? null,
           currentMonth,
         });
-        return res.json({ ...result, suggestionId: saved.id });
+        return res.json({ ...result, suggestionId: saved.id, ...(saved.skipped ? { deduped: true } : {}) });
       } catch {
         // fall through — return suggestions without history
       }

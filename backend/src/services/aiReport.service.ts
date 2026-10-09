@@ -96,15 +96,75 @@ function excerptOf(report: string): string {
   return first.slice(0, 220);
 }
 
+// Content hash for the identical-save guard: normalized (CRLF + surrounding
+// whitespace) so byte-trivial differences don't defeat the comparison.
+export function contentHash(text: string): string {
+  const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+  return crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
+}
+
+// Newest local entry that actually has a body, with its content hash.
+// Cloud-only rows can't be compared without downloading every full report,
+// so the guard is local-only (merging still hides cross-device dupes).
+async function latestReportHash(dir: string): Promise<{ id: string; hash: string } | null> {
+  let files: string[];
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return null;
+  }
+  const entries: { id: string; createdAt: string; hash: string }[] = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    const id = f.slice(0, -5);
+    if (!ID_RE.test(id)) continue;
+    try {
+      const raw = await fs.readFile(path.join(dir, f), 'utf8');
+      const parsed = JSON.parse(raw) as Partial<AiReportFull>;
+      const body = String(parsed.report ?? '');
+      if (!body.trim()) continue;
+      entries.push({ id, createdAt: String(parsed.createdAt ?? ''), hash: contentHash(body) });
+    } catch {
+      continue;
+    }
+  }
+  if (!entries.length) return null;
+  entries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return { id: entries[0].id, hash: entries[0].hash };
+}
+
+async function readFullReport(dir: string, id: string): Promise<AiReportFull | null> {
+  try {
+    const raw = await fs.readFile(path.join(dir, `${id}.json`), 'utf8');
+    const parsed = JSON.parse(raw) as Partial<AiReportFull>;
+    if (!parsed.report) return null;
+    return toFull(id, parsed);
+  } catch {
+    return null;
+  }
+}
+
 export async function saveAiReport(input: {
   report: string;
   source?: string;
   provider?: string | null;
   model?: string | null;
   createdBy?: string | null;
-}): Promise<AiReportMeta> {
+}): Promise<AiReportMeta & { skipped?: boolean }> {
   const dir = getReportsDir();
   await fs.mkdir(dir, { recursive: true });
+  // Identical-save guard: when the new body hashes the same as the newest
+  // saved report, skip the write and hand back the existing entry so rapid
+  // re-clicks (and unchanged weekly auto-runs) don't stack duplicate rows.
+  const hash = contentHash(input.report);
+  const latest = await latestReportHash(dir);
+  if (latest && latest.hash === hash) {
+    const full = await readFullReport(dir, latest.id);
+    if (full) {
+      const { report: _omit, ...meta } = full;
+      return { ...meta, skipped: true };
+    }
+  }
   const id = reportFilename();
   const createdAt = new Date().toISOString();
   const full: AiReportFull = {

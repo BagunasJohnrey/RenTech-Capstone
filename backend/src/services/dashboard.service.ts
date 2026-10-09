@@ -1,6 +1,6 @@
 import { prisma } from '../config/database.js';
 import { TransactionStatus } from '@prisma/client';
-import { sma } from '../utils/sma.js';
+import { sma, smaCapped, mape } from '../utils/sma.js';
 import { cacheOrCompute, setDataCacheWarmer } from '../utils/ttlCache.js';
 import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
 
@@ -9,21 +9,59 @@ import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
 // return / payment pays the full query cost; with it, that visit is already
 // a warm cache hit. Self-registered here (dashboard.service is loaded by the
 // routes) so ttlCache doesn't have to import us (circular).
-setDataCacheWarmer(() => {
-  return Promise.allSettled([
-    getKpis(),
-    getTodayTasks(),
-    getInsights({}),
-    getForecast(3),
-    getInventoryAnalytics(),
-  ]).then(() => {});
-});
+//
+// The staff list queries (transactions + raw inventory full lists) ride the
+// same warmer: they share the clearDataCache() invalidation, so without a
+// refill the first Tasks/Dashboard visit after any mutation would pay the
+// full cold cost again. Warmed through the public functions so the real
+// cache keys (incl. the isHotPath/isFullList gates) are exercised, not
+// bypassed. Guest-catalog (effective-status) lists are NOT warmed — they
+// bypass the cache by design (see listItems).
+// Disabled under vitest: the warmer is fire-and-forget, so it races test
+// mocks (a warmer kicked off by clearDataCache consumes mockResolvedValueOnce
+// values meant for the request under test). Production/dev unaffected.
+const isTestEnv = (process.env.NODE_ENV ?? '') === 'test' || (process.env.VITEST ?? '') === 'true';
+if (!isTestEnv) {
+  setDataCacheWarmer(() => {
+    return Promise.allSettled([
+      getKpis(),
+      getTodayTasks(),
+      getInsights({}),
+      getForecast(3),
+      getInventoryAnalytics(),
+      getDataVersion(),
+      import('./transactions.service.js').then((m) => m.listTransactions({ role: 'Staff' })),
+      import('./inventory.service.js').then((m) =>
+        Promise.all([
+          m.listItems(undefined, undefined, undefined, { rawStatus: true, exclude: ['Deleted'] }),
+          m.listItems(undefined, undefined, undefined, { rawStatus: true }),
+        ])
+      ),
+    ]).then(() => {});
+  });
+}
 
 
 function applyPeriod(where: any, filter?: { start?: Date; end?: Date }) {
   if (filter?.start) where.createdAt = { gte: filter.start };
   if (filter?.end) where.createdAt = { ...where.createdAt, lt: filter.end };
   return where;
+}
+
+// Years that actually have bookings (drives the year picker so it never
+// offers decades of empty years). The current year is always included — new
+// bookings land there. One light indexed scan; cached like the rest.
+export async function getAvailableYears() {
+  return cacheOrCompute('years', async () => {
+    const rows = await prisma.transaction.findMany({ select: { createdAt: true } });
+    const years = new Set<number>();
+    for (const r of rows) {
+      const d = r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt);
+      if (!Number.isNaN(d.getTime())) years.add(d.getFullYear());
+    }
+    years.add(new Date().getFullYear());
+    return { years: [...years].sort((a, b) => a - b) };
+  });
 }
 
 export async function getKpis(filter?: { start?: Date; end?: Date }) {
@@ -38,6 +76,8 @@ export async function getKpis(filter?: { start?: Date; end?: Date }) {
 }
 
 async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
   const [
     activeRentals,
     overdueReturns,
@@ -45,6 +85,7 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     cancelledCount,
     damagedCount,
     periodRevenue,
+    todayRevenue,
     totalItems,
     availableItems,
   ] = await Promise.all([
@@ -54,9 +95,20 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     prisma.transaction.count({ where: { status: 'Cancelled' } }),
     prisma.inventoryItem.count({ where: { status: 'OutOfService' } }),
     filter?.start ? aggregateRevenueFrom(filter.start, filter.end) : aggregateMonthlyRevenue(),
-    prisma.inventoryItem.count(),
+    // "Collected today" pill (staff Today-at-a-Glance + admin Revenue
+    // Trend header): collected payments since midnight, same ledger
+    // definition as monthlyRevenue — not booked fees.
+    aggregateRevenueFrom(todayStart),
+    // Deleted excluded: archived items are not rentable stock, so dashboard
+    // totals ("N of M items free") and utilizationRate read on live stock.
+    prisma.inventoryItem.count({ where: { status: { not: 'Deleted' } } }),
     prisma.inventoryItem.count({ where: { status: 'Available' } }),
   ]);
+
+  // All-time collected across every period (drives the AI Insights Overall
+  // tab). Kept separate from monthlyRevenue so the dashboards that consume
+  // getKpis() unfiltered keep their current-month figure.
+  const totalRevenue = await aggregateRevenueFrom(new Date(0));
 
   let prevRevenue = 0;
   if (filter?.start) {
@@ -75,6 +127,34 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
   const inUseItems = totalItems - availableItems;
   const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
+  // Revenue trend: one collected-payments series over the same month
+  // buckets the admin Revenue Trend chart renders (last 6 months including
+  // the current one). Previously the chart summed booked rental fees from the
+  // transaction list client-side, which disagreed with this payments-based
+  // monthlyRevenue (e.g. card showed a Sept-heavy total while the chart
+  // spiked Oct on unpaid bookings). Same definition everywhere now.
+  const now = new Date();
+  const trendStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+  const trendEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const trendPayments = await prisma.payment.findMany({
+    where: {
+      status: { in: COLLECTED_PAYMENT_STATUS },
+      createdAt: { gte: trendStart, lt: trendEnd },
+    },
+    select: { amount: true, createdAt: true },
+  });
+  const revenueTrend = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const label = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+    const revenue = trendPayments
+      .filter(
+        (p) => p.createdAt.getFullYear() === d.getFullYear() && p.createdAt.getMonth() === d.getMonth()
+      )
+      .reduce((sum, p) => sum + p.amount, 0);
+    revenueTrend.push({ label, revenue });
+  }
+
   return {
     activeRentals,
     overdueReturns,
@@ -83,6 +163,9 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     damagedItems: damagedCount,
     monthlyRevenue: periodRevenue,
     prevMonthRevenue: prevRevenue,
+    todayRevenue,
+    revenueTrend,
+    totalRevenue,
     totalItems,
     availableItems,
     inUseItems,
@@ -93,28 +176,25 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
   };
 }
 
+// Revenue counts money actually collected, from EITHER ledger path: online
+// gateway rows ('succeeded', written by payments.ledger.ts) AND counter cash
+// rows ('completed', written by recordPayment). Booked-but-unpaid rental fees
+// are never revenue — the ledger is the only proof money moved.
+const COLLECTED_PAYMENT_STATUS = ['succeeded', 'completed'];
+
 async function aggregateRevenueBetween(start: Date, end: Date) {
   const paymentSum = await prisma.payment.aggregate({
     _sum: { amount: true },
-    where: { status: 'succeeded', createdAt: { gte: start, lt: end } },
+    where: { status: { in: COLLECTED_PAYMENT_STATUS }, createdAt: { gte: start, lt: end } },
   });
-  if (paymentSum._sum.amount) return paymentSum._sum.amount;
-  const txSum = await prisma.transaction.aggregate({
-    _sum: { rentalFee: true },
-    where: { status: { in: ['Active', 'Overdue', 'Returned'] }, createdAt: { gte: start, lt: end } },
-  });
-  return txSum._sum.rentalFee || 0;
+  return paymentSum._sum.amount || 0;
 }
 
 async function aggregateRevenueFrom(start: Date, end?: Date) {
-  const where: any = { status: 'succeeded', createdAt: { gte: start } };
+  const where: any = { status: { in: COLLECTED_PAYMENT_STATUS }, createdAt: { gte: start } };
   if (end) where.createdAt.lt = end;
   const paymentSum = await prisma.payment.aggregate({ _sum: { amount: true }, where });
-  if (paymentSum._sum.amount) return paymentSum._sum.amount;
-  const txWhere: any = { status: { in: ['Active', 'Overdue', 'Returned'] }, createdAt: { gte: start } };
-  if (end) txWhere.createdAt.lt = end;
-  const txSum = await prisma.transaction.aggregate({ _sum: { rentalFee: true }, where: txWhere });
-  return txSum._sum.rentalFee || 0;
+  return paymentSum._sum.amount || 0;
 }
 
 async function aggregateMonthlyRevenue() {
@@ -124,22 +204,12 @@ async function aggregateMonthlyRevenue() {
   const paymentSum = await prisma.payment.aggregate({
     _sum: { amount: true },
     where: {
-      status: 'succeeded',
+      status: { in: COLLECTED_PAYMENT_STATUS },
       createdAt: { gte: startOfMonth },
     },
   });
 
-  if (paymentSum._sum.amount) return paymentSum._sum.amount;
-
-  const transactions = await prisma.transaction.aggregate({
-    _sum: { rentalFee: true },
-    where: {
-      status: { in: ['Active', 'Overdue', 'Returned'] },
-      createdAt: { gte: startOfMonth },
-    },
-  });
-
-  return transactions._sum.rentalFee || 0;
+  return paymentSum._sum.amount || 0;
 }
 
 export async function getTodayTasks() {
@@ -157,37 +227,61 @@ async function getTodayTasksUncached() {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const dueToday = await prisma.transaction.findMany({
-    where: {
-      status: { in: ['Active', 'Overdue'] },
-      dueDate: { gte: today, lt: tomorrow },
-    },
-    include: {
-      customer: { select: { id: true, name: true, phone: true } },
-      item: { select: { id: true, name: true } },
-    },
-    orderBy: { dueDate: 'asc' },
-  });
+  // One batch: the old code awaited these serially (4+ back-to-back pooler
+  // round trips). All five are independent, so they fly together.
+  // Row shape is deliberately FULL (all tx scalars + customer/item names):
+  // the digest doubles as the Tasks first paint (~20 rows ≈ 20KB vs the
+  // 500-row /transactions list at ~330KB), so every action the queue offers
+  // (SMS, release with balance check, edit with phone/address, detail nav)
+  // works directly off digest rows — no partial-row hazards.
+  const taskRow = {
+    customer: { select: { id: true, name: true, phone: true, address: true } },
+    item: { select: { id: true, name: true, category: true } },
+  };
 
-  const overdue = await prisma.transaction.findMany({
-    where: {
-      OR: [{ status: 'Overdue' }, { status: 'Active', dueDate: { lt: today } }],
-    },
-    include: {
-      customer: { select: { id: true, name: true, phone: true } },
-      item: { select: { id: true, name: true } },
-    },
-    orderBy: { dueDate: 'asc' },
-  });
-
-  const inCleaning = await prisma.inventoryItem.count({
-    where: { status: 'Cleaning' },
-  });
+  const [dueToday, overdue, pendingPickup, inCleaning, todayRevenue] = await Promise.all([
+    prisma.transaction.findMany({
+      where: {
+        status: { in: ['Active', 'Overdue'] },
+        dueDate: { gte: today, lt: tomorrow },
+      },
+      include: taskRow,
+      orderBy: { dueDate: 'asc' },
+    }),
+    prisma.transaction.findMany({
+      where: {
+        OR: [{ status: 'Overdue' }, { status: 'Active', dueDate: { lt: today } }],
+      },
+      include: taskRow,
+      orderBy: { dueDate: 'asc' },
+    }),
+    // Ready-for-Pickup: booked but not yet handed over (no release/condition
+    // photo). Mirrors client isReleased(), so digest rows match the Tasks
+    // queue exactly.
+    prisma.transaction.findMany({
+      where: {
+        status: { in: ['Active', 'Reserved'] },
+        releasePhoto: null,
+        conditionPhoto: null,
+      },
+      include: taskRow,
+      orderBy: { rentalDate: 'asc' },
+    }),
+    prisma.inventoryItem.count({
+      where: { status: 'Cleaning' },
+    }),
+    // Collected-today pill (staff Today-at-a-Glance + admin Revenue Trend
+    // header): same ledger definition as monthlyRevenue. Staff never fetch
+    // /kpis, so it rides the today-digest both roles already load.
+    aggregateRevenueFrom(today),
+  ]);
 
   return {
     dueToday,
     overdue,
+    pendingPickup,
     inCleaning,
+    todayRevenue,
   };
 }
 
@@ -228,6 +322,38 @@ function forecastConfidence(historyMonths: number): 'low' | 'medium' | 'high' {
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
+
+// One honest series builder shared by the monthly and weekly forecast paths:
+// adaptive window (thin histories average over what exists), spike-capped
+// values with user-facing flags, and a backtested error band. Bars elsewhere
+// always show TRUE counts — only the average uses capped values.
+export function buildForecastSeries(counts: number[], requestedPeriod: number) {
+  const nNonZero = counts.filter((c) => c > 0).length;
+  const effectivePeriod = Math.max(1, Math.min(requestedPeriod, Math.max(1, nNonZero)));
+  const provisional = nNonZero < 3;
+  const { values, flags } = smaCapped(counts, effectivePeriod);
+
+  // Backtest: one-step-ahead residuals over the trailing min(8, n) points —
+  // each point predicted by the average known *before* it. Zero-actual
+  // periods are skipped (no division by zero).
+  const k = Math.min(8, counts.length);
+  const actual: number[] = [];
+  const predicted: (number | null)[] = [];
+  for (let i = Math.max(1, counts.length - k); i < counts.length; i++) {
+    actual.push(counts[i]);
+    predicted.push(values[i - 1] ?? null);
+  }
+  const errorPct = mape(actual, predicted);
+
+  // Expected-range band: ±error around each average point (null where the
+  // average itself is null; floored at zero — a rental count can never be
+  // negative). Rendered as the shaded polygon behind the line.
+  const e = errorPct === null ? 0 : errorPct / 100;
+  const lo = values.map((v) => (v === null ? null : Math.max(0, round1(v * (1 - e)))));
+  const hi = values.map((v) => (v === null ? null : round1(v * (1 + e))));
+
+  return { values, flags, errorPct, band: { lo, hi }, provisional, effectivePeriod };
+}
 
 // Flat-SMA projection: the last complete moving average carried forward.
 // Honest for an SMA model (it predicts "about the recent average") and the
@@ -275,6 +401,8 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       where: {
         status: { in: FORECAST_STATUSES },
         createdAt: { gte: firstMonth },
+        // Demand from archived items must not drive restock projections.
+        item: { status: { not: 'Deleted' } },
       },
       select: { createdAt: true, itemId: true },
     });
@@ -295,7 +423,7 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
         const end = i + 1 < weeks.length ? weeks[i + 1].start : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         return rows.filter(t => t.createdAt >= w.start && t.createdAt < end).length;
       });
-      const smaValues = sma(weeklyCounts, period);
+      const series = buildForecastSeries(weeklyCounts, period);
       const nextLabels = [1, 2, 3].map(i => {
         const d = new Date(weeks[weeks.length - 1].start);
         d.setDate(d.getDate() + i * 7);
@@ -306,14 +434,18 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       return {
         labels: weeks.map(w => w.label),
         counts: weeklyCounts,
-        sma: smaValues,
-        period,
+        sma: series.values,
+        flags: series.flags,
+        errorPct: series.errorPct,
+        band: series.band,
+        provisional: series.provisional,
+        period: series.effectivePeriod,
         granularity,
-        projections: projectForward(smaValues, weeks.map(w => w.label), nextLabels),
+        projections: projectForward(series.values, weeks.map(w => w.label), nextLabels),
         byCategory: [],
         historyMonths,
         confidence,
-        confidenceNote: `Based on ${historyMonths} month${historyMonths === 1 ? '' : 's'} of history · ${confidence} confidence`,
+        confidenceNote: `Last ${FORECAST_WEEKS} weeks · ${confidence} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
       };
     }
 
@@ -321,10 +453,10 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       rows.filter(t => t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1).length
     );
 
-    const smaValues = sma(monthlyCounts, period);
+    const series = buildForecastSeries(monthlyCounts, period);
     const last = months[months.length - 1];
     const projections = projectForward(
-      smaValues,
+      series.values,
       months.map(m => m.label),
       last ? nextMonthLabels(last.year, last.month, FORECAST_HORIZON).map(x => x.label) : []
     );
@@ -367,14 +499,18 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
     return {
       labels: months.map(m => m.label),
       counts: monthlyCounts,
-      sma: smaValues,
-      period,
+      sma: series.values,
+      flags: series.flags,
+      errorPct: series.errorPct,
+      band: series.band,
+      provisional: series.provisional,
+      period: series.effectivePeriod,
       granularity,
       projections,
       byCategory,
       historyMonths: months.length,
       confidence: forecastConfidence(months.length),
-      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${forecastConfidence(months.length)} confidence`,
+      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${forecastConfidence(months.length)} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
     };
   });
 }
@@ -389,20 +525,34 @@ export async function getInsights(filter?: { start?: Date; end?: Date; past?: bo
 }
 
 async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }) {
-  const txWhere: any = { status: { in: ['Active', 'Returned', 'Overdue'] } };
-  if (filter?.start) txWhere.createdAt = { gte: filter.start };
-  if (filter?.end) txWhere.createdAt = { ...txWhere.createdAt, lt: filter.end };
+  // Window by RENTAL date (when the item is out), not creation date — a booking
+  // made in September for October belongs to October. Reserved counts too: a
+  // locked upcoming rental is real demand for the period (Cancelled stays out).
+  // Revenue below is payments-based and unaffected by this query's shape.
+  const txWhere: any = { status: { in: ['Active', 'Returned', 'Overdue', 'Reserved'] } };
+  if (filter?.start) txWhere.rentalDate = { gte: filter.start };
+  if (filter?.end) txWhere.rentalDate = { ...txWhere.rentalDate, lt: filter.end };
 
   // Light select — the previous `include: { transactions }` pulled every item
   // plus its FULL transaction history into memory just to count them.
+  // Deleted items are excluded everywhere here: archived pieces are not
+  // rentable stock, so they must not inflate category totals, appear in
+  // top/underperforming lists, or show up as dead "0% utilised" rows on the
+  // Category Performance card. OutOfService stays IN (still boutique-owned
+  // stock, e.g. damaged pieces awaiting repair — the restock rules need them
+  // for accurate free-unit counts); only Deleted is terminal-archived.
   const items = await prisma.inventoryItem.findMany({
+    where: { status: { not: 'Deleted' } },
     select: { id: true, name: true, category: true },
   });
 
   // Everything below is derived from this one transaction query:
   // per-item rental counts, revenue by month, and revenue by category.
+  // Transactions on Deleted items are excluded too — otherwise an archived
+  // item's PAST rentals would still credit its category with "rented" units
+  // and revenue that no longer reflects rentable stock.
   const txs = await prisma.transaction.findMany({
-    where: txWhere,
+    where: { ...txWhere, item: { status: { not: 'Deleted' } } },
     select: {
       itemId: true,
       rentalFee: true,
@@ -451,26 +601,28 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     ? months.filter(m => new Date(m.year, m.month - 1, 1) >= filter.start!)
     : months;
 
-  // Revenue prefers succeeded payments when any exist (accurate cash-in), else
-  // falls back to rental fees. Payments are fetched once and bucketed in JS —
-  // the old per-month aggregate loop is gone (6+ sequential round trips).
-  const paymentWhere: any = { status: 'succeeded' };
+  // Revenue is collected payments only (both ledger paths — see
+  // COLLECTED_PAYMENT_STATUS), bucketed by payment date in JS. Category
+  // revenue rides the same rows via the payment's transaction item, so every
+  // revenue figure on this endpoint shares one definition.
+  const paymentWhere: any = { status: { in: COLLECTED_PAYMENT_STATUS } };
   if (filter?.start) paymentWhere.createdAt = { gte: filter.start };
   if (filter?.end) paymentWhere.createdAt = { ...paymentWhere.createdAt, lt: filter.end };
   const payments = await prisma.payment.findMany({
     where: paymentWhere,
-    select: { amount: true, createdAt: true },
+    select: {
+      amount: true,
+      createdAt: true,
+      transaction: { select: { item: { select: { category: true } } } },
+    },
     orderBy: { createdAt: 'asc' },
   });
-  const hasPayments = payments.length > 0;
 
   const inMonth = (d: Date, m: { year: number; month: number }) =>
     d.getFullYear() === m.year && d.getMonth() === m.month - 1;
 
   const revenueByMonth = filteredMonths.map(m => {
-    const revenue = hasPayments
-      ? payments.filter(p => inMonth(p.createdAt, m)).reduce((sum, p) => sum + p.amount, 0)
-      : txs.filter(t => inMonth(t.createdAt, m)).reduce((sum, t) => sum + (t.rentalFee || 0), 0);
+    const revenue = payments.filter(p => inMonth(p.createdAt, m)).reduce((sum, p) => sum + p.amount, 0);
     return { label: m.label, revenue };
   });
 
@@ -484,23 +636,21 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     const y = filter.start.getFullYear();
     const mo = filter.start.getMonth();
     const inThisMonth = (d: Date) => d.getFullYear() === y && d.getMonth() === mo;
-    const inRange = hasPayments
-      ? payments.filter(p => inThisMonth(p.createdAt))
-      : txs.filter(t => inThisMonth(t.createdAt));
+    const inRange = payments.filter(p => inThisMonth(p.createdAt));
     const weekOf = (day: number) => Math.min(4, Math.floor((day - 1) / 7)); // 0..4
     const buckets = [0, 0, 0, 0, 0];
     for (const r of inRange) {
-      const d = (r as any).createdAt as Date;
-      buckets[weekOf(d.getDate())] += hasPayments ? (r as any).amount : ((r as any).rentalFee || 0);
+      const d = r.createdAt as Date;
+      buckets[weekOf(d.getDate())] += r.amount;
     }
     revenueByWeek = buckets.map((revenue, i) => ({ label: `Wk ${i + 1}`, revenue }));
   }
 
   const revenueByCategory: Record<string, number> = {};
-  for (const t of txs) {
-    const cat = t.item?.category;
+  for (const p of payments) {
+    const cat = p.transaction?.item?.category;
     if (!cat) continue;
-    revenueByCategory[cat] = (revenueByCategory[cat] || 0) + (t.rentalFee || 0);
+    revenueByCategory[cat] = (revenueByCategory[cat] || 0) + p.amount;
   }
 
   return {
@@ -518,6 +668,38 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     totalItems: items.length,
     totalRented: rentedItemIds.size,
   };
+}
+
+// Tiny version fingerprint for cross-device freshness: the frontend polls
+// this every ~15s (~100 bytes) and only refetches the heavy lists when the
+// fingerprint moves — instead of re-pulling ~400KB on a timer. Two cheap
+// aggregates (indexed MAX + COUNTs) instead of full row scans.
+// Cached alongside everything else: ANY mutation clears it via
+// clearDataCache(), including the 1-min scheduler flag flips (overdue
+// status changes move maxTx). Counts ride along so the UI can decide
+// whether a change even affects the visible tab (e.g. inventory-only
+// change while on Tasks still refetches — cheap correctness over cleverness).
+export async function getDataVersion() {
+  return cacheOrCompute('dataVersion', async () => {
+    const [maxTx, txCount, maxItem, itemCount] = await Promise.all([
+      prisma.transaction.aggregate({ _max: { updatedAt: true } }),
+      prisma.transaction.count(),
+      prisma.inventoryItem.aggregate({ _max: { updatedAt: true } }),
+      prisma.inventoryItem.count(),
+    ]);
+    const version = Math.max(
+      maxTx._max.updatedAt?.getTime() ?? 0,
+      maxItem._max.updatedAt?.getTime() ?? 0,
+    );
+    return {
+      version,
+      txCount,
+      itemCount,
+      // ISO for debugging (which write moved the needle); numeric `version`
+      // is what the client compares.
+      at: new Date(version || Date.now()).toISOString(),
+    };
+  });
 }
 
 // One cached round trip for the entire AI Insights page. The frontend used to

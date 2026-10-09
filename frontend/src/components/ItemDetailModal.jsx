@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, AlertCircle, CheckCircle2, Search, CalendarDays } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from './Toast';
+import BottomSheet from './BottomSheet';
 import ItemImage from './ItemImage';
 import BookingCalendar from './BookingCalendar';
 import { getSaleInfo } from './ItemCard';
@@ -58,12 +59,11 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
   if (!item) return null;
   const sale = getSaleInfo(item);
 
+  // Bottom-sheet shell (same as the transaction sheet): bottom-anchored on
+  // mobile with swipe-down-to-close, centered card on desktop. The body
+  // carries data-sheet-scroll so a downward drag mid-scroll stays a scroll.
   return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-300 max-h-[90vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <BottomSheet onClose={onClose} labelledby="dialog-title-item-detail">
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-gray-50/50">
           <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0">
@@ -71,14 +71,14 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</p>
-            <h3 className="font-bold text-gray-900 truncate">{item.name}</h3>
+            <h3 id="dialog-title-item-detail" className="font-bold text-gray-900 truncate">{item.name}</h3>
           </div>
           <button onClick={onClose} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors shrink-0">
             <X size={18} />
           </button>
         </div>
 
-        <div className="overflow-y-auto p-4 space-y-4">
+        <div data-sheet-scroll className="overflow-y-auto p-4 space-y-4 min-h-0">
           <div className="flex items-end gap-2">
             {sale.active ? (
               <>
@@ -101,14 +101,15 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               <CalendarDays size={14} className="text-gray-400" />
               <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Availability</span>
             </div>
+            {/* Loading skeleton mirrors the Fully Available box below
+                (icon + two lines, same padding) so the card keeps its height
+                when data lands — the old 28-cell grid was far taller and the
+                modal visibly jumped on every open. */}
             {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-1/3" />
-                <div className="grid grid-cols-7 gap-1.5">
-                  {Array.from({ length: 28 }).map((_, i) => (
-                    <Skeleton key={i} className="h-8 rounded-lg" />
-                  ))}
-                </div>
+              <div className="bg-emerald-50/50 rounded-xl py-4 text-center space-y-2" aria-label="Loading availability">
+                <Skeleton className="h-5 w-5 rounded-full mx-auto" />
+                <Skeleton className="h-4 w-32 mx-auto" />
+                <Skeleton className="h-3 w-44 mx-auto" />
               </div>
             ) : blockedRanges.length === 0 ? (
               <div className="bg-emerald-50/50 rounded-xl py-4 text-center">
@@ -155,7 +156,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-100">
+        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-gray-100 shrink-0">
           {guest ? (
             <button onClick={onGuestBook}
               className="w-full py-3 rounded-full bg-[#bf4a53] text-white font-bold hover:bg-[#a63f47] transition-colors">
@@ -172,7 +173,6 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { HelpCircle, LogOut, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { resolveAvatarUrl } from '../utils/images';
 
 // Desktop sidebar collapse preference (persisted; mobile is unaffected — the
 // sidebar is hidden below md and replaced by the bottom nav).
@@ -9,7 +10,7 @@ const COLLAPSED_KEY = 'rentech_sidebar_collapsed';
 // toggle always wins and is what gets persisted.
 const RAIL_BREAKPOINT = 1024;
 
-export default function Sidebar({ role, activeTab, setActiveTab, navItems, onRequestLogout, customerName, taskBadge = 0 }) {
+export default function Sidebar({ role, activeTab, setActiveTab, navItems, onRequestLogout, customerName, avatarPath, avatarName, taskBadge = 0 }) {
   const [collapsed, setCollapsed] = useState(() => {
     try {
       const saved = localStorage.getItem(COLLAPSED_KEY);
@@ -27,14 +28,24 @@ export default function Sidebar({ role, activeTab, setActiveTab, navItems, onReq
   };
 
   const displayName = role === 'Customer' ? (customerName || 'Customer') : role;
+  // Signed-in user's photo; falls back to their initial on the brand
+  // gradient when no photo is set yet.
+  const avatarUrl = resolveAvatarUrl(avatarPath);
+  const initial = ((avatarName || displayName || '?').trim()[0] || '?').toUpperCase();
   const mainNav = navItems.filter(i => i.id !== 'Help');
   const isActiveFn = (id) => activeTab === id || (id === 'Home' && activeTab === 'Dashboard');
 
   return (
     <aside className={`hidden md:flex flex-col shrink-0 bg-white/80 backdrop-blur-xl border-r border-gray-100/50 sticky top-0 h-screen z-20 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
-      {/* Logo + role + collapse toggle */}
+      {/* User identity + collapse toggle */}
       <div className={`border-b border-gray-100/50 flex items-center gap-3 ${collapsed ? 'flex-col px-2 py-6 gap-2' : 'p-8'}`}>
-        <img src="/RenTech.png" alt="" className="w-10 h-10 rounded-full object-cover border-2 border-gray-200 shrink-0" />
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="Profile photo" className="w-10 h-10 rounded-full object-cover border-2 border-gray-200 shrink-0" />
+        ) : (
+          <span aria-hidden="true" className="w-10 h-10 rounded-full bg-gradient-to-br from-[#bf4a53] to-[#d4636d] text-white text-base font-extrabold flex items-center justify-center shrink-0">
+            {initial}
+          </span>
+        )}
         {!collapsed && (
           <div className="min-w-0 flex-1">
             <h1 className="font-bold text-sm tracking-tight text-gray-900 leading-tight break-words">{displayName}</h1>

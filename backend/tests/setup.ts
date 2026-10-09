@@ -298,6 +298,7 @@ vi.mock('../src/config/database.js', () => {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
+      aggregate: vi.fn().mockResolvedValue({ _max: { updatedAt: null } }),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       delete: vi.fn().mockResolvedValue({ id: 1 }),
       findFirst: vi.fn().mockResolvedValue(null),
@@ -307,6 +308,7 @@ vi.mock('../src/config/database.js', () => {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
+      groupBy: vi.fn().mockResolvedValue([]),
       aggregate: vi.fn().mockResolvedValue({
         _count: { id: 0 },
         _sum: { rentalFee: 0, totalPaid: 0, latePenalty: 0, damageFee: 0 },
@@ -331,9 +333,11 @@ vi.mock('../src/config/database.js', () => {
     },
     notification: {
       findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
       findUnique: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'notif-new', ...args.data })),
+      createMany: vi.fn().mockImplementation((args) => Promise.resolve({ count: args.data?.length ?? 0 })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -361,6 +365,7 @@ vi.mock('../src/config/database.js', () => {
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'promo-new', ...args.data })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      delete: vi.fn().mockResolvedValue({ id: 'promo-deleted' }),
     },
     smsTemplate: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -378,7 +383,8 @@ vi.mock('../src/config/database.js', () => {
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    $transaction: (fn: any) => Promise.resolve(fn(mockPrisma)),
+    // vi.fn so tests can assert the ledger actually wrapped its writes.
+    $transaction: vi.fn((fn: any) => Promise.resolve(fn(mockPrisma))),
     $disconnect: vi.fn(),
   };
 

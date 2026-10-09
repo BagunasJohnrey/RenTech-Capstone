@@ -38,7 +38,19 @@ export function itemLabel(i) {
 }
 
 // Default staff-composed overdue nudge. Shown pre-filled in the manual-SMS
-// modal so staff can tweak it per customer before sending.
+// modal so staff can tweak it per customer before sending. Mirrors the
+// `late_return` template: balance in ASCII PHP (never the ₱ glyph), no
+// per-day penalty rates, 1 segment.
 export function defaultOverdueMessage(tx) {
-  return `Hi ${customerLabel(tx?.customer)}, your rental of ${itemLabel(tx?.item)} is now overdue. Please return immediately to minimize penalties. Thank you!`;
+  const name = customerLabel(tx?.customer);
+  const item = itemLabel(tx?.item);
+  const due = new Date(tx?.dueDate || tx?.date);
+  const days = !isNaN(due.getTime())
+    ? Math.max(1, Math.ceil((Date.now() - due.getTime()) / 86400000))
+    : 1;
+  const bal = Number(tx?.balance);
+  const balPart = Number.isFinite(bal)
+    ? ` Balance: PHP ${bal.toLocaleString('en-PH', { maximumFractionDigits: 2 })}.`
+    : '';
+  return `Hi ${name}, your ${item} rental is overdue (${days} day(s)).${balPart} Please return soon. Thank you!`;
 }

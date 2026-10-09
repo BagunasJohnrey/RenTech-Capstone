@@ -38,6 +38,63 @@ describe('POST /api/transactions', () => {
     expect(res.body.rentalFee).toBe(5000);
   });
 
+  it('writes a completed Payment row for staff cash collected at booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, downpaymentCash: true });
+
+    expect(res.status).toBe(201);
+    // The cash is money in hand: completed row + totalPaid seeded, so revenue
+    // counts it and later collections don't re-collect it.
+    expect(prisma.payment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amount: 1000, method: 'cash', status: 'completed' }),
+      })
+    );
+    expect(res.body.totalPaid).toBe(1000);
+    expect(res.body.balance).toBe(4000);
+  });
+
+  it('writes no Payment row without the cash flag (gateway credits it later)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
+
+    expect(res.status).toBe(201);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(res.body.totalPaid).toBe(0);
+  });
+
+  it('ignores downpaymentCash on customer bookings (webhook is the only credit)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, downpaymentCash: true });
+
+    expect(res.status).toBe(201);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
   // The prisma transaction.create mock returns { id, ...data } with no
   // included item/customer, so the notification/SMS blocks (which read
   // transaction.item.name) need a fuller shape stubbed per-test.
@@ -229,7 +286,7 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-rel', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
-      rentalFee: 5000, balance: 4000, status: 'Reserved',
+      rentalFee: 5000, totalPaid: 5000, balance: 0, status: 'Reserved',
       assistedById: 'staff-id-456', releasedById: null,
       item: { id: 1, name: 'Test', status: 'Reserved' },
     });
@@ -248,6 +305,25 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     // assistedById must never be part of the release update (history preserved).
     const updateData = vi.mocked(prisma.transaction.update).mock.calls.at(-1)?.[0]?.data as Record<string, unknown>;
     expect(updateData).not.toHaveProperty('assistedById');
+  });
+
+  it('release refuses when balance is outstanding', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-rel-unpaid', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
+      rentalFee: 5000, totalPaid: 1000, balance: 4000, status: 'Reserved',
+      assistedById: 'staff-id-456', releasedById: null,
+      item: { id: 1, name: 'Test', status: 'Reserved' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-rel-unpaid/release')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ releasePhoto: 'rental/tx-rel-unpaid/release.jpg' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message || res.body.error || JSON.stringify(res.body)).toMatch(/payment|balance/i);
   });
 
   it('GET /transactions/:id/audits returns the timeline with staff names', async () => {
@@ -284,7 +360,7 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-rerelease', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
-      rentalFee: 5000, balance: 4000, status: 'Active',
+      rentalFee: 5000, totalPaid: 5000, balance: 0, status: 'Active',
       assistedById: 'staff-id-456', releasedById: 'staff-id-456',
       releasePhoto: 'rental/tx-rerelease/release-old.jpg',
       item: { id: 1, name: 'Test', status: 'Rented' },
@@ -379,12 +455,12 @@ describe('GET /api/transactions/:id', () => {
 });
 
 describe('PUT /api/transactions/:id/return', () => {
-  it('should process return', async () => {
+  it('should process return when fully paid', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date('2026-07-10'), dueDate: new Date('2026-07-13'),
-      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
       latePenalty: 0, damageFee: 0, status: 'Active',
       item: { id: 1, name: 'Test', status: 'Rented' },
     });
@@ -398,12 +474,31 @@ describe('PUT /api/transactions/:id/return', () => {
     expect(res.body.fees).toBeDefined();
   });
 
+  it('should refuse return when balance is outstanding', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-unpaid', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date('2026-07-10'), dueDate: new Date('2026-07-13'),
+      rentalFee: 5000, downpayment: 1000, totalPaid: 1000, balance: 4000,
+      latePenalty: 0, damageFee: 0, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Rented' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-unpaid/return')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ returnDate: '2026-07-14', isDamaged: false });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message || res.body.error || JSON.stringify(res.body)).toMatch(/balance/i);
+  });
+
   it('should waive late penalty (late fees removed)', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-2', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date('2026-07-01'), dueDate: new Date('2026-07-04'),
-      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
       latePenalty: 0, damageFee: 0, status: 'Active',
       item: { id: 1, name: 'Test', status: 'Rented' },
     });
@@ -423,7 +518,7 @@ describe('PUT /api/transactions/:id/return', () => {
     prisma.transaction.findUnique.mockResolvedValueOnce({
       id: 'tx-4', itemId: 1, customerId: 'customer-id-111',
       rentalDate: new Date('2026-07-01'), dueDate: new Date('2026-07-04'),
-      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
       latePenalty: 0, damageFee: 0, status: 'Active',
       item: { id: 1, name: 'Test', status: 'Rented' },
     });
@@ -452,6 +547,25 @@ describe('PUT /api/transactions/:id/return', () => {
       .send({ returnDate: '2026-07-14', isDamaged: false });
 
     expect(res.status).toBe(400);
+  });
+
+  it('should reject return on an unreleased (Reserved) rental', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-reserved', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
+      latePenalty: 0, damageFee: 0, status: 'Reserved',
+      item: { id: 1, name: 'Test', status: 'Reserved' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-reserved/return')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ returnDate: '2026-07-14', isDamaged: false });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message || res.body.error || JSON.stringify(res.body)).toMatch(/release/i);
   });
 
   it('should reject for customer', async () => {
@@ -502,6 +616,67 @@ describe('PUT /api/transactions/:id/cancel', () => {
       .set('Authorization', 'Bearer staff-token');
 
     expect(res.status).toBe(200);
+  });
+
+  it('keeps the item Reserved when a second live hold remains', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Reserved',
+      item: { id: 1, name: 'Test', status: 'Reserved' },
+    });
+    prisma.transaction.findFirst.mockResolvedValue({ id: 'tx-2', status: 'Reserved' });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-1/cancel')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ itemId: 1, itemStatus: 'Reserved' });
+    expect(prisma.inventoryItem.update).not.toHaveBeenCalled();
+  });
+
+  it('frees the item to Available when no other hold remains', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Rented' },
+    });
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    const res = await request(app)
+      .put('/api/transactions/tx-1/cancel')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ itemId: 1, itemStatus: 'Available' });
+    expect(prisma.inventoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1 },
+        data: expect.objectContaining({ status: 'Available', outOfServiceReason: null }),
+      })
+    );
+  });
+
+  it('never touches Cleaning/OutOfService items on cancel', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'tx-1', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Active',
+      item: { id: 1, name: 'Test', status: 'Cleaning' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-1/cancel')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ itemStatus: 'Cleaning' });
+    expect(prisma.inventoryItem.update).not.toHaveBeenCalled();
   });
 
   // SECURITY: a customer may only REQUEST a cancellation (with a written
@@ -708,6 +883,42 @@ describe('GET /api/dashboard/kpis', () => {
     expect(res.body).toHaveProperty('activeRentals');
     expect(res.body).toHaveProperty('overdueReturns');
     expect(res.body).toHaveProperty('monthlyRevenue');
+    expect(res.body).toHaveProperty('totalRevenue');
+  });
+
+  it('should include a collected-payments revenueTrend (6 months) + todayRevenue', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // Unique period window → unique cache key, so this test always computes
+    // fresh instead of hitting the `kpis:all` entry warmed by the test above.
+    const now = new Date();
+    const thisMonth = now.getMonth() + 1;
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { amount: 1500, createdAt: new Date() },
+    ]);
+
+    const res = await request(app)
+      .get(`/api/dashboard/kpis?period=monthly&year=${now.getFullYear()}&month=${thisMonth}`)
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('todayRevenue');
+    expect(typeof res.body.todayRevenue).toBe('number');
+    expect(Array.isArray(res.body.revenueTrend)).toBe(true);
+    expect(res.body.revenueTrend).toHaveLength(6);
+    for (const m of res.body.revenueTrend) {
+      expect(m).toHaveProperty('label');
+      expect(typeof m.revenue).toBe('number');
+    }
+    // The trend query targets collected ledger rows only (never booked fees).
+    const trendCall = (prisma.payment.findMany as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c?.[0]?.select?.amount === true && Array.isArray(c?.[0]?.where?.status?.in)
+    );
+    expect(trendCall).toBeTruthy();
+    expect(trendCall[0].where.status.in).toEqual(expect.arrayContaining(['succeeded', 'completed']));
+    // This month's collected payment lands in the current-month bucket.
+    const currentLabel = now.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+    const current = res.body.revenueTrend.find((m: { label: string }) => m.label === currentLabel);
+    expect(current?.revenue).toBe(1500);
   });
 
   it('should reject for customer', async () => {
@@ -722,6 +933,11 @@ describe('GET /api/dashboard/kpis', () => {
 describe('GET /api/dashboard/today', () => {
   it('should return today tasks for staff', async () => {
     const { prisma } = await import('../src/config/database.js');
+    // The 'today' digest is cached server-side and earlier tests (via the
+    // mutation cache-warmer) may have filled it — clear so this test's mocks
+    // drive a fresh compute and the query-shape assertions below are real.
+    const { clearDataCache } = await import('../src/utils/ttlCache.js');
+    clearDataCache();
     prisma.transaction.findMany.mockResolvedValue([]);
     prisma.inventoryItem.count.mockResolvedValueOnce(0);
 
@@ -733,6 +949,18 @@ describe('GET /api/dashboard/today', () => {
     expect(res.body).toHaveProperty('dueToday');
     expect(res.body).toHaveProperty('overdue');
     expect(res.body).toHaveProperty('inCleaning');
+    // First-paint fast path: the digest carries the pickup queue + revenue
+    // so Tasks paints before the 500-row list lands.
+    expect(res.body).toHaveProperty('pendingPickup');
+    expect(Array.isArray(res.body.pendingPickup)).toBe(true);
+    expect(res.body).toHaveProperty('todayRevenue');
+    // Digest rows are FULL records (all scalars + customer/item names) —
+    // every queue action works directly off them.
+    const pickupCall = (prisma.transaction.findMany as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => Array.isArray(c?.[0]?.where?.status?.in) && c[0].where.status.in.includes('Reserved') && 'releasePhoto' in (c[0].where ?? {})
+    );
+    expect(pickupCall).toBeTruthy();
+    expect(pickupCall[0].include?.customer?.select).toMatchObject({ id: true, name: true, phone: true, address: true });
   });
 
   it('should reject for customer', async () => {
@@ -741,6 +969,43 @@ describe('GET /api/dashboard/today', () => {
       .set('Authorization', 'Bearer customer-token');
 
     expect(res.status).toBe(403);
+  });
+});
+
+describe('GET /api/dashboard/version', () => {
+  it('should return a tiny freshness fingerprint for staff', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // The mutation cache-warmer is disabled under vitest (see
+    // dashboard.service), so Once mocks below are consumed only by this
+    // request.
+    prisma.transaction.aggregate.mockResolvedValueOnce({ _max: { updatedAt: new Date('2026-10-07T01:00:00Z') } });
+    prisma.transaction.count.mockResolvedValueOnce(290);
+    prisma.inventoryItem.aggregate.mockResolvedValueOnce({ _max: { updatedAt: new Date('2026-10-06T12:00:00Z') } });
+    prisma.inventoryItem.count.mockResolvedValueOnce(116);
+
+    const res = await request(app)
+      .get('/api/dashboard/version')
+      .set('Authorization', 'Bearer staff-token');
+
+    expect(res.status).toBe(200);
+    // Version = max of the two table watermarks (tx wins here).
+    expect(res.body.version).toBe(new Date('2026-10-07T01:00:00Z').getTime());
+    expect(res.body.txCount).toBe(290);
+    expect(res.body.itemCount).toBe(116);
+    expect(typeof res.body.at).toBe('string');
+  });
+
+  it('should reject for customer', async () => {
+    const res = await request(app)
+      .get('/api/dashboard/version')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.status).toBe(403);
+  });
+
+  it('should reject when unauthenticated', async () => {
+    const res = await request(app).get('/api/dashboard/version');
+    expect(res.status).toBe(401);
   });
 });
 

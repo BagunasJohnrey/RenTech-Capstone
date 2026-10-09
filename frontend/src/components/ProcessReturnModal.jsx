@@ -145,8 +145,11 @@ const handleRadioKeys = (e) => {
   const invalidFee = parsedFee !== null && (!Number.isFinite(parsedFee) || parsedFee < 0);
   const effectiveFee = isDamaged ? (invalidFee ? 0 : (parsedFee ?? defaultFee)) : 0;
   const totalFees = effectiveFee;
+  // Return is locked until the rental is fully paid (backend enforces too).
+  const outstandingBalance = Math.max(0, Number(transaction?.balance ?? 0) || 0);
+  const isUnpaid = outstandingBalance > 0;
 
-  const canConfirm = (!isDamaged || reasonText) && !invalidFee && !submitting;
+  const canConfirm = (!isDamaged || reasonText) && !invalidFee && !submitting && !isUnpaid;
 
   useEffect(() => () => { if (returnPhotoUrl) URL.revokeObjectURL(returnPhotoUrl); }, [returnPhotoUrl]);
 
@@ -239,6 +242,12 @@ const handleRadioKeys = (e) => {
         </div>
 
         <div ref={bodyRef} className="p-5 sm:p-6 space-y-5 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+          {isUnpaid && (
+            <div className="flex items-start gap-2 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-2xl p-3.5">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+              <span>Outstanding balance of ₱{outstandingBalance.toLocaleString()} — record the payment first. Return unlocks once fully paid.</span>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-3.5 bg-gray-50 rounded-2xl">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5">Customer</p>

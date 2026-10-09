@@ -92,6 +92,50 @@ function excerptOf(suggestions: PromoSuggestion): string {
   return parts.join(', ') || 'No suggestions';
 }
 
+// Same identical-save guard as aiReport.service (see there): new suggestions
+// whose canonical JSON hashes the same as the newest saved entry reuse that
+// entry instead of stacking a duplicate row.
+function suggestionHash(suggestions: PromoSuggestion): string {
+  return crypto.createHash('sha256').update(JSON.stringify(suggestions ?? {}), 'utf8').digest('hex');
+}
+
+async function latestSuggestionHash(dir: string): Promise<{ id: string; hash: string } | null> {
+  let files: string[];
+  try {
+    files = await fs.readdir(dir);
+  } catch {
+    return null;
+  }
+  const entries: { id: string; createdAt: string; hash: string }[] = [];
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    const id = f.slice(0, -5);
+    if (!ID_RE.test(id)) continue;
+    try {
+      const raw = await fs.readFile(path.join(dir, f), 'utf8');
+      const parsed = JSON.parse(raw) as Partial<PromoSuggestionFull>;
+      if (!parsed.suggestions) continue;
+      entries.push({ id, createdAt: String(parsed.createdAt ?? ''), hash: suggestionHash(parsed.suggestions) });
+    } catch {
+      continue;
+    }
+  }
+  if (!entries.length) return null;
+  entries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return { id: entries[0].id, hash: entries[0].hash };
+}
+
+async function readFullSuggestion(dir: string, id: string): Promise<PromoSuggestionFull | null> {
+  try {
+    const raw = await fs.readFile(path.join(dir, `${id}.json`), 'utf8');
+    const parsed = JSON.parse(raw) as Partial<PromoSuggestionFull>;
+    if (!parsed.suggestions) return null;
+    return toFull(id, parsed);
+  } catch {
+    return null;
+  }
+}
+
 export async function savePromoSuggestion(input: {
   suggestions: PromoSuggestion;
   source?: string;
@@ -99,9 +143,18 @@ export async function savePromoSuggestion(input: {
   model?: string | null;
   createdBy?: string | null;
   currentMonth?: string;
-}): Promise<PromoSuggestionMeta> {
+}): Promise<PromoSuggestionMeta & { skipped?: boolean }> {
   const dir = getSuggestionsDir();
   await fs.mkdir(dir, { recursive: true });
+  const hash = suggestionHash(input.suggestions);
+  const latest = await latestSuggestionHash(dir);
+  if (latest && latest.hash === hash) {
+    const full = await readFullSuggestion(dir, latest.id);
+    if (full) {
+      const { suggestions: _omit, ...meta } = full;
+      return { ...meta, skipped: true };
+    }
+  }
   const id = suggestionFilename();
   const createdAt = new Date().toISOString();
   const full: PromoSuggestionFull = {

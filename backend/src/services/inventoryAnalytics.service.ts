@@ -2,6 +2,7 @@ import { prisma } from '../config/database.js';
 import { cacheOrCompute } from '../utils/ttlCache.js';
 
 type TxShape = {
+  id: string;
   itemId: number;
   rentalFee: number;
   rentalDate: Date;
@@ -23,16 +24,25 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
       if (startDate) txWhere.rentalDate.gte = startDate;
       if (endDate) txWhere.rentalDate.lt = endDate;
     }
+    // Transactions on Deleted items excluded (same rule as the items query):
+    // an archived piece's past rentals must not credit it with utilisation
+    // or revenue on the performance tables.
+    txWhere.item = { status: { not: 'Deleted' } };
 
     // Light item select + one transaction query, grouped in JS — the old
     // `include: { transactions }` loaded every item's full history into memory.
+    // Deleted items excluded (same rule as dashboard insights): archived pieces
+    // are not rentable stock and must not appear as 0%-utilisation rows or
+    // dilute the averages.
     const items = await prisma.inventoryItem.findMany({
+      where: { status: { not: 'Deleted' } },
       select: { id: true, name: true, category: true, price: true, status: true, image: true },
     });
 
     const txs = await prisma.transaction.findMany({
       where: txWhere,
       select: {
+        id: true,
         itemId: true,
         rentalFee: true,
         rentalDate: true,
@@ -49,6 +59,25 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
       const list = txsByItem.get(t.itemId);
       if (list) list.push(t);
       else txsByItem.set(t.itemId, [t]);
+    }
+
+    // Revenue is money actually collected (gateway 'succeeded' + counter
+    // 'completed' rows) attributed to the rented item — never the booked fee.
+    const paidByItem = new Map<number, number>();
+    if (txs.length > 0) {
+      const payments = await prisma.payment.findMany({
+        where: {
+          status: { in: ['succeeded', 'completed'] },
+          transactionId: { in: txs.map(t => t.id) },
+        },
+        select: { amount: true, transactionId: true },
+      });
+      const txItemById = new Map(txs.map(t => [t.id, t.itemId]));
+      for (const p of payments) {
+        const itemId = txItemById.get(p.transactionId);
+        if (itemId == null) continue;
+        paidByItem.set(itemId, (paidByItem.get(itemId) || 0) + p.amount);
+      }
     }
 
     // Days Idle stays a current-state column even in a period view (an item
@@ -72,14 +101,18 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
     const now = new Date();
     // Period-aware utilization: rented days from rentals *started* in the
     // window, over the window length (Jul 2026 → /31 days). Overall keeps the
-    // lifetime denominator so the all-time view is unchanged.
+    // lifetime denominator so the all-time view is unchanged. An in-progress
+    // window (this year, this month) measures against ELAPSED days only —
+    // dividing October's 5 days of rentals by the full 31 would understate
+    // the current pace every time. Past complete windows are exact.
+    const effectiveEnd = endDate && endDate.getTime() < now.getTime() ? endDate : now;
     const periodDays = startDate
-      ? Math.max(1, Math.ceil(((endDate ?? now).getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)))
+      ? Math.max(1, Math.ceil((effectiveEnd.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)))
       : null;
     const analytics = items.map(item => {
       const tx = txsByItem.get(item.id) || [];
       const totalRentals = tx.length;
-      const revenueGenerated = tx.reduce((sum, t) => sum + t.rentalFee, 0);
+      const revenueGenerated = paidByItem.get(item.id) || 0;
       const avgRevenuePerRental = totalRentals > 0 ? revenueGenerated / totalRentals : 0;
 
       const totalRentedDays = tx.reduce((days, t) => {

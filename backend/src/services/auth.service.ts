@@ -4,6 +4,7 @@ import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
 import { env } from '../config/env.js';
 import * as brevoService from './brevo.service.js';
+import * as storageService from './storage.service.js';
 import { Role, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 
@@ -22,6 +23,13 @@ function frontendUrl(): string {
   return env.FRONTEND_URL.replace(/\/$/, '');
 }
 
+// Email identity is case-insensitive, but Postgres `=` is not. Every write
+// stores the trimmed + lowercased form (the zod schemas already normalize
+// inbound values — this covers any direct service caller too).
+export function normalizeEmail(email: unknown): string {
+  return String(email ?? '').trim().toLowerCase();
+}
+
 export async function signupCustomer(data: {
   email: string;
   password: string;
@@ -30,13 +38,14 @@ export async function signupCustomer(data: {
   address?: string;
   preferences?: string[];
 }) {
+  const email = normalizeEmail(data.email);
   if (!env.AUTH_EMAIL_CONFIRM) {
     // Email verification path (Brevo): create the user UNCONFIRMED via the
     // service role (admin.createUser never sends email — delivery is ours),
     // store a single-use token, and send the branded link via Brevo. The
     // user cannot log in until they click it (/verify-email?token=...).
     const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
-      email: data.email,
+      email,
       password: data.password,
       email_confirm: false,
     });
@@ -51,7 +60,7 @@ export async function signupCustomer(data: {
     const profile = await prisma.profile.create({
       data: {
         userId: authData.user.id,
-        email: data.email,
+        email,
         role: 'Customer',
         name: data.name,
         phone: data.phone ?? null,
@@ -76,7 +85,7 @@ export async function signupCustomer(data: {
     // user can request a fresh link via POST /auth/resend-verification.
     try {
       await brevoService.sendVerificationEmail(
-        data.email,
+        email,
         data.name,
         `${frontendUrl()}/verify-email?token=${token}`,
       );
@@ -96,7 +105,7 @@ export async function signupCustomer(data: {
   }
 
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
-    email: data.email,
+    email,
     password: data.password,
     email_confirm: true,
   });
@@ -111,7 +120,7 @@ export async function signupCustomer(data: {
   const profile = await prisma.profile.create({
     data: {
       userId: authData.user.id,
-      email: data.email,
+      email,
       role: 'Customer',
       name: data.name,
       phone: data.phone ?? null,
@@ -123,7 +132,7 @@ export async function signupCustomer(data: {
   });
 
   const { data: sessionData } = await supabaseAdmin.auth.signInWithPassword({
-    email: data.email,
+    email,
     password: data.password,
   });
 
@@ -139,10 +148,11 @@ export async function signupCustomer(data: {
   };
 }
 
-export async function loginUser(email: string, password: string, trustedDevice = false) {
+export async function loginUser(rawEmail: string, password: string, trustedDevice = false) {
   // L3: uniform error for both "no account" and "wrong password" so the API
   // can't be used to enumerate registered emails. The sign-up CTA on the
   // login screen serves as the generic fallback for new users.
+  const email = normalizeEmail(rawEmail);
   const existing = await prisma.profile.findUnique({ where: { email } });
   if (!existing) {
     throw new AppError(401, 'Invalid email or password');
@@ -208,6 +218,21 @@ export async function loginUser(email: string, password: string, trustedDevice =
   };
 }
 
+// Google account photo: link the provider URL directly. The frontend
+// renders absolute avatar URLs straight into <img> (see resolveAvatarUrl),
+// so no download/re-upload is needed. Only ever SET from Google, never
+// overwrite — a manually uploaded photo always wins on later logins.
+// Provider metadata is not trusted blindly: https-only + length-capped.
+function pickGooglePhoto(meta: unknown): string | null {
+  const m = (meta ?? {}) as { picture?: unknown; avatar_url?: unknown };
+  for (const v of [m.picture, m.avatar_url]) {
+    if (typeof v !== 'string') continue;
+    const url = v.trim();
+    if (url.length > 0 && url.length <= 2000 && /^https:\/\//i.test(url)) return url;
+  }
+  return null;
+}
+
 export async function oauthGetOrCreateProfile(
   accessToken: string,
   details?: { name?: string; phone?: string; address?: string; preferences?: string[] }
@@ -218,10 +243,12 @@ export async function oauthGetOrCreateProfile(
     throw new AppError(401, 'Invalid OAuth token');
   }
 
-  const email = user.email;
-  if (!email) {
+  const rawOAuthEmail = user.email;
+  if (!rawOAuthEmail) {
     throw new AppError(400, 'OAuth account has no email address');
   }
+  // Google already normalizes, but keep the canonical form for our rows too.
+  const email = normalizeEmail(rawOAuthEmail);
 
   // A profile may already exist (e.g., auto-created by a Supabase trigger or a
   // previous abandoned OAuth). Only treat it as "complete" if it has the
@@ -266,6 +293,10 @@ export async function oauthGetOrCreateProfile(
       Array.isArray(details!.preferences) && details!.preferences.length
         ? details!.preferences.join(',')
         : null,
+    // Google photo links on first save only — an existing manual photo is
+    // never overwritten by a later Google login.
+    avatarPath: existing?.avatarPath
+      ?? pickGooglePhoto((user as { user_metadata?: unknown }).user_metadata),
   };
 
   // Update an incomplete existing profile, otherwise create a new one.
@@ -334,6 +365,41 @@ export async function updateProfile(userId: string, data: {
     data: updateData,
   });
   return profile;
+}
+
+// Profile photo (any role). The file lands under `avatars/` — a non-`rental/`
+// prefix, so it lives in the PUBLIC catalog bucket and the frontend resolves
+// it to a stable URL with zero signing round-trips (same as item photos).
+// Uploads go through the same hardened path as every other image
+// (allowlist + server-side WebP normalize in storageService.uploadFile).
+export async function setAvatar(userId: string, file: {
+  contentType: string;
+  buffer: Buffer;
+}) {
+  const profile = await prisma.profile.findUnique({ where: { id: userId } });
+  if (!profile) throw new AppError(404, 'Profile not found');
+  const key = `avatars/${profile.id}-${Date.now()}.jpg`;
+  const { path } = await storageService.uploadFile(key, file.contentType, file.buffer);
+  // Best-effort cleanup of the previous photo — a missing/stale key must not
+  // fail the swap (removeObject already swallows errors, belt and suspenders).
+  const previous = profile.avatarPath;
+  if (previous && previous !== path) {
+    await storageService.removeObject(previous);
+  }
+  await prisma.profile.update({ where: { id: userId }, data: { avatarPath: path } });
+  return getProfile(userId);
+}
+
+// Remove the profile photo (back to the default icon avatar).
+export async function removeAvatar(userId: string) {
+  const profile = await prisma.profile.findUnique({ where: { id: userId } });
+  if (!profile) throw new AppError(404, 'Profile not found');
+  const previous = profile.avatarPath;
+  if (previous) {
+    await storageService.removeObject(previous);
+  }
+  await prisma.profile.update({ where: { id: userId }, data: { avatarPath: null } });
+  return getProfile(userId);
 }
 
 // First-login staff flow: replace the admin-issued one-time password with the
@@ -432,12 +498,13 @@ export async function createStaffAccount(adminId: string, data: {
   }
 
   const tempPassword = generateOneTimePassword();
+  const email = normalizeEmail(data.email);
 
   // Staff are created by an admin, so they're trusted by default — always
   // auto-confirm (admin.createUser wouldn't send a verification email anyway,
   // so an unconfirmed staff account would be locked out with no way in).
   const { data: authData, error } = await supabaseAdmin.auth.admin.createUser({
-    email: data.email,
+    email,
     password: tempPassword,
     email_confirm: true,
   });
@@ -451,7 +518,7 @@ export async function createStaffAccount(adminId: string, data: {
   const profile = await prisma.profile.create({
     data: {
       userId: authData.user.id,
-      email: data.email,
+      email,
       role: 'Staff',
       name: data.name,
       phone: data.phone ?? null,
@@ -462,7 +529,7 @@ export async function createStaffAccount(adminId: string, data: {
   // Best-effort welcome email carrying the one-time password (the admin still
   // sees it once in the response for out-of-band sharing). Never blocks.
   try {
-    await brevoService.sendStaffWelcomeEmail(data.email, data.name, tempPassword);
+    await brevoService.sendStaffWelcomeEmail(email, data.name, tempPassword);
   } catch {
     // best-effort
   }
@@ -661,7 +728,8 @@ function brevoTokenError(used: boolean, expired: boolean): AppError {
 // Resend the signup verification email. Always resolves with the generic
 // message (no account enumeration): unknown emails, walk-ins, and already-
 // confirmed accounts are indistinguishable from a fresh send.
-export async function requestVerificationEmail(email: string) {
+export async function requestVerificationEmail(rawEmail: string) {
+  const email = normalizeEmail(rawEmail);
   const profile = await prisma.profile.findUnique({ where: { email } });
   if (profile && brevoService.isSendableEmail(profile.email)) {
     try {
@@ -747,7 +815,8 @@ export async function verifyEmailToken(token: string) {
 // message — unknown emails and undeliverable sends are indistinguishable, so
 // the endpoint can never be used to enumerate accounts. (The route itself is
 // rate-limited per-IP, which bounds retry abuse.)
-export async function requestPasswordReset(email: string) {
+export async function requestPasswordReset(rawEmail: string) {
+  const email = normalizeEmail(rawEmail);
   const profile = await prisma.profile.findUnique({ where: { email } });
   if (profile && brevoService.isSendableEmail(profile.email)) {
     try {

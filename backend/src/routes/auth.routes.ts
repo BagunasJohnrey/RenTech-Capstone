@@ -62,6 +62,10 @@ router.post('/mfa/step-up', authMiddleware, requireRole(Role.Admin), createRateL
 
 router.get('/me', authMiddleware, authController.getMe);
 router.put('/me', authMiddleware, validate(authController.updateProfileSchema), authController.updateMe);
+// Profile photo (any role, own photo only). Upload bounded per-IP so a
+// retry loop can't flood the storage bucket.
+router.post('/me/avatar', authMiddleware, createRateLimiter(10, 60_000), validate(authController.avatarSchema), authController.setAvatar);
+router.delete('/me/avatar', authMiddleware, createRateLimiter(10, 60_000), authController.removeAvatar);
 // First-login staff: replace the admin-issued one-time password. Only usable
 // while Profile.mustChangePassword is set; rate-limited against guessing the
 // one-time password from a hijacked session.

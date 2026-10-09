@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Bell, CheckCheck, CheckCircle2, Trash2, Inbox, MessageCircle, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Bell, CheckCheck, CheckCircle2, Trash2, Inbox, MessageCircle, BookOpen, ChevronLeft, ChevronRight, Send } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { transactionsService } from '../services/transactions';
 import { Skeleton } from '../components/Skeleton';
+import SmsLogPanel from '../components/SmsLogPanel';
 import { mapNotification, timeAgo, targetTabForNotification } from '../components/NotificationsDropdown';
 import ConfirmModal from '../components/ConfirmModal';
 import MessageReaderModal from '../components/MessageReaderModal';
@@ -61,7 +62,7 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
     try {
       const hint = sessionStorage.getItem('rentech_notif_section');
       sessionStorage.removeItem('rentech_notif_section');
-      return hint === 'messages' || hint === 'notifications' ? hint : 'all';
+      return hint === 'messages' || hint === 'notifications' || hint === 'sms' ? hint : 'all';
     } catch {
       return 'all';
     }
@@ -140,9 +141,16 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
     }
   };
 
-  // Tapping a notification marks it read and jumps to its page.
+  // Tapping a notification marks it read and jumps to its page. Weekly
+  // auto-reports drop the `rentech_open_report` hint (mirrors the dropdown
+  // handleOpen) so the BI page auto-opens the saved report on arrival.
   const handleOpen = (n) => {
     if (!n.isRead) handleMarkRead(n.id);
+    if (n.type === 'ai_report' && n.reportId) {
+      try {
+        sessionStorage.setItem('rentech_open_report', n.reportId);
+      } catch { /* private mode — still navigates, just no auto-open */ }
+    }
     if (onNavigateTab) onNavigateTab(targetTabForNotification(n.type, role));
   };
 
@@ -185,8 +193,25 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
   const messageUnread = messageNotes.filter((n) => !n.isRead);
 
   // Merged view: one switchable, paginated list. "All" interleaves both
-  // types chronologically (API returns newest-first).
-  const dataset = section === 'messages' ? messageNotes : section === 'notifications' ? systemNotes : notifications;
+  // types chronologically (API returns newest-first). The SMS Log is a
+  // separate dataset (sent-SMS rows, not notifications) rendered by its own
+  // panel with Manual/Automatic + status filters — staff roles only
+  // (GET /sms/history 403s customers, so don't show them the tab at all).
+  const canSeeSmsLog = role === 'Admin' || role === 'Staff';
+  // Customer messages are fanned out to Admin profiles only
+  // (customer.controller contactAdmin) — staff and customers never have
+  // message rows, so the section is admin-only instead of an empty tab.
+  const canSeeMessages = role === 'Admin';
+  // Customers see a single dataset (their All == Notifications — they never
+  // have message rows), so the switcher itself is clutter: hide it and lock
+  // them to the full list.
+  const showSwitcher = canSeeMessages || canSeeSmsLog;
+  const safeSection = !showSwitcher
+    ? 'all'
+    : (section === 'sms' && !canSeeSmsLog) || (section === 'messages' && !canSeeMessages)
+      ? 'all'
+      : section;
+  const dataset = safeSection === 'sms' ? [] : safeSection === 'messages' ? messageNotes : safeSection === 'notifications' ? systemNotes : notifications;
   const datasetUnread = section === 'messages' ? messageUnread : section === 'notifications' ? systemUnread : unread;
   const filtered = unreadOnly ? datasetUnread : dataset;
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -340,6 +365,8 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:shrink-0">
+              {safeSection !== 'sms' && (
+              <>
               <button
                 onClick={() => { setUnreadOnly((v) => !v); setPage(1); }}
                 aria-pressed={unreadOnly}
@@ -376,6 +403,8 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
                   <Trash2 size={14} /> Clear all
                 </button>
               )}
+              </>
+              )}
             </div>
           </div>
 
@@ -385,14 +414,16 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
       {/* ── Merged timeline: notifications | messages switcher + pagination ── */}
       <div className="bg-white rounded-3xl shadow-sm ring-1 ring-black/5 overflow-hidden">
         <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-gray-100/80 space-y-3">
-          {/* Section switcher */}
-          <div className="grid grid-cols-3 gap-0.5 sm:gap-1 p-1 rounded-2xl bg-gray-100" role="tablist" aria-label="Notifications or messages">
+          {/* Section switcher (hidden when only one section exists) */}
+          {showSwitcher && (
+          <div className={`grid gap-0.5 sm:gap-1 p-1 rounded-2xl bg-gray-100 ${canSeeMessages && canSeeSmsLog ? 'grid-cols-4' : canSeeMessages || canSeeSmsLog ? 'grid-cols-3' : 'grid-cols-2'}`} role="tablist" aria-label="Notifications, messages, or SMS log">
             {[
               { key: 'all', label: 'All', icon: Inbox, total: notifications.length, unread: unread.length },
               { key: 'notifications', label: 'Notifications', icon: Bell, total: systemNotes.length, unread: systemUnread.length },
-              { key: 'messages', label: 'Messages', icon: MessageCircle, total: messageNotes.length, unread: messageUnread.length },
+              ...(canSeeMessages ? [{ key: 'messages', label: 'Messages', icon: MessageCircle, total: messageNotes.length, unread: messageUnread.length }] : []),
+              ...(canSeeSmsLog ? [{ key: 'sms', label: 'SMS Log', icon: Send, total: null, unread: 0 }] : []),
             ].map(({ key, label, icon: Icon, total, unread: unreadCount }) => {
-              const isActive = section === key;
+              const isActive = safeSection === key;
               return (
                 <button
                   key={key}
@@ -403,13 +434,15 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
                     isActive ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  <Icon size={14} className={`shrink-0 hidden min-[400px]:block ${isActive ? (key === 'messages' ? 'text-blue-500' : key === 'all' ? 'text-gray-700' : 'text-[#bf4a53]') : ''}`} />
+                  <Icon size={14} className={`shrink-0 hidden min-[400px]:block ${isActive ? (key === 'messages' ? 'text-blue-500' : key === 'sms' ? 'text-violet-500' : key === 'all' ? 'text-gray-700' : 'text-[#bf4a53]') : ''}`} />
                   <span className="truncate">{label}</span>
+                  {total != null && (
                   <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold inline-flex items-center justify-center tabular-nums ${
                     isActive ? 'bg-gray-900 text-white' : 'bg-gray-200/70 text-gray-500'
                   }`}>
                     {total}
                   </span>
+                  )}
                   {unreadCount > 0 && !isActive && (
                     <span className="absolute top-1 right-1 sm:top-1.5 sm:right-2 w-2 h-2 rounded-full bg-[#bf4a53]" />
                   )}
@@ -417,8 +450,12 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
               );
             })}
           </div>
+          )}
         </div>
       {/* List */}
+        {safeSection === 'sms' ? (
+          <div className="p-4"><SmsLogPanel /></div>
+        ) : (
         <div className="p-4 space-y-3">
           {loading ? (
             <div className="space-y-3 py-4">
@@ -459,6 +496,7 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
             </div>
           )}
         </div>
+        )}
         {/* Pagination */}
         {!loading && totalPages > 1 && (
           <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-t border-gray-100/80">

@@ -3,13 +3,23 @@ import {
   HelpCircle, ChevronDown, ChevronUp, CheckCircle2, Wrench, Calendar,
   CalendarCheck, AlertTriangle, XCircle, Info, Sparkles,
   TrendingUp, PackageCheck, DoorOpen, ClipboardList, Play, ShieldCheck,
+  Palette, Package, Ticket, LayoutDashboard, RotateCcw,
 } from 'lucide-react';
 import { itemPill, txPill } from '../utils/statusColors';
 import { TERMS_SECTIONS, TermsBadge } from '../components/TermsContent';
+import CollapsibleCard from '../components/settings/CollapsibleCard';
+import HelpAccordion from '../components/HelpAccordion';
+
+const countBadge = (n, singular) => (
+  <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+    {n} {singular}{n === 1 ? '' : 's'}
+  </span>
+);
 
 export const staffFaqs = [
-  { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental", or open Catalog, find an Available item, and tap "Book for Customer" on its card. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
-  { q: 'How do I process a return?', a: 'From Dashboard tap "Process Return", or find the active rental under Records. Pick the condition: Good sends the item to Cleaning (back to Available once washed); Damaged needs a reason and an optional custom fee, and takes the item Out of Service. Add a condition photo if you like, then Confirm — the button locks while it processes so a double-tap can\u2019t file it twice.' },
+  { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental", or open Catalog, find an Available item, and tap it to start booking straight away. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
+  { q: 'How do I release an item for pickup?', a: 'Open the Reserved booking → "Release". Full payment is required first: collect the outstanding balance in the sheet (Cash tab, or Online via PayMongo/Maya QR) and the release unlocks once the balance is ₱0. Then capture the condition photo and Confirm — the rental goes Active.' },
+  { q: 'How do I process a return?', a: 'From Dashboard tap "Process Return", or find the active rental under Records. Returns are accepted only when fully paid — settle any outstanding balance first (Record Payment: Cash or Online). Pick the condition: Good sends the item to Cleaning (back to Available once washed); Damaged needs a reason and an optional custom fee, and takes the item Out of Service. A damage fee may leave a new balance, which stays payable on the Returned record. Add a condition photo if you like, then Confirm — the button locks while it processes so a double-tap can\u2019t file it twice.' },
   { q: 'How do I add an item to inventory?', a: 'Tap "+ Add Item" in the header or inside Catalog. Fill in the name, category, price, and photo. Only Admins and Staff can add items; Admins can also set them on sale (discount % or fixed sale price, optionally with an end date).' },
   { q: 'How do I take an item off the floor temporarily?', a: 'Open Catalog, find the item, and tap "Pull from rental" — the item flips to Out of Service so customers can no longer book it. When the repair or cleaning is done, tap "Restore to Available" on the same card to put it back.' },
   { q: 'How do I view demand forecasts and reports?', a: 'Admins can open "AI Insights" from the sidebar — demand forecast, utilization breakdown, monthly revenue, and the "Generate AI Report" button that drafts a summary for you. See the "Insights" section below for what every term means.' },
@@ -19,7 +29,8 @@ export const staffFaqs = [
 const customerFaqs = [
   { q: 'How do I rent an item?', a: 'Browse the Collection, pick an item that is "Available", tap "Rent Now", and follow the booking wizard. Select your pickup and event dates, choose a size, and complete the downpayment to confirm.' },
   { q: 'Can I choose my own pickup and return dates?', a: 'Yes. You select the pickup date and the event date. The item must be picked up before your event and is due back the day after.' },
-  { q: 'How much do I need to pay upfront?', a: 'A minimum downpayment of ₱200 is required to secure your booking. The remaining balance is payable at pickup. You can pay via GCash or card.' },
+  { q: 'How much do I need to pay upfront?', a: 'A minimum downpayment of ₱200 is required to secure your booking. The remaining balance is payable at pickup — the item is released only once fully paid, so please settle the full amount (cash or online via GCash/card) before or at pickup.' },
+  { q: 'Do I need to pay in full before pickup and return?', a: 'Yes. Pickup (release) and return are both locked until your balance is ₱0. Pay the remaining balance at the counter (cash or online) before pickup; returns are accepted only when fully paid. A damage fee found at return may leave a new balance, which you can settle right after.' },
   { q: 'What if I need to cancel or reschedule?', a: 'Contact the boutique directly — downpayment refunds follow the store policy.' },
   { q: 'How do I view my bookings?', a: 'Open the Transactions tab in your account for your booking history, payment status, and upcoming rentals.' },
 ];
@@ -27,11 +38,11 @@ const customerFaqs = [
 // Inventory lifecycle legend (Staff/Admin only) — maps each on-card action
 // button to what it actually does, so nobody has to guess from the icon.
 export const inventoryActions = [
-  { status: 'Available', PillIcon: Wrench, pillCls: 'bg-red-50 text-red-700 border border-red-200', btnLabel: 'Pull from rental',
+  { status: 'Available', PillIcon: Wrench, pillCls: 'bg-white text-gray-400 border border-gray-200', btnLabel: 'Pull from rental',
     desc: 'For damaged or maintenance-needed pieces. The item flips to Out of Service, is hidden from the catalog, and existing bookings stay intact.' },
   { status: 'Cleaning', PillIcon: CheckCircle2, pillCls: 'bg-emerald-600 text-white', btnLabel: 'Mark as clean',
     desc: 'After a return lands in Cleaning, press this once the item is washed. It flips straight to Available and can be rented again. In the Cleaning queue you can also select several items and "Mark selected as cleaned" at once.' },
-  { status: 'OutOfService', PillIcon: CheckCircle2, pillCls: 'bg-emerald-50 text-emerald-700 border border-emerald-300', btnLabel: 'Restore to Available',
+  { status: 'OutOfService', PillIcon: RotateCcw, pillCls: 'bg-emerald-50 text-emerald-700 border border-emerald-200', btnLabel: 'Restore to Available',
     desc: 'After a repair or cleaning finishes on an item you pulled. One tap puts it back in the catalog.' },
 ];
 
@@ -87,8 +98,7 @@ const insightsTerms = [
   { term: 'AI Report', Icon: Info, desc: 'A written summary of your KPIs and insights drafted by the AI. Every peso figure is checked against the real data before it is shown — if the AI provider is busy (rate-limited) you will see a notice and can retry later.' },
 ];
 
-export default function HelpGuide({ role, onStartTutorial }) {
-  const [openFaq, setOpenFaq] = useState(null);
+export default function HelpGuide({ role, onStartTutorial, fluid = false }) {
   const [openTerm, setOpenTerm] = useState(null);
   const isCustomer = role?.toLowerCase() === 'customer';
   const isAdmin = role?.toLowerCase() === 'admin';
@@ -96,7 +106,9 @@ export default function HelpGuide({ role, onStartTutorial }) {
   const faqs = isCustomer ? customerFaqs : staffFaqs;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+    // `fluid` (admin Settings tab): fill the wide tab instead of sitting in
+    // a narrow centered column with dead margins on desktop.
+    <div className={`${fluid ? 'max-w-none' : 'max-w-3xl mx-auto'} space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-700`}>
       {/* Hero */}
       <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-8 md:p-10 text-white shadow-lg relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3" />
@@ -105,12 +117,12 @@ export default function HelpGuide({ role, onStartTutorial }) {
             <HelpCircle className="text-[#bf4a53]" size={28} />
             <h2 className="text-3xl font-bold tracking-tight">Help Guide</h2>
           </div>
-          {!isCustomer && onStartTutorial && (
+          {onStartTutorial && (
             <button
               onClick={onStartTutorial}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#bf4a53] hover:bg-red-600 text-white text-xs font-bold transition-colors shadow-lg shadow-red-900/40"
             >
-              <Play size={13} /> Start guided tour
+              <Play size={13} /> {isCustomer ? 'Replay guided tour' : 'Start guided tour'}
             </button>
           )}
         </div>
@@ -123,45 +135,58 @@ export default function HelpGuide({ role, onStartTutorial }) {
 
       {/* Status colors — Staff & Admin only */}
       {!isCustomer && (
-        <div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">Status colors</h3>
-          <p className="text-sm text-gray-500 mb-4">One color = one meaning, everywhere in the app — on item cards, transactions, and dashboards.</p>
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100/60 overflow-hidden">
+        <CollapsibleCard
+          icon={Palette}
+          iconClass="bg-violet-50 text-violet-600"
+          title="Status colors"
+          subtitle="One color = one meaning, everywhere in the app — on item cards, transactions, and dashboards."
+          storageKey="help-colors-open"
+          defaultOpen={false}
+          badge={countBadge(colorLegend.length, 'color')}
+        >
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {colorLegend.map(({ key, cls, label, desc }) => (
-              <div key={key} className="flex items-start gap-3 p-4">
-                <span className={`mt-0.5 shrink-0 w-3 h-3 rounded-full shadow-sm ${cls}`} />
+              <div key={key} className="flex items-start gap-3 p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100">
+                <span aria-hidden="true" className={`mt-1 shrink-0 w-2.5 h-2.5 rounded-full shadow-sm ${cls}`} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold text-gray-900">{label}</p>
-                  <p className="text-sm text-gray-600 leading-relaxed mt-0.5">{desc}</p>
+                  <p className="text-xs text-gray-500 leading-relaxed mt-0.5">{desc}</p>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* Inventory actions */}
       {!isCustomer && (
-        <div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">Inventory item actions</h3>
-          <p className="text-sm text-gray-500 mb-4">What the buttons on a catalog card mean, status by status.</p>
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100/60 overflow-hidden">
+        <CollapsibleCard
+          icon={Package}
+          iconClass="bg-blue-50 text-blue-600"
+          title="Inventory item actions"
+          subtitle="What the buttons on a catalog card mean, status by status."
+          storageKey="help-actions-open"
+          defaultOpen={false}
+          badge={countBadge(inventoryActions.length + statusReference.length, 'status')}
+        >
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {inventoryActions.map(({ status, PillIcon, pillCls, btnLabel, desc }) => {
               const meta = itemPill(status);
               const StatusIcon = meta.icon;
               return (
-                <div key={status} className="flex items-start gap-3 p-4">
-                  <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
-                    <StatusIcon size={10} />
-                    {meta.label}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold mb-1.5 ${pillCls}`}>
+                <div key={status} className="p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
+                      <StatusIcon size={10} />
+                      {meta.label}
+                    </span>
+                    <span aria-hidden="true" className="text-gray-300 text-xs font-bold">→</span>
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold ${pillCls}`}>
                       <PillIcon size={11} />
                       {btnLabel}
                     </span>
-                    <p className="text-sm text-gray-600 leading-relaxed">{desc}</p>
                   </div>
+                  <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
                 </div>
               );
             })}
@@ -169,124 +194,142 @@ export default function HelpGuide({ role, onStartTutorial }) {
               const meta = itemPill(status);
               const StatusIcon = meta.icon;
               return (
-                <div key={status} className="flex items-start gap-3 p-4 bg-gray-50/40">
-                  <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
-                    <StatusIcon size={10} />
-                    {meta.label}
-                  </span>
-                  <p className="text-sm text-gray-600 leading-relaxed flex-1">{desc}</p>
+                <div key={status} className="p-3.5 bg-gray-50/60 rounded-2xl border border-gray-100 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
+                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
+                      <StatusIcon size={10} />
+                      {meta.label}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded-md bg-gray-200/70 text-gray-500 text-[10px] font-extrabold uppercase tracking-wide">
+                      Automatic
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
                 </div>
               );
             })}
           </div>
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* Rental statuses */}
       {!isCustomer && (
-        <div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">Rental statuses</h3>
-          <p className="text-sm text-gray-500 mb-4">What each badge on a transaction means — and whether it needs you or runs itself.</p>
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100/60 overflow-hidden">
+        <CollapsibleCard
+          icon={Ticket}
+          iconClass="bg-indigo-50 text-indigo-600"
+          title="Rental statuses"
+          subtitle="What each badge on a transaction means — and whether it needs you or runs itself."
+          storageKey="help-rentals-open"
+          defaultOpen={false}
+          badge={countBadge(transactionStatuses.length + alterationStatuses.length, 'badge')}
+        >
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {transactionStatuses.map(({ key, Icon, desc }) => {
               const meta = txPill(key);
               return (
-                <div key={key} className="flex items-start gap-3 p-4">
+                <div key={key} className="flex items-start gap-3 p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100 min-w-0">
                   <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
                     <Icon size={10} />
                     {key}
                   </span>
-                  <p className="text-sm text-gray-600 leading-relaxed flex-1">{desc}</p>
+                  <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
                 </div>
               );
             })}
             {alterationStatuses.map(({ key, cls, desc }) => (
-              <div key={key} className="flex items-start gap-3 p-4 bg-gray-50/40">
+              <div key={key} className="flex items-start gap-3 p-3.5 bg-amber-50/60 rounded-2xl border border-amber-100 min-w-0">
                 <span className={`shrink-0 inline-flex items-center px-2 py-1 rounded-full border text-[10px] font-bold ${cls}`}>
                   {key}
                 </span>
-                <p className="text-sm text-gray-600 leading-relaxed flex-1">{desc}</p>
+                <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
               </div>
             ))}
-            <p className="px-4 py-3 text-[11px] text-gray-400 bg-gray-50/40">When an alteration flag is set, its badge replaces the booking status — only one badge per row.</p>
           </div>
-        </div>
+          <p className="text-[11px] text-gray-400 mt-3">When an alteration flag is set, its badge replaces the booking status — only one badge per row.</p>
+        </CollapsibleCard>
       )}
 
       {/* Dashboard labels */}
       {!isCustomer && (
-        <div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">Dashboard labels</h3>
-          <p className="text-sm text-gray-500 mb-4">The everyday terms you will see on the staff and admin dashboards.</p>
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100/60 overflow-hidden">
+        <CollapsibleCard
+          icon={LayoutDashboard}
+          iconClass="bg-emerald-50 text-emerald-600"
+          title="Dashboard labels"
+          subtitle="The everyday terms you will see on the staff and admin dashboards."
+          storageKey="help-dashboard-open"
+          defaultOpen={false}
+          badge={countBadge(dashboardTerms.length, 'term')}
+        >
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {dashboardTerms.map(({ Icon, title, desc }) => (
-              <div key={title} className="flex items-start gap-3 p-4">
-                <span className="shrink-0 w-9 h-9 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-500">
+              <div key={title} className="flex items-start gap-3 p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100 min-w-0">
+                <span className="shrink-0 w-9 h-9 rounded-xl bg-white border border-gray-100 flex items-center justify-center text-[#bf4a53]">
                   <Icon size={16} />
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold text-gray-900">{title}</p>
-                  <p className="text-sm text-gray-600 leading-relaxed mt-0.5">{desc}</p>
+                  <p className="text-xs text-gray-500 leading-relaxed mt-0.5">{desc}</p>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* Insights glossary — Admin only */}
       {isAdmin && (
-        <div>
-          <h3 className="text-lg font-bold text-gray-900 mb-1">Insights & reports glossary</h3>
-          <p className="text-sm text-gray-500 mb-4">What the numbers in "AI Insights" actually mean.</p>
-          <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100/60 overflow-hidden">
+        <CollapsibleCard
+          icon={TrendingUp}
+          iconClass="bg-[#bf4a53]/10 text-[#bf4a53]"
+          title="Insights & reports glossary"
+          subtitle="What the numbers in “AI Insights” actually mean."
+          storageKey="help-insights-open"
+          defaultOpen={false}
+          badge={countBadge(insightsTerms.length, 'term')}
+        >
+          <div className="grid gap-2 md:grid-cols-2">
             {insightsTerms.map(({ term, Icon, desc }) => (
-              <div key={term} className="flex items-start gap-3 p-4">
-                <span className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#bf4a53]/10 border border-[#bf4a53]/20 text-[#bf4a53] text-[11px] font-bold">
+              <div key={term} className="p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100 min-w-0">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#bf4a53]/10 border border-[#bf4a53]/20 text-[#bf4a53] text-[11px] font-bold mb-2">
                   <Icon size={12} />
                   {term}
                 </span>
-                <p className="text-sm text-gray-600 leading-relaxed flex-1">{desc}</p>
+                <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
               </div>
             ))}
           </div>
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* FAQ */}
-      <div>
-        <h3 className="text-lg font-bold text-gray-900 mb-4">Frequently Asked Questions</h3>
-        <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm divide-y divide-gray-100/50 overflow-hidden">
-          {faqs.map((faq, i) => (
-            <div key={i}>
-              <button
-                onClick={() => setOpenFaq(openFaq === i ? null : i)}
-                className="w-full flex items-center justify-between p-5 text-left hover:bg-gray-50/50 transition-colors"
-              >
-                <span className="font-semibold text-sm text-gray-900">{faq.q}</span>
-                {openFaq === i ? <ChevronUp size={16} className="text-gray-400 shrink-0" /> : <ChevronDown size={16} className="text-gray-400 shrink-0" />}
-              </button>
-              {openFaq === i && (
-                <div className="px-5 pb-5">
-                  <p className="text-sm text-gray-600 leading-relaxed">{faq.a}</p>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
+      <CollapsibleCard
+        icon={HelpCircle}
+        iconClass="bg-amber-50 text-amber-600"
+        title="Frequently Asked Questions"
+        subtitle="Tap a question for the answer"
+        storageKey="help-faq-open"
+        defaultOpen={isCustomer}
+        badge={countBadge(faqs.length, 'question')}
+      >
+        <HelpAccordion
+          items={faqs}
+          renderAnswer={(faq) => <p className="text-sm text-gray-600 leading-relaxed">{faq.a}</p>}
+        />
+      </CollapsibleCard>
 
       {/* Terms & Conditions + Privacy Policy — collapsible dropdowns.
           Hidden for staff (customer-facing legal text, not front-desk ops). */}
       {!isStaff && (
-      <div>
-        <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
-          <ShieldCheck size={18} className="text-emerald-600 shrink-0" /> Terms and Conditions &amp; Privacy Policy
-        </h3>
-        <p className="text-xs sm:text-sm text-gray-500 mb-4 leading-relaxed">
-          Our full terms — covering the rental business policies, website usage, and your rights under the Philippine Data Privacy Act of 2012 (RA 10173). Tap each section to expand it.
-        </p>
-        <div className="bg-white rounded-2xl sm:rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
+      <CollapsibleCard
+        icon={ShieldCheck}
+        iconClass="bg-emerald-50 text-emerald-600"
+        title="Terms and Conditions & Privacy Policy"
+        subtitle="Rental policies, website use, and your rights under the Data Privacy Act of 2012 (RA 10173)."
+        storageKey="help-terms-open"
+        defaultOpen={false}
+        badge={countBadge(TERMS_SECTIONS.length, 'section')}
+      >
+        <div className="rounded-2xl border border-gray-100 overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-gray-100/60 bg-gray-50/40">
             <TermsBadge
               label="Effective date: August 2026"
@@ -333,7 +376,7 @@ export default function HelpGuide({ role, onStartTutorial }) {
             })}
           </div>
         </div>
-      </div>
+      </CollapsibleCard>
       )}
     </div>
   );

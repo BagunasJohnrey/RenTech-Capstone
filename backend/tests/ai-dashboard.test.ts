@@ -180,21 +180,52 @@ describe('GET /api/dashboard/insights', () => {
     expect(res.body.underperforming[0].name).toBe('Barong C');
   });
 
+  it('excludes Deleted items from every insights query (no dead 0% rows)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockReset();
+    prisma.transaction.findMany.mockReset();
+    prisma.payment.findMany.mockReset();
+    prisma.inventoryItem.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+
+    // Unique period window (cache key includes start) so this test always
+    // computes fresh instead of hitting the warmed `insights:all` key.
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=yearly&year=2025')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    // Items query filters out archived stock.
+    const itemsArg = (prisma.inventoryItem.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(itemsArg.where).toMatchObject({ status: { not: 'Deleted' } });
+    // Transaction query excludes rentals of archived items.
+    const txArg = (prisma.transaction.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(txArg.where.item).toMatchObject({ status: { not: 'Deleted' } });
+  });
+
   it('buckets this month\'s revenue into weekly chunks on period=monthly', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, name: 'Gown A', category: 'Gown' }]);
 
     const now = new Date();
     const inThisMonth = (day: number) => new Date(now.getFullYear(), now.getMonth(), Math.min(day, 28));
+    // Revenue is collected payments only: booked fees (9000s) must NOT leak
+    // in — only the payment amounts land in the buckets.
     prisma.transaction.findMany.mockResolvedValueOnce([
-      // Wk 1 (day 3), Wk 2 (day 10), Wk 3 (day 17)
-      { itemId: 1, rentalFee: 1000, createdAt: inThisMonth(3), item: { category: 'Gown' } },
-      { itemId: 1, rentalFee: 2000, createdAt: inThisMonth(10), item: { category: 'Gown' } },
-      { itemId: 1, rentalFee: 4000, createdAt: inThisMonth(17), item: { category: 'Gown' } },
-      // Previous-month transaction must NOT leak into this month's weekly view.
+      { itemId: 1, rentalFee: 9000, createdAt: inThisMonth(3), item: { category: 'Gown' } },
+      { itemId: 1, rentalFee: 9000, createdAt: inThisMonth(10), item: { category: 'Gown' } },
+      { itemId: 1, rentalFee: 9000, createdAt: inThisMonth(17), item: { category: 'Gown' } },
       { itemId: 1, rentalFee: 9000, createdAt: new Date(now.getFullYear(), now.getMonth() - 1, 15), item: { category: 'Gown' } },
     ]);
-    prisma.payment.findMany.mockResolvedValueOnce([]);
+    prisma.payment.findMany.mockResolvedValueOnce([
+      // Wk 1 (day 3), Wk 2 (day 10), Wk 3 (day 17)
+      { amount: 1000, createdAt: inThisMonth(3) },
+      { amount: 2000, createdAt: inThisMonth(10) },
+      { amount: 4000, createdAt: inThisMonth(17) },
+      // Previous-month payment must NOT leak into this month's weekly view.
+      { amount: 9000, createdAt: new Date(now.getFullYear(), now.getMonth() - 1, 15) },
+    ]);
 
     const res = await request(app)
       .get('/api/dashboard/insights?period=monthly')
@@ -215,11 +246,15 @@ describe('GET /api/dashboard/insights', () => {
     prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, name: 'Gown A', category: 'Gown' }]);
 
     prisma.transaction.findMany.mockResolvedValueOnce([
-      { itemId: 1, rentalFee: 500, createdAt: new Date(2025, 5, 5), item: { category: 'Gown' } },   // Jun 5 2025 → Wk 1
-      { itemId: 1, rentalFee: 700, createdAt: new Date(2025, 5, 20), item: { category: 'Gown' } },  // Jun 20 2025 → Wk 3
-      { itemId: 1, rentalFee: 9000, createdAt: new Date(2025, 7, 2), item: { category: 'Gown' } },  // Aug 2 2025 → must NOT leak
+      { itemId: 1, rentalFee: 9000, createdAt: new Date(2025, 5, 5), item: { category: 'Gown' } },
+      { itemId: 1, rentalFee: 9000, createdAt: new Date(2025, 5, 20), item: { category: 'Gown' } },
+      { itemId: 1, rentalFee: 9000, createdAt: new Date(2025, 7, 2), item: { category: 'Gown' } },
     ]);
-    prisma.payment.findMany.mockResolvedValueOnce([]);
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { amount: 500, createdAt: new Date(2025, 5, 5) },   // Jun 5 2025 → Wk 1
+      { amount: 700, createdAt: new Date(2025, 5, 20) },  // Jun 20 2025 → Wk 3
+      { amount: 9000, createdAt: new Date(2025, 7, 2) },  // Aug 2 2025 → must NOT leak
+    ]);
 
     const res = await request(app)
       .get('/api/dashboard/insights?period=monthly&year=2025&month=6')
@@ -234,10 +269,134 @@ describe('GET /api/dashboard/insights', () => {
       { label: 'Wk 4', revenue: 0 },
       { label: 'Wk 5', revenue: 0 },
     ]);
-    // And the transaction query was bounded: gte June 1, lt July 1.
+    // And the transaction query was bounded on rental date: gte June 1, lt July 1.
     const findManyArg = prisma.transaction.findMany.mock.calls[0][0] as any;
-    expect(findManyArg.where.createdAt.gte).toEqual(new Date(2025, 5, 1));
-    expect(findManyArg.where.createdAt.lt).toEqual(new Date(2025, 6, 1));
+    expect(findManyArg.where.rentalDate.gte).toEqual(new Date(2025, 5, 1));
+    expect(findManyArg.where.rentalDate.lt).toEqual(new Date(2025, 6, 1));
+  });
+
+  it('counts counter-cash (completed) payments and ignores unpaid booked fees', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // Hermetic mocks: earlier tests can leave unconsumed mock queues behind
+    // (cache hits skip consumption), which are served FIFO — reset first so
+    // only this test's rows are served, restoring the [] default underneath.
+    prisma.inventoryItem.findMany.mockReset();
+    prisma.transaction.findMany.mockReset();
+    prisma.payment.findMany.mockReset();
+    prisma.inventoryItem.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, name: 'Gown A', category: 'Gown' }]);
+    // Booked fees (5000/9000) exceed what was collected — revenue must be the
+    // collected 3000 only. Only actually-collected rows count, whatever ledger
+    // path wrote them. Jan 2025 gives a unique cache key (the current-month
+    // key is already cached by an earlier test).
+    prisma.transaction.findMany.mockResolvedValueOnce([
+      { itemId: 1, rentalFee: 5000, createdAt: new Date(2025, 0, 3), item: { category: 'Gown' } },
+      { itemId: 1, rentalFee: 9000, createdAt: new Date(2025, 0, 10), item: { category: 'Gown' } },
+    ]);
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { amount: 1000, status: 'completed', createdAt: new Date(2025, 0, 3) },
+      { amount: 2000, status: 'succeeded', createdAt: new Date(2025, 0, 10) },
+    ]);
+
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=monthly&year=2025&month=1')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.revenueByWeek).toEqual([
+      { label: 'Wk 1', revenue: 1000 },
+      { label: 'Wk 2', revenue: 2000 },
+      { label: 'Wk 3', revenue: 0 },
+      { label: 'Wk 4', revenue: 0 },
+      { label: 'Wk 5', revenue: 0 },
+    ]);
+    // (revenueByMonth only spans recent months, so a 2025 window asserts
+    // nothing there — the weekly buckets above already prove collected-only:
+    // booked fees of 5000/9000 would have landed here instead.)
+  });
+
+  it('builds revenueByCategory from collected payments, not booked fees', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockReset();
+    prisma.transaction.findMany.mockReset();
+    prisma.payment.findMany.mockReset();
+    prisma.inventoryItem.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([
+      { id: 1, name: 'Gown A', category: 'Gown' },
+      { id: 2, name: 'Suit B', category: 'Suit' },
+    ]);
+    prisma.transaction.findMany.mockResolvedValueOnce([
+      { itemId: 1, rentalFee: 9999, createdAt: new Date(), item: { category: 'Gown' } },
+      { itemId: 2, rentalFee: 8888, createdAt: new Date(), item: { category: 'Suit' } },
+    ]);
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { amount: 3000, createdAt: new Date(), transaction: { item: { category: 'Gown' } } },
+      { amount: 1500, createdAt: new Date(), transaction: { item: { category: 'Gown' } } },
+      { amount: 2000, createdAt: new Date(), transaction: { item: { category: 'Suit' } } },
+    ]);
+
+    // year=2026 (current year, so `new Date()` rows fall inside) for a unique
+    // cache key — plain /insights is already cached by an earlier test.
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=yearly&year=2026')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.revenueByCategory).toEqual({ Gown: 4500, Suit: 2000 });
+  });
+
+  it('GET /api/dashboard/years lists only years with bookings plus current year', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([
+      { createdAt: new Date(2024, 10, 5) },
+      { createdAt: new Date(2025, 5, 5) },
+      { createdAt: new Date(2025, 8, 5) },
+    ]);
+
+    const res = await request(app)
+      .get('/api/dashboard/years')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    // Current year is always included even with no rows for it.
+    const expected = [...new Set([2024, 2025, new Date().getFullYear()])].sort((a, b) => a - b);
+    expect(res.body).toEqual({ years: expected });
+  });
+
+  it('GET /api/dashboard/years rejects staff', async () => {
+    const res = await request(app)
+      .get('/api/dashboard/years')
+      .set('Authorization', 'Bearer staff-token');
+
+    expect(res.status).toBe(403);
+  });
+
+  it('counts Reserved upcoming rentals in topRented for the rental month', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockReset();
+    prisma.transaction.findMany.mockReset();
+    prisma.payment.findMany.mockReset();
+    prisma.inventoryItem.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 9, name: 'Gown Z', category: 'Gown' }]);
+    // Booked in January for February, still Reserved: belongs to February.
+    prisma.transaction.findMany.mockResolvedValueOnce([
+      { itemId: 9, rentalFee: 5000, rentalDate: new Date(2025, 1, 10), createdAt: new Date(2025, 0, 20), item: { category: 'Gown' } },
+    ]);
+    prisma.payment.findMany.mockResolvedValueOnce([]);
+
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=monthly&year=2025&month=2')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.topRented).toHaveLength(1);
+    expect(res.body.topRented[0]).toMatchObject({ name: 'Gown Z', rentals: 1 });
   });
 
   it('year filter scopes Yearly revenue to Jan 1..Dec 31 of that year', async () => {
@@ -252,8 +411,8 @@ describe('GET /api/dashboard/insights', () => {
 
     expect(res.status).toBe(200);
     const findManyArg = prisma.transaction.findMany.mock.calls[0][0] as any;
-    expect(findManyArg.where.createdAt.gte).toEqual(new Date(2024, 0, 1));
-    expect(findManyArg.where.createdAt.lt).toEqual(new Date(2025, 0, 1));
+    expect(findManyArg.where.rentalDate.gte).toEqual(new Date(2024, 0, 1));
+    expect(findManyArg.where.rentalDate.lt).toEqual(new Date(2025, 0, 1));
     expect(res.body).not.toHaveProperty('revenueByWeek');
   });
 

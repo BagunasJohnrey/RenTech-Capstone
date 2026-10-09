@@ -1,13 +1,31 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Loader2, Search, Calendar, User, Check, Percent, ShieldCheck, CheckCircle2, Printer, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, CreditCard, QrCode, ExternalLink, ScanLine, RotateCcw } from 'lucide-react';
+import QRCode from 'qrcode';
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
+import DatePickGuide from '../components/DatePickGuide';
+import ScheduleChips, { shortDate } from '../components/ScheduleChips';
+import CollapsibleSection from '../components/CollapsibleSection';
 import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
+import BottomSheet from '../components/BottomSheet';
 import { inventoryService } from '../services/inventory';
+import { promoService } from '../services/promo';
+import { promoDiscountLabel } from '../utils/promoLabel';
+import { paymentsService } from '../services/payments';
+import { usePaymongo } from '../hooks/usePaymongo';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { downloadReceiptImage } from '../utils/receiptImage';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { toLocalYmd, todayYmd } from '../utils/format';
+import {
+  INPUT_LIMITS,
+  sanitizeName,
+  sanitizePhone,
+  sanitizeAddress,
+  sanitizeNotes,
+} from '../utils/inputLimits';
 
 const ITEMS_PER_LOAD = 6;
 
@@ -44,50 +62,20 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // Selected item (only one at a time)
   const [selectedItem, setSelectedItem] = useState(initialItem || null);
 
-  // Customer lookup from past transactions
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [showCustomerResults, setShowCustomerResults] = useState(false);
-  const customerSearchRef = useRef(null);
-
-  const foundCustomers = useMemo(() => {
-    if (!customerSearch.trim()) return [];
-    const q = customerSearch.toLowerCase();
-    const seen = new Set();
-    const results = [];
-    for (const tx of transactions) {
-      if (results.length >= 5) break;
-      if (tx.customer && !seen.has(tx.customer) && tx.customer.toLowerCase().includes(q)) {
-        seen.add(tx.customer);
-        results.push({ name: tx.customer, contact: tx.contact || '', address: tx.address || '' });
-      }
-    }
-    return results;
-  }, [customerSearch, transactions]);
-
-  const selectCustomer = (c) => {
-    setCustomer({ ...customer, name: c.name, contact: c.contact, address: c.address });
-    setCustomerSearch(c.name);
-    setShowCustomerResults(false);
-  };
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handler = (e) => {
-      if (customerSearchRef.current && !customerSearchRef.current.contains(e.target)) {
-        setShowCustomerResults(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
   const todayStr = useMemo(() => todayYmd(), []);
 
-  // Fetch return-days-after-event setting from admin rules.
+  // Fetch return-days-after-event + minimum downpayment + payment gateway
+  // from admin rules (same floor + gateway as the customer flow).
   const [returnDays, setReturnDays] = useState(1);
+  const [minDownpayment, setMinDownpayment] = useState(200);
+  const [gateway, setGateway] = useState('paymongo');
   useEffect(() => {
     api.get('/settings/rental-defaults')
-      .then((d) => { if (d?.return_days_after_event) setReturnDays(d.return_days_after_event); })
+      .then((d) => {
+        if (d?.return_days_after_event) setReturnDays(d.return_days_after_event);
+        if (d?.min_downpayment) setMinDownpayment(d.min_downpayment);
+        if (d?.payment_gateway === 'maya') setGateway('maya'); else setGateway('paymongo');
+      })
       .catch(() => {});
   }, []);
 
@@ -114,49 +102,65 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       const ret = new Date(e);
       ret.setDate(ret.getDate() + returnDays);
       updated.returnDate = toLocalYmd(ret);
+    } else {
+      updated.returnDate = '';
     }
     setCustomer(updated);
     setFieldErrors((prev) => ({ ...prev, rentalDate: '', eventDate: '' }));
   };
 
-  const handleRentalDateChange = (d) => {
-    const updated = { ...customer, rentalDate: d };
-    if (d > customer.eventDate) {
-      const ret = new Date(d);
-      ret.setDate(ret.getDate() + returnDays);
-      updated.eventDate = d;
-      updated.returnDate = toLocalYmd(ret);
-    }
-    setCustomer(updated);
-  };
-
-  // Customer details
+  // Customer details — dates start EMPTY so staff must tap both days on
+  // the calendar (no prefill).
   const [customer, setCustomer] = useState(() => {
-    const now = new Date();
-    const eventD = new Date(now);
-    eventD.setDate(eventD.getDate() + 2);
-    const returnD = new Date(eventD);
-    returnD.setDate(returnD.getDate() + 1);
     return {
       name: '', contact: '', address: '',
-      rentalDate: todayYmd(),
-      eventDate: toLocalYmd(eventD),
-      returnDate: toLocalYmd(returnD),
+      rentalDate: '',
+      eventDate: '',
+      returnDate: '',
       notes: '',
       photoUrl: null,
     };
   });
 
-  // Downpayment
-  const [includeDownpayment, setIncludeDownpayment] = useState(false);
+  // Downpayment — required, same floor as the customer flow (never more
+  // than the fee being charged). Prefilled once an item is picked.
   const [downpaymentAmount, setDownpaymentAmount] = useState('');
+  useEffect(() => {
+    if (selectedItem && !String(downpaymentAmount ?? '').trim()) {
+      setDownpaymentAmount(String(minDownpayment || 200));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItem, minDownpayment]);
 
   // Discount: staff picks the % first; the admin approves that exact amount
   // with their PIN at order confirmation. The approval is bound to the % +
   // item — any change after approval voids it and forces re-approval, so
   // staff can't get a blank approval and inflate the discount afterwards.
   const [discountPct, setDiscountPct] = useState(0);
-  const [discountAuthorized, setDiscountAuthorized] = useState(null); // { admin, pct, itemId } | null
+  const [discountAuthorized, setDiscountAuthorized] = useState(null); // { admin, pct, itemId, pin } | null
+  // Counter voucher code (same server-side vouchers as the customer flow).
+  const [promoCode, setPromoCode] = useState('');
+  const [promoApplied, setPromoApplied] = useState(null);
+  const [promoError, setPromoError] = useState('');
+  const [promoApplying, setPromoApplying] = useState(false);
+  const handleApplyPromo = async (codeOverride) => {
+    const raw = (codeOverride ?? promoCode).trim().toUpperCase();
+    if (!raw || !selectedItem || promoApplying) return;
+    setPromoApplying(true);
+    setPromoError('');
+    try {
+      const result = await promoService.validate({
+        code: raw, rentalFee: selectedItem.price || 0, itemCategory: selectedItem.category,
+      });
+      setPromoCode(result.code || raw);
+      setPromoApplied(result);
+    } catch (err) {
+      setPromoApplied(null);
+      setPromoError(err?.message || 'Invalid promo code');
+    }
+    setPromoApplying(false);
+  };
+  const clearPromo = () => { setPromoCode(''); setPromoApplied(null); setPromoError(''); };
   const [showAdminAuth, setShowAdminAuth] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
@@ -174,20 +178,15 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     if (discountAuthorized && discountAuthorized.pct !== pct) setDiscountAuthorized(null);
   };
 
-  // Switching items voids the approval (the peso amount changed).
+  // Switching items voids the approval (the peso amount changed) and any
+  // applied voucher (it was validated against the old item's price).
   useEffect(() => {
     if (discountAuthorized && discountAuthorized.itemId !== selectedItem?.id) {
       setDiscountAuthorized(null);
     }
+    setPromoCode(''); setPromoApplied(null); setPromoError('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItem?.id]);
-
-  // When event date changes, auto-update return date
-  const handleEventDateChange = (d) => {
-    const ret = new Date(d);
-    ret.setDate(ret.getDate() + returnDays);
-    setCustomer({ ...customer, eventDate: d, returnDate: toLocalYmd(ret) });
-  };
 
   // Size & measurements
   const [size, setSize] = useState('');
@@ -214,6 +213,19 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   // Created transaction — shown on the post-booking receipt step (with QR).
   const [createdTx, setCreatedTx] = useState(null);
+
+  // Payment channel for the downpayment: cash (recorded with the booking) or
+  // online (real gateway charge collected right after the booking is created).
+  const [payChannel, setPayChannel] = useState('cash');
+  const [collecting, setCollecting] = useState(false);
+  const [gatewayIntent, setGatewayIntent] = useState(null);
+  const [gatewayQrUrl, setGatewayQrUrl] = useState(null);
+  const [gatewayStatus, setGatewayStatus] = useState(null);
+  const [collectError, setCollectError] = useState('');
+  const { openDropIn } = usePaymongo();
+  const flags = useFeatureFlags();
+  const pollStopRef = useRef(false);
+  useEffect(() => () => { pollStopRef.current = true; }, []);
 
   // Live availability check (same backend overlap logic as createRental) so
   // staff can't confirm dates that clash with an existing booking.
@@ -256,11 +268,18 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   const validateStep2 = () => {
     const errs = {};
-    if (!customer.name || customer.name.trim().length < 2) errs.name = 'Full name is required (min 2 characters)';
+    const nameTrimmed = (customer.name || '').trim();
+    if (nameTrimmed.length < INPUT_LIMITS.NAME_MIN) errs.name = 'Full name is required (min 2 characters)';
+    else if (nameTrimmed.length > INPUT_LIMITS.NAME_MAX) errs.name = `Full name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`;
+    else if (/\d/.test(nameTrimmed)) errs.name = 'Name must not contain numbers';
     if (!customer.contact || !/^\d{11}$/.test(customer.contact.trim())) errs.contact = 'Contact number must be exactly 11 digits';
-    if (!customer.address || customer.address.trim().length < 5) errs.address = 'Address is required (min 5 characters)';
-    if (new Date(customer.rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
-    if (new Date(customer.eventDate) < new Date(customer.rentalDate)) errs.eventDate = 'Event date must be on or after pickup date';
+    const addrTrimmed = (customer.address || '').trim();
+    if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
+    else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
+    if (!customer.rentalDate) errs.rentalDate = 'Please select a pickup date.';
+    else if (new Date(customer.rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
+    if (!customer.eventDate) errs.eventDate = 'Please select an event date.';
+    else if (new Date(customer.eventDate) < new Date(customer.rentalDate)) errs.eventDate = 'Event date must be on or after pickup date';
     if (!size) errs.size = 'Please select a size';
     if (selectedItem && customer.eventDate) {
       const overlap = bookedRanges.some(
@@ -273,50 +292,62 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       const filled = measurementFields.filter(f => measurements[f] && String(measurements[f]).trim());
       if (filled.length < 3) errs.measurements = 'Please provide at least 3 measurements';
     }
-    if (includeDownpayment) {
+    // Required downpayment, same rule as the customer flow: at least the
+    // flat floor (default ₱200), never more than the fee being charged.
+    {
+      const base = selectedItem?.price || 0;
+      const fee = base - Math.round(base * (discountPct / 100));
+      const min = Math.min(minDownpayment || 200, fee);
       const dp = Number(downpaymentAmount) || 0;
-      if (dp <= 0) errs.downpayment = 'Downpayment amount must be greater than 0';
-      if (dp > totals.baseRate) errs.downpayment = 'Downpayment cannot exceed the rental fee';
+      if (!dp || dp <= 0) errs.downpayment = 'Downpayment is required';
+      else if (dp < min) errs.downpayment = `Downpayment must be at least ₱${min.toLocaleString()}`;
+      else if (dp > fee) errs.downpayment = 'Downpayment cannot exceed the rental fee';
     }
     setFieldErrors(errs);
     setTouchedFields(prev => ({ ...prev, ...Object.fromEntries(Object.keys(errs).map(k => [k, true])) }));
     return Object.keys(errs).length === 0;
   };
 
-  // Derived totals — always reflect the selected % so the admin sees the
-  // exact amount they are approving. The booking itself only carries the
+  // Derived totals — voucher first, then the PIN-approved staff % on top
+  // (mirrors the server order in createRental). The booking only carries the
   // discount when it is approved (see submitBooking).
   const totals = useMemo(() => {
     const base = selectedItem?.price || 0;
-    const discountAmt = Math.round(base * (discountPct / 100));
-    const afterDiscount = base - discountAmt;
-    const dp = includeDownpayment ? (Number(downpaymentAmount) || 0) : 0;
-    return { baseRate: base, discount: discountAmt, discountedRate: afterDiscount, downpayment: dp, balance: afterDiscount - dp };
-  }, [selectedItem, includeDownpayment, downpaymentAmount, discountPct]);
+    const promoFee = promoApplied?.finalFee ?? base;
+    const promoDiscount = Math.max(0, base - promoFee);
+    const discountAmt = Math.round(promoFee * (discountPct / 100));
+    const afterDiscount = promoFee - discountAmt;
+    const dp = Number(downpaymentAmount) || 0;
+    return { baseRate: base, promoDiscount, promoCode: promoApplied?.code || null, discount: discountAmt, discountedRate: afterDiscount, downpayment: dp, balance: afterDiscount - dp };
+  }, [selectedItem, downpaymentAmount, discountPct, promoApplied]);
 
   // Live field validity (green glow when valid)
   const fieldValid = useMemo(() => {
     const v = {};
-    if (customer.name?.trim().length >= 2) v.name = true;
+    const nm = customer.name?.trim() ?? '';
+    if (nm.length >= INPUT_LIMITS.NAME_MIN && nm.length <= INPUT_LIMITS.NAME_MAX && !/\d/.test(nm)) v.name = true;
     if (/^\d{11}$/.test(customer.contact?.trim())) v.contact = true;
-    if (customer.address?.trim().length >= 5) v.address = true;
+    const ad = customer.address?.trim() ?? '';
+    if (ad.length >= INPUT_LIMITS.ADDRESS_MIN && ad.length <= INPUT_LIMITS.ADDRESS_MAX) v.address = true;
     if (customer.rentalDate && new Date(customer.rentalDate) >= new Date(todayStr)) v.rentalDate = true;
     if (customer.eventDate && customer.rentalDate && new Date(customer.eventDate) >= new Date(customer.rentalDate)) v.eventDate = true;
     if (size) v.size = true;
     if (size === 'Custom / Measurements' && measurementsExpanded) {
       const filled = measurementFields.filter(f => measurements[f] && String(measurements[f]).trim());
       if (filled.length >= 3) v.measurements = true;
-    } else if (size && size !== 'Custom / Measurements') {
+    } else     if (size && size !== 'Custom / Measurements') {
       v.measurements = true;
     }
-    if (includeDownpayment) {
+    {
+      const base = selectedItem?.price || 0;
+      const promoFee = promoApplied?.finalFee ?? base;
+      const fee = promoFee - Math.round(promoFee * (discountPct / 100));
+      const min = Math.min(minDownpayment || 200, fee);
       const dp = Number(downpaymentAmount) || 0;
-      if (dp > 0 && dp <= totals.baseRate) v.downpayment = true;
-    } else {
-      v.downpayment = true;
+      if (dp >= min && dp <= fee && fee > 0) v.downpayment = true;
     }
     return v;
-  }, [customer, todayStr, size, measurementsExpanded, measurements, measurementFields, includeDownpayment, downpaymentAmount, totals.baseRate]);
+  }, [customer, todayStr, size, measurementsExpanded, measurements, measurementFields, downpaymentAmount, selectedItem, discountPct, promoApplied, minDownpayment]);
 
   // Category tabs (with live counts) built from the actual inventory so every
   // category (Gown, Barong, Filipiniana, Suit, Costume, …) always appears —
@@ -333,14 +364,19 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   // Filtered catalog (staff can pick any bookable item, including ones that are
   // currently Rented/Reserved — so they can reserve a future-free date). Deleted
-  // items are excluded since they're removed from the catalog.
+  // items are excluded since they're removed from the catalog. Available items
+  // sort first so bookable garments are always on top; the category filter and
+  // search still apply across everything.
   const filteredCatalog = useMemo(() => {
-    return inventory.filter(item => {
-      if (item.status === 'Deleted') return false;
-      const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
-      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesCat && matchesSearch;
-    });
+    const rank = (status) => (status === 'Available' ? 0 : 1);
+    return inventory
+      .filter(item => {
+        if (item.status === 'Deleted') return false;
+        const matchesCat = selectedCategories.length === 0 || selectedCategories.includes((item.category || '').toLowerCase());
+        const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesCat && matchesSearch;
+      })
+      .sort((a, b) => rank(a.status) - rank(b.status));
   }, [inventory, selectedCategories, searchQuery]);
 
   // Reset visibleCount when filters change
@@ -384,6 +420,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   if (initialCustomerRef.current === null) {
     initialCustomerRef.current = { ...customer };
   }
+  // The item we opened with (tap-to-book preselects one): merely having it
+  // is NOT a change — only picking a different item counts. Otherwise every
+  // swipe-down on a freshly opened booking asks "Discard changes?".
+  const initialItemIdRef = useRef(initialItem?.id ?? null);
 
   // True when the user typed/changed anything worth keeping: a selected item,
   // customer details, dates, size/measurements, downpayment or a discount.
@@ -391,17 +431,18 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // UI (search text, category pills) never triggers the guard.
   const hasUnsavedChanges = useMemo(() => {
     if (step === 4 || createdTx) return false;
-    if (selectedItem) return true;
+    if ((selectedItem?.id ?? null) !== initialItemIdRef.current) return true;
     const init = initialCustomerRef.current || {};
     if ((customer.name || '').trim() || (customer.contact || '').trim() ||
         (customer.address || '').trim() || (customer.notes || '').trim()) return true;
     if (customer.rentalDate !== init.rentalDate || customer.eventDate !== init.eventDate ||
         customer.returnDate !== init.returnDate) return true;
     if (size || Object.keys(measurements || {}).some(k => String(measurements[k] ?? '').trim() !== '')) return true;
-    if (includeDownpayment && String(downpaymentAmount ?? '').trim() !== '') return true;
+    if (String(downpaymentAmount ?? '').trim() !== '') return true;
     if ((Number(discountPct) || 0) > 0 || discountAuthorized) return true;
+    if ((promoCode || '').trim() !== '' || promoApplied) return true;
     return false;
-  }, [step, createdTx, selectedItem, customer, size, measurements, includeDownpayment, downpaymentAmount, discountPct, discountAuthorized]);
+  }, [step, createdTx, selectedItem, customer, size, measurements, downpaymentAmount, discountPct, discountAuthorized, promoCode, promoApplied]);
 
   // Back / close go through here: with unsaved entries the user gets a
   // "Discard changes?" confirm instead of silently losing the rental.
@@ -453,7 +494,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     setAuthLoading(true); setAuthError('');
     try {
       const res = await api.post('/auth/verify-admin', { pin: adminPin });
-      setDiscountAuthorized({ admin: res.admin, pct: discountPct, itemId: selectedItem?.id });
+      // The PIN itself is retained in memory (never persisted/logged) so the
+      // server can re-verify it at booking time; it dies with this form.
+      setDiscountAuthorized({ admin: res.admin, pct: discountPct, itemId: selectedItem?.id, pin: adminPin });
       setShowAdminAuth(false);
       setAdminPin('');
     } catch (err) {
@@ -484,38 +527,160 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         setShowAdminAuth(true);
         return;
       }
-      submitBooking();
+      // Online collects the downpayment through the gateway right after the
+      // booking is created; cash just records it with the booking.
+      if (payChannel === 'online') submitBookingOnline();
+      else submitBooking();
       return;
     }
     setStep(s => s + 1);
   };
+
+  // Online collection: the booking is created first (an intent needs a
+  // transaction id), then the downpayment is charged through the gateway.
+  // The receipt lands only after the gateway confirms — Maya via QR + poll,
+  // PayMongo via drop-in + poll. Anything unrecoverable falls back to the
+  // receipt with the balance due at pickup (release stays locked until ₱0).
+  const submitBookingOnline = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setCollectError('');
+    setGatewayIntent(null);
+    setGatewayQrUrl(null);
+    setGatewayStatus(null);
+    try {
+      const created = await createBookingRecord();
+      // Seed immediately so the poller can merge gateway totals into it.
+      setCreatedTx(created);
+      const amt = Number(totals.downpayment) || 0;
+      let intent;
+      try {
+        intent = await paymentsService.createIntent({ transactionId: created.id, amount: amt });
+      } catch (intentErr) {
+        setCollectError(intentErr?.message || 'Could not start the online payment — collect the downpayment at pickup instead.');
+        setSubmitting(false);
+        submittingRef.current = false;
+        setStep(4);
+        return;
+      }
+      if (intent?.simulated) {
+        setSubmitting(false);
+        submittingRef.current = false;
+        setStep(4);
+        return;
+      }
+      setCollecting(true);
+      if (intent?.gateway === 'maya') {
+        setGatewayIntent(intent);
+        setGatewayStatus('pending');
+        if (intent.qrCodeBody) {
+          try { setGatewayQrUrl(await QRCode.toDataURL(intent.qrCodeBody, { width: 220, margin: 1 })); }
+          catch { setGatewayQrUrl(null); }
+        }
+        pollStopRef.current = false;
+        const ok = await pollBookingPaid(created.id);
+        finishOnlineCollect(created, ok);
+        return;
+      }
+      try {
+        await openDropIn(intent.clientKey, {
+          amount: Math.round(amt * 100),
+          currency: 'PHP',
+          description: `Downpayment for ${selectedItem?.name || 'booking'}`,
+        });
+      } catch (payErr) {
+        setCollecting(false);
+        setCollectError(payErr?.message || 'Payment was cancelled — collect the downpayment at pickup instead.');
+        setSubmitting(false);
+        submittingRef.current = false;
+        setStep(4);
+        return;
+      }
+      setGatewayIntent(intent);
+      setGatewayStatus('pending');
+      pollStopRef.current = false;
+      const ok = await pollBookingPaid(created.id);
+      finishOnlineCollect(created, ok);
+    } catch (err) {
+      setError(err?.message || 'Failed to create rental. Please try again.');
+      setCollecting(false);
+      setSubmitting(false);
+      submittingRef.current = false;
+    }
+  };
+
+  // Polls until the downpayment credit lands (getStatus reports succeeded
+  // once totalPaid covers the booking's downpayment). Resolves false on
+  // timeout/failure/expiry so the caller can fall back to pickup collection.
+  const pollBookingPaid = async (txId) => {
+    for (let i = 0; i < 20; i++) {
+      if (pollStopRef.current) return false;
+      await new Promise((r) => setTimeout(r, 3000));
+      if (pollStopRef.current) return false;
+      try {
+        const s = await paymentsService.getStatus(txId);
+        setGatewayStatus(s?.status ?? null);
+        if (s?.status === 'succeeded') {
+          setCreatedTx((prev) => (prev ? { ...prev, totalPaid: s.totalPaid ?? prev.totalPaid, balance: s.balance ?? prev.balance } : prev));
+          return true;
+        }
+        if (s?.status === 'failed' || s?.status === 'expired') return false;
+      } catch { /* transient blip — keep polling */ }
+    }
+    return false;
+  };
+
+  const finishOnlineCollect = (created, ok) => {
+    setCollecting(false);
+    if (!ok) {
+      setCollectError('Payment not confirmed yet — the booking is saved; collect the downpayment at pickup instead.');
+    }
+    // createdTx was seeded at creation and merged by the poller on success.
+    setCreatedTx((prev) => prev ?? created);
+    setSubmitting(false);
+    submittingRef.current = false;
+    setStep(4);
+  };
+
+  const buildBookingPayload = () => ({
+    customer: customer.name,
+    contact: customer.contact,
+    address: customer.address,
+    item: selectedItem.name,
+    itemId: selectedItem.id,
+    date: customer.rentalDate,
+    amount: totals.discountedRate,
+    downpayment: totals.downpayment,
+    // Cash tab = money in hand, recorded as a completed payment with the
+    // booking. Online tab = gateway webhook credits it when it lands.
+    downpaymentCash: payChannel === 'cash',
+    balance: totals.balance,
+    discountPct: isDiscountApproved ? discountPct : 0,
+    discountApprovedBy: isDiscountApproved ? discountAuthorized?.admin?.name || null : null,
+    // Server-verified at booking (ignored without a staff session): the PIN
+    // approval + the voucher code. Previously the counter discount never
+    // reached the server at all (validation strips unknown fields).
+    staffDiscountPct: isDiscountApproved ? discountPct : 0,
+    staffDiscountPin: isDiscountApproved ? discountAuthorized?.pin || undefined : undefined,
+    promoCode: promoApplied?.code || undefined,
+    size,
+    measurements,
+    notes: customer.notes,
+    rentalDate: customer.rentalDate,
+    eventDate: customer.eventDate,
+    returnDate: customer.returnDate,
+  });
+
+  const createBookingRecord = () => onAddTransaction(buildBookingPayload());
 
   const submitBooking = async () => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
     {
-      const transactionData = {
-        customer: customer.name,
-        contact: customer.contact,
-        address: customer.address,
-        item: selectedItem.name,
-        itemId: selectedItem.id,
-        date: customer.rentalDate,
-        amount: totals.discountedRate,
-        downpayment: totals.downpayment,
-        balance: totals.balance,
-        discountPct: isDiscountApproved ? discountPct : 0,
-        discountApprovedBy: isDiscountApproved ? discountAuthorized?.admin?.name || null : null,
-        size,
-        measurements,
-        notes: customer.notes,
-        rentalDate: customer.rentalDate,
-        eventDate: customer.eventDate,
-        returnDate: customer.returnDate,
-      };
       try {
-        const created = await onAddTransaction(transactionData);
+        const created = await createBookingRecord();
         setCreatedTx(created);
         setSubmitting(false);
         submittingRef.current = false;
@@ -532,9 +697,13 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const progressSteps = ['Items', 'Details', 'Confirm', 'Receipt'];
 
   return (
-    <div className="fixed inset-0 z-[200] bg-gray-900/40 backdrop-blur-sm" onClick={() => requestNavigate('close')}>
-      <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-new-rental" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300 pointer-events-auto" onClick={e => e.stopPropagation()}>
+    <>
+      {/* interceptClose: while the form is dirty, backdrop/swipe hand
+          control straight to the discard guard with NO exit animation —
+          otherwise the sheet slides away under the confirm dialog and
+          "Keep Editing" returns to an invisible sheet (looks like lost
+          entries). When clean, the normal animated close plays. */}
+      <BottomSheet onClose={() => requestNavigate('close')} interceptClose={hasUnsavedChanges} maxWidth="sm:max-w-3xl" labelledby="dialog-title-new-rental">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
           <h2 id="dialog-title-new-rental" className="text-xl font-bold text-gray-900">New Rental</h2>
@@ -561,7 +730,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         </div>
 
         {/* Content area with scrollable catalog */}
-        <div className="flex-1 overflow-hidden flex flex-col p-6">
+        <div className="flex-1 overflow-hidden flex flex-col min-h-0 p-6">
           {/* STEP 1: Catalog */}
           {step === 1 && (
             <div key="step1" className="step-enter flex flex-col flex-1 min-h-0">
@@ -664,6 +833,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               <div
                 ref={catalogRef}
                 onScroll={handleCatalogScroll}
+                data-sheet-scroll
                 className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[36vh] sm:max-h-[44vh]"
               >
                 {filteredCatalog.length === 0 ? (
@@ -740,99 +910,115 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
           {/* STEP 2: Details */}
           {step === 2 && (
-            <div key="step2" ref={step2Ref} className="step-enter overflow-y-auto pr-1 space-y-6">
+            <div key="step2" ref={step2Ref} data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-6">
               <h3 className="font-bold text-lg text-gray-900">Booking Details</h3>
 
 
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Customer</h4>
-                <div ref={customerSearchRef} className="relative">
-                  <div className="relative">
-                    <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input type="text" placeholder="Search past customers or enter new name..."
-                      value={customerSearch}
-                      onChange={e => { setCustomerSearch(e.target.value); setShowCustomerResults(true); }}
-                      onFocus={() => setShowCustomerResults(true)}
-                      className="w-full pl-9 p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53]" />
-                  </div>
-                  {showCustomerResults && foundCustomers.length > 0 && (
-                    <div className="absolute top-full mt-1 left-0 right-0 bg-white border border-gray-100 rounded-2xl shadow-lg z-10 overflow-hidden">
-                      {foundCustomers.map((c, i) => (
-                        <button key={i}
-                          onClick={() => selectCustomer(c)}
-                          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
-                        >
-                          <div className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center shrink-0">
-                            <User size={14} className="text-[#bf4a53]" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-gray-900 truncate">{c.name}</p>
-                            {c.contact && <p className="text-[11px] text-gray-500">{c.contact}</p>}
-                          </div>
-                          <Check size={14} className="text-emerald-500 shrink-0" />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
                 <div>
                   <Field showLabel={false} type="text" placeholder="Full Name" value={customer.name}
-                    onChange={e => { setCustomer({...customer, name: e.target.value}); clearFieldError('name'); touchField('name'); }}
+                    onChange={e => { setCustomer({...customer, name: sanitizeName(e.target.value)}); clearFieldError('name'); touchField('name'); }}
                     onBlur={() => touchField('name')}
                     className={inputClass('name')} aria-label="Customer full name"
+                    maxLength={INPUT_LIMITS.NAME_MAX}
                     error={fieldErrors.name || undefined} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <Field showLabel={false} type="tel" placeholder="Contact No." value={customer.contact}
-                      onChange={e => { setCustomer({...customer, contact: e.target.value.replace(/\D/g, '')}); clearFieldError('contact'); touchField('contact'); }}
+                      onChange={e => { setCustomer({...customer, contact: sanitizePhone(e.target.value)}); clearFieldError('contact'); touchField('contact'); }}
                       onBlur={() => touchField('contact')}
                       className={inputClass('contact')} inputMode="numeric" aria-label="Customer contact number"
+                      maxLength={INPUT_LIMITS.PHONE_LENGTH}
                       error={fieldErrors.contact || undefined} />
                   </div>
                   <div>
                     <Field showLabel={false} type="text" placeholder="Address" value={customer.address}
-                      onChange={e => { setCustomer({...customer, address: e.target.value}); clearFieldError('address'); touchField('address'); }}
+                      onChange={e => { setCustomer({...customer, address: sanitizeAddress(e.target.value)}); clearFieldError('address'); touchField('address'); }}
                       onBlur={() => touchField('address')}
                       className={inputClass('address')} aria-label="Customer address"
+                      maxLength={INPUT_LIMITS.ADDRESS_MAX}
                       error={fieldErrors.address || undefined} />
                   </div>
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Rental Dates</label>
-                  <p className="text-[10px] text-gray-400 mb-2">Tap once for pickup, tap again for event date.</p>
-                  <BookingCalendar
-                    pickup={customer.rentalDate}
-                    event={customer.eventDate}
-                    bookedRanges={bookedRanges}
-                    returnDays={returnDays}
-                    onChange={handleCalendarChange}
-                  />
-                  {fieldErrors.rentalDate && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.rentalDate}</p>}
+                <div className="space-y-3">
+                  <CollapsibleSection
+                    icon={Calendar}
+                    title="Rental Dates"
+                    required={!customer.rentalDate || !customer.eventDate || !!fieldErrors.rentalDate}
+                    summary={
+                      customer.rentalDate && customer.eventDate
+                        ? `${shortDate(customer.rentalDate)} → ${shortDate(customer.eventDate)}`
+                        : customer.rentalDate
+                          ? `${shortDate(customer.rentalDate)} → pick event day`
+                          : 'Pick your dates'
+                    }
+                    hasError={!!(fieldErrors.rentalDate || fieldErrors.eventDate || (availability.available === false && !availability.checking))}
+                  >
+                    <DatePickGuide
+                      hasPickup={!!customer.rentalDate}
+                      hasEvent={!!customer.eventDate}
+                      returnLabel={customer.returnDate
+                        ? new Date(customer.returnDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                        : null}
+                    />
+                    {(customer.rentalDate || customer.eventDate) && (
+                      <div className="flex justify-end -mt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCalendarChange('', '')}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[36px] text-[11px] font-bold text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                        >
+                          <RotateCcw size={12} /> Reset dates
+                        </button>
+                      </div>
+                    )}
+                    <div className="grid gap-4 lg:grid-cols-[1fr_230px]">
+                      <BookingCalendar
+                        pickup={customer.rentalDate}
+                        event={customer.eventDate}
+                        bookedRanges={bookedRanges}
+                        returnDays={returnDays}
+                        hideSummary
+                        onChange={handleCalendarChange}
+                      />
+                      <div className="space-y-3 min-w-0">
+                        <ScheduleChips
+                          pickup={customer.rentalDate}
+                          event={customer.eventDate}
+                          returnDays={returnDays}
+                          vertical
+                        />
+                        <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
+                          <Calendar size={15} className="text-amber-500 mt-0.5 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-amber-800">Pickup before the event</p>
+                            <p className="text-[11px] text-amber-600/80 mt-0.5">Return due {returnDays === 1 ? 'the day after' : `${returnDays} days after`} the event{customer.returnDate ? ` (${new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})})` : ''}.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {fieldErrors.rentalDate && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.rentalDate}</p>}
+                    {fieldErrors.eventDate && <p role="alert" className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.eventDate}</p>}
+                    {availability.checking && (
+                      <div className="flex items-center gap-2 text-xs text-gray-500">
+                        <Loader2 size={14} className="animate-spin" /> Checking availability…
+                      </div>
+                    )}
+                    {!availability.checking && availability.available === true && (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                        <Check size={16} /> Available for the selected dates.
+                      </div>
+                    )}
+                    {!availability.checking && availability.available === false && (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
+                        <Calendar size={16} /> {availability.reason || 'Not available for the selected dates.'}
+                      </div>
+                    )}
+                  </CollapsibleSection>
                 </div>
-                <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
-                  <Calendar size={16} className="text-amber-500 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-bold text-amber-800">Pick up before your event date</p>
-                    <p className="text-[11px] text-amber-600/80 mt-0.5">Return due {returnDays === 1 ? 'the day after' : `${returnDays} days after`} your event ({new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}).</p>
-                  </div>
-                </div>
-                {availability.checking && (
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <Loader2 size={14} className="animate-spin" /> Checking availability…
-                  </div>
-                )}
-                {!availability.checking && availability.available === true && (
-                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-                    <Check size={16} /> Available for the selected dates.
-                  </div>
-                )}
-                {!availability.checking && availability.available === false && (
-                  <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
-                    <Calendar size={16} /> {availability.reason || 'Not available for the selected dates.'}
-                  </div>
-                )}
               </div>
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
@@ -871,54 +1057,71 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               </div>
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-bold text-sm text-gray-900">Downpayment</p>
-                    <p className="text-xs text-gray-500">Optional partial payment</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" checked={includeDownpayment} onChange={e => setIncludeDownpayment(e.target.checked)} className="sr-only peer" />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#bf4a53]"></div>
-                  </label>
+                <div>
+                  <p className="font-bold text-sm text-gray-900">Downpayment <span className="text-[#bf4a53]">*</span></p>
+                  <p className="text-xs text-gray-500">Required — minimum ₱{Math.min(minDownpayment || 200, totals.discountedRate || 0).toLocaleString()} to secure the booking</p>
                 </div>
-                {includeDownpayment && (
-                  <div>
-                    <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
-                      <input type="number" placeholder="Amount" value={downpaymentAmount}
-                        onChange={e => { setDownpaymentAmount(e.target.value); clearFieldError('downpayment'); touchField('downpayment'); }}
-                        onBlur={() => touchField('downpayment')}
-                        className={inputClass('downpayment', 'pl-8')} />
-                    </div>
-                    {fieldErrors.downpayment && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.downpayment}</p>}
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">₱</span>
+                    <input type="number" placeholder="Amount" value={downpaymentAmount}
+                      onChange={e => { setDownpaymentAmount(e.target.value); clearFieldError('downpayment'); touchField('downpayment'); }}
+                      onBlur={() => touchField('downpayment')}
+                      className={inputClass('downpayment', 'pl-8')} aria-label="Required downpayment amount" />
                   </div>
-                )}
+                  {fieldErrors.downpayment && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.downpayment}</p>}
+                </div>
               </div>
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Documentation</h4>
                 <textarea placeholder="Remarks / Notes" value={customer.notes}
-                  onChange={e => setCustomer({...customer, notes: e.target.value})}
+                  onChange={e => setCustomer({...customer, notes: sanitizeNotes(e.target.value)})}
+                  maxLength={INPUT_LIMITS.NOTES_MAX}
                   className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[80px] focus:outline-none focus:border-[#bf4a53]" />
-                <div className="bg-blue-50/50 rounded-xl p-4 text-center">
-                  <p className="text-xs font-semibold text-blue-700">Photo taken at pickup</p>
-                  <p className="text-[10px] text-blue-500 mt-0.5">Pre-rental condition photo will be captured when the customer picks up the item.</p>
-                </div>
               </div>
             </div>
           )}
 
           {/* STEP 3: Receipt */}
           {step === 3 && (
-            <div key="step3" className="step-enter overflow-y-auto pr-1 space-y-4">
+            <div key="step3" data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-4">
               <div className="text-center">
-                <h3 className="text-lg font-bold text-gray-900">Review Transaction</h3>
-                <p className="text-sm text-gray-500">Finalize rental details</p>
+                <p className="text-[11px] font-extrabold text-[#bf4a53] uppercase tracking-[0.14em]">Step 3 of 3 · Review</p>
+                <h3 className="text-lg font-bold text-gray-900 mt-0.5">Review Transaction</h3>
+                <p className="text-sm text-gray-500">Check everything before confirming the rental.</p>
               </div>
-              <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-                <div className="bg-[#bf4a53] text-white p-5 text-center">
-                  <svg className="w-6 h-6 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  <p className="font-bold">{selectedItem?.name}</p>
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="flex items-center gap-4 p-4 sm:p-5 bg-gradient-to-br from-red-50/70 via-white to-white border-b border-red-100/60">
+                  <ItemImage thumb image={selectedItem?.image} alt={selectedItem?.name || 'Item photo'} className="w-16 h-16 rounded-2xl object-cover bg-gray-100 shadow-sm shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-extrabold text-gray-900 leading-snug truncate">{selectedItem?.name}</p>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                      {selectedItem?.category && (
+                        <span className="text-[10px] font-extrabold uppercase tracking-wide text-gray-500 bg-gray-100 rounded-full px-2.5 py-1">{selectedItem.category}</span>
+                      )}
+                      {!!size && (
+                        <span className="text-[10px] font-extrabold uppercase tracking-wide text-[#bf4a53] bg-[#bf4a53]/10 rounded-full px-2.5 py-1">Size {size}</span>
+                      )}
+                    </div>
+                  </div>
+                  <span title="Ready to confirm" className="shrink-0 w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                    <Check size={18} strokeWidth={3} />
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 divide-x divide-gray-100 bg-gray-50/60">
+                  {[
+                    { label: 'Pickup', value: customer.rentalDate },
+                    { label: 'Event', value: customer.eventDate },
+                    { label: 'Return', value: customer.returnDate },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="px-2 py-2.5 text-center min-w-0">
+                      <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-gray-400">{label}</p>
+                      <p className="text-xs font-extrabold text-gray-900 mt-0.5 truncate">
+                        {value ? new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                      </p>
+                    </div>
+                  ))}
                 </div>
                 <div className="p-5 space-y-3 text-sm">
                   <div className="flex justify-between"><span className="text-gray-500">Customer</span><span className="font-semibold">{customer.name}</span></div>
@@ -926,16 +1129,48 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   <div className="flex justify-between"><span className="text-gray-500">Event Date</span><span className="font-semibold">{new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="font-semibold">{new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
                   <div className="flex justify-between font-bold"><span>{selectedItem?.name}</span><span>₱{totals.baseRate.toLocaleString()}</span></div>
+                  {totals.promoDiscount > 0 && (
+                    <div className="flex justify-between text-emerald-600"><span>Voucher ({totals.promoCode})</span><span>-₱{totals.promoDiscount.toLocaleString()}</span></div>
+                  )}
                   {totals.discount > 0 && (
                     <div className="flex justify-between text-emerald-600"><span>Discount ({discountPct}%)</span><span>-₱{totals.discount.toLocaleString()}</span></div>
                   )}
-                  {totals.discount > 0 && (
+                  {(totals.discount > 0 || totals.promoDiscount > 0) && (
                     <div className="flex justify-between text-sm"><span className="text-gray-500">After Discount</span><span className="font-semibold">₱{totals.discountedRate.toLocaleString()}</span></div>
                   )}
-                  {includeDownpayment && totals.downpayment > 0 && (
-                    <div className="flex justify-between text-[#bf4a53]"><span>Downpayment</span><span>-₱{totals.downpayment.toLocaleString()}</span></div>
+                  <div className="flex justify-between border-t pt-3 mt-2"><span className="text-gray-500">Balance (remaining)</span><span className="font-bold text-gray-900">₱{totals.balance.toLocaleString()}</span></div>
+                  {totals.downpayment > 0 && (
+                    <div className="overflow-hidden rounded-2xl bg-white border-2 border-[#bf4a53] shadow-[0_4px_14px_-10px_rgba(191,74,83,0.35)]">
+                      <div className="px-4 pt-3.5 pb-3 flex items-end justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="inline-block text-[9px] font-extrabold uppercase tracking-[0.14em] text-white bg-[#bf4a53] rounded-full px-2 py-0.5">Due now</span>
+                          <p className="text-sm font-bold text-gray-900 mt-1.5">Paying now <span className="font-medium text-gray-400">(downpayment)</span></p>
+                        </div>
+                        <p className="font-extrabold text-[#bf4a53] text-2xl leading-none tabular-nums shrink-0">₱{totals.downpayment.toLocaleString()}</p>
+                      </div>
+                      <div className="mx-4 h-1.5 rounded-full bg-gray-100 overflow-hidden" aria-hidden="true">
+                        <div
+                          className="h-full rounded-full bg-[#bf4a53] transition-all"
+                          style={{ width: `${totals.discountedRate > 0 ? Math.min(100, Math.round((totals.downpayment / totals.discountedRate) * 100)) : 0}%` }}
+                        />
+                      </div>
+                      <div className="mt-3 px-4 py-2.5 bg-red-50/70 border-t border-red-100 flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold text-gray-500">Balance due at pickup</span>
+                        <span className="text-sm font-extrabold text-gray-900 tabular-nums">₱{Math.max(0, totals.balance).toLocaleString()}</span>
+                      </div>
+                    </div>
                   )}
-                  <div className="flex justify-between font-bold text-base border-t pt-3 mt-2"><span>Balance</span><span className="text-[#bf4a53]">₱{totals.balance.toLocaleString()}</span></div>
+                  {totals.balance > 0 && (
+                    <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white px-4 py-3">
+                      <span className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                        <Banknote size={17} />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-amber-800 tabular-nums">₱{totals.balance.toLocaleString()} to collect at pickup</p>
+                        <p className="text-[11px] text-amber-700 leading-snug mt-0.5">Collect the rest at handover — release the item only once fully paid.</p>
+                      </div>
+                    </div>
+                  )}
                   {discountPct > 0 && (
                     isDiscountApproved ? (
                       <p className="text-[10px] text-emerald-600 font-medium text-center pt-1">Discount approved by {discountAuthorized.admin?.name}</p>
@@ -947,20 +1182,94 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 </div>
 </div>
 
-              {/* Discount Section — staff picks the %; the admin approves it
-                  with their PIN when Confirm is pressed (not before). */}
+              {/* Payment — how the ₱{totals.downpayment} downpayment is collected.
+                  Cash records it with the booking; Online charges it through the
+                  gateway right after the booking is created (receipt lands only
+                  after the gateway confirms). */}
               <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Percent size={16} className="text-gray-500" />
-                    <h4 className="font-bold text-sm text-gray-900">Discount</h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold text-sm text-gray-900">Payment</h4>
+                  <span className="text-xs font-bold text-[#bf4a53] bg-red-50 rounded-full px-3 py-1.5">₱{totals.downpayment.toLocaleString()} downpayment</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-2xl" role="tablist" aria-label="Downpayment channel">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payChannel === 'cash'}
+                    onClick={() => setPayChannel('cash')}
+                    className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'cash' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    <Banknote size={14} /> Cash
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={payChannel === 'online'}
+                    onClick={() => setPayChannel('online')}
+                    className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    {gateway === 'maya' ? <QrCode size={14} /> : <CreditCard size={14} />} Online
+                  </button>
+                </div>
+                {payChannel === 'cash' ? (
+                  <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 rounded-xl px-3.5 py-3">
+                    Collect <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} in cash</span> at the counter — it is recorded with the booking. The remaining ₱{totals.balance.toLocaleString()} is settled at pickup.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-gray-500 leading-relaxed bg-blue-50/70 border border-blue-100 rounded-xl px-3.5 py-3">
+                      {gateway === 'maya'
+                        ? <>Charge <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via Maya QRPh</span> — after Confirm, show the QR to the customer to scan. The receipt lands only after Maya confirms.</>
+                        : <>Charge <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via PayMongo</span> (GCash / card) — after Confirm, the secure checkout opens on this device. The receipt lands only after the payment succeeds.</>}
+                    </p>
+                    {collecting && gatewayIntent?.gateway === 'maya' && (
+                      <div className="bg-white border border-gray-100 rounded-2xl p-4 flex flex-col items-center gap-2">
+                        {gatewayQrUrl
+                          ? <img src={gatewayQrUrl} alt="Maya payment QR" className="w-44 h-44 rounded-xl border border-gray-100" />
+                          : <QrCode size={40} className="text-gray-300" />}
+                        {gatewayIntent.redirectUrl && (
+                          <a href={gatewayIntent.redirectUrl} target="_blank" rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-bold text-[#bf4a53] hover:underline">
+                            <ExternalLink size={12} /> Open Maya checkout
+                          </a>
+                        )}
+                        <p className="text-[11px] font-bold text-amber-600 animate-pulse flex items-center gap-1.5">
+                          <Loader2 size={12} className="animate-spin" /> Waiting for customer payment…
+                        </p>
+                      </div>
+                    )}
+                    {collecting && gatewayIntent?.gateway !== 'maya' && (
+                      <p className="text-[11px] font-bold text-amber-600 animate-pulse flex items-center gap-1.5">
+                        <Loader2 size={12} className="animate-spin" /> Waiting for payment confirmation…
+                      </p>
+                    )}
                   </div>
-                  {discountPct > 0 && (
-                    <button onClick={() => { handleDiscountChange(0); }}
-                      className="text-xs font-bold text-red-500 hover:underline">
-                      Remove
-                    </button>
-                  )}
+                )}
+                {collectError && <p className="text-xs text-red-500 font-medium bg-red-50 rounded-xl px-3.5 py-2.5">{collectError}</p>}
+              </div>
+
+              {/* Discount — staff picks the %; the admin approves that exact
+                  amount with their PIN when Confirm is pressed (not before). */}
+              <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                      <Percent size={15} />
+                    </span>
+                    <div>
+                      <h4 className="font-bold text-sm text-gray-900">Discount</h4>
+                      <p className="text-[11px] text-gray-400">Admin approves it at confirmation</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-extrabold rounded-full px-3 py-1.5 ${discountPct > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>{discountPct}%</span>
+                    {discountPct > 0 && (
+                      <button onClick={() => { handleDiscountChange(0); }}
+                        className="text-xs font-bold text-red-500 hover:underline">
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <div className="flex items-center gap-3">
@@ -984,6 +1293,35 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     )
                   )}
                 </div>
+                {/* Voucher — same server-side codes as the customer flow,
+                    validated against this item's price + category. */}
+                <div className="pt-3 border-t border-gray-100">
+                  {!promoApplied ? (
+                    <>
+                      <div className="flex gap-2">
+                        <input type="text" value={promoCode}
+                          onChange={e => { setPromoCode(e.target.value.toUpperCase()); if (promoError) setPromoError(''); }}
+                          placeholder="Voucher code (optional)" maxLength={20}
+                          aria-label="Voucher code"
+                          className="flex-1 min-w-0 p-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm font-bold uppercase placeholder:normal-case placeholder:font-medium placeholder:text-gray-400 focus:outline-none focus:border-[#bf4a53]" />
+                        <button type="button" onClick={() => handleApplyPromo()} disabled={!promoCode.trim() || promoApplying}
+                          className="px-4 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800 transition-colors disabled:opacity-50 shrink-0">
+                          {promoApplying ? '…' : 'Apply'}
+                        </button>
+                      </div>
+                      {promoError && <p className="text-xs text-red-500 font-medium mt-1.5">{promoError}</p>}
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
+                      <p className="flex-1 min-w-0 text-xs font-bold text-emerald-800 truncate">
+                        {promoApplied.code} <span className="font-semibold text-emerald-600">· {promoDiscountLabel(promoApplied)}</span>
+                      </p>
+                      <button type="button" onClick={clearPromo} className="text-xs text-gray-400 hover:text-red-500 font-semibold shrink-0">
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
             </div>
@@ -991,7 +1329,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
           {/* STEP 4: Receipt (post-booking with scannable QR for the customer) */}
           {step === 4 && createdTx && (
-            <div key="step4" className="step-enter overflow-y-auto pr-1 space-y-4">
+            <div key="step4" data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-4">
               <div className="text-center">
                 <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-3">
                   <CheckCircle2 size={28} className="text-emerald-500" />
@@ -999,15 +1337,17 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 <h3 className="text-lg font-bold text-gray-900">Rental Created</h3>
                 <p className="text-sm text-gray-500">Show this receipt to the customer. They can show the QR at pickup.</p>
               </div>
+              {collectError && (
+                <p className="text-xs text-amber-700 font-medium bg-amber-50 border border-amber-200/70 rounded-2xl px-4 py-2.5 text-center">{collectError}</p>
+              )}
               <div className="print-area">
-                <BookingReceipt tx={createdTx} />
+                <BookingReceipt
+                  tx={createdTx}
+                  pickupLabel={new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
+                  eventLabel={new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
+                  dueLabel={new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
+                />
               </div>
-              <button
-                onClick={() => window.print()}
-                className="w-full py-3 rounded-full font-bold text-sm bg-white border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 text-gray-700 no-print"
-              >
-                <Printer size={16} /> Print
-              </button>
             </div>
           )}
         </div>
@@ -1020,10 +1360,27 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
             </div>
           )}
           {step === 4 ? (
-            <button onClick={onClose}
-              className="flex-1 py-2.5 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow">
-              Done
-            </button>
+            <>
+              <button
+                onClick={() => downloadReceiptImage({
+                  tx: createdTx,
+                  itemName: selectedItem?.name,
+                  customerName: customer.name,
+                  pickupLabel: new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
+                  eventLabel: new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
+                  dueLabel: new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
+                  notes: customer.notes || null,
+                  showQr: flags.qr_codes,
+                })}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 no-print"
+              >
+                <Download size={16} /> Save Receipt
+              </button>
+              <button onClick={onClose}
+                className="flex-1 py-2.5 rounded-full font-bold text-sm bg-gray-900 text-white hover:bg-gray-800 transition-colors shadow">
+                Done
+              </button>
+            </>
           ) : (
             <>
               <button onClick={() => requestNavigate('back')} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
@@ -1031,17 +1388,16 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               </button>
               <button
                 onClick={handleNext}
-                disabled={submitting || (step >= 2 && (availability.checking || availability.available === false))}
+                disabled={submitting || collecting || (step >= 2 && (availability.checking || availability.available === false))}
                 className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors shadow flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
-                {step === 3 ? (submitting ? 'Processing…' : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
+                {submitting || collecting ? <Loader2 size={16} className="animate-spin" /> : null}
+                {step === 3 ? (collecting ? 'Collecting…' : submitting ? 'Processing…' : payChannel === 'online' ? 'Create & Collect Online' : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
               </button>
             </>
           )}
         </div>
-      </div>
-      </div>
+      </BottomSheet>
 
       {/* Discard-changes confirm — Back / X / backdrop / Escape with unsaved entries */}
       {showDiscardConfirm && (
@@ -1099,6 +1455,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               </div>
             </div>
           )}
-    </div>
+    </>
   );
 }

@@ -16,8 +16,50 @@ import exportRoutes from './export.routes.js';
 
 const router = Router();
 
-router.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Storage self-check: verifies the LIVE backend's own credentials can list
+// the configured private bucket. Catches the stale-env class of bug fast:
+// the file objects may exist in the bucket while this process signs against
+// a wrong/stale bucket (or with a stale key) and 404s every download.
+// e.g. GET /api/health?check=storage → { status:'ok', storage:{…} }
+router.get('/health', async (req, res) => {
+  const base: Record<string, unknown> = { status: 'ok', timestamp: new Date().toISOString() };
+  if (String(req.query.check ?? '') !== 'storage') {
+    res.json(base);
+    return;
+  }
+  try {
+    const [{ supabaseAdmin }, storageService] = await Promise.all([
+      import('../config/supabase.js'),
+      import('../services/storage.service.js'),
+    ]);
+    const probePath = 'rental/';
+    // Private bucket for `rental/` keys per bucketFor() routing.
+    const probeBucket = storageService.bucketFor(probePath);
+    const { data, error } = await supabaseAdmin.storage.from(probeBucket).list('rental', { limit: 1 });
+    // Key identity WITHOUT leaking the secret: decode the JWT ref/role
+    // claims only. Distinguishes "running with .env values" from "shell
+    // exports overrode dotenv" (dotenv never overrides existing env vars).
+    let keyRef: string | null = null;
+    let keyRole: string | null = null;
+    try {
+      const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+      const claims = JSON.parse(Buffer.from(rawKey.split('.')[1] || '', 'base64').toString());
+      keyRef = claims.ref ?? null;
+      keyRole = claims.role ?? null;
+    } catch { /* unreadable key */ }
+    const info = {
+      bucket: probeBucket,
+      configuredBucket: process.env.STORAGE_BUCKET || '(default rentech-images)',
+      supabaseUrl: process.env.SUPABASE_URL || null,
+      keyRef,
+      keyRole,
+      listError: error ? String((error as { message?: unknown }).message ?? error) : null,
+      sampleEntries: Array.isArray(data) ? data.length : 0,
+    };
+    res.json({ ...base, storage: info });
+  } catch (err) {
+    res.json({ ...base, storage: { error: (err as Error)?.message ?? String(err) } });
+  }
 });
 
 router.use('/auth', authRoutes);

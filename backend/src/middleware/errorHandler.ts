@@ -19,6 +19,11 @@ function mapKnownError(err: unknown): { status: number; message: string } | null
   if (e.type === 'entity.too.large' || e.status === 413 || e.statusCode === 413) {
     return { status: 413, message: 'Request payload too large' };
   }
+  // Malformed JSON bodies (body-parser SyntaxError, type entity.parse.failed)
+  // are a client bug, not a server crash — answer 400 instead of 500.
+  if (e.type === 'entity.parse.failed') {
+    return { status: 400, message: 'Invalid request payload' };
+  }
   switch (e.code) {
     case 'P2002': return { status: 409, message: 'A record with that unique value already exists' };
     case 'P2003': return { status: 400, message: 'Invalid reference (foreign key constraint failed)' };

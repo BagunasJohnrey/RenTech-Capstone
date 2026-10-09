@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, Camera, Shirt, Loader2 } from 'lucide-react';
+import BottomSheet from './BottomSheet';
 import { storageService } from '../services';
 import { useToast } from './Toast';
 import { useButtonGuard } from '../hooks/useButtonGuard';
@@ -267,19 +268,18 @@ export default function ItemForm({
     'w-full bg-white border border-gray-200/80 rounded-2xl px-4 py-2.5 text-[13px] font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15 transition-all';
   const categoryDefaults = OCCASIONS_BY_CATEGORY[effectiveCategory] || [];
 
+  // Bottom-sheet shell: bottom-anchored on mobile with swipe-down-to-close,
+  // centered card on desktop. The form body carries data-sheet-scroll so a
+  // downward drag mid-scroll stays a scroll — only a drag from the top (or a
+  // flick) dismisses.
   return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 animate-in fade-in duration-200" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full ${maxWidth} max-h-[92dvh] sm:max-h-[90vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom sm:zoom-in-95 duration-200`} onClick={(e) => e.stopPropagation()}>
+    <BottomSheet onClose={onClose} labelledby="dialog-title-item-form" z="z-[100]" maxWidth={maxWidth} hideHandle>
         <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl sm:rounded-t-3xl">
           <div className="w-10 h-10 rounded-2xl bg-[#bf4a53]/10 flex items-center justify-center shrink-0">
             <Shirt size={18} className="text-[#bf4a53]" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="font-bold text-gray-900 leading-tight truncate">{title}</h3>
+            <h3 id="dialog-title-item-form" className="font-bold text-gray-900 leading-tight truncate">{title}</h3>
             <p className="text-xs text-gray-400 mt-0.5 truncate">{subtitle || 'Fill in the garment details below'}</p>
           </div>
           <button onClick={onClose} aria-label="Close editor" className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
@@ -288,7 +288,7 @@ export default function ItemForm({
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
-          <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 space-y-4">
+          <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 space-y-4">
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Garment Name</label>
@@ -557,7 +557,6 @@ export default function ItemForm({
             </div>
           </div>
         </form>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

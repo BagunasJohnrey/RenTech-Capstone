@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import * as paymongoService from '../services/paymongo.service.js';
+import { isMayaWebhookIpAllowed, retrievePayment } from '../services/maya.service.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { createAuditLog } from '../utils/audit.js';
-import { clearDataCache } from '../utils/ttlCache.js';
+import { applyPaymentToTransaction } from '../services/payments.ledger.js';
 
 export async function handlePayMongoWebhook(req: Request, res: Response, next: NextFunction) {
   try {
@@ -54,67 +54,116 @@ export async function handlePayMongoWebhook(req: Request, res: Response, next: N
       if (!transactionId) {
         throw new AppError(400, 'Missing transactionId in payment metadata');
       }
+      // The gatewayRef is the idempotency anchor, so an event without one can't
+      // be recorded safely — rejecting is the only way to avoid a double credit.
+      if (!piId) {
+        throw new AppError(400, 'Missing payment id in webhook payload');
+      }
       if (!(amount > 0)) {
         throw new AppError(400, 'Invalid payment amount');
       }
 
-      const tx = await prisma.transaction.findUnique({ where: { id: transactionId } });
-      if (!tx) throw new AppError(404, 'Transaction not found');
+      // No local existence check here — applyPaymentToTransaction performs the
+      // same lookup (and raises the same 404 when the transaction is gone).
+      const result = await applyPaymentToTransaction({
+        transactionId,
+        amount,
+        gateway: 'paymongo',
+        gatewayRef: piId,
+        method,
+      });
 
-      // Idempotency: PayMongo retries webhooks on transient failures. If this
-      // payment intent was already applied, acknowledge silently instead of
-      // double-recording the payment and corrupting the balance.
-      const existing = await prisma.payment.findUnique({ where: { paymongoPiId: piId } });
-      if (existing) {
+      if (result.duplicate) {
         return res.json({ received: true, duplicate: true });
       }
-
-      try {
-        await prisma.payment.create({
-          data: {
-            transactionId,
-            amount,
-            method,
-            type: amount >= tx.rentalFee ? 'full_payment' : 'downpayment',
-            paymongoPiId: piId,
-            status: 'succeeded',
-          },
-        });
-      } catch (err: any) {
-        // Concurrent duplicate deliveries both pass the findUnique above; the
-        // unique paymongoPiId constraint makes the loser throw P2002. Treat it
-        // as an already-applied duplicate instead of failing the webhook.
-        if (err?.code === 'P2002') {
-          return res.json({ received: true, duplicate: true });
-        }
-        throw err;
-      }
-
-      const newTotalPaid = tx.totalPaid + amount;
-      const newBalance = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - newTotalPaid);
-
-      await prisma.transaction.update({
-        where: { id: transactionId },
-        data: {
-          totalPaid: newTotalPaid,
-          balance: newBalance,
-          paymentIntentId: piId,
-        },
-      });
-
-      await createAuditLog({
-        action: 'update',
-        entity: 'transaction',
-        entityId: transactionId,
-        newValue: { paymentReceived: amount, totalPaid: newTotalPaid, balance: newBalance },
-      });
-
-      // A succeeded payment changes revenue figures — drop the cached dashboard
-      // data so the next load shows the new totals.
-      clearDataCache();
     }
 
     res.json({ received: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Maya (QRPh). Maya webhooks carry NO HMAC signature, so this endpoint cannot
+// trust anything it is sent. Two defences, in order:
+//
+//   1. An optional IP allowlist (Maya publishes its webhook IPs).
+//   2. A mandatory re-check: ask Maya, with our secret key, what actually
+//      happened to this payment. Only a confirmed SUCCESS with a matching
+//      amount credits the booking.
+//
+// Every path returns 200 quickly because Maya retries only 4 times and then
+// gives up. A slow or failing re-check credits nothing — the polling endpoint
+// (GET /payments/transaction/:id/status) repairs it from the customer's own
+// browser, which is strictly better than a retry storm.
+export async function handleMayaWebhook(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!isMayaWebhookIpAllowed(req.ip)) {
+      throw new AppError(403, 'Webhook source not allowed');
+    }
+
+    const body = req.body as {
+      id?: string;
+      paymentStatus?: string;
+      metadata?: { transactionId?: string };
+      totalAmount?: { value?: number };
+    };
+
+    // Anything uninteresting (a FAILED/EXPIRED/CANCELLED event, a payload we
+    // can't correlate) is acknowledged without crediting.
+    const ack = () => res.json({ received: true, verified: false });
+
+    if (body.paymentStatus !== 'SUCCESS' || !body.id) return ack();
+
+    // SECURITY (the whole point of this handler): the payload is unsigned, so
+    // NOTHING in it chooses which booking gets credited. Not `metadata`, not
+    // `receiptNumber`. The binding comes only from the gatewayPaymentId WE
+    // stored when we created the charge — so a customer who pays their own
+    // downpayment once cannot replay that paymentId against another booking.
+    // (The re-check below proves the money arrived; this proves it was OUR money
+    // for THIS booking.)
+    const tx = await prisma.transaction.findFirst({
+      where: { gatewayPaymentId: body.id },
+    });
+    if (!tx) return ack();
+
+    let verified;
+    try {
+      verified = await retrievePayment(body.id);
+    } catch {
+      // Maya is unreachable or erroring. Credit nothing, but still 200.
+      return ack();
+    }
+
+    if (verified.status !== 'SUCCESS') return ack();
+
+    // The re-check is the ONLY amount we trust — the unsigned payload's own
+    // figures are never read. A forged payload can neither inflate a credit
+    // (claiming more than Maya received) nor shrink one; whatever Maya says
+    // actually landed is what gets recorded, and the balance follows.
+    let result;
+    try {
+      result = await applyPaymentToTransaction({
+        transactionId: tx.id,
+        amount: verified.amount,
+        gateway: 'maya',
+        gatewayRef: body.id,
+        method: 'maya',
+      });
+    } catch (err: any) {
+      // 400/404 = nothing to do. 409 = a concurrent credit moved totalPaid first,
+      // so this delivery lost a race; Maya's retry (or the poller) will land it.
+      // All three ack rather than 4xx — a retry storm is worse than a delay.
+      if (
+        err?.statusCode === 400 || err?.statusCode === 404 || err?.statusCode === 409
+      ) return ack();
+      throw err;
+    }
+
+    if (result.duplicate) {
+      return res.json({ received: true, verified: true, duplicate: true });
+    }
+    res.json({ received: true, verified: true });
   } catch (err) {
     next(err);
   }

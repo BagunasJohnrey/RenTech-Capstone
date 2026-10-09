@@ -14,6 +14,7 @@ import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNo
 import { purgeOldData } from './services/retention.service.js';
 import { ensureBucket } from './services/storage.service.js';
 import { ensureBackupBucket, runAutoBackup } from './services/backup.service.js';
+import { runAutoReport } from './services/autoReport.service.js';
 import { ensureAiReportsBucket } from './services/aiReport.service.js';
 import { getKpis, getForecast, getInsights, getTodayTasks } from './services/dashboard.service.js';
 import { getInventoryAnalytics } from './services/inventoryAnalytics.service.js';
@@ -281,6 +282,33 @@ app.listen(env.PORT, () => {
     daily.unref?.();
   }, 10 * 60 * 1000);
   autoBackupStart.unref?.();
+
+  // Automatic weekly AI business report (same generation path as the manual
+  // button). The service anchors cadence to calendar weeks (Manila Monday via
+  // the `auto_report_last_week` rule), so this tick can run on the same
+  // hourly cadence as a cheap check: most ticks exit at the rule read.
+  // Missed weeks while down are NOT backfilled — the first tick after boot
+  // generates for the current week only.
+  let autoReportRunning = false;
+  const runAutoReportTick = async () => {
+    if (autoReportRunning) return;
+    autoReportRunning = true;
+    try {
+      await runAutoReport();
+    } catch (err) {
+      console.error('[AutoReport] tick failed:', err);
+    } finally {
+      autoReportRunning = false;
+    }
+  };
+  // First check 15 min after boot (after pre-warm + SMS tick + retention +
+  // backup ticks have had their stagger), then hourly.
+  const autoReportStart = setTimeout(() => {
+    runAutoReportTick();
+    const hourly = setInterval(runAutoReportTick, 60 * 60 * 1000);
+    hourly.unref?.();
+  }, 15 * 60 * 1000);
+  autoReportStart.unref?.();
 
   // Keep Render free tier alive: free web services spin down after ~15 min
   // without INBOUND traffic, so ping the PUBLIC url (Render injects

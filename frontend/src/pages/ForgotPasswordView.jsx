@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ShieldCheck, CheckCircle, MapPin, MailWarning } from 'lucide-react';
+import { ShieldCheck, CheckCircle, MapPin, MailWarning, Eye, EyeOff } from 'lucide-react';
 import { api } from '../utils/api';
 import { PASSWORD_REQUIREMENTS } from '../components/Login';
 import { useToast } from '../components/Toast';
@@ -50,6 +50,9 @@ export default function ForgotPasswordView() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   // Inline (non-toast) error kept on the form — used when the old-password
   // confirmation fails so the user can correct it without losing the link.
@@ -191,14 +194,21 @@ export default function ForgotPasswordView() {
           <form onSubmit={handleResetSubmit} className="space-y-4 bg-white rounded-2xl border border-gray-100 p-6 sm:p-8 shadow-sm">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => { setCurrentPassword(e.target.value); if (formError) setFormError(''); }}
-                placeholder="Your current password"
-                autoComplete="current-password"
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
-              />
+              <div className="relative">
+                <input
+                  type={showCurrent ? 'text' : 'password'}
+                  value={currentPassword}
+                  onChange={(e) => { setCurrentPassword(e.target.value); if (formError) setFormError(''); }}
+                  placeholder="Your current password"
+                  autoComplete="current-password"
+                  className="w-full px-4 py-3 pr-11 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
+                />
+                <button type="button" onClick={() => setShowCurrent(!showCurrent)}
+                  aria-label={showCurrent ? 'Hide current password' : 'Show current password'} aria-pressed={showCurrent}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
               <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
                 Confirm the password you use now — <span className="font-semibold text-gray-500">leave blank if you've forgotten it</span>; your email link already confirms it's you.
               </p>
@@ -208,15 +218,22 @@ export default function ForgotPasswordView() {
             )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••"
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
-                required
-                minLength={12}
-              />
+              <div className="relative">
+                <input
+                  type={showNew ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••••"
+                  className="w-full px-4 py-3 pr-11 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
+                  required
+                  minLength={12}
+                />
+                <button type="button" onClick={() => setShowNew(!showNew)}
+                  aria-label={showNew ? 'Hide new password' : 'Show new password'} aria-pressed={showNew}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  {showNew ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </div>
             <div className="space-y-1.5 mb-2">
               {PASSWORD_REQUIREMENTS.map((req) => {
@@ -231,15 +248,22 @@ export default function ForgotPasswordView() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-              <input
-                type="password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                placeholder="••••••••••"
-                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
-                required
-                minLength={12}
-              />
+              <div className="relative">
+                <input
+                  type={showConfirm ? 'text' : 'password'}
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  placeholder="••••••••••"
+                  className="w-full px-4 py-3 pr-11 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#bf4a53]/30 focus:border-[#bf4a53]"
+                  required
+                  minLength={12}
+                />
+                <button type="button" onClick={() => setShowConfirm(!showConfirm)}
+                  aria-label={showConfirm ? 'Hide password confirmation' : 'Show password confirmation'} aria-pressed={showConfirm}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
             </div>
             {password !== confirm && password.length >= 12 && (
               <p className="text-xs text-red-500">Passwords do not match</p>

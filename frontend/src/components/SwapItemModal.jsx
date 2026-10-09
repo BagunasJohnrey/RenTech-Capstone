@@ -13,9 +13,11 @@ const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
 
 // At-pickup item swap (staff only): the customer is at the counter and wants a
 // different garment on the SAME booking record. The server re-derives the fee
-// from the new item, voids any promo, keeps the downpayment as-is (no refunds),
-// clears sizes, and voids the old release photo — so release must be (re)taken
-// for the new item afterwards. This modal only swaps; it never releases.
+// from the new item, carries the promo over when it still validates there
+// (voids + hands the use back otherwise), keeps the downpayment as-is (no
+// refunds), clears sizes, and voids the old release photo — so release must
+// be (re)taken for the new item afterwards. This modal only swaps; it never
+// releases.
 //
 // Mobile behaves like the release sheet: bottom-anchored, swipe-down to
 // dismiss, footer pinned. Desktop stays a centered dialog.
@@ -257,7 +259,7 @@ export default function SwapItemModal({ transaction, inventory: inventoryProp = 
                 </p>
               )}
               {transaction.promoCodeId ? (
-                <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5"><Tag size={12} /> The booking coupon is voided on swap (it applied to the old item).</p>
+                <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5"><Tag size={12} /> The booking coupon carries over when it still applies to the new item — otherwise it is voided (use handed back).</p>
               ) : null}
               {check.checking && <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Checking availability…</p>}
               {!check.checking && check.available === false && (

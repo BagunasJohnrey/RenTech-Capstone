@@ -145,13 +145,38 @@ describe('POST /api/payments/create-intent', () => {
     expect(res.status).toBe(401);
   });
 
-  it('should reject for admin (customer-only)', async () => {
+  it('should allow staff/admin to create an intent for any transaction (counter checkout)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', txNumber: 1001, customerId: 'customer-id-111',
+      rentalFee: 5000, downpayment: 1000, balance: 4000,
+      status: 'Active', totalPaid: 0, latePenalty: 0, damageFee: 0,
+    });
+    prisma.transaction.update.mockResolvedValueOnce({ id: 'tx-1' });
+
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        data: {
+          id: 'pi_staff123',
+          attributes: {
+            amount: 250000,
+            currency: 'PHP',
+            status: 'awaiting_payment_method',
+            client_key: 'ck_staff123',
+            metadata: { transactionId: 'tx-1', customerId: 'customer-id-111' },
+          },
+        },
+      }),
+    });
+
     const res = await request(app)
       .post('/api/payments/create-intent')
       .set('Authorization', 'Bearer admin-token')
-      .send({ transactionId: 'tx-1', amount: 1000 });
+      .send({ transactionId: 'tx-1', amount: 2500 });
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('paymentIntentId', 'pi_staff123');
   });
 });
 
@@ -203,6 +228,19 @@ describe('GET /api/payments/:id', () => {
       .set('Authorization', 'Bearer admin-token');
 
     expect(res.status).toBe(200);
+  });
+
+  // SECURITY: a customer may not read another customer's payment intent, and an
+  // unknown id must not be waved through either.
+  it('rejects a customer reading an unknown pi_ intent', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .get('/api/payments/pi_someone_elses')
+      .set('Authorization', 'Bearer customer-token');
+
+    expect(res.status).toBe(403);
   });
 });
 

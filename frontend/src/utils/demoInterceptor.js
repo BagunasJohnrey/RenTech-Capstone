@@ -139,7 +139,11 @@ function todayDigest() {
   return {
     dueToday: clone(dueTodayTxs),
     overdue: clone(overdueTxs),
+    // Ready-for-Pickup: booked but not yet handed over (mirrors the server
+    // digest's pendingPickup + client isReleased()).
+    pendingPickup: clone(transactions.filter((t) => (t.status === 'Active' || t.status === 'Reserved') && !(t.releasePhoto || t.conditionPhoto))),
     inCleaning: items.filter((i) => i.status === 'Cleaning').length,
+    todayRevenue: 0,
     pickups: clone(transactions.filter((t) => (t.rentalDate ?? '').split('T')[0] === day(0) && (t.status === 'Active' || t.status === 'Reserved'))),
   };
 }
@@ -545,6 +549,21 @@ function route(method, path, body) {
   // ---- Dashboard ----
   if (P(/^\/dashboard\/kpis/)) return { value: kpis() };
   if (path === '/dashboard/today') return { value: todayDigest() };
+  // Freshness fingerprint: version bumps whenever demo data mutates (all
+  // mutations below touch transactions/items), so the version-poll demo
+  // behaves like the live endpoint.
+  if (path === '/dashboard/version') {
+    let version = 0;
+    for (const t of transactions) {
+      const ts = new Date(t.updatedAt || t.createdAt || 0).getTime();
+      if (Number.isFinite(ts) && ts > version) version = ts;
+    }
+    for (const it of items) {
+      const ts = new Date(it.updatedAt || it.createdAt || 0).getTime();
+      if (Number.isFinite(ts) && ts > version) version = ts;
+    }
+    return { value: { version, txCount: transactions.length, itemCount: items.length, at: new Date(version || Date.now()).toISOString() } };
+  }
   if (P(/^\/dashboard\/forecast/)) return { value: forecast() };
   if (P(/^\/dashboard\/insights/)) return { value: insights() };
   if (P(/^\/dashboard\/bundle/)) return { value: bundle() };
@@ -575,7 +594,7 @@ function route(method, path, body) {
   // ---- Settings ----
   if (path === '/settings/flags') return { value: { features: {} } };
   if (path === '/settings/rules') return { value: { minDownpaymentPct: 50, latePenaltyPerDay: 100, overdueEscalationDays: 3, dataRetentionMonths: 12 } };
-  if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false } };
+  if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false, rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'paymongo', store_name: 'RenTech Boutique', store_contact: '0917 123 4567', store_address: 'Balayan, Batangas' } };
   if (path === '/settings/sms-templates') return { value: [] };
   if (path === '/settings/integrations-status') return { value: { gemini: { configured: false }, groq: { configured: false }, openrouter: { configured: false }, paymongo: { configured: false }, semaphore: { configured: false } } };
   if (path === '/settings/backups' && method === 'GET') return { value: clone(demoBackups) };
@@ -612,8 +631,12 @@ function route(method, path, body) {
   if (P(/^\/promo-codes\/public/)) return { value: [] };
   if (P(/^\/promo-codes\/validate/)) return { status: 404, error: 'Promo code not found (demo)' };
   if (P(/^\/promo-codes/)) return { value: [] };
-  if (P(/^\/payments\/create-intent/)) return { value: { simulated: true, id: 'demo-intent' } };
-  if (P(/^\/payments\/(.+)$/)) return { value: { id: P(/^\/payments\/(.+)$/)[1], status: 'succeeded', simulated: true } };
+    if (P(/^\/payments\/create-intent/)) return { value: { simulated: true, id: 'demo-intent' } };
+    if (P(/^\/payments\/transaction\/(.+)\/status$/)) {
+      const txId = P(/^\/payments\/transaction\/(.+)\/status$/)[1];
+      return { value: { status: 'succeeded', totalPaid: 2000, balance: 3000, gateway: 'maya', transactionId: txId } };
+    }
+    if (P(/^\/payments\/(.+)$/)) return { value: { id: P(/^\/payments\/(.+)$/)[1], status: 'succeeded', simulated: true } };
   if (path === '/ai/chat') {
     return {
       value: {

@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import { api } from '../utils/api';
 import { resolveDisplayUrl } from '../utils/images';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import BottomSheet from './BottomSheet';
 import { getSaleInfo } from './ItemCard';
 import { getWelcomeSuggestions, getNextSuggestions } from '../utils/stylistChips';
 
@@ -318,16 +319,14 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
     onBook(item);
   };
 
+  // Bottom-sheet shell (same as the transaction sheet): bottom-anchored on
+  // mobile with swipe-down-to-close, centered card on desktop. The messages
+  // list carries data-sheet-scroll so a downward drag mid-scroll stays a
+  // scroll — only a drag from the top dismisses.
   return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        role="dialog" aria-modal="true" aria-labelledby="dialog-title-ai-stylist"
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-md h-[90vh] max-h-[680px] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <BottomSheet onClose={onClose} labelledby="dialog-title-ai-stylist" maxWidth="sm:max-w-md" hideHandle>
+      <div className="h-[88dvh] sm:h-[90vh] sm:max-h-[680px] flex flex-col min-h-0 overflow-hidden">
+
         {/* Header */}
         <div className="relative px-5 py-4 bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] shrink-0 overflow-hidden">
           <div className="absolute -right-8 -top-10 w-36 h-36 rounded-full bg-white/10" />
@@ -356,7 +355,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-gradient-to-b from-[#fdf7f5] to-[#f8f8f8] hide-scrollbar">
+        <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4 bg-gradient-to-b from-[#fdf7f5] to-[#f8f8f8] hide-scrollbar">
           {messages.map((msg, idx) => (
             <div
               key={idx}
@@ -502,7 +501,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
         </div>
 
         {/* Input */}
-        <div className="px-4 pt-2.5 pb-3 bg-white border-t border-gray-100 shrink-0">
+        <div className="px-4 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] bg-white border-t border-gray-100 shrink-0">
           <div className="flex gap-2">
             <input
               type="text"
@@ -533,6 +532,6 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
           </p>
         </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }

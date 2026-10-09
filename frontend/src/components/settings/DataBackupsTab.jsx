@@ -3,7 +3,7 @@ import { Database, Download, RefreshCw, Loader2, FileText, Eye, Upload, X, Alert
 import { settingsService } from '../../services/settings';
 import { aiService } from '../../services/ai';
 import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
-import SettingsCard from './SettingsCard';
+import CollapsibleCard from './CollapsibleCard';
 import AIReportModal from '../AIReportModal';
 
 const fmtBytes = (n) => {
@@ -286,81 +286,58 @@ export default function DataBackupsTab() {
 
   return (
     <>
-      <SettingsCard
+      <CollapsibleCard
         icon={Database}
         iconClass="bg-sky-50 text-sky-600"
         title="Data Backups"
-        desc="One-click JSON download of all boutique data + history of recent backups"
-        action={
-          <div className="hidden sm:flex flex-wrap items-center justify-end gap-2 shrink-0 max-w-full">
-            <button
-              onClick={loadBackups}
-              disabled={backupsLoading || backingUp}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-50"
-              title="Refresh list"
-            >
-              <RefreshCw size={15} className={backupsLoading ? 'animate-spin' : ''} />
-            </button>
-            <button
-              onClick={handleBackupNow}
-              disabled={backingUp}
-              className="flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
-            >
-              {backingUp ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-              {backingUp ? 'Backing up…' : 'Backup now'}
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={backingUp || importing}
-              className="flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full bg-white border border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
-              title="Restore from a previously downloaded backup file"
-            >
-              <Upload size={13} />
-              Import
-            </button>
-            <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handlePickFile} />
-          </div>
+        subtitle="One-click JSON download of all boutique data + history of recent backups"
+        storageKey="settings-data-backups-open"
+        badge={
+          backups.length > 0 ? (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+              {backups.length} saved
+            </span>
+          ) : null
+        }
+        headerAction={
+          <button
+            onClick={loadBackups}
+            disabled={backupsLoading || backingUp}
+            aria-label="Refresh backups list"
+            title="Refresh list"
+            className="shrink-0 w-10 h-10 inline-flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={15} className={backupsLoading ? 'animate-spin' : ''} />
+          </button>
         }
       >
+        {/* Actions — full-width stack on mobile, inline row on desktop */}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <button
+            onClick={handleBackupNow}
+            disabled={backingUp}
+            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold px-5 py-2.5 min-h-[44px] rounded-2xl sm:rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
+          >
+            {backingUp ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            {backingUp ? 'Backing up…' : 'Backup now'}
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={backingUp || importing}
+            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold px-5 py-2.5 min-h-[44px] rounded-2xl sm:rounded-full bg-white border border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            title="Restore from a previously downloaded backup file"
+          >
+            <Upload size={13} />
+            Import
+          </button>
+          <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handlePickFile} />
+        </div>
         <p className="text-sm text-gray-500 leading-relaxed">
           One JSON download of all boutique data, plus an image manifest so restores can verify nothing is missing.
           Copies save to private cloud automatically, with a daily auto-backup — file lists only, photo bytes stay in Supabase.
         </p>
         {backupMsg && <p className="text-xs text-emerald-600 font-bold">{backupMsg}</p>}
         {backupErr && <p className="text-xs text-red-500 font-bold">{backupErr}</p>}
-
-        {/* Mobile actions — full-width stack (desktop uses the header row) */}
-        <div className="sm:hidden space-y-2">
-          <button
-            onClick={handleBackupNow}
-            disabled={backingUp}
-            className="w-full flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 rounded-xl bg-gray-900 text-white hover:bg-gray-700 active:scale-[0.99] transition-all disabled:opacity-50"
-          >
-            {backingUp ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-            {backingUp ? 'Backing up…' : 'Backup now'}
-          </button>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={backingUp || importing}
-              className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50 active:scale-[0.99] transition-all disabled:opacity-50"
-              title="Restore from a previously downloaded backup file"
-            >
-              <Upload size={13} />
-              Import
-            </button>
-            <button
-              onClick={loadBackups}
-              disabled={backupsLoading || backingUp}
-              aria-label="Refresh list"
-              className="p-2.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors disabled:opacity-50"
-              title="Refresh list"
-            >
-              <RefreshCw size={15} className={backupsLoading ? 'animate-spin' : ''} />
-            </button>
-          </div>
-          <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={handlePickFile} />
-        </div>
 
         {backupsLoading && backups.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
@@ -530,19 +507,29 @@ export default function DataBackupsTab() {
             </div>
           </div>
         )}
-      </SettingsCard>
+      </CollapsibleCard>
 
-      <SettingsCard
+      <CollapsibleCard
         icon={FileText}
         iconClass="bg-purple-50 text-purple-600"
         title="Saved AI Reports"
-        desc="Past business reports — reopen any recent one. Cloud-saved automatically."
-        action={
+        subtitle="Past business reports — reopen any recent one. Cloud-saved automatically."
+        storageKey="settings-data-reports-open"
+        defaultOpen={false}
+        badge={
+          reports.length > 0 ? (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+              {reports.length} saved
+            </span>
+          ) : null
+        }
+        headerAction={
           <button
             onClick={loadReports}
             disabled={reportsLoading}
-            className="shrink-0 p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-50"
+            aria-label="Refresh reports list"
             title="Refresh list"
+            className="shrink-0 w-10 h-10 inline-flex items-center justify-center text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-50"
           >
             <RefreshCw size={15} className={reportsLoading ? 'animate-spin' : ''} />
           </button>
@@ -633,7 +620,7 @@ export default function DataBackupsTab() {
             )}
           </div>
         )}
-      </SettingsCard>
+      </CollapsibleCard>
 
       {openReport !== null && (
         <AIReportModal geminiReport={openReport} onClose={() => setOpenReport(null)} />

@@ -1,17 +1,73 @@
 // Revenue chart card: weekly series in Monthly view, monthly otherwise,
-// with the projection bar appended. Pure presentational.
+// with the projection bar appended. Week-over-week deltas + best-week star
+// cover finished weeks only (in-progress and projection bars excluded).
+// Pure presentational.
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Cell, ReferenceLine,
+  BarChart, Bar, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Cell, ReferenceLine, ErrorBar,
 } from 'recharts';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { RevenueTooltip } from './shared';
 
+// Per-bar annotations computed from the series: { [index]: { delta, up, best } }.
+function annotationsFor(revChart) {
+  const out = {};
+  const done = revChart
+    .map((e, i) => ({ ...e, i }))
+    .filter((e) => !e.forecast && !e.wip && e.rev > 0);
+  if (done.length === 0) return out;
+  const best = done.reduce((a, b) => (b.rev > a.rev ? b : a));
+  for (let k = 1; k < done.length; k++) {
+    const prev = done[k - 1].rev;
+    const cur = done[k].rev;
+    if (!(prev > 0)) continue;
+    const pct = Math.round(((cur - prev) / prev) * 100);
+    if (pct === 0) continue;
+    out[done[k].i] = { delta: `${pct > 0 ? '+' : '−'}${Math.abs(pct)}%`, up: pct > 0, best: done[k].i === best.i };
+  }
+  if (out[best.i]) out[best.i].best = true;
+  else out[best.i] = { delta: null, up: true, best: true };
+  return out;
+}
+
+// Invisible Line layer whose custom dots draw the delta labels. Line dots
+// live outside the bar layer, so hovering a bar no longer dims them (the
+// old LabelList lived inside the bars and vanished on every hover).
+// NOTE: Line dots receive cx/cy (not x/y like Bar labels) — read both.
+function DeltaDot({ x, y, cx, cy, index, info }) {
+  const px = cx ?? x;
+  const py = cy ?? y;
+  const a = info?.[index];
+  if (px == null || py == null || !a || (!a.delta && !a.best)) return <g />;
+  return (
+    <g>
+      {a.delta && (
+        <text x={px} y={py - 8} textAnchor="middle" fontSize={11} fontWeight={800} fill={a.up ? '#059669' : '#ef4444'}>
+          {a.delta}
+        </text>
+      )}
+      {a.best && (
+        <text x={px} y={a.delta ? py - 24 : py - 8} textAnchor="middle" fontSize={11} fontWeight={700} fill="#b45309">
+          ★ best
+        </text>
+      )}
+    </g>
+  );
+}
+
 export default function RevenueChart({
   isMonthlyView, monthName, appliedYear, appliedMonth,
-  viewingCurrentMonth, revChart, revChartEmptyLabel,
+  viewingCurrentMonth, revChart, revChartEmptyLabel, revFootnote,
   stepMonth, goCurrentMonth,
 }) {
+  const labels = annotationsFor(revChart);
+  // Delta labels sit above the bars (up to ~32px for a stacked ★ best +
+  // percent). When any exist, grow the top margin and extend the Y domain
+  // so the tallest bar's labels never clip against the card edge.
+  const hasLabels = Object.keys(labels).length > 0;
+  const chartTop = hasLabels ? 40 : 8;
+  const hasWip = revChart.some((e) => e.wip);
+  const hasForecast = revChart.some((e) => e.forecast);
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-5 md:px-7 pt-5 md:pt-7 pb-2">
@@ -46,25 +102,49 @@ export default function RevenueChart({
         <p className="text-sm text-gray-400 text-center py-12">{revChartEmptyLabel}</p>
       ) : (
         <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={revChart} margin={{ top: 8, right: 16, bottom: 8, left: 4 }}>
+          <BarChart data={revChart} margin={{ top: chartTop, right: 16, bottom: 8, left: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={revChart.length > 7 ? -35 : 0} textAnchor={revChart.length > 7 ? 'end' : 'middle'} height={revChart.length > 7 ? 56 : 30} />
-            <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} />
+            <YAxis domain={[0, (dataMax) => hasLabels ? Math.ceil((dataMax * 1.18) / 1000) * 1000 : dataMax]} tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} allowDataOverflow={false} />
             <Tooltip content={<RevenueTooltip />} cursor={{ fill: '#f9fafb' }} />
             <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56} minPointSize={4}>
               {revChart.map((e, i) => (
                 <Cell key={i}
-                  fill={e.rev <= 0 ? '#e5e7eb' : e.forecast ? '#bf4a53' : '#1f2937'}
-                  fillOpacity={e.forecast ? 0.22 : e.rev <= 0 ? 0.5 : 1}
+                  fill={e.rev <= 0 ? '#e5e7eb' : e.forecast ? '#bf4a53' : e.wip ? '#d1d5db' : '#1f2937'}
+                  fillOpacity={e.forecast ? 0.22 : e.rev <= 0 || e.wip ? 0.5 : 1}
                   stroke={e.forecast ? '#bf4a53' : 'none'}
                   strokeWidth={e.forecast ? 2 : 0}
                   strokeDasharray={e.forecast ? '4 3' : 'none'}
                 />
               ))}
             </Bar>
+            <Line type="monotone" dataKey="rev" stroke="none" dot={(p) => <DeltaDot {...p} info={labels} />} activeDot={false} legendType="none" isAnimationActive={false} />
             <ReferenceLine y={0} stroke="#e5e7eb" />
           </BarChart>
         </ResponsiveContainer>
+      )}
+      <div className="flex items-center justify-center gap-4 pt-1 text-[11px] text-gray-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded bg-gray-800" aria-hidden="true" /> Finished week
+        </span>
+        {hasWip && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded bg-gray-300" aria-hidden="true" /> Still ongoing
+          </span>
+        )}
+        {hasForecast && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded border-2 border-dashed border-[#bf4a53] bg-[#bf4a53]/20" aria-hidden="true" /> Projection
+          </span>
+        )}
+      </div>
+      {revFootnote && (
+        <p className="text-[11px] text-gray-400 italic px-5 md:px-7 pt-2 pb-5">{revFootnote}</p>
+      )}
+      {hasWip && (
+        <p className={`text-[11px] text-gray-400 italic px-5 md:px-7 ${revFootnote ? 'pt-1' : 'pt-2'} pb-5`}>
+          The current week is still ongoing, so it will naturally look lower.
+        </p>
       )}
     </div>
   );

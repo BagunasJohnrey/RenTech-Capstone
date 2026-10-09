@@ -26,7 +26,7 @@ export default function PrivacyPolicyView() {
       icon: Share2,
       title: 'How We Use and Share Your Data',
       body: [
-        'Your personal information is collected with your consent, used only for the purposes stated above, and is never sold to third parties. We share data with our payment processor (PayMongo) only to the extent needed to complete payments, and with SMS gateways only to send booking and reminder messages you have opted into.',
+        'Your personal information is collected with your consent, used only for the purposes stated above, and is never sold to third parties. We share data with our payment processors (Maya or PayMongo) only to the extent needed to complete payments, and with SMS gateways only to send booking and reminder messages you have opted into.',
       ],
     },
     {

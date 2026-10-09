@@ -90,6 +90,7 @@ describe('SMS scheduler service (Phase 2.4)', () => {
     status: 'Active',
     dueDate: new Date(Date.now() - 2 * 86400000), // 2 days overdue
     rentalDate: new Date(Date.now() - 5 * 86400000),
+    balance: 1500,
     overdueSmsSent: false,
     overdueEscalationSent: false,
     customer: { id: 'customer-id-111', name: 'Customer User', phone: '09171234567', notifyPrefs: null },
@@ -111,14 +112,14 @@ describe('SMS scheduler service (Phase 2.4)', () => {
     expect(statusCall).toBeTruthy();
   });
 
-  it('message text contains no penalty/fee amounts', async () => {
+  it('overdue message shows the PHP balance, never penalty rates or the peso sign', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findMany.mockResolvedValueOnce([baseTx]);
     const svc = await reload();
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([{ message_id: 'm1' }]) });
     const out = await svc.autoNotifyOverdue();
-    const msg = out[0].message.toLowerCase();
-    expect(msg).not.toMatch(/penalty|fee|₱|php|\d+\s*\/\s*day.*fee/);
+    expect(out[0].message).toContain('PHP 1,500');
+    expect(out[0].message.toLowerCase()).not.toMatch(/penalty|fee|₱|\d+\s*\/\s*day.*fee/);
   });
 
   it('send failure leaves overdueSmsSent false so next tick retries', async () => {
@@ -164,5 +165,39 @@ describe('SMS scheduler service (Phase 2.4)', () => {
     expect(out.length).toBe(1);
     const escCall = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.overdueEscalationSent === true);
     expect(escCall).toBeTruthy();
+  });
+});
+
+describe('DELETE /api/sms/history/:id (admin log cleanup)', () => {
+  it('admin can delete a log row', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.sentSms.findUnique.mockResolvedValueOnce({ id: 'sms-1' });
+    const res = await request(app)
+      .delete('/api/sms/history/sms-1')
+      .set('Authorization', 'Bearer admin-token');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 'sms-1' });
+    expect(prisma.sentSms.delete).toHaveBeenCalledWith({ where: { id: 'sms-1' } });
+  });
+
+  it('missing row returns 404', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.sentSms.findUnique.mockResolvedValueOnce(null);
+    const res = await request(app)
+      .delete('/api/sms/history/does-not-exist')
+      .set('Authorization', 'Bearer admin-token');
+    expect(res.status).toBe(404);
+  });
+
+  it('staff cannot delete (admin-only audit trail)', async () => {
+    const res = await request(app)
+      .delete('/api/sms/history/sms-1')
+      .set('Authorization', 'Bearer staff-token');
+    expect(res.status).toBe(403);
+  });
+
+  it('unauthenticated delete is rejected', async () => {
+    const res = await request(app).delete('/api/sms/history/sms-1');
+    expect(res.status).toBe(401);
   });
 });
