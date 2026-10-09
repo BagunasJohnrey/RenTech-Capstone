@@ -5,6 +5,7 @@ import MobileBottomNav from './MobileBottomNav';
 import InstallAppBanner from '../components/InstallAppBanner';
 import NotificationsDropdown from '../components/NotificationsDropdown';
 import { isDemoMode, getDemoRole, setDemoRole, DEMO_ROLES } from '../utils/demoMode';
+import { resolveAvatarUrl } from '../utils/images';
 
 // Layout-level CSS (animations, scrollbars). Kept here so the composition
 // root (App.jsx) stays free of styling concerns.
@@ -67,6 +68,8 @@ export default function AppLayout({
   onRequestLogout,
   customerInfo,
   role,
+  avatarPath,
+  avatarName,
   onOpenGlobalSearch,
   onAddItem,
   onOpenSettings,
@@ -94,6 +97,10 @@ export default function AppLayout({
       contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [activeTab, scrollKey]);
+
+  const headerAvatarUrl = resolveAvatarUrl(avatarPath);
+  const headerName = viewRole === 'Customer' ? (customerInfo?.name || 'Customer') : (avatarName || viewRole);
+  const headerInitial = ((headerName || '?').trim()[0] || '?').toUpperCase();
 
   return (
     <>
@@ -131,6 +138,8 @@ export default function AppLayout({
           navItems={navItems}
           onRequestLogout={onRequestLogout}
           customerName={customerInfo.name}
+          avatarPath={avatarPath}
+          avatarName={avatarName || customerInfo.name}
           taskBadge={taskBadge}
         />
 
@@ -141,15 +150,21 @@ export default function AppLayout({
           <InstallAppBanner onOpenGuide={onOpenSettings} />
           <header className="bg-white/70 backdrop-blur-xl border-b border-gray-100/50 px-5 md:px-10 py-4 flex items-center justify-between z-20 shrink-0">
             <div className="flex items-center gap-2 md:hidden">
-              <img
-                src="/RenTech.png"
-                alt="Profile"
-                className="w-8 h-8 rounded-full object-cover border border-gray-200"
-              />
+              {headerAvatarUrl ? (
+                <img
+                  src={headerAvatarUrl}
+                  alt="Profile photo"
+                  className="w-8 h-8 rounded-full object-cover border border-gray-200"
+                />
+              ) : (
+                <span aria-hidden="true" className="w-8 h-8 rounded-full bg-gradient-to-br from-[#bf4a53] to-[#d4636d] text-white text-xs font-extrabold flex items-center justify-center shrink-0">
+                  {headerInitial}
+                </span>
+              )}
               {/* Mobile role / name display — full name always visible, wraps to
                   a second line instead of cropping */}
               <span className="text-sm font-bold text-gray-800 leading-tight break-words max-w-[45vw]">
-                {viewRole === 'Customer' ? (customerInfo?.name || 'Customer') : viewRole}
+                {headerName}
               </span>
             </div>
 

@@ -1340,6 +1340,8 @@ export default function RentechApp() {
       onRequestLogout={() => setShowLogoutModal(true)}
       customerInfo={customerInfo}
       role={role}
+      avatarPath={profile?.avatarPath}
+      avatarName={role === 'Customer' ? customerInfo?.name : profile?.name}
       onOpenGlobalSearch={() => setShowGlobalSearch(true)}
       onAddItem={() => setShowAddItemModal(true)}
       onOpenSettings={() => goTab('Settings')}
