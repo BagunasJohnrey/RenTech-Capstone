@@ -163,7 +163,9 @@ export async function suggestPromos(req: AuthenticatedRequest, res: Response, ne
 
     const promos = (Array.isArray(activePromos) ? activePromos : [])
       .filter((p: { isActive?: boolean }) => p.isActive !== false)
-      .map((p: { code: string; discountPct: number }) => ({ code: p.code, discountPct: p.discountPct }));
+      .map((p: { code: string; discountPct: number | null; discountAmount: number | null }) => ({
+        code: p.code, discountPct: p.discountPct, discountAmount: p.discountAmount,
+      }));
 
     const now = new Date();
     const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];

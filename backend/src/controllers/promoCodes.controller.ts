@@ -4,22 +4,42 @@ import * as promoCodesService from '../services/promoCodes.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
+const discountFields = {
+  // Exactly one of percent / fixed amount (exclusivity refined on create;
+  // update merges with the stored row and the service re-asserts).
+  discountPct: z.number().min(1).max(100).nullish(),
+  discountAmount: z.number().positive().max(1000000).nullish(),
+};
+
+const promoExtras = {
+  minSpend: z.number().min(0).max(1000000).nullish(),
+  startsAt: z.string().nullish(),
+  maxUsesPerCustomer: z.number().int().positive().nullish(),
+  firstBookingOnly: z.boolean().optional(),
+  appliesToCategories: z.array(z.string().min(1).max(40)).max(20).optional(),
+};
+
 export const createPromoCodeSchema = z.object({
   body: z.object({
     code: z.string().min(1).max(50),
-    discountPct: z.number().min(1).max(100),
     maxUses: z.number().int().positive().optional(),
     expiresAt: z.string().optional(),
-  }),
+    ...discountFields,
+    ...promoExtras,
+  }).refine(
+    (v) => (v.discountPct != null) !== (v.discountAmount != null),
+    { message: 'Set either a percent discount or a fixed amount, not both/neither' }
+  ),
 });
 
 export const updatePromoCodeSchema = z.object({
   body: z.object({
     code: z.string().min(1).max(50).optional(),
-    discountPct: z.number().min(1).max(100).optional(),
     maxUses: z.number().int().positive().optional(),
     expiresAt: z.string().nullable().optional(),
     isActive: z.boolean().optional(),
+    ...discountFields,
+    ...promoExtras,
   }),
 });
 
@@ -27,6 +47,10 @@ export const validatePromoCodeSchema = z.object({
   body: z.object({
     code: z.string().min(1),
     rentalFee: z.number().positive(),
+    // Optional context for the advisory checks (category scope); the
+    // per-customer cap always runs against the caller's own account, and the
+    // booking re-checks authoritatively with the real customer.
+    itemCategory: z.string().min(1).max(40).optional(),
   }),
 });
 
@@ -97,7 +121,12 @@ export async function deletePromoCode(req: AuthenticatedRequest, res: Response, 
 export async function validatePromoCode(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     // Read-only check — does NOT consume a use (see promoCodes.service.checkPromo).
-    const result = await promoCodesService.checkPromo(req.body.code, req.body.rentalFee);
+    // Runs the per-customer cap against the caller so a code that would fail
+    // at submit fails here too (booking re-checks with the real customer).
+    const result = await promoCodesService.checkPromo(req.body.code, req.body.rentalFee, {
+      customerId: req.user?.id,
+      itemCategory: req.body.itemCategory,
+    });
     res.json(result);
   } catch (err) { next(err); }
 }

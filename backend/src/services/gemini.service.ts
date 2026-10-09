@@ -1264,7 +1264,7 @@ function extractJsonBlock(text: string): string {
 // Generates actionable suggestions from inventory data alone.
 function generateRuleBasedSuggestions(data: {
   inventory: { id: number; name: string; category: string; price: number; rentalCount: number; onSale: boolean; status: string }[];
-  activePromos: { code: string; discountPct: number }[];
+  activePromos: { code: string; discountPct: number | null; discountAmount?: number | null }[];
   currentMonth: string;
 }): PromoSuggestion {
   const active = data.inventory.filter(i => i.status === 'Available' || i.status === 'Rented');
@@ -1329,7 +1329,7 @@ function generateRuleBasedSuggestions(data: {
 
 export async function suggestPromos(data: {
   inventory: { id: number; name: string; category: string; price: number; rentalCount: number; onSale: boolean; status: string }[];
-  activePromos: { code: string; discountPct: number }[];
+  activePromos: { code: string; discountPct: number | null; discountAmount?: number | null }[];
   currentMonth: string;
   kpis?: Record<string, number | { label: string; revenue: number }[]>;
   revenueByCategory?: Record<string, number>;
@@ -1352,7 +1352,9 @@ export async function suggestPromos(data: {
     })
     .join('\n');
   const activePromoList = data.activePromos.length
-    ? data.activePromos.map(p => `${p.code} (${p.discountPct}% off)`).join(', ')
+    ? data.activePromos.map(p => p.discountAmount != null
+        ? `${p.code} (₱${p.discountAmount} off)`
+        : `${p.code} (${p.discountPct}% off)`).join(', ')
     : 'None';
 
   const userPrompt = `Current month: ${data.currentMonth}

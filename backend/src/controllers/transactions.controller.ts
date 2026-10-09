@@ -42,6 +42,13 @@ export const createRentalSchema = z.object({
     conditionPhoto: z.string().optional(),
     size: z.string().optional(),
     measurements: z.record(z.unknown()).optional(),
+    // Voucher code for counter bookings (resolved + consumed server-side in
+    // createRental, same as the customer flow).
+    promoCode: z.string().min(1).max(50).optional(),
+    // Staff counter discount: percent + the admin PIN that approved it.
+    // Re-verified server-side in createRental; ignored without processedById.
+    staffDiscountPct: z.number().min(0).max(50).optional(),
+    staffDiscountPin: z.string().min(4).max(12).optional(),
   }),
 });
 

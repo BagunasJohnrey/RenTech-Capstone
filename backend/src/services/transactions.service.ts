@@ -10,6 +10,7 @@ import { createNotification, notifyStaffMembers } from './notifications.service.
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
+import { verifyDiscountPin } from './auth.service.js';
 import { getBusinessRules, getFeatureFlags } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 
@@ -51,6 +52,12 @@ interface CreateRentalInput {
   conditionPhoto?: string;
   promoCode?: string;            // resolved + consumed server-side
   promoCodeId?: string;          // legacy: only honored when it matches a real promo
+  // Staff counter discount: percent + the admin PIN that approved it. Only
+  // honored on the staff route (processedById set) and re-verified
+  // server-side at booking time — the client-side PIN check alone is not
+  // trusted, and the approved numbers are persisted on the row for audit.
+  staffDiscountPct?: number;
+  staffDiscountPin?: string;
   size?: string;
   measurements?: unknown;
   requireMinimumDownpayment?: boolean; // customers must put down the flat min_downpayment floor (default ₱200)
@@ -88,24 +95,40 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   // Resolve the promo server-side WITHOUT consuming a use yet. Consumption is
   // deferred to inside the booking $transaction (atomic + rollback-safe), so a
   // failed booking never burns a promo use or the per-customer cap.
+  // checkPromo enforces everything advisories + booking rules: active window,
+  // min spend, category scope, per-customer cap, and first-timer codes.
   let fee = baseFee;
   let promoCodeId: string | undefined;
   let promoToConsume: string | undefined;
   if (data.promoCode) {
-    const promo = await checkPromo(data.promoCode, baseFee);
-    // Per-customer cap: one use of a given promo per customer.
-    const priorUses = await prisma.transaction.count({
-      where: { customerId: data.customerId, promoCodeId: promo.promoCodeId },
+    const promo = await checkPromo(data.promoCode, baseFee, {
+      customerId: data.customerId,
+      itemCategory: item.category ?? undefined,
     });
-    if (priorUses > 0) {
-      throw new AppError(400, 'You have already used this promo code');
-    }
     fee = promo.finalFee;
     promoCodeId = promo.promoCodeId;
     promoToConsume = promo.promoCodeId;
   } else if (data.promoCodeId) {
     const promo = await prisma.promoCode.findUnique({ where: { id: data.promoCodeId } });
     if (promo && promo.isActive) promoCodeId = promo.id;
+  }
+
+  // Staff counter discount (staff route only — processedById is set only
+  // there; customers calling createRental directly have no processedById so
+  // these fields are dead for them). The PIN is re-verified here so a forged
+  // client can't self-approve a discount; the pct is clamped to the same
+  // 0–50 range as the staff UI slider.
+  let staffDiscountPct: number | undefined;
+  let staffDiscountBy: string | undefined;
+  if (processedById && (data.staffDiscountPct ?? 0) > 0) {
+    const pct = Math.min(50, Math.max(0, Number(data.staffDiscountPct)));
+    if (!(pct > 0)) throw new AppError(400, 'Invalid staff discount');
+    if (!data.staffDiscountPin) throw new AppError(401, 'Admin approval (PIN) is required for the staff discount');
+    const approver = await verifyDiscountPin(String(data.staffDiscountPin));
+    if (!approver) throw new AppError(401, 'Invalid admin PIN');
+    staffDiscountPct = pct;
+    staffDiscountBy = approver.name;
+    fee = Math.round(fee * (1 - pct / 100) * 100) / 100;
   }
 
   const downpayment = Math.min(data.downpayment ?? 0, fee);
@@ -215,6 +238,8 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           totalPaid: data.downpaymentCash && downpayment > 0 ? downpayment : 0,
           balance,
           promoCodeId: promoCodeId ?? null,
+          staffDiscountPct: staffDiscountPct ?? null,
+          staffDiscountBy: staffDiscountBy ?? null,
           size: data.size ?? null,
           measurements: data.measurements as Prisma.InputJsonValue | undefined,
           notes: data.notes ?? null,
@@ -698,8 +723,9 @@ export async function updateTransaction(
 // better garment, and staff moves the SAME booking record onto it — dates,
 // customer, and payment history stay put, only the garment (and its derived
 // price) changes. Agreed policy:
-//   - promo/coupon is VOIDED (it was validated against the old item's price;
-//     the consumed use is handed back);
+//   - promo/coupon is CARRIED OVER when it still validates against the new
+//     item's price/category (use transfers with the row); otherwise voided
+//     and the consumed use is handed back;
 //   - downpayment stays exactly as paid — NO refunds, so balance floors at 0;
 //   - size/measurements are cleared (different garment, different fit);
 //   - any release photo is voided (it documented the wrong garment), so the
@@ -733,9 +759,11 @@ export async function swapBookingItem(
 
   const newFee = effectiveItemPrice(replacement);
   const oldNotes = existing.notes ?? null;
-  const swapNote =
-    `Item swapped at pickup: "${existing.item.name}" → "${replacement.name}" ` +
-    `(fee ₱${existing.rentalFee.toLocaleString()} → ₱${newFee.toLocaleString()}; promo voided, downpayment kept)`;
+  // Promo carry-over is resolved INSIDE the $transaction below (reads the
+  // code row + re-validates against the replacement's fee/category with the
+  // row itself excluded from the cap count). Kept → the consumed use
+  // transfers with the row, no double-charge. Invalid there → the use is
+  // handed back and the promo voided.
 
   let updated;
   try {
@@ -751,19 +779,47 @@ export async function swapBookingItem(
         tx
       );
 
-      // Promo void: hand the consumed use back so global/per-customer caps
-      // stay honest (the swap itself never re-validates a coupon).
+      // Promo carry-over: re-validate the old code against the replacement.
+      // Still valid (new fee + category + caps, own row excluded) → keep it
+      // and charge the re-validated fee, the consumed use transferring with
+      // the row. Invalid → hand the use back and void it.
+      let keptPromoCodeId: string | null = null;
+      let fee = newFee;
       if (existing.promoCodeId) {
-        await tx.promoCode.updateMany({
-          where: { id: existing.promoCodeId, currentUses: { gt: 0 } },
-          data: { currentUses: { decrement: 1 } },
-        });
+        const oldPromo = await tx.promoCode.findUnique({ where: { id: existing.promoCodeId } });
+        let revalidated = false;
+        if (oldPromo) {
+          try {
+            const re = await checkPromo(oldPromo.code, newFee, {
+              client: tx,
+              customerId: existing.customerId,
+              itemCategory: replacement.category ?? undefined,
+              excludeTransactionId: transactionId,
+            });
+            keptPromoCodeId = oldPromo.id;
+            fee = re.finalFee;
+            revalidated = true;
+          } catch {
+            revalidated = false;
+          }
+        }
+        if (!revalidated) {
+          await tx.promoCode.updateMany({
+            where: { id: existing.promoCodeId, currentUses: { gt: 0 } },
+            data: { currentUses: { decrement: 1 } },
+          });
+        }
       }
+      const promoKept = keptPromoCodeId !== null;
+      const swapNote =
+        `Item swapped at pickup: "${existing.item.name}" → "${replacement.name}" ` +
+        `(fee ₱${existing.rentalFee.toLocaleString()} → ₱${fee.toLocaleString()}; ` +
+        `${promoKept ? 'promo carried over' : 'promo voided'}, downpayment kept)`;
 
       // Downpayment is historical (what was actually paid) — never touched.
       // Balance recomputes against the new fee and floors at 0: swapping to a
       // cheaper item forfeits the overpayment, per boutique policy (no refunds).
-      const balance = Math.max(0, newFee - existing.totalPaid);
+      const balance = Math.max(0, fee - existing.totalPaid);
 
       // Optimistic lock on updatedAt: a concurrent release/return touching the
       // same row makes this a 409 ("please retry") instead of silently
@@ -772,9 +828,9 @@ export async function swapBookingItem(
         where: { id: transactionId, updatedAt: existing.updatedAt },
         data: {
           itemId: newItemId,
-          rentalFee: newFee,
+          rentalFee: fee,
           balance,
-          promoCodeId: null,
+          promoCodeId: keptPromoCodeId,
           size: null,
           // DbNull clears the column (plain `null` is not assignable to the
           // nullable-JSON update type and `undefined` would leave it untouched).
@@ -824,7 +880,7 @@ export async function swapBookingItem(
     entityId: transactionId,
     performedById,
     oldValue: { itemId: existing.itemId, itemName: existing.item.name, rentalFee: existing.rentalFee, promoCodeId: existing.promoCodeId, balance: existing.balance },
-    newValue: { itemId: newItemId, itemName: replacement.name, rentalFee: newFee, promoCodeId: null, balance: updated!.balance },
+    newValue: { itemId: newItemId, itemName: replacement.name, rentalFee: updated!.rentalFee, promoCodeId: updated!.promoCodeId, balance: updated!.balance },
   });
 
   // Tell the customer in-app + by email (best-effort, never blocks the swap).
@@ -860,7 +916,8 @@ export async function swapBookingItem(
     ...updated,
     swappedFrom: { id: existing.itemId, name: existing.item.name },
     previousFee: existing.rentalFee,
-    promoVoided: !!existing.promoCodeId,
+    promoVoided: !!existing.promoCodeId && !updated!.promoCodeId,
+    promoKept: !!updated!.promoCodeId,
   };
 }
 
