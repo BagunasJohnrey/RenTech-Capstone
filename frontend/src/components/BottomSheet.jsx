@@ -5,7 +5,7 @@ import { useState, useRef, useCallback } from 'react';
 // TransactionDetailModal treatment so every modal behaves the same.
 // Scrollable bodies inside should carry `data-sheet-scroll` so a downward
 // drag that starts mid-scroll stays a scroll instead of dismissing.
-export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWidth = 'sm:max-w-lg', children }) {
+export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWidth = 'sm:max-w-lg', interceptClose = false, children }) {
   const [dragY, setDragY] = useState(null);
   const [dismissing, setDismissing] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -15,11 +15,17 @@ export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWid
 
   const requestClose = useCallback(() => {
     if (closing || closingRef.current) return;
+    // Guarded flows (e.g. an unsaved-changes confirm): skip the exit
+    // animation and hand control straight to the parent. Animating first
+    // would slide the sheet away underneath the confirm dialog, so "Keep
+    // Editing" would return to an invisible sheet that looks like lost work.
+    // No flags are set here — the sheet stays fully interactive.
+    if (interceptClose) { onClose(); return; }
     closingRef.current = true;
     setDragY(null);
     setClosing(true);
     setTimeout(onClose, 150);
-  }, [closing, onClose]);
+  }, [closing, onClose, interceptClose]);
 
   const onSheetTouchStart = (e) => {
     if (dismissing || closingRef.current || e.touches.length !== 1) return;
@@ -54,6 +60,9 @@ export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWid
     // flicks no longer dismiss on velocity — the swipe must truly reach.
     const threshold = Math.max(180, (sheetRef.current?.offsetHeight ?? 600) * 0.45);
     if (dy >= threshold) {
+      // Same guard as backdrop-tap: a guarded parent (unsaved changes)
+      // keeps the sheet put and decides (confirm dialog) instead.
+      if (interceptClose) { setDragY(null); onClose(); return; }
       closingRef.current = true;
       setDismissing(true);
       setDragY(null);

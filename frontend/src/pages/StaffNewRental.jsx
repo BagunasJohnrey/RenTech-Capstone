@@ -670,7 +670,12 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   return (
     <>
-      <BottomSheet onClose={() => requestNavigate('close')} labelledby="dialog-title-new-rental">
+      {/* interceptClose: while the form is dirty, backdrop/swipe hand
+          control straight to the discard guard with NO exit animation —
+          otherwise the sheet slides away under the confirm dialog and
+          "Keep Editing" returns to an invisible sheet (looks like lost
+          entries). When clean, the normal animated close plays. */}
+      <BottomSheet onClose={() => requestNavigate('close')} interceptClose={hasUnsavedChanges} labelledby="dialog-title-new-rental">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
           <h2 id="dialog-title-new-rental" className="text-xl font-bold text-gray-900">New Rental</h2>

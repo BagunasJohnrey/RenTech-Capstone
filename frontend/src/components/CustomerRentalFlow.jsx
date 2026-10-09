@@ -61,6 +61,10 @@ export default function CustomerRentalFlow({
   useEscapeClose(onClose);
   const [step, setStep] = useState(() => (preselectedItem ? 1 : 0));
   const [selectedItem, setSelectedItem] = useState(preselectedItem || null);
+  // Entry-point memory: the + button opens at step 0 (Select Item), while a
+  // catalog item opens directly at step 1. Step 1's left button is Back
+  // (→ step 0, selection kept) only in the first case; otherwise Cancel.
+  const [startedAtCatalog] = useState(() => !preselectedItem);
   const todayStr = useMemo(() => todayYmd(), []);
   const [rentalDate, setRentalDate] = useState(preselectedDate || todayStr);
   const measurementFields = useMemo(() => {
@@ -367,6 +371,7 @@ export default function CustomerRentalFlow({
 
   const handleBack = () => {
     if (step > 1) setStep(s => s - 1);
+    else if (step === 1 && startedAtCatalog) setStep(0);
     else onClose();
   };
 
@@ -1075,7 +1080,7 @@ export default function CustomerRentalFlow({
         {step < 3 && (
           <div className="p-4 border-t bg-gray-50/50 flex gap-3">
             <button onClick={handleBack} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
-              {step > 1 ? 'Back' : 'Cancel'}
+              {step > 1 || (step === 1 && startedAtCatalog) ? 'Back' : 'Cancel'}
             </button>
             <button
               onClick={handleNext}
