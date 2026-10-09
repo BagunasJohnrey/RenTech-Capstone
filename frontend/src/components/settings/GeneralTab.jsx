@@ -144,21 +144,34 @@ export default function GeneralTab() {
         icon={Building2}
         iconClass="bg-amber-50 text-amber-600"
         title="Business Profile"
-        desc="Store details shown in receipts and customer communications"
+        desc="Store details shown in receipts and the customer Inquiries & Contact card"
         action={!editBusiness && editBtn(() => { setEditBusiness(true); setLocalBusiness(business); })}
       >
         {editBusiness ? (
           <div className="space-y-3 max-w-xl">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <input type="text" value={localBusiness.name} onChange={e => setLocalBusiness({ ...localBusiness, name: e.target.value })}
-                className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Name" />
-              <input type="text" value={localBusiness.contact} onChange={e => setLocalBusiness({ ...localBusiness, contact: e.target.value })}
-                className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Contact Number" />
+              <div>
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store Name</p>
+                <input type="text" value={localBusiness.name} onChange={e => setLocalBusiness({ ...localBusiness, name: e.target.value })}
+                  className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Name" />
+              </div>
+              <div>
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store inquiry number</p>
+                <input type="text" value={localBusiness.contact} onChange={e => setLocalBusiness({ ...localBusiness, contact: e.target.value })}
+                  className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="e.g. 0917 123 4567" />
+                <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">Fixed number customers see in Settings → Inquiries &amp; Contact. They call or text this number for bookings and questions.</p>
+              </div>
             </div>
-            <input type="text" value={localBusiness.address} onChange={e => setLocalBusiness({ ...localBusiness, address: e.target.value })}
-              className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Address" />
-            <input type="text" value={localBusiness.taxId} onChange={e => setLocalBusiness({ ...localBusiness, taxId: e.target.value })}
-              className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Tax ID (optional)" />
+            <div>
+              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store Address</p>
+              <input type="text" value={localBusiness.address} onChange={e => setLocalBusiness({ ...localBusiness, address: e.target.value })}
+                className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Address" />
+            </div>
+            <div>
+              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Tax ID (optional)</p>
+              <input type="text" value={localBusiness.taxId} onChange={e => setLocalBusiness({ ...localBusiness, taxId: e.target.value })}
+                className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Tax ID (optional)" />
+            </div>
             {saveCancel(saveBusiness, () => { setEditBusiness(false); setLocalBusiness(business); })}
             {bizMsg && <p className="text-xs text-emerald-600 font-bold">{bizMsg}</p>}
           </div>
@@ -166,7 +179,7 @@ export default function GeneralTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <InfoTile label="Store" value={business.name} />
             <InfoTile label="Address" value={business.address} />
-            <InfoTile label="Contact" value={business.contact} />
+            <InfoTile label="Store inquiry number" value={business.contact} />
             <InfoTile label="Tax ID" value={business.taxId} />
           </div>
         )}

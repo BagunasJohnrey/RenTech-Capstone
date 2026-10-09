@@ -594,7 +594,7 @@ function route(method, path, body) {
   // ---- Settings ----
   if (path === '/settings/flags') return { value: { features: {} } };
   if (path === '/settings/rules') return { value: { minDownpaymentPct: 50, latePenaltyPerDay: 100, overdueEscalationDays: 3, dataRetentionMonths: 12 } };
-  if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false } };
+  if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false, rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'paymongo', store_name: 'RenTech Boutique', store_contact: '0917 123 4567', store_address: 'Balayan, Batangas' } };
   if (path === '/settings/sms-templates') return { value: [] };
   if (path === '/settings/integrations-status') return { value: { gemini: { configured: false }, groq: { configured: false }, openrouter: { configured: false }, paymongo: { configured: false }, semaphore: { configured: false } } };
   if (path === '/settings/backups' && method === 'GET') return { value: clone(demoBackups) };
