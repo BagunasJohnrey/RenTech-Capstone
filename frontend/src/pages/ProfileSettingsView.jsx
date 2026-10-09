@@ -71,7 +71,7 @@ export default function ProfileSettingsView({
             />
           )}
           {/* Help Guide — its own Settings tab (users get the portal Help page). */}
-          {adminSection === 'help' && <HelpGuide role={role} />}
+          {adminSection === 'help' && <HelpGuide role={role} fluid />}
         </>
       )}
 
