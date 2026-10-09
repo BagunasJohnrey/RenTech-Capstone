@@ -124,6 +124,10 @@ model Transaction {
   releasedById    String?           @map("released_by_id")
   itemId          Int               @map("item_id")
   promoCodeId     String?           @map("promo_code_id")
+  // Staff counter discount (admin-PIN approved at booking): percent applied
+  // server-side + approver name for the audit trail. Null = no staff discount.
+  staffDiscountPct Float?          @map("staff_discount_pct")
+  staffDiscountBy  String?         @map("staff_discount_by")
   rentalDate      DateTime          @map("rental_date")
   dueDate         DateTime          @map("due_date")
   returnDate      DateTime?         @map("return_date")
@@ -177,7 +181,18 @@ model Transaction {
 model PromoCode {
   id          String   @id @default(uuid())
   code        String   @unique
-  discountPct Float    @map("discount_pct")
+  // Exactly one of the two is set (enforced in service + zod): percent off
+  // (1–100) or a fixed peso amount off.
+  discountPct Float?   @map("discount_pct")
+  discountAmount Float? @map("discount_amount")
+  // Optional guards: minimum rental fee, start date, per-customer cap
+  // (null = once, the historical behavior), first-timers only, and category
+  // scoping (empty = all categories).
+  minSpend    Float?   @map("min_spend")
+  startsAt    DateTime? @map("starts_at")
+  maxUsesPerCustomer Int? @map("max_uses_per_customer")
+  firstBookingOnly Boolean @default(false) @map("first_booking_only")
+  appliesToCategories String[] @default([]) @map("applies_to_categories")
   maxUses     Int?     @map("max_uses")
   currentUses Int      @default(0) @map("current_uses")
   expiresAt   DateTime? @map("expires_at")
