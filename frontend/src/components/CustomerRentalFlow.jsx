@@ -303,6 +303,21 @@ export default function CustomerRentalFlow({
     setFieldErrors(prev => ({ ...prev, [field]: '' }));
   };
 
+  // After a failed Continue, bring the first missing field into view BEFORE
+  // the user can proceed — no more hunting for which field blocked them.
+  // Runs on the next frame so the just-set error state has rendered.
+  const scrollToFirstError = (errs) => {
+    const order = ['item', 'name', 'contact', 'address', 'schedule', 'size', 'measurements', 'downpayment'];
+    const keyFor = (k) => (k === 'rentalDate' || k === 'eventDate' || k === 'availability' ? 'schedule' : k);
+    const first = order.find((k) => Object.keys(errs).some((e) => keyFor(e) === k));
+    if (!first) return;
+    requestAnimationFrame(() => {
+      const root = stepBodyRef.current || catalogRef.current || document;
+      const el = root.querySelector?.(`[data-field="${first}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
   const validateStep1 = () => {
     const errs = {};
     if (!selectedItem) errs.item = 'Please select an item.';
@@ -325,6 +340,7 @@ export default function CustomerRentalFlow({
     if (downpaymentAmount < minDownpayment) errs.downpayment = `Downpayment must be at least ₱${minDownpayment.toLocaleString()}`;
     if (availability.available === false) errs.availability = availability.reason || 'Item is not available for the selected dates.';
     setFieldErrors(errs);
+    if (Object.keys(errs).length > 0) scrollToFirstError(errs);
     return Object.keys(errs).length === 0;
   };
 
@@ -467,7 +483,14 @@ export default function CustomerRentalFlow({
 
   const handleNextInner = async () => {
     if (step === 0) {
-      if (!selectedItem) { setFieldErrors({ item: 'Please select an item.' }); return; }
+      if (!selectedItem) {
+        setFieldErrors({ item: 'Please select an item.' });
+        // The error banner sits above the list — bring it into view.
+        requestAnimationFrame(() => {
+          catalogRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' });
+        });
+        return;
+      }
       setDownpaymentAmount(rentalDefaults.min_downpayment || 200);
       setFieldErrors({});
       setStep(1);
@@ -813,28 +836,34 @@ export default function CustomerRentalFlow({
                   removed: bookings are account-bound server-side). */}
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Contact Details</h4>
-                <Field type="text" label="Full Name" placeholder="Full Name" value={customer.name}
+                <div data-field="name">
+                <Field type="text" label="Full Name" placeholder="Full Name" value={customer.name} required
                   onChange={(e) => { setCustomer({ ...customer, name: sanitizeName(e.target.value) }); clearFieldError('name'); }}
                   className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`}
                   maxLength={INPUT_LIMITS.NAME_MAX}
                   error={fieldErrors.name || undefined} />
+                </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field type="tel" label="Contact No." placeholder="Contact No." value={customer.contact}
+                  <div data-field="contact">
+                  <Field type="tel" label="Contact No." placeholder="Contact No." value={customer.contact} required
                     onChange={(e) => { setCustomer({ ...customer, contact: sanitizePhone(e.target.value) }); clearFieldError('contact'); }}
                     className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.contact ? 'border-red-300 bg-red-50' : ''}`} inputMode="numeric"
                     maxLength={INPUT_LIMITS.PHONE_LENGTH}
                     error={fieldErrors.contact || undefined} />
-                  <Field type="text" label="Address" placeholder="Address" value={customer.address}
+                  </div>
+                  <div data-field="address">
+                  <Field type="text" label="Address" placeholder="Address" value={customer.address} required
                     onChange={(e) => { setCustomer({ ...customer, address: sanitizeAddress(e.target.value) }); clearFieldError('address'); }}
                     className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`}
                     maxLength={INPUT_LIMITS.ADDRESS_MAX}
                     error={fieldErrors.address || undefined} />
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4">
+              <div data-field="schedule" className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                  <Calendar size={14} /> Rental Schedule
+                  <Calendar size={14} /> Rental Schedule <span aria-hidden="true" className="text-[#bf4a53]">*</span>
                 </h4>
                 <p className="text-[10px] text-gray-400 -mt-2">Tap once for pickup, tap again for event date.</p>
                 {isCleaning ? (
@@ -880,6 +909,9 @@ export default function CustomerRentalFlow({
                     <Calendar size={16} /> {availability.reason || 'Not available for the selected dates.'}
                   </div>
                 )}
+                {(fieldErrors.rentalDate || fieldErrors.eventDate) && (
+                  <p role="alert" className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.rentalDate || fieldErrors.eventDate}</p>
+                )}
                 {fieldErrors.availability && (
                   <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.availability}</p>
                 )}
@@ -887,9 +919,9 @@ export default function CustomerRentalFlow({
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Item Details</h4>
-                <div>
+                <div data-field="size">
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase">Size</label>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Size <span aria-hidden="true" className="text-[#bf4a53]">*</span></label>
                     <button type="button" onClick={() => setShowSizeGuide(true)}
                       className="text-[10px] font-bold text-[#bf4a53] hover:text-red-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50 rounded">
                       Size Guide
@@ -904,10 +936,10 @@ export default function CustomerRentalFlow({
                 </div>
 
                 {selectedSize === 'Custom / Measurements' && (
-                  <div className="pt-3 border-t border-gray-100">
+                  <div data-field="measurements" className="pt-3 border-t border-gray-100">
                     <button onClick={() => setMeasurementsExpanded(!measurementsExpanded)}
                       className="flex items-center justify-between w-full text-xs font-bold text-gray-500 hover:text-[#bf4a53] transition-colors">
-                      <span>Custom Measurements</span>
+                      <span>Custom Measurements <span aria-hidden="true" className="text-[#bf4a53]">*</span></span>
                       <svg className={`w-4 h-4 transition-transform ${measurementsExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                     </button>
                     <div className={`grid grid-cols-2 gap-3 mt-3 overflow-hidden transition-all duration-300 ${measurementsExpanded ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
@@ -931,8 +963,8 @@ export default function CustomerRentalFlow({
                   className="w-full p-3 bg-gray-50 rounded-xl border text-sm min-h-[80px] focus:outline-none focus:border-[#bf4a53]" />
               </div>
 
-              <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
-                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Required Downpayment</p>
+              <div data-field="downpayment" className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Required Downpayment <span aria-hidden="true" className="text-[#bf4a53]">*</span></p>
                 <div className="relative mt-2">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400 pointer-events-none">₱</span>
                   <input

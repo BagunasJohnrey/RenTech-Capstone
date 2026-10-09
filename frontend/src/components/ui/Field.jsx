@@ -34,6 +34,9 @@ export default function Field({
       {showLabel && label != null && label !== '' ? (
         <label htmlFor={id} className={labelClassName}>
           {label}
+          {required ? (
+            <span aria-hidden="true" className="text-[#bf4a53] ml-0.5">*</span>
+          ) : null}
         </label>
       ) : null}
       <div className={`relative ${label != null && label !== '' && showLabel ? 'mt-1.5' : ''}`}>
