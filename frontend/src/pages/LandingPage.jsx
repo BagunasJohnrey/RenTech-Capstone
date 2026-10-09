@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import ItemImage from '../components/ItemImage';
 import { getSaleInfo } from '../components/ItemCard';
+import { FeaturedSkeleton } from '../components/Skeleton';
 import { sortByCategory } from '../utils/categorySort';
 import { customerService } from '../services/customer';
 
@@ -126,10 +127,13 @@ function useFeaturedItems(fallback) {
     return () => { active = false; };
   }, []);
 
-  // While loading, show nothing (prevents flash). On error, use fallback.
-  if (items && items.length) return { items };
-  if (failed) return { items: fallback };
-  return { items: [] };
+  // While loading, report it (the section keeps its headers and shows card
+  // skeletons). Returning [] here rendered an empty grid + "end of featured
+  // pieces" long before the catalog fetch resolved — the late pop-in.
+  // On error, use fallback.
+  if (items && items.length) return { items, loading: false };
+  if (failed) return { items: fallback, loading: false };
+  return { items: [], loading: items === null };
 }
 
 // --- Sub-Components (unchanged) ---
@@ -247,7 +251,7 @@ const FaqItem = ({ question, answer }) => {
 export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
   const [navHidden, setNavHidden] = useState(false);
   const { scrollY } = useScroll();
-  const { items: featuredItems } = useFeaturedItems(galleryItems);
+  const { items: featuredItems, loading: featuredLoading } = useFeaturedItems(galleryItems);
 
   useMotionValueEvent(scrollY, "change", (latest) => {
     const previous = scrollY.getPrevious();
@@ -358,13 +362,19 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
             </p>
           </motion.div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-            {featuredItems.map((item) => (
-              <GalleryCard key={item.id} item={item} onBrowse={() => onViewFeatured?.(item)} />
-            ))}
-          </div>
+          {featuredLoading ? (
+            <FeaturedSkeleton count={4} />
+          ) : (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+                {featuredItems.map((item) => (
+                  <GalleryCard key={item.id} item={item} onBrowse={() => onViewFeatured?.(item)} />
+                ))}
+              </div>
 
-          <p className="text-center text-xs text-gray-400 mt-8">You've reached the end of featured pieces</p>
+              <p className="text-center text-xs text-gray-400 mt-8">You've reached the end of featured pieces</p>
+            </>
+          )}
 
           <motion.div variants={fadeInUp} className="mt-12 md:mt-16 flex justify-center">
             <motion.button

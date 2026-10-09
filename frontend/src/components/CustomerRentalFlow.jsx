@@ -48,6 +48,35 @@ function parseStyleNotesToMeasurements(text, keys) {
   return out;
 }
 
+// Discard-changes confirm shared by every exit of the customer flow
+// (step-0 sheet, flow sheet, inline modal). Rendered OUTSIDE the BottomSheet:
+// a `fixed` node inside its transform-gpu container would position against
+// the sheet instead of the viewport.
+function DiscardConfirm({ onKeep, onDiscard }) {
+  return (
+    <div className="fixed inset-0 z-[260] bg-gray-900/40 backdrop-blur-sm flex items-center justify-center p-4" onClick={onKeep}>
+      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-discard-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <h4 id="dialog-title-discard-booking" className="font-bold text-lg text-gray-900">Discard changes?</h4>
+        <p className="text-sm text-gray-500">You have unsaved entries in this booking. Leaving now will lose them.</p>
+        <div className="flex gap-3 pt-1">
+          <button
+            onClick={onKeep}
+            className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
+          >
+            Keep Editing
+          </button>
+          <button
+            onClick={onDiscard}
+            className="flex-1 py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors"
+          >
+            Discard
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CustomerRentalFlow({
   item: preselectedItem,
   selectedDate: preselectedDate,
@@ -58,7 +87,6 @@ export default function CustomerRentalFlow({
   onCancelBooking,
   inline,
 }) {
-  useEscapeClose(onClose);
   const [step, setStep] = useState(() => (preselectedItem ? 1 : 0));
   const [selectedItem, setSelectedItem] = useState(preselectedItem || null);
   // Entry-point memory: the + button opens at step 0 (Select Item), while a
@@ -185,6 +213,53 @@ export default function CustomerRentalFlow({
   const [visibleCount, setVisibleCount] = useState(ITEMS_PER_LOAD);
   const [loadingMore, setLoadingMore] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
+  // Discard-confirmation for leaving the flow (mirrors the staff rental
+  // flow): Back between steps keeps everything and never asks — only
+  // LEAVING with unsaved entries confirms.
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  // First-render snapshot: prefilled profile/size/dates are the baseline,
+  // so an untouched form is never "dirty". Pure filter UI (search text,
+  // category pills) never counts.
+  const initialFormRef = useRef(null);
+  if (initialFormRef.current === null) {
+    initialFormRef.current = {
+      rentalDate, eventDate,
+      name: customer.name, contact: customer.contact,
+      address: customer.address, notes: customer.notes,
+      size: selectedSize, downpayment: downpaymentAmount,
+    };
+  }
+  const hasUnsavedChanges = useMemo(() => {
+    if (confirmedTx) return false; // booking committed — always safe to leave
+    if (selectedItem) return true;
+    const init = initialFormRef.current || {};
+    if ((customer.name || '') !== (init.name || '') ||
+        (customer.contact || '') !== (init.contact || '') ||
+        (customer.address || '') !== (init.address || '') ||
+        (customer.notes || '') !== (init.notes || '')) return true;
+    if (rentalDate !== init.rentalDate || eventDate !== init.eventDate) return true;
+    if ((selectedSize || '') !== (init.size || '')) return true;
+    if (Object.keys(measurements || {}).some((k) => String(measurements[k] ?? '').trim() !== '')) return true;
+    if (String(downpaymentAmount ?? '') !== String(init.downpayment ?? '')) return true;
+    if ((promoCode || '').trim() !== '' || promoApplied) return true;
+    return false;
+  }, [confirmedTx, selectedItem, customer, rentalDate, eventDate, selectedSize, measurements, downpaymentAmount, promoCode, promoApplied]);
+  // Every exit goes through here: dirty → confirm dialog (sheet stays put,
+  // no exit animation, so Keep Editing returns to the untouched form);
+  // clean/committed → close. Step-back stays on handleBack (fields kept).
+  const requestLeave = useCallback(() => {
+    if (hasUnsavedChanges) { setShowDiscardConfirm(true); return; }
+    onClose();
+  }, [hasUnsavedChanges, onClose]);
+  const confirmDiscard = useCallback(() => {
+    setShowDiscardConfirm(false);
+    onClose();
+  }, [onClose]);
+  const keepEditing = useCallback(() => setShowDiscardConfirm(false), []);
+  // Escape leaves through the same guard; a second handler closes just the
+  // confirm (Keep Editing) while it's up — same two-level pattern as staff.
+  useEscapeClose(() => requestLeave(), !showDiscardConfirm);
+  useEscapeClose(() => setShowDiscardConfirm(false), showDiscardConfirm);
   const [availability, setAvailability] = useState({ checking: false, available: null, reason: '' });
   const [bookedRanges, setBookedRanges] = useState([]);
   const [itemStatus, setItemStatus] = useState(null);
@@ -374,6 +449,12 @@ export default function CustomerRentalFlow({
     else if (step === 1 && startedAtCatalog) setStep(0);
     else onClose();
   };
+  // Footer left button: step-back keeps fields (never asks); leaving the
+  // flow goes through the discard guard (mirrors the staff flow).
+  const handleFooterLeft = () => {
+    if (step > 1 || (step === 1 && startedAtCatalog)) handleBack();
+    else requestLeave();
+  };
 
   const handleNextInner = async () => {
     if (step === 0) {
@@ -507,7 +588,8 @@ export default function CustomerRentalFlow({
   // ---- Step 0: Catalog ----
   if (step === 0) {
     return (
-      <BottomSheet onClose={onClose} labelledby="dialog-title-select-item">
+      <>
+      <BottomSheet onClose={requestLeave} interceptClose={hasUnsavedChanges && !confirmedTx} labelledby="dialog-title-select-item">
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
             <h2 id="dialog-title-select-item" className="text-xl font-bold text-gray-900">Select Item</h2>
             <button onClick={onClose} aria-label="Close item selection" className="p-1 text-gray-400 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"><X size={20} /></button>
@@ -650,12 +732,16 @@ export default function CustomerRentalFlow({
             </div>
           </div>
           <div className="p-4 border-t bg-gray-50/50 flex gap-3">
-            <button onClick={onClose} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">Cancel</button>
+            <button onClick={requestLeave} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">Cancel</button>
             <button onClick={handleNext} className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors flex items-center justify-center gap-1.5">
               Continue <ChevronRight size={16} />
             </button>
           </div>
       </BottomSheet>
+      {showDiscardConfirm && (
+        <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
+      )}
+      </>
     );
   }
 
@@ -1079,7 +1165,7 @@ export default function CustomerRentalFlow({
 
         {step < 3 && (
           <div className="p-4 border-t bg-gray-50/50 flex gap-3">
-            <button onClick={handleBack} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
+            <button onClick={handleFooterLeft} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
               {step > 1 || (step === 1 && startedAtCatalog) ? 'Back' : 'Cancel'}
             </button>
             <button
@@ -1109,16 +1195,24 @@ export default function CustomerRentalFlow({
   );
 
   return inline ? (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
+    <>
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={requestLeave}>
       <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-complete-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto" onClick={(e) => e.stopPropagation()}>
         {flowContent}
       </div>
     </div>
+    {showDiscardConfirm && (
+      <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
+    )}
+    </>
   ) : (
     <>
-      <BottomSheet onClose={onClose} z="z-[100]" labelledby="dialog-title-complete-booking">
+      <BottomSheet onClose={requestLeave} interceptClose={hasUnsavedChanges && !confirmedTx} z="z-[100]" labelledby="dialog-title-complete-booking">
         {flowContent}
       </BottomSheet>
+      {showDiscardConfirm && (
+        <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
+      )}
 
       {/* Size Guide */}
       {showSizeGuide && (
