@@ -324,7 +324,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
   // list carries data-sheet-scroll so a downward drag mid-scroll stays a
   // scroll — only a drag from the top dismisses.
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-ai-stylist" maxWidth="sm:max-w-md">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-ai-stylist" maxWidth="sm:max-w-md" hideHandle>
       <div className="h-[88dvh] sm:h-[90vh] sm:max-h-[680px] flex flex-col min-h-0 overflow-hidden">
 
         {/* Header */}
