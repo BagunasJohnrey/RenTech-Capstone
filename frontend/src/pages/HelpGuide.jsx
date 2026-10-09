@@ -3,7 +3,7 @@ import {
   HelpCircle, ChevronDown, ChevronUp, CheckCircle2, Wrench, Calendar,
   CalendarCheck, AlertTriangle, XCircle, Info, Sparkles,
   TrendingUp, PackageCheck, DoorOpen, ClipboardList, Play, ShieldCheck,
-  Palette, Package, Ticket, LayoutDashboard,
+  Palette, Package, Ticket, LayoutDashboard, RotateCcw,
 } from 'lucide-react';
 import { itemPill, txPill } from '../utils/statusColors';
 import { TERMS_SECTIONS, TermsBadge } from '../components/TermsContent';
@@ -17,7 +17,7 @@ const countBadge = (n, singular) => (
 );
 
 export const staffFaqs = [
-  { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental", or open Catalog, find an Available item, and tap "Book for Customer" on its card. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
+  { q: 'How do I create a new rental?', a: 'Go to Dashboard and tap "+ New Rental", or open Catalog, find an Available item, and tap it to start booking straight away. Follow the 3-step wizard: pick an item, enter customer details, review and confirm.' },
   { q: 'How do I release an item for pickup?', a: 'Open the Reserved booking → "Release". Full payment is required first: collect the outstanding balance in the sheet (Cash tab, or Online via PayMongo/Maya QR) and the release unlocks once the balance is ₱0. Then capture the condition photo and Confirm — the rental goes Active.' },
   { q: 'How do I process a return?', a: 'From Dashboard tap "Process Return", or find the active rental under Records. Returns are accepted only when fully paid — settle any outstanding balance first (Record Payment: Cash or Online). Pick the condition: Good sends the item to Cleaning (back to Available once washed); Damaged needs a reason and an optional custom fee, and takes the item Out of Service. A damage fee may leave a new balance, which stays payable on the Returned record. Add a condition photo if you like, then Confirm — the button locks while it processes so a double-tap can\u2019t file it twice.' },
   { q: 'How do I add an item to inventory?', a: 'Tap "+ Add Item" in the header or inside Catalog. Fill in the name, category, price, and photo. Only Admins and Staff can add items; Admins can also set them on sale (discount % or fixed sale price, optionally with an end date).' },
@@ -38,11 +38,11 @@ const customerFaqs = [
 // Inventory lifecycle legend (Staff/Admin only) — maps each on-card action
 // button to what it actually does, so nobody has to guess from the icon.
 export const inventoryActions = [
-  { status: 'Available', PillIcon: Wrench, pillCls: 'bg-red-50 text-red-700 border border-red-200', btnLabel: 'Pull from rental',
+  { status: 'Available', PillIcon: Wrench, pillCls: 'bg-white text-gray-400 border border-gray-200', btnLabel: 'Pull from rental',
     desc: 'For damaged or maintenance-needed pieces. The item flips to Out of Service, is hidden from the catalog, and existing bookings stay intact.' },
   { status: 'Cleaning', PillIcon: CheckCircle2, pillCls: 'bg-emerald-600 text-white', btnLabel: 'Mark as clean',
     desc: 'After a return lands in Cleaning, press this once the item is washed. It flips straight to Available and can be rented again. In the Cleaning queue you can also select several items and "Mark selected as cleaned" at once.' },
-  { status: 'OutOfService', PillIcon: CheckCircle2, pillCls: 'bg-emerald-50 text-emerald-700 border border-emerald-300', btnLabel: 'Restore to Available',
+  { status: 'OutOfService', PillIcon: RotateCcw, pillCls: 'bg-emerald-50 text-emerald-700 border border-emerald-200', btnLabel: 'Restore to Available',
     desc: 'After a repair or cleaning finishes on an item you pulled. One tap puts it back in the catalog.' },
 ];
 

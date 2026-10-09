@@ -16,7 +16,7 @@ const staffWorkflows = [
   {
     q: 'New walk-in rental (the full flow)',
     steps: [
-      'Dashboard → "+ New Rental", or Catalog → "Book for Customer" on an item card.',
+      'Dashboard → "+ New Rental", or tap any Available item in Catalog to book it straight away.',
       'Step 1 — pick the item: search, filter by category, scroll (or "Show more") to see everything, then tap to select and Continue.',
       'Step 2 — customer details: name, 11-digit contact, address, pickup/event dates on the calendar, size (or custom measurements), optional downpayment.',
       'Step 3 — review: check every row, set a discount with the slider if the customer gets one (see discounts below), then "Confirm & Process".',
