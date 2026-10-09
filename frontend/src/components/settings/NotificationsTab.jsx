@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Bell, MessageSquare, Pencil, RotateCcw, Check, X, Loader2, Clock, AlertTriangle, Mail } from 'lucide-react';
 import { api } from '../../utils/api';
-import SettingsCard from './SettingsCard';
+import CollapsibleCard from './CollapsibleCard';
 import SettingRow from './SettingRow';
 import Toggle from './Toggle';
 import { SkeletonList } from '../Skeleton';
@@ -173,11 +173,12 @@ export default function NotificationsTab({ profile }) {
   return (
     <>
       {/* Notification Preferences — this account only */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Bell}
         iconClass="bg-red-50 text-[#bf4a53]"
         title="My Notification Preferences"
-        desc="Which automated SMS and emails this account receives. Customer messaging is controlled on each customer's own profile."
+        subtitle="Which automated SMS and emails this account receives. Customer messaging is controlled on each customer's own profile."
+        storageKey="settings-notif-prefs-open"
       >
         {/* Mobile-first: single column → 2-col on desktop */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -208,19 +209,26 @@ export default function NotificationsTab({ profile }) {
           ))}
         </div>
         {notifMsg && <p className="text-xs text-emerald-600 font-bold">{notifMsg}</p>}
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* SMS Templates */}
-      <SettingsCard
+      <CollapsibleCard
         icon={MessageSquare}
         iconClass="bg-blue-50 text-blue-600"
         title="SMS Templates"
-        desc="Customize the SMS customers receive — placeholders are filled in automatically"
-        action={
+        subtitle="Customize the SMS customers receive — placeholders are filled in automatically"
+        storageKey="settings-notif-templates-open"
+        defaultOpen={false}
+        badge={
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+            {TEMPLATE_KEYS.filter(isCustomized).length} of {TEMPLATE_KEYS.length} custom
+          </span>
+        }
+        headerAction={
           <button
             onClick={resetAllTemplates}
             disabled={savingKey === '__all'}
-            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 active:scale-[0.97] transition-all disabled:opacity-50"
+            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-2 min-h-[36px] rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 active:scale-[0.97] transition-all disabled:opacity-50"
             title="Restore all three stock messages"
           >
             {savingKey === '__all'
@@ -416,7 +424,7 @@ export default function NotificationsTab({ profile }) {
           </>
         )}
         {templateSaveMsg && <p className="text-xs text-emerald-600 font-bold">{templateSaveMsg}</p>}
-      </SettingsCard>
+      </CollapsibleCard>
     </>
   );
 }

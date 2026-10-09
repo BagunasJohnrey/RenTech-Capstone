@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Building2, DollarSign, Clock, ScanLine } from 'lucide-react';
 import { api } from '../../utils/api';
 import { useFeatureFlags } from '../../hooks/useFeatureFlags';
-import SettingsCard from './SettingsCard';
+import CollapsibleCard from './CollapsibleCard';
 import InfoTile from './InfoTile';
 import Toggle from './Toggle';
 import NumberField from './NumberField';
@@ -28,6 +28,12 @@ export default function GeneralTab() {
   const [editAutomation, setEditAutomation] = useState(false);
   const [localAutomation, setLocalAutomation] = useState(automation);
   const [autoMsg, setAutoMsg] = useState('');
+
+  // Collapsible open state (controlled so Edit auto-expands; persisted
+  // via storageKey by CollapsibleCard).
+  const [bizOpen, setBizOpen] = useState();
+  const [polOpen, setPolOpen] = useState();
+  const [autoOpen, setAutoOpen] = useState();
 
   // QR codes (scannable receipts + staff scanner) — admin toggle persisted as
   // a business rule and broadcast so every open screen updates instantly.
@@ -140,12 +146,15 @@ export default function GeneralTab() {
   return (
     <>
       {/* Business Profile */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Building2}
         iconClass="bg-amber-50 text-amber-600"
         title="Business Profile"
-        desc="Store details shown in receipts and the customer Inquiries & Contact card"
-        action={!editBusiness && editBtn(() => { setEditBusiness(true); setLocalBusiness(business); })}
+        subtitle="Store details shown in receipts and the customer Inquiries & Contact card"
+        storageKey="settings-general-biz-open"
+        open={bizOpen}
+        onOpenChange={setBizOpen}
+        headerAction={!editBusiness && editBtn(() => { setEditBusiness(true); setLocalBusiness(business); setBizOpen(true); })}
       >
         {editBusiness ? (
           <div className="space-y-3 max-w-xl">
@@ -183,15 +192,19 @@ export default function GeneralTab() {
             <InfoTile label="Tax ID" value={business.taxId} />
           </div>
         )}
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* Rental Policies & Fees */}
-      <SettingsCard
+      <CollapsibleCard
         icon={DollarSign}
         iconClass="bg-emerald-50 text-emerald-600"
         title="Rental Policies & Fees"
-        desc="Defaults applied to every new booking and return"
-        action={!editPolicies && editBtn(() => { setEditPolicies(true); setLocalPolicies(policies); })}
+        subtitle="Defaults applied to every new booking and return"
+        storageKey="settings-general-policies-open"
+        defaultOpen={false}
+        open={polOpen}
+        onOpenChange={setPolOpen}
+        headerAction={!editPolicies && editBtn(() => { setEditPolicies(true); setLocalPolicies(policies); setPolOpen(true); })}
       >
         {editPolicies ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
@@ -219,15 +232,19 @@ export default function GeneralTab() {
             <InfoTile label="Default Damage Fee" value={`₱${policies.damageFee}`} />
           </div>
         )}
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* Automation & data */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Clock}
         iconClass="bg-sky-50 text-sky-600"
         title="Automation & Data"
-        desc="Scheduled reminders, escalations, and how long history is kept"
-        action={!editAutomation && editBtn(() => { setEditAutomation(true); setLocalAutomation(automation); })}
+        subtitle="Scheduled reminders, escalations, and how long history is kept"
+        storageKey="settings-general-automation-open"
+        defaultOpen={false}
+        open={autoOpen}
+        onOpenChange={setAutoOpen}
+        headerAction={!editAutomation && editBtn(() => { setEditAutomation(true); setLocalAutomation(automation); setAutoOpen(true); })}
       >
         {editAutomation ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
@@ -249,19 +266,26 @@ export default function GeneralTab() {
             <InfoTile label="History Retention" value={`${automation.retentionMonths} months`} />
           </div>
         )}
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* QR Codes */}
-      <SettingsCard
+      <CollapsibleCard
         icon={ScanLine}
         iconClass="bg-purple-50 text-purple-600"
         title="QR Codes"
-        desc="Scannable booking receipts + the staff QR scanner"
-        action={<Toggle on={qrCodesOn} onClick={toggleQr} />}
+        subtitle="Scannable booking receipts + the staff QR scanner"
+        storageKey="settings-general-qr-open"
+        defaultOpen={false}
+        badge={
+          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${qrCodesOn ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>
+            {qrCodesOn ? 'On' : 'Off'}
+          </span>
+        }
+        headerAction={<Toggle on={qrCodesOn} onClick={toggleQr} label="QR codes" />}
       >
         <p className="text-sm text-gray-500 leading-relaxed">When on, booking receipts show a QR code the customer can present at pickup — staff scan it from the Records or Dashboard to release or return the item.</p>
         {qrMsg && <p className="text-xs text-emerald-600 font-bold">{qrMsg}</p>}
-      </SettingsCard>
+      </CollapsibleCard>
     </>
   );
 }

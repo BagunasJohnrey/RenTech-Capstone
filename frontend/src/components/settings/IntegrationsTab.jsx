@@ -3,7 +3,7 @@ import { ShieldCheck, MessageSquare, CreditCard, RefreshCw, Sparkles, Mail, QrCo
 import { settingsService } from '../../services/settings';
 import { useToast } from '../Toast';
 import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
-import SettingsCard from './SettingsCard';
+import CollapsibleCard from './CollapsibleCard';
 
 const INTEGRATIONS = [
   { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Primary AI for outfit suggestions & business insights.', icon: Sparkles, iconClass: 'bg-purple-50 text-purple-600' },
@@ -91,22 +91,30 @@ export default function IntegrationsTab() {
     : null;
 
   return (
-    <SettingsCard
+    <CollapsibleCard
       icon={ShieldCheck}
       iconClass="bg-emerald-50 text-emerald-600"
       title="System Integrations"
-      desc="Live connectivity status for AI, SMS, email and payments"
-      action={
-        <div className="shrink-0 flex items-center gap-2">
+      subtitle="Live connectivity status for AI, SMS, email and payments"
+      storageKey="settings-integrations-open"
+      badge={
+        integrations ? (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+            {INTEGRATIONS.filter(({ key }) => integrations?.[key]?.configured && integrations?.[key]?.reachable).length} of {INTEGRATIONS.length} live
+          </span>
+        ) : null
+      }
+      headerAction={
+        <div className="flex items-center gap-2">
           {statusLabel && (
-            <span className="hidden sm:block text-[11px] font-semibold text-gray-400 tabular-nums" title={probeAt ? new Date(probeAt).toLocaleString('en-PH') : undefined}>
+            <span className="hidden lg:block text-[11px] font-semibold text-gray-400 tabular-nums" title={probeAt ? new Date(probeAt).toLocaleString('en-PH') : undefined}>
               {statusLabel}
             </span>
           )}
           <button
             onClick={() => loadIntegrations(true)}
             disabled={integrationsLoading}
-            className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
+            className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-4 py-2.5 min-h-[44px] rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
           >
             <RefreshCw size={13} className={integrationsLoading ? 'animate-spin' : ''} />
             {integrationsLoading ? (integrations ? 'Refreshing…' : 'Checking…') : 'Refresh'}
@@ -115,10 +123,10 @@ export default function IntegrationsTab() {
       }
     >
       {statusLabel && (
-        <p className="sm:hidden text-[11px] font-semibold text-gray-400 tabular-nums -mt-1">{statusLabel}</p>
+        <p className="lg:hidden text-[11px] font-semibold text-gray-400 tabular-nums -mt-1">{statusLabel}</p>
       )}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3 p-4 rounded-2xl bg-white border border-[#bf4a53]/20">
+      <div className="grid gap-3 xl:grid-cols-2">
+        <div className="flex items-center justify-between gap-3 p-4 rounded-2xl bg-white border border-[#bf4a53]/20 xl:col-span-2">
           <div className="min-w-0">
             <p className="font-bold text-sm text-gray-900">Payment Gateway</p>
             <p className="text-xs text-gray-500 mt-0.5">
@@ -192,6 +200,6 @@ export default function IntegrationsTab() {
           );
         })}
       </div>
-    </SettingsCard>
+    </CollapsibleCard>
   );
 }
