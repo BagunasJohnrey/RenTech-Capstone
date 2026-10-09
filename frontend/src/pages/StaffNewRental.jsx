@@ -390,6 +390,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   if (initialCustomerRef.current === null) {
     initialCustomerRef.current = { ...customer };
   }
+  // The item we opened with (tap-to-book preselects one): merely having it
+  // is NOT a change — only picking a different item counts. Otherwise every
+  // swipe-down on a freshly opened booking asks "Discard changes?".
+  const initialItemIdRef = useRef(initialItem?.id ?? null);
 
   // True when the user typed/changed anything worth keeping: a selected item,
   // customer details, dates, size/measurements, downpayment or a discount.
@@ -397,7 +401,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // UI (search text, category pills) never triggers the guard.
   const hasUnsavedChanges = useMemo(() => {
     if (step === 4 || createdTx) return false;
-    if (selectedItem) return true;
+    if ((selectedItem?.id ?? null) !== initialItemIdRef.current) return true;
     const init = initialCustomerRef.current || {};
     if ((customer.name || '').trim() || (customer.contact || '').trim() ||
         (customer.address || '').trim() || (customer.notes || '').trim()) return true;

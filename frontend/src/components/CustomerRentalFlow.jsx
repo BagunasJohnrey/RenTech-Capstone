@@ -243,6 +243,7 @@ export default function CustomerRentalFlow({
   const initialFormRef = useRef(null);
   if (initialFormRef.current === null) {
     initialFormRef.current = {
+      itemId: preselectedItem?.id ?? null,
       rentalDate, eventDate,
       name: customer.name, contact: customer.contact,
       address: customer.address, notes: customer.notes,
@@ -251,8 +252,11 @@ export default function CustomerRentalFlow({
   }
   const hasUnsavedChanges = useMemo(() => {
     if (confirmedTx) return false; // booking committed — always safe to leave
-    if (selectedItem) return true;
     const init = initialFormRef.current || {};
+    // The item we opened with is the baseline, not a change — only picking
+    // a different item counts. Otherwise a freshly opened booking is "dirty"
+    // and every swipe-down asks "Discard changes?".
+    if ((selectedItem?.id ?? null) !== (init.itemId ?? null)) return true;
     if ((customer.name || '') !== (init.name || '') ||
         (customer.contact || '') !== (init.contact || '') ||
         (customer.address || '') !== (init.address || '') ||
