@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, CreditCard, QrCode, ExternalLink, ScanLine } from 'lucide-react';
+import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, CreditCard, QrCode, ExternalLink, ScanLine, RotateCcw } from 'lucide-react';
 import QRCode from 'qrcode';
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
+import DatePickGuide from '../components/DatePickGuide';
+import ScheduleChips, { shortDate } from '../components/ScheduleChips';
+import CollapsibleSection from '../components/CollapsibleSection';
 import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
 import BottomSheet from '../components/BottomSheet';
@@ -97,34 +100,21 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       const ret = new Date(e);
       ret.setDate(ret.getDate() + returnDays);
       updated.returnDate = toLocalYmd(ret);
+    } else {
+      updated.returnDate = '';
     }
     setCustomer(updated);
     setFieldErrors((prev) => ({ ...prev, rentalDate: '', eventDate: '' }));
   };
 
-  const handleRentalDateChange = (d) => {
-    const updated = { ...customer, rentalDate: d };
-    if (d > customer.eventDate) {
-      const ret = new Date(d);
-      ret.setDate(ret.getDate() + returnDays);
-      updated.eventDate = d;
-      updated.returnDate = toLocalYmd(ret);
-    }
-    setCustomer(updated);
-  };
-
-  // Customer details
+  // Customer details — dates start EMPTY so staff must tap both days on
+  // the calendar (no prefill).
   const [customer, setCustomer] = useState(() => {
-    const now = new Date();
-    const eventD = new Date(now);
-    eventD.setDate(eventD.getDate() + 2);
-    const returnD = new Date(eventD);
-    returnD.setDate(returnD.getDate() + 1);
     return {
       name: '', contact: '', address: '',
-      rentalDate: todayYmd(),
-      eventDate: toLocalYmd(eventD),
-      returnDate: toLocalYmd(returnD),
+      rentalDate: '',
+      eventDate: '',
+      returnDate: '',
       notes: '',
       photoUrl: null,
     };
@@ -170,13 +160,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItem?.id]);
-
-  // When event date changes, auto-update return date
-  const handleEventDateChange = (d) => {
-    const ret = new Date(d);
-    ret.setDate(ret.getDate() + returnDays);
-    setCustomer({ ...customer, eventDate: d, returnDate: toLocalYmd(ret) });
-  };
 
   // Size & measurements
   const [size, setSize] = useState('');
@@ -266,8 +249,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     const addrTrimmed = (customer.address || '').trim();
     if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
     else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
-    if (new Date(customer.rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
-    if (new Date(customer.eventDate) < new Date(customer.rentalDate)) errs.eventDate = 'Event date must be on or after pickup date';
+    if (!customer.rentalDate) errs.rentalDate = 'Please select a pickup date.';
+    else if (new Date(customer.rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
+    if (!customer.eventDate) errs.eventDate = 'Please select an event date.';
+    else if (new Date(customer.eventDate) < new Date(customer.rentalDate)) errs.eventDate = 'Event date must be on or after pickup date';
     if (!size) errs.size = 'Please select a size';
     if (selectedItem && customer.eventDate) {
       const overlap = bookedRanges.some(
@@ -675,7 +660,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
           otherwise the sheet slides away under the confirm dialog and
           "Keep Editing" returns to an invisible sheet (looks like lost
           entries). When clean, the normal animated close plays. */}
-      <BottomSheet onClose={() => requestNavigate('close')} interceptClose={hasUnsavedChanges} labelledby="dialog-title-new-rental">
+      <BottomSheet onClose={() => requestNavigate('close')} interceptClose={hasUnsavedChanges} maxWidth="sm:max-w-3xl" labelledby="dialog-title-new-rental">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-100/80">
           <h2 id="dialog-title-new-rental" className="text-xl font-bold text-gray-900">New Rental</h2>
@@ -915,40 +900,82 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       error={fieldErrors.address || undefined} />
                   </div>
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Rental Dates</label>
-                  <p className="text-[10px] text-gray-400 mb-2">Tap once for pickup, tap again for event date.</p>
-                  <BookingCalendar
-                    pickup={customer.rentalDate}
-                    event={customer.eventDate}
-                    bookedRanges={bookedRanges}
-                    returnDays={returnDays}
-                    onChange={handleCalendarChange}
-                  />
-                  {fieldErrors.rentalDate && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.rentalDate}</p>}
+                <div className="space-y-3">
+                  <CollapsibleSection
+                    icon={Calendar}
+                    title="Rental Dates"
+                    required={!customer.rentalDate || !customer.eventDate || !!fieldErrors.rentalDate}
+                    summary={
+                      customer.rentalDate && customer.eventDate
+                        ? `${shortDate(customer.rentalDate)} → ${shortDate(customer.eventDate)}`
+                        : customer.rentalDate
+                          ? `${shortDate(customer.rentalDate)} → pick event day`
+                          : 'Pick your dates'
+                    }
+                    hasError={!!(fieldErrors.rentalDate || fieldErrors.eventDate || (availability.available === false && !availability.checking))}
+                  >
+                    <DatePickGuide
+                      hasPickup={!!customer.rentalDate}
+                      hasEvent={!!customer.eventDate}
+                      returnLabel={customer.returnDate
+                        ? new Date(customer.returnDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                        : null}
+                    />
+                    {(customer.rentalDate || customer.eventDate) && (
+                      <div className="flex justify-end -mt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCalendarChange('', '')}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[36px] text-[11px] font-bold text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                        >
+                          <RotateCcw size={12} /> Reset dates
+                        </button>
+                      </div>
+                    )}
+                    <div className="grid gap-4 lg:grid-cols-[1fr_230px]">
+                      <BookingCalendar
+                        pickup={customer.rentalDate}
+                        event={customer.eventDate}
+                        bookedRanges={bookedRanges}
+                        returnDays={returnDays}
+                        hideSummary
+                        onChange={handleCalendarChange}
+                      />
+                      <div className="space-y-3 min-w-0">
+                        <ScheduleChips
+                          pickup={customer.rentalDate}
+                          event={customer.eventDate}
+                          returnDays={returnDays}
+                          vertical
+                        />
+                        <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
+                          <Calendar size={15} className="text-amber-500 mt-0.5 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-amber-800">Pickup before the event</p>
+                            <p className="text-[11px] text-amber-600/80 mt-0.5">Return due {returnDays === 1 ? 'the day after' : `${returnDays} days after`} the event{customer.returnDate ? ` (${new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})})` : ''}.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {fieldErrors.rentalDate && <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.rentalDate}</p>}
+                    {fieldErrors.eventDate && <p role="alert" className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.eventDate}</p>}
+                    {availability.checking && (
+                      <div className="flex items-center gap-2 text-xs text-gray-500">
+                        <Loader2 size={14} className="animate-spin" /> Checking availability…
+                      </div>
+                    )}
+                    {!availability.checking && availability.available === true && (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                        <Check size={16} /> Available for the selected dates.
+                      </div>
+                    )}
+                    {!availability.checking && availability.available === false && (
+                      <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
+                        <Calendar size={16} /> {availability.reason || 'Not available for the selected dates.'}
+                      </div>
+                    )}
+                  </CollapsibleSection>
                 </div>
-                <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
-                  <Calendar size={16} className="text-amber-500 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-bold text-amber-800">Pick up before your event date</p>
-                    <p className="text-[11px] text-amber-600/80 mt-0.5">Return due {returnDays === 1 ? 'the day after' : `${returnDays} days after`} your event ({new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}).</p>
-                  </div>
-                </div>
-                {availability.checking && (
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <Loader2 size={14} className="animate-spin" /> Checking availability…
-                  </div>
-                )}
-                {!availability.checking && availability.available === true && (
-                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-                    <Check size={16} /> Available for the selected dates.
-                  </div>
-                )}
-                {!availability.checking && availability.available === false && (
-                  <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
-                    <Calendar size={16} /> {availability.reason || 'Not available for the selected dates.'}
-                  </div>
-                )}
               </div>
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">

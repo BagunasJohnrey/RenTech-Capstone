@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal } from 'lucide-react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
 import { usePayments } from '../hooks/usePayments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -7,6 +7,9 @@ import ItemImage from './ItemImage';
 import { getSaleInfo } from './ItemCard';
 import { inventoryService } from '../services/inventory';
 import BookingCalendar from './BookingCalendar';
+import DatePickGuide from './DatePickGuide';
+import ScheduleChips, { shortDate } from './ScheduleChips';
+import CollapsibleSection from './CollapsibleSection';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useButtonGuard } from '../hooks/useButtonGuard';
@@ -94,7 +97,10 @@ export default function CustomerRentalFlow({
   // (→ step 0, selection kept) only in the first case; otherwise Cancel.
   const [startedAtCatalog] = useState(() => !preselectedItem);
   const todayStr = useMemo(() => todayYmd(), []);
-  const [rentalDate, setRentalDate] = useState(preselectedDate || todayStr);
+  // Dates start EMPTY — the customer must tap both days on the calendar
+  // (no prefill). `preselectedDate` is only honored when an entry point
+  // passes an explicit date, otherwise ''.
+  const [rentalDate, setRentalDate] = useState(preselectedDate || '');
   const measurementFields = useMemo(() => {
     const isFemale = selectedItem?.category?.toLowerCase().includes('gown');
     return isFemale
@@ -102,12 +108,7 @@ export default function CustomerRentalFlow({
       : ['shoulder', 'chest', 'waist', 'sleeveLength', 'pantsLength', 'neck'];
   }, [selectedItem]);
 
-  const [eventDate, setEventDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 3);
-    return toLocalYmd(d);
-  });
-  const eventDateTouched = useRef(false);
+  const [eventDate, setEventDate] = useState('');
   // Suggested rental period, minimum downpayment, and the active payment
   // gateway come from the admin's business rules (public endpoint) — fall back
   // to the 3-day / ₱200 / PayMongo defaults.
@@ -124,11 +125,7 @@ export default function CustomerRentalFlow({
           payment_gateway: d.payment_gateway === 'maya' ? 'maya' : 'paymongo',
         });
         setDownpaymentAmount(d.min_downpayment || 200);
-        if (!eventDateTouched.current) {
-          const dt = new Date();
-          dt.setDate(dt.getDate() + d.rental_period_days);
-          setEventDate(toLocalYmd(dt));
-        }
+        // Dates stay empty until the customer taps them — no auto-suggest.
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -329,7 +326,8 @@ export default function CustomerRentalFlow({
     const addrTrimmed = (customer.address || '').trim();
     if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
     else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
-    if (new Date(rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
+    if (!rentalDate) errs.rentalDate = 'Please select a pickup date.';
+    else if (new Date(rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
     if (!eventDate) errs.eventDate = 'Please select an event date.';
     else if (new Date(eventDate) < new Date(rentalDate)) errs.eventDate = 'Event date must be on or after the pickup date';
     if (!selectedSize) errs.size = 'Please select a size';
@@ -820,7 +818,7 @@ export default function CustomerRentalFlow({
                 <ItemImage thumb image={selectedItem.image} alt="" className="w-16 h-16 rounded-xl object-cover bg-gray-200 shadow-sm" />
                 <div className="flex-1">
                   <p className="font-bold text-gray-900">{selectedItem.name}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Pickup: {formatDate(rentalDate)}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{rentalDate ? `Pickup: ${formatDate(rentalDate)}` : 'Pickup: pick your dates below'}</p>
                   {saleInfo?.active ? (
                     <p className="text-lg font-bold text-[#bf4a53] mt-1">
                       ₱{saleInfo.price.toLocaleString()} <span className="text-xs text-gray-400 line-through font-medium">₱{selectedItem.price.toLocaleString()}</span>
@@ -861,40 +859,79 @@ export default function CustomerRentalFlow({
                 </div>
               </div>
 
-              <div data-field="schedule" className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4">
-                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                  <Calendar size={14} /> Rental Schedule{(!rentalDate || !eventDate || fieldErrors.rentalDate || fieldErrors.eventDate) && (
-                    <span aria-hidden="true" className="text-[#bf4a53]">*</span>
-                  )}
-                </h4>
-                <p className="text-[10px] text-gray-400 -mt-2">Tap once for pickup, tap again for event date.</p>
+              <div data-field="schedule">
+              <CollapsibleSection
+                icon={Calendar}
+                title="Rental Schedule"
+                required={!rentalDate || !eventDate || !!fieldErrors.rentalDate || !!fieldErrors.eventDate}
+                summary={
+                  rentalDate && eventDate
+                    ? `${shortDate(rentalDate)} → ${shortDate(eventDate)}`
+                    : rentalDate
+                      ? `${shortDate(rentalDate)} → pick event day`
+                      : 'Pick your dates'
+                }
+                hasError={!!(fieldErrors.rentalDate || fieldErrors.eventDate || fieldErrors.availability)}
+              >
+                <DatePickGuide
+                  hasPickup={!!rentalDate}
+                  hasEvent={!!eventDate}
+                  returnLabel={dueDate ? formatDate(dueDate) : null}
+                />
+                {(rentalDate || eventDate) && (
+                  <div className="flex justify-end -mt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRentalDate('');
+                        setEventDate('');
+                        clearFieldError('rentalDate');
+                        clearFieldError('eventDate');
+                        clearFieldError('availability');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[36px] text-[11px] font-bold text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                    >
+                      <RotateCcw size={12} /> Reset dates
+                    </button>
+                  </div>
+                )}
                 {isCleaning ? (
                   <div className="flex items-start gap-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
                     <Calendar size={16} className="mt-0.5 text-amber-500" />
                     <span>This item is currently being cleaned and can't be booked yet. Please check back once staff mark it available.</span>
                   </div>
                 ) : (
-                <BookingCalendar
-                  pickup={rentalDate}
-                  event={eventDate}
-                  bookedRanges={bookedRanges}
-                  returnDays={rentalDefaults.return_days_after_event}
-                  onChange={(p, e) => {
-                    eventDateTouched.current = true;
-                    setRentalDate(p);
-                    setEventDate(e);
-                    clearFieldError('rentalDate');
-                    clearFieldError('eventDate');
-                  }}
-                />
-                )}
-                <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
-                  <span className="text-amber-500 mt-0.5"><Calendar size={16} /></span>
-                  <div>
-                    <p className="text-xs font-bold text-amber-800">Pick up from the store before your event date</p>
-                    <p className="text-[11px] text-amber-600 mt-0.5">Return is due {rentalDefaults.return_days_after_event === 1 ? 'the day after' : `${rentalDefaults.return_days_after_event} days after`} your event ({formatDate(dueDate)}).</p>
+                <div className="grid gap-4 lg:grid-cols-[1fr_230px]">
+                  <BookingCalendar
+                    pickup={rentalDate}
+                    event={eventDate}
+                    bookedRanges={bookedRanges}
+                    returnDays={rentalDefaults.return_days_after_event}
+                    hideSummary
+                    onChange={(p, e) => {
+                      setRentalDate(p);
+                      setEventDate(e);
+                      clearFieldError('rentalDate');
+                      clearFieldError('eventDate');
+                    }}
+                  />
+                  <div className="space-y-3 min-w-0">
+                    <ScheduleChips
+                      pickup={rentalDate}
+                      event={eventDate}
+                      returnDays={rentalDefaults.return_days_after_event}
+                      vertical
+                    />
+                    <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2">
+                      <span className="text-amber-500 mt-0.5 shrink-0"><Calendar size={15} /></span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-amber-800">Pickup before your event</p>
+                        <p className="text-[11px] text-amber-600 mt-0.5">Return due {rentalDefaults.return_days_after_event === 1 ? 'the day after' : `${rentalDefaults.return_days_after_event} days after`} your event{dueDate ? ` (${formatDate(dueDate)})` : ''}.</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
+                )}
 
                 {availability.checking && (
                   <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -917,6 +954,7 @@ export default function CustomerRentalFlow({
                 {fieldErrors.availability && (
                   <p className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.availability}</p>
                 )}
+              </CollapsibleSection>
               </div>
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
@@ -1236,7 +1274,7 @@ export default function CustomerRentalFlow({
   return inline ? (
     <>
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={requestLeave}>
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-complete-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-complete-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto" onClick={(e) => e.stopPropagation()}>
         {flowContent}
       </div>
     </div>
@@ -1246,7 +1284,7 @@ export default function CustomerRentalFlow({
     </>
   ) : (
     <>
-      <BottomSheet onClose={requestLeave} interceptClose={hasUnsavedChanges && !confirmedTx} z="z-[100]" labelledby="dialog-title-complete-booking">
+      <BottomSheet onClose={requestLeave} interceptClose={hasUnsavedChanges && !confirmedTx} z="z-[100]" maxWidth="sm:max-w-3xl" labelledby="dialog-title-complete-booking">
         {flowContent}
       </BottomSheet>
       {showDiscardConfirm && (
