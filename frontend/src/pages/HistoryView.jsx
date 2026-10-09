@@ -12,6 +12,7 @@ import { api } from '../utils/api';
 import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
 import { isReleased } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
+import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 
@@ -771,23 +772,22 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         />
       )}
 
-      {/* SMS Confirmation Modal — message is editable per send */}
+      {/* SMS Confirmation Modal — message is editable per send. Bottom-sheet
+          shell (no floating card, no top gap): bottom-anchored on mobile,
+          centered on desktop. */}
       {smsModalTx && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-          onClick={closeSmsModal}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-            onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center p-6 border-b border-gray-100/80">
-              <div>
-                <h3 className="font-bold text-lg text-gray-900">Confirm SMS</h3>
-                <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
-              </div>
-              <button onClick={closeSmsModal}
-                className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
-                <X size={20} />
-              </button>
+        <BottomSheet onClose={closeSmsModal} labelledby="dialog-title-confirm-sms" z="z-[100]" maxWidth="sm:max-w-sm" hideHandle>
+          <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
+            <div>
+              <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
+              <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
             </div>
-            <div className="p-6 space-y-4">
+            <button onClick={closeSmsModal}
+              className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+          <div data-sheet-scroll className="p-6 space-y-4 overflow-y-auto min-h-0">
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
                 <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
@@ -821,8 +821,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+        </BottomSheet>
       )}
 
       {/* Post-send outcome — sent vs queued vs failed, stated honestly. */}
