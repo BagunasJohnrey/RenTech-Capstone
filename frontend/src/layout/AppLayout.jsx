@@ -168,9 +168,8 @@ export default function AppLayout({
               </span>
             </div>
 
-            <div className="hidden md:block">
-              <h2 className="text-sm font-bold text-gray-800">{viewRole} Portal</h2>
-            </div>
+            {/* Spacer: keeps the right-side actions pinned right on desktop */}
+            <div className="hidden md:block" aria-hidden="true" />
 
             {/* Right side actions */}
             <div className="flex items-center gap-2">
