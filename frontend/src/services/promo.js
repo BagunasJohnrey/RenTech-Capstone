@@ -36,4 +36,11 @@ export const promoService = {
     _publicCacheAt = now;
     return d;
   },
+
+  // Drop the cached public list (e.g. right after a booking consumes a code
+  // so an exhausted voucher disappears instead of lingering for the TTL).
+  clearPublicCache() {
+    _publicCache = null;
+    _publicCacheAt = 0;
+  },
 };

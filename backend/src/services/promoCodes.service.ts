@@ -8,8 +8,10 @@ export async function listPromoCodes() {
 // Public, read-only view of currently-usable codes (active, started, not
 // expired, not exhausted). Used by the customer dashboard so shoppers can
 // discover real promotions created by the admin. Exposes only shareable
-// fields (no usage internals).
-export async function listPublicPromoCodes() {
+// fields (no usage internals). When customerId is known, codes that customer
+// has already exhausted (per-customer cap reached) are left out — offering a
+// code they can no longer use is a dead end.
+export async function listPublicPromoCodes(customerId?: string) {
   const now = new Date();
   const codes = await prisma.promoCode.findMany({
     where: {
@@ -19,8 +21,26 @@ export async function listPublicPromoCodes() {
     },
     orderBy: { createdAt: 'desc' },
   });
-  return codes
-    .filter((c) => c.maxUses === null || c.currentUses < c.maxUses)
+  const usable = codes.filter((c) => c.maxUses === null || c.currentUses < c.maxUses);
+  let exhausted = new Set<string>();
+  if (customerId && usable.length > 0) {
+    const useCounts = await prisma.transaction.groupBy({
+      by: ['promoCodeId'],
+      where: { customerId, promoCodeId: { not: null } },
+      _count: { promoCodeId: true },
+    });
+    exhausted = new Set(
+      useCounts
+        .filter((g) => {
+          const code = usable.find((c) => c.id === g.promoCodeId);
+          if (!code) return false;
+          return (g._count?.promoCodeId ?? 0) >= (code.maxUsesPerCustomer ?? 1);
+        })
+        .map((g) => String(g.promoCodeId))
+    );
+  }
+  return usable
+    .filter((c) => !exhausted.has(c.id))
     .map((c) => ({
       code: c.code,
       discountPct: c.discountPct,

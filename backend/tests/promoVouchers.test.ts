@@ -176,6 +176,37 @@ describe('checkPromo — guards', () => {
   });
 });
 
+describe('GET /api/promo-codes/public — hides exhausted vouchers', () => {
+  it('leaves out codes the caller has already used up', async () => {
+    const { prisma } = await mockDb();
+    const { listPublicPromoCodes } = await import('../src/services/promoCodes.service.js');
+    prisma.promoCode.findMany.mockResolvedValue([
+      promoRow({ id: 'promo-1', code: 'USEDUP' }),
+      promoRow({ id: 'promo-2', code: 'FRESH' }),
+    ]);
+    prisma.transaction.groupBy.mockResolvedValue([
+      { promoCodeId: 'promo-1', _count: { promoCodeId: 1 } },
+    ]);
+
+    const codes = await listPublicPromoCodes('customer-id-111');
+    expect(codes.map((c) => c.code)).toEqual(['FRESH']);
+  });
+
+  it('keeps multi-use codes until the personal limit is reached', async () => {
+    const { prisma } = await mockDb();
+    const { listPublicPromoCodes } = await import('../src/services/promoCodes.service.js');
+    prisma.promoCode.findMany.mockResolvedValue([
+      promoRow({ id: 'promo-3', code: 'THRICE', maxUsesPerCustomer: 3 }),
+    ]);
+    prisma.transaction.groupBy.mockResolvedValue([
+      { promoCodeId: 'promo-3', _count: { promoCodeId: 2 } },
+    ]);
+
+    const codes = await listPublicPromoCodes('customer-id-111');
+    expect(codes.map((c) => c.code)).toEqual(['THRICE']);
+  });
+});
+
 describe('POST /api/promo-codes (admin CRUD)', () => {
   it('creates a fixed-amount code', async () => {
     await mockDb();
