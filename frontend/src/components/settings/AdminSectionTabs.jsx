@@ -13,7 +13,7 @@ export const ADMIN_SECTIONS = [
 
 export default function AdminSectionTabs({ active, onChange }) {
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 justify-start md:justify-center">
       {ADMIN_SECTIONS.map(({ id, label, icon: Icon }) => (
         <button key={id} onClick={() => onChange(id)}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${
