@@ -863,7 +863,9 @@ export default function CustomerRentalFlow({
 
               <div data-field="schedule" className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                  <Calendar size={14} /> Rental Schedule <span aria-hidden="true" className="text-[#bf4a53]">*</span>
+                  <Calendar size={14} /> Rental Schedule{(!rentalDate || !eventDate || fieldErrors.rentalDate || fieldErrors.eventDate) && (
+                    <span aria-hidden="true" className="text-[#bf4a53]">*</span>
+                  )}
                 </h4>
                 <p className="text-[10px] text-gray-400 -mt-2">Tap once for pickup, tap again for event date.</p>
                 {isCleaning ? (
@@ -921,7 +923,9 @@ export default function CustomerRentalFlow({
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Item Details</h4>
                 <div data-field="size">
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase">Size <span aria-hidden="true" className="text-[#bf4a53]">*</span></label>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Size{!selectedSize && (
+                      <span aria-hidden="true" className="text-[#bf4a53]"> *</span>
+                    )}</label>
                     <button type="button" onClick={() => setShowSizeGuide(true)}
                       className="text-[10px] font-bold text-[#bf4a53] hover:text-red-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50 rounded">
                       Size Guide
@@ -939,7 +943,12 @@ export default function CustomerRentalFlow({
                   <div data-field="measurements" className="pt-3 border-t border-gray-100">
                     <button onClick={() => setMeasurementsExpanded(!measurementsExpanded)}
                       className="flex items-center justify-between w-full text-xs font-bold text-gray-500 hover:text-[#bf4a53] transition-colors">
-                      <span>Custom Measurements <span aria-hidden="true" className="text-[#bf4a53]">*</span></span>
+                      <span>Custom Measurements{(() => {
+                        const filled = measurementFields.filter((f) => measurements[f] && String(measurements[f]).trim()).length;
+                        return (filled < 3 || fieldErrors.measurements) && (
+                          <span aria-hidden="true" className="text-[#bf4a53]"> *</span>
+                        );
+                      })()}</span>
                       <svg className={`w-4 h-4 transition-transform ${measurementsExpanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                     </button>
                     <div className={`grid grid-cols-2 gap-3 mt-3 overflow-hidden transition-all duration-300 ${measurementsExpanded ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'}`}>
@@ -964,7 +973,9 @@ export default function CustomerRentalFlow({
               </div>
 
               <div data-field="downpayment" className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
-                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Required Downpayment <span aria-hidden="true" className="text-[#bf4a53]">*</span></p>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Required Downpayment{(!downpaymentAmount || fieldErrors.downpayment) && (
+                  <span aria-hidden="true" className="text-[#bf4a53]"> *</span>
+                )}</p>
                 <div className="relative mt-2">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400 pointer-events-none">₱</span>
                   <input
