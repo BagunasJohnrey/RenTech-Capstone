@@ -490,6 +490,10 @@ export async function processReturn(
   if (!tx) throw new AppError(404, 'Transaction not found');
   if (tx.status === 'Returned') throw new AppError(400, 'Transaction already returned');
   if (tx.status === 'Cancelled') throw new AppError(400, 'Transaction was cancelled');
+  // No return before release: a Reserved booking is an upcoming hold the
+  // customer hasn't picked up yet — returning it would send the item to
+  // Cleaning for a rental that never happened.
+  if (tx.status === 'Reserved') throw new AppError(400, 'Item has not been released yet — release it at pickup first');
 
   // No return until fully paid: the rental balance (fee − amounts actually
   // credited) must be zero first. Staff settle it via Record Payment (counter

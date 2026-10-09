@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, Loader2, Camera, AlertTriangle, Keyboard, Package, Undo2, ArrowLeft } from 'lucide-react';
+import { X, Loader2, Camera, AlertTriangle, Keyboard, Package, Undo2, ArrowLeft, RotateCcw } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { api } from '../utils/api';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -21,24 +21,64 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
   const [lookingUp, setLookingUp] = useState(false);
   const [manualCode, setManualCode] = useState('');
   const [showManual, setShowManual] = useState(false);
-  const [videoAR, setVideoAR] = useState(null); // measured camera aspect ratio
+  // Camera session generation: StrictMode double-mounts effects in dev (and a
+  // process switch restarts the stream), so overlapping start() calls must not
+  // fight over the camera/element — only the newest session stays live.
+  const sessionRef = useRef(0);
+  // Structured scan errors: title + what-happened + how to recover. `switchTo`
+  // offers a one-tap flip to the other process when the code is valid but the
+  // rental is in the wrong state for this one.
+  // On any failure the camera is parked and the viewfinder hides — only the
+  // notice + recovery buttons stay until staff retries.
+  const [streamDown, setStreamDown] = useState(false);
+  const videoEl = () => document.getElementById(regionId.current)?.querySelector('video');
+  const fail = (title, message, switchTo = null) => {
+    lookingUpRef.current = false;
+    setLookingUp(false);
+    setLookupError(switchTo ? { title, message, switchTo } : { title, message });
+    stop();
+    setStreamDown(true);
+  };
+  const retryScan = () => {
+    setLookupError('');
+    setStreamDown(false);
+    start();
+  };
   // Ref guard: the decode callback closure can't see state updates, so a
   // state-based check would let rapid repeat decodes fire duplicate lookups.
   const lookingUpRef = useRef(false);
+  // Same-code cooldown: a held-still QR (valid or not) decodes every frame —
+  // without this the same error/scan would hammer state + the API nonstop.
+  const lastScan = useRef({ raw: '', at: 0 });
 
-  const stop = async () => {
-    if (scannerRef.current && runningRef.current) {
-      runningRef.current = false;
+  const teardown = async () => {
+    runningRef.current = false;
+    if (scannerRef.current) {
       try { await scannerRef.current.stop(); } catch { /* already stopped */ }
       try { await scannerRef.current.clear(); } catch { /* noop */ }
+      scannerRef.current = null;
     }
+  };
+
+  const stop = async () => {
+    sessionRef.current += 1; // invalidate any in-flight start
+    await teardown();
   };
 
   const lookup = async (raw) => {
     if (lookingUpRef.current) return;
+    const now = Date.now();
+    if (lastScan.current.raw === raw && now - lastScan.current.at < 3000) return;
+    lastScan.current = { raw, at: now };
+    // Freeze the frame the moment something decodes — the feed holds still
+    // while the lookup runs; fail() resumes it, success hands off.
+    try { videoEl()?.pause?.(); } catch { /* noop */ }
     const m = String(raw || '').match(/(?:tx=)?(RT-[0-9A-Fa-f]{6,8})/i);
     if (!m) {
-      setLookupError('Not a RenTech booking QR. Expected a code like RT-XXXXXXXX.');
+      fail(
+        'Invalid QR code',
+        'This doesn\u2019t look like a RenTech booking QR (RT-XXXXXXXX). Aim at the booking code or enter it manually below.'
+      );
       return;
     }
     setLookupError('');
@@ -46,6 +86,30 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
     setLookingUp(true);
     try {
       const tx = await api.get(`/transactions/scan/${encodeURIComponent(m[1].toUpperCase())}`);
+      // State gate: a scan must match the rental's actual state, or staff get
+      // a clear reason instead of the wrong modal (or worse, a bad write).
+      // RELEASE accepts upcoming holds only; RETURN accepts live rentals only.
+      const status = tx?.status;
+      const action = actionRef.current;
+      const gateError =
+        action === 'return' && status === 'Reserved'
+          ? 'Not released yet — scan this code with Release Item at pickup first.'
+          : action === 'return' && status === 'Returned'
+            ? 'Already returned — nothing to process.'
+            : action === 'return' && status === 'Cancelled'
+              ? 'This booking was cancelled — nothing to return.'
+              : action === 'release' && (status === 'Active' || status === 'Overdue')
+                ? 'Already released — scan this code with Process Return instead.'
+                : action === 'release' && status === 'Returned'
+                  ? 'Already returned — this booking is closed.'
+                  : action === 'release' && status === 'Cancelled'
+                    ? 'This booking was cancelled — nothing to release.'
+                    : null;
+      if (gateError) {
+        const other = action === 'return' ? 'release' : 'return';
+        fail('Wrong process for this booking', gateError, other);
+        return;
+      }
       // Don't await stop() before handing off — stopping the stream can take
       // a beat (camera teardown) and it's not required for onFound. The
       // modal unmount cleanup will stop the camera anyway; the guard below
@@ -60,24 +124,32 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
       } catch { /* noop */ }
       onFound(tx, actionRef.current);
     } catch (err) {
-      lookingUpRef.current = false;
-      setLookingUp(false);
-      setLookupError(err?.message || 'Booking not found for this QR code.');
+      if (err?.status === 404) {
+        fail(
+          'Booking not found',
+          'No booking matches this code. Check the receipt — the code may be mistyped or from another item.'
+        );
+      } else {
+        fail('Lookup failed', err?.message || 'Could not look up this booking. Check your connection and try again.');
+      }
     }
   };
 
   const start = async () => {
+    const my = ++sessionRef.current;
+    // Fully park any previous stream BEFORE negotiating a new one — two
+    // live getUserMedia sessions on the same element is the flicker.
+    await teardown();
+    if (my !== sessionRef.current) return;
     setCameraError('');
     setLookupError('');
     try {
       const scanner = new Html5Qrcode(regionId.current);
       scannerRef.current = scanner;
-      runningRef.current = true;
-      setScanning(true);
       await scanner.start(
         { facingMode: 'environment' },
         {
-          fps: 30,
+          fps: 20,
           qrbox: { width: 240, height: 240 },
           // Only decode QR codes (skip 1D barcodes) — cuts decode time a lot.
           formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
@@ -89,34 +161,36 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
         },
         () => {} // per-frame decode failures are normal; ignore
       );
-      // Measure the live feed and fit the viewfinder to it (laptop webcams are
-      // landscape, phones portrait) so no side gets cropped away.
-      measureFrameSize();
+      // A newer session (StrictMode remount / process switch) took over while
+      // we awaited the camera — park this stream, the newer one wins.
+      if (my !== sessionRef.current) {
+        await teardown();
+        return;
+      }
+      runningRef.current = true;
+      setScanning(true);
     } catch {
+      if (my !== sessionRef.current) return;
       setCameraError('Camera unavailable or permission denied. Check the browser permission and HTTPS.');
       setScanning(false);
       runningRef.current = false;
     }
   };
 
-  // Read the camera stream's native resolution off the <video> element and
-  // adapt the viewfinder aspect ratio to it. Runs a few retries because
-  // videoWidth/Height can still be 0 for a frame or two after start.
-  const measureFrameSize = (attempt = 0) => {
-    const el = document.getElementById(regionId.current);
-    const video = el?.querySelector('video');
-    if (video && video.videoWidth > 0 && video.videoHeight > 0) {
-      setVideoAR(`${video.videoWidth} / ${video.videoHeight}`);
-      return;
-    }
-    if (attempt < 15) setTimeout(() => measureFrameSize(attempt + 1), 100);
-  };
-
   const chooseAction = (next) => {
     actionRef.current = next;
     setAction(next);
     setLookupError('');
+    setStreamDown(false);
     setShowManual(false);
+  };
+
+  // One-tap recovery from a "wrong process" error: stop the camera first
+  // (starting a second Html5Qrcode on the same element breaks the stream),
+  // then flip to the other process.
+  const switchProcess = async (next) => {
+    await stop();
+    chooseAction(next);
   };
 
   const backToProcess = async () => {
@@ -126,6 +200,7 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
     setScanning(false);
     setCameraError('');
     setLookupError('');
+    setStreamDown(false);
     setShowManual(false);
   };
 
@@ -133,9 +208,12 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
   // process-pick step renders it, so starting in the click handler ran before
   // React committed the element and Html5Qrcode mounted onto nothing, which
   // surfaced as a bogus "Camera unavailable or permission denied".
+  // The cleanup stops the stream so StrictMode remounts / process switches
+  // never leave two live sessions fighting over the camera (the flicker).
   useEffect(() => {
     if (!action) return;
     start();
+    return () => { stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action]);
 
@@ -144,9 +222,15 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[400] bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <>
+      {/* Kill the library's own frame UI: its 4 border bars flash white ↔
+          green on every detection waver (the flicker). Our overlay provides
+          the dimming + corner frame instead. Video (and any button UI) is
+          untouched — only injected plain divs are hidden. */}
+      <style>{`.qr-host > div{display:none !important;}`}</style>
+    <div className="fixed inset-0 z-[400] bg-gray-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={title}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
@@ -208,8 +292,13 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
                 </span>
               </div>
 
-              <div className="relative rounded-3xl overflow-hidden bg-black ring-1 ring-black/5 shadow-[0_8px_30px_rgba(0,0,0,0.25)]" style={{ aspectRatio: videoAR || '3 / 4' }}>
-                <div id={regionId.current} className="absolute inset-0 w-full h-full" />
+              {/* Fixed-ratio viewfinder: the box never resizes mid-stream, so the
+                  feed can't jump or flicker when the camera reports its size.
+                  The library letterboxes inside (black bars, never a stretch).
+                  Hidden after a failed scan — only the notice + retry stay. */}
+              {!streamDown && (
+              <div className="relative rounded-3xl overflow-hidden bg-black ring-1 ring-black/5 shadow-[0_8px_30px_rgba(0,0,0,0.25)] aspect-[3/4]">
+                <div id={regionId.current} className="qr-host absolute inset-0 w-full h-full" />
                 {!scanning && !cameraError && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/70">
                     <Loader2 size={24} className="animate-spin" />
@@ -245,6 +334,7 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
                   </div>
                 )}
               </div>
+              )}
 
               {lookingUp && (
                 <p className="text-xs text-gray-500 flex items-center justify-center gap-2 py-2">
@@ -252,8 +342,34 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
                 </p>
               )}
               {lookupError && !lookingUp && (
-                <div className="flex items-start gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
-                  <AlertTriangle size={15} className="mt-0.5 shrink-0" /> {lookupError}
+                <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <span className="w-8 h-8 rounded-xl bg-red-500 text-white flex items-center justify-center shrink-0">
+                      <AlertTriangle size={15} />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-extrabold text-red-700 text-sm">{lookupError.title || 'Scan failed'}</p>
+                      <p className="text-xs font-medium text-red-600 leading-relaxed mt-0.5">{lookupError.message}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={retryScan}
+                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 min-h-[44px] rounded-xl bg-[#bf4a53] text-white text-xs font-bold hover:bg-[#a63f47] active:scale-[0.99] transition-all"
+                    >
+                      <RotateCcw size={13} /> Retry scan
+                    </button>
+                    {lookupError.switchTo && (
+                      <button
+                        type="button"
+                        onClick={() => switchProcess(lookupError.switchTo)}
+                        className="inline-flex items-center justify-center px-3.5 py-2.5 min-h-[44px] rounded-xl bg-gray-900 text-white text-xs font-bold hover:bg-gray-700 active:scale-[0.99] transition-all"
+                      >
+                        Use {lookupError.switchTo === 'return' ? 'Process Return' : 'Release Item'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -284,5 +400,6 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
         </div>
       </div>
     </div>
+    </>
   );
 }

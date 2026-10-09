@@ -549,6 +549,25 @@ describe('PUT /api/transactions/:id/return', () => {
     expect(res.status).toBe(400);
   });
 
+  it('should reject return on an unreleased (Reserved) rental', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-reserved', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, downpayment: 5000, totalPaid: 5000, balance: 0,
+      latePenalty: 0, damageFee: 0, status: 'Reserved',
+      item: { id: 1, name: 'Test', status: 'Reserved' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-reserved/return')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ returnDate: '2026-07-14', isDamaged: false });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message || res.body.error || JSON.stringify(res.body)).toMatch(/release/i);
+  });
+
   it('should reject for customer', async () => {
     const res = await request(app)
       .put('/api/transactions/tx-1/return')
