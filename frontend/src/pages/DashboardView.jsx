@@ -9,6 +9,7 @@ import { api } from '../utils/api';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { txPill } from '../utils/statusColors';
 import { promoService } from '../services/promo';
+import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
 import { sortByCategory } from '../utils/categorySort';
 import { tabPath } from '../utils/routing';
 import { todayYmd } from '../utils/format';
@@ -155,9 +156,12 @@ export default function DashboardView({ role, transactions, inventory, transacti
                     <div key={p.code} className="relative overflow-hidden rounded-2xl border-2 border-dashed border-[#bf4a53]/30 bg-gradient-to-br from-red-50 to-orange-50 p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-xl font-extrabold text-[#bf4a53]">{p.discountPct}% OFF</p>
+                          <p className="text-xl font-extrabold text-[#bf4a53]">{promoDiscountLabel(p).toUpperCase()}</p>
                           <p className="text-[11px] text-gray-500 font-medium">
-                            {p.expiresAt ? `Until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'No expiry'}
+                            {[
+                              promoTermsLabel(p),
+                              p.expiresAt ? `until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : '',
+                            ].filter(Boolean).join(' · ') || 'No expiry'}
                           </p>
                         </div>
                         <button

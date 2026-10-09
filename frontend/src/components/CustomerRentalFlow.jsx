@@ -16,6 +16,7 @@ import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
+import { promoDiscountLabel } from '../utils/promoLabel';
 import BookingQR from './BookingQR';
 import BottomSheet from './BottomSheet';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
@@ -462,7 +463,7 @@ export default function CustomerRentalFlow({
     setPromoApplying(true);
     setPromoError('');
     try {
-      const result = await validatePromo(raw, effectiveItemPrice || 0);
+      const result = await validatePromo(raw, effectiveItemPrice || 0, selectedItem?.category);
       setPromoCode(result.code || raw);
       setPromoApplied(result);
       setPromoError('');
@@ -1170,7 +1171,7 @@ export default function CustomerRentalFlow({
                                     className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-red-50/60 transition-colors disabled:opacity-50"
                                   >
                                     <span className="text-xs font-bold text-gray-900">{p.code}</span>
-                                    <span className="text-[11px] font-bold text-emerald-600 shrink-0">−{p.discountPct}%</span>
+                                    <span className="text-[11px] font-bold text-emerald-600 shrink-0">−{promoDiscountLabel(p)}</span>
                                   </button>
                                 ))}
                               </div>
@@ -1184,7 +1185,7 @@ export default function CustomerRentalFlow({
                               <Check size={15} strokeWidth={3} />
                             </span>
                             <div className="flex-1 min-w-0">
-                              <p className="text-xs font-bold text-emerald-800">{promoApplied.code} <span className="font-semibold text-emerald-600">· {promoApplied.discountPct}% off</span></p>
+                              <p className="text-xs font-bold text-emerald-800">{promoApplied.code} <span className="font-semibold text-emerald-600">· {promoDiscountLabel(promoApplied)}</span></p>
                               <p className="text-xs font-bold text-emerald-600">−₱{promoApplied.discountAmount.toLocaleString()} saved</p>
                             </div>
                             <button onClick={() => { setPromoCode(''); setPromoApplied(null); }}

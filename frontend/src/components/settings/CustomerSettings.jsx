@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Ruler, Bell, Tag, Sparkles, NotebookPen, Check, RotateCcw, Save, Mail, BellRing, TriangleAlert, Copy, CalendarClock } from 'lucide-react';
 import { api } from '../../utils/api';
 import { promoService } from '../../services/promo';
+import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../../utils/promoLabel';
 import { SIZE_PRESETS } from '../../utils/sizePresets';
 import Toggle from './Toggle';
 import StoreContactCard from './StoreContactCard';
@@ -269,7 +270,7 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
               <div key={p.code} className="flex items-stretch rounded-2xl border border-[#bf4a53]/20 bg-red-50/60 overflow-hidden min-w-0">
                 {/* Discount stub — larger on desktop */}
                 <div className="flex flex-col items-center justify-center px-3 sm:px-4 md:px-7 py-3.5 md:py-5 bg-[#bf4a53] text-white shrink-0 min-w-[4rem] md:min-w-[7rem]">
-                  <span className="text-base sm:text-lg md:text-2xl font-extrabold leading-none tabular-nums">-{p.discountPct}%</span>
+                  <span className="text-base sm:text-lg md:text-2xl font-extrabold leading-none tabular-nums">{promoShortLabel(p)}</span>
                   <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider opacity-80 mt-1">off</span>
                 </div>
                 {/* Perforation */}
@@ -279,7 +280,12 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
                   <div className="min-w-0 flex-1">
                     <p className="text-sm md:text-lg font-extrabold text-gray-900 font-mono tracking-wide select-all">{p.code}</p>
                     <p className="text-xs md:text-sm text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
-                      {p.discountPct}% off rental
+                      {promoDiscountLabel(p)} rental
+                      {promoTermsLabel(p) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white border border-gray-200 text-[10px] md:text-[11px] font-bold text-gray-500">
+                          {promoTermsLabel(p)}
+                        </span>
+                      )}
                       {p.expiresAt && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white border border-gray-200 text-[10px] md:text-[11px] font-bold text-gray-500">
                           <CalendarClock size={10} />
