@@ -991,7 +991,7 @@ export default function RentechApp() {
                 onNavigate={goTab}
                 onOpenChatbot={() => setShowChatbot(true)}
                 onOpenScanner={() => setShowScanner(true)}
-                onCustomerBook={(item) => setCustomerRental({ item, date: todayYmd() })}
+                onCustomerBook={(item) => setCustomerRental({ item })}
                 onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))}
               />
             )}
@@ -1017,7 +1017,7 @@ export default function RentechApp() {
                 transactions={transactions}
                 loading={inventoryLoading}
                 onBook={(item, date) => setCustomerRental({ item, date })}
-                onCustomerBook={(item) => setCustomerRental({ item, date: todayYmd() })}
+                onCustomerBook={(item) => setCustomerRental({ item })}
                 onViewDetail={(item) => navigate(itemDetailPath(viewRole, item.id))}
                 onEdit={setEditingItem}
                 onDelete={handleDeleteInventoryItem}
@@ -1213,7 +1213,7 @@ export default function RentechApp() {
             onBook={() => {
               const it = detailItem;
               navigate(basePath, { replace: true });
-              setCustomerRental({ item: it, date: todayYmd() });
+              setCustomerRental({ item: it });
             }}
           />
         )}
@@ -1359,7 +1359,7 @@ export default function RentechApp() {
       onFabClick={() => {
         if (viewRole === 'Admin') goTab('AI Insights');
         else if (viewRole === 'Staff') setShowStaffRental(true);
-        else setCustomerRental({ item: null, date: todayYmd() });
+        else setCustomerRental({ item: null });
       }}
     >
       <Suspense fallback={<PageSkeleton tab={activeTab} />}>
