@@ -1216,21 +1216,14 @@ export default function CustomerRentalFlow({
                 )}
               </div>
               {flags.qr_codes && (
-                <div className="flex flex-col items-center gap-2">
+                <div className="flex flex-col items-center">
                   <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
-                    {/* Real, scannable QR (encodes the booking code). Server-rendered data URI on the booking response, otherwise generated client-side. */}
+                    {/* Real, scannable QR (encodes the booking code). Already on
+                        the downloadable receipt below — shown here bare, with no
+                        helper text or save link. Server-rendered data URI on the
+                        booking response, otherwise generated client-side. */}
                     <BookingQR tx={confirmedTx} size={144} showCode={false} onDataUrl={setQrSaveUrl} />
                   </div>
-                  <p className="text-[11px] text-gray-400 text-center">Show this code to staff on pickup — they can scan it to pull up your order.</p>
-                  {qrSaveUrl && (
-                    <a
-                      href={qrSaveUrl}
-                      download={`${bookingCode(confirmedTx)}.png`}
-                      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#bf4a53] bg-red-50 hover:bg-red-100 rounded-full px-3 py-1.5 transition-colors"
-                      title="Save a copy of this QR code">
-                      <Download size={13} /> Save QR
-                    </a>
-                  )}
                 </div>
               )}
               {confirmError && (
