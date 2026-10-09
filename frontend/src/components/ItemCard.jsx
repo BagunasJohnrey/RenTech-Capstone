@@ -213,18 +213,29 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
   }
 
   const sale = getSaleInfo(item);
+  // Whole card taps through: details when a detail handler exists (catalog),
+  // straight to booking otherwise (home grids, chatbot). The detail modal
+  // owns availability gating (its Rent button disables itself when the
+  // piece can't be booked), so no per-status button row is needed here.
+  const activate = onViewDetail ? () => onViewDetail(item) : (onBook ? () => onBook() : undefined);
   return (
     <div
-      className="bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col">
-      <button type="button" onClick={() => onViewDetail?.(item)} aria-label={`View ${item.name}`}
-        className="relative aspect-[4/5] bg-gray-50 overflow-hidden w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60">
+      data-tour="book"
+      onClick={activate}
+      onKeyDown={activate ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } } : undefined}
+      tabIndex={activate ? 0 : undefined}
+      role={activate ? 'button' : undefined}
+      aria-label={activate ? `${item.name}, ₱${item.price.toLocaleString()}` : undefined}
+      title={activate ? (onViewDetail ? `View ${item.name}` : `Book ${item.name}`) : undefined}
+      className={`bg-white rounded-2xl border border-gray-100/80 overflow-hidden shadow-sm hover:shadow-md transition-all group flex flex-col ${activate ? 'cursor-pointer' : ''}`}>
+      <div className="relative aspect-[4/5] bg-gray-50 overflow-hidden">
         <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
         {sale.active && (
-          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] font-bold shadow-sm text-[#bf4a53]">
+          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#bf4a53]/30 bg-[#bf4a53]/10 text-[9px] font-bold shadow-sm text-[#bf4a53] pointer-events-none">
             {sale.pct > 0 ? `-${sale.pct}%` : 'SALE'}
           </span>
         )}
-      </button>
+      </div>
       <div className="p-4 flex flex-col flex-1 gap-1">
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</div>
         <h3 className="font-bold text-gray-900 text-sm leading-tight line-clamp-2">{item.name}</h3>
@@ -242,62 +253,16 @@ export default function ItemCard({ item, role, onBook, onEdit, onDelete, onResto
             )}
           </div>
         )}
-        <p className="font-bold text-sm">
+        <p className="font-extrabold text-lg tracking-tight mt-0.5">
           {sale.active ? (
             <>
               <span className="text-[#bf4a53]">₱{sale.price.toLocaleString()}</span>
-              <span className="text-gray-400 font-medium text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
+              <span className="text-gray-400 font-semibold text-xs line-through ml-1.5">₱{item.price.toLocaleString()}</span>
             </>
           ) : (
             <span className="text-gray-900">₱{item.price.toLocaleString()}</span>
           )}
         </p>
-        {(() => {
-          const disabled = !guest && (item.status === 'OutOfService' || item.status === 'Deleted');
-          const sizingCls = 'w-full font-bold py-2.5 rounded-full text-[13px] shadow-sm transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 flex items-center justify-center gap-1.5 whitespace-nowrap';
-          // Guests tap the photo itself to open details (same modal) — no
-          // separate button needed on the card.
-          if (guest) {
-            return null;
-          }
-          if (disabled) {
-            return (
-              <div className="mt-auto pt-3">
-                <button data-tour="book" type="button" disabled
-                  className={`${sizingCls} bg-gray-100 text-gray-400 cursor-not-allowed shadow-none`}>
-                  Unavailable
-                </button>
-              </div>
-            );
-          }
-          // Currently rented out (incl. overdue) — still bookable in advance
-          // for other dates. Show a distinct "Advance Book" action instead of
-          // the loud Rent Now so customers know the piece is currently out.
-          if (item.status === 'Rented' || item.status === 'Overdue') {
-            return (
-              <div className="mt-auto pt-3">
-                <button data-tour="book" type="button"
-                  onClick={(e) => { e.stopPropagation(); onBook?.(); }}
-                  className={`${sizingCls} bg-white border border-gray-300 text-gray-700 hover:border-gray-900 hover:text-gray-900 hover:shadow-md active:scale-[0.98]`}
-                >
-                  <Calendar size={14} />
-                  <span>Advance Book</span>
-                </button>
-              </div>
-            );
-          }
-          return (
-            <div className="mt-auto pt-3">
-              <button data-tour="book" type="button"
-                onClick={(e) => { e.stopPropagation(); onBook?.(); }}
-                className={`${sizingCls} bg-gradient-to-r from-[#b33842] via-[#bf4a53] to-[#d97079] text-white shadow-md shadow-[#bf4a53]/30 hover:shadow-lg hover:shadow-[#bf4a53]/40 hover:brightness-110 active:scale-[0.98]`}
-              >
-                <Calendar size={14} />
-                <span>Rent Now</span>
-              </button>
-            </div>
-          );
-        })()}
       </div>
     </div>
   );
