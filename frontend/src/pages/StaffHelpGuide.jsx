@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import {
-  ChevronDown, ChevronUp, ClipboardList, Palette, Package, Ticket,
+  ChevronDown, ClipboardList, Palette, Package, Ticket,
   LayoutDashboard, HelpCircle, Play,
 } from 'lucide-react';
-import SettingsCard from '../components/settings/SettingsCard';
+import CollapsibleCard from '../components/settings/CollapsibleCard';
 import { itemPill, txPill } from '../utils/statusColors';
 import {
   staffFaqs, inventoryActions, statusReference, transactionStatuses,
@@ -71,52 +71,79 @@ const extraStaffFaqs = [
   { q: 'A return shows "Alteration Pending" instead of its status — is that an error?', a: 'No. When a fitting flag is set, its badge replaces the booking status so there is only one badge per row. The booking itself is unchanged.' },
 ];
 
+// Card-style accordion: questions sit in a 2-column grid on desktop; the
+// open answer spans the full row so steps read edge to edge.
 function Accordion({ items, renderAnswer }) {
   const [open, setOpen] = useState(null);
   return (
-    <div className="divide-y divide-gray-100/60">
-      {items.map((item, i) => (
-        <div key={i}>
-          <button
-            onClick={() => setOpen(open === i ? null : i)}
-            className="w-full flex items-center justify-between gap-3 px-1 py-3 text-left hover:bg-gray-50/50 transition-colors"
+    <div className="grid gap-2 md:grid-cols-2">
+      {items.map((item, i) => {
+        const isOpen = open === i;
+        return (
+          <div
+            key={i}
+            className={`rounded-2xl border transition-colors overflow-hidden ${
+              isOpen
+                ? 'border-[#bf4a53]/30 bg-red-50/40 md:col-span-2'
+                : 'bg-[#fafafa] border-gray-100 hover:border-gray-200'
+            }`}
           >
-            <span className="font-semibold text-sm text-gray-900">{item.q}</span>
-            {open === i ? <ChevronUp size={16} className="text-gray-400 shrink-0" /> : <ChevronDown size={16} className="text-gray-400 shrink-0" />}
-          </button>
-          {open === i && (
-            <div className="px-1 pb-4">
-              {renderAnswer(item)}
-            </div>
-          )}
-        </div>
-      ))}
+            <button
+              type="button"
+              onClick={() => setOpen(isOpen ? null : i)}
+              aria-expanded={isOpen}
+              className="w-full flex items-center gap-3 p-3.5 sm:p-4 min-h-[52px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/50"
+            >
+              <span className="flex-1 min-w-0 font-bold text-sm text-gray-900">{item.q}</span>
+              <ChevronDown
+                size={17}
+                aria-hidden="true"
+                className={`shrink-0 text-gray-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {isOpen && (
+              <div className="px-3.5 sm:px-4 pb-4">
+                {renderAnswer(item)}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// Staff-only Help Guide, styled as native Settings cards so it sits naturally
-// in Profile Settings: compact hero + one card per topic. Status references
-// are imported from the shared guide so the two can never disagree.
+const countBadge = (n, singular) => (
+  <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+    {n} {singular}{n === 1 ? '' : 's'}
+  </span>
+);
+
+// Staff-only Help Guide: collapsible header-band cards (same language as
+// Settings) so a long guide stays scannable — workflows open by default,
+// reference sections collapse with count badges. Status data is imported
+// from the shared guide so the two can never disagree.
 // No Terms section — that legal text is customer/admin-facing.
 export default function StaffHelpGuide({ onStartTutorial }) {
+  const allFaqs = [...staffFaqs, ...extraStaffFaqs];
+
   return (
     <div className="space-y-4">
-      {/* Compact hero */}
-      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-5 md:p-6 text-white shadow-sm relative overflow-hidden">
+      {/* Hero */}
+      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-3xl p-5 md:p-8 text-white shadow-sm relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3" />
         <div className="flex flex-wrap items-center justify-between gap-3 relative z-10">
-          <div className="flex items-center gap-2.5">
-            <HelpCircle className="text-[#bf4a53]" size={22} />
-            <div>
-              <h2 className="text-xl font-bold tracking-tight">Staff Help Guide</h2>
-              <p className="text-xs text-gray-400 font-medium mt-0.5">Your flows, your buttons, every status badge.</p>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <HelpCircle className="text-[#bf4a53] shrink-0" size={24} />
+            <div className="min-w-0">
+              <h2 className="text-xl md:text-2xl font-bold tracking-tight">Staff Help Guide</h2>
+              <p className="text-xs md:text-sm text-gray-400 font-medium mt-0.5">Your flows, your buttons, every status badge.</p>
             </div>
           </div>
           {onStartTutorial && (
             <button
               onClick={onStartTutorial}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#bf4a53] hover:bg-red-600 text-white text-xs font-bold transition-colors shadow-lg shadow-red-900/40"
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 min-h-[44px] rounded-full bg-[#bf4a53] hover:bg-red-600 text-white text-xs font-bold transition-colors shadow-lg shadow-red-900/40"
             >
               <Play size={12} /> Guided tour
             </button>
@@ -125,71 +152,77 @@ export default function StaffHelpGuide({ onStartTutorial }) {
       </div>
 
       {/* Workflows */}
-      <SettingsCard
+      <CollapsibleCard
         icon={ClipboardList}
-        iconClass="bg-red-50 text-[#bf4a53]"
         title="Front-desk workflows"
-        desc="Tap a job to see every tap, in order"
+        subtitle="Tap a job to see every tap, in order"
+        storageKey="help-staff-workflows-open"
+        badge={countBadge(staffWorkflows.length, 'flow')}
       >
         <Accordion
           items={staffWorkflows}
           renderAnswer={(w) => (
-            <ol className="space-y-2">
+            <ol className="space-y-2.5">
               {w.steps.map((s, j) => (
-                <li key={j} className="flex gap-2.5 text-sm text-gray-600 leading-relaxed">
-                  <span className="shrink-0 w-5 h-5 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold flex items-center justify-center mt-0.5">{j + 1}</span>
+                <li key={j} className="flex gap-2.5 text-sm text-gray-700 leading-relaxed">
+                  <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-[#bf4a53] text-white text-[11px] font-bold flex items-center justify-center mt-0.5">{j + 1}</span>
                   <span>{s}</span>
                 </li>
               ))}
             </ol>
           )}
         />
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* Status colors */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Palette}
-        iconClass="bg-violet-50 text-violet-600"
         title="Status colors"
-        desc="One color = one meaning, everywhere in the app"
+        subtitle="One color = one meaning, everywhere in the app"
+        storageKey="help-staff-colors-open"
+        defaultOpen={false}
+        badge={countBadge(colorLegend.length, 'color')}
       >
-        <div className="divide-y divide-gray-100/60">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {colorLegend.map(({ key, cls, label, desc }) => (
-            <div key={key} className="flex items-start gap-3 py-3">
-              <span className={`mt-1 shrink-0 w-2.5 h-2.5 rounded-full shadow-sm ${cls}`} />
-              <div className="flex-1 min-w-0">
+            <div key={key} className="flex items-start gap-3 p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100">
+              <span aria-hidden="true" className={`mt-1 shrink-0 w-2.5 h-2.5 rounded-full shadow-sm ${cls}`} />
+              <div className="min-w-0">
                 <p className="text-sm font-bold text-gray-900">{label}</p>
                 <p className="text-xs text-gray-500 leading-relaxed mt-0.5">{desc}</p>
               </div>
             </div>
           ))}
         </div>
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* Catalog buttons */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Package}
-        iconClass="bg-blue-50 text-blue-600"
         title="Catalog buttons"
-        desc="What the buttons on an item card do, status by status"
+        subtitle="What the buttons on an item card do, status by status"
+        storageKey="help-staff-buttons-open"
+        defaultOpen={false}
+        badge={countBadge(inventoryActions.length + statusReference.length, 'status')}
       >
-        <div className="divide-y divide-gray-100/60">
+        <div className="grid gap-2 md:grid-cols-2">
           {inventoryActions.map(({ status, PillIcon, pillCls, btnLabel, desc }) => {
             const meta = itemPill(status);
             const StatusIcon = meta.icon;
             return (
-              <div key={status} className="flex items-start gap-3 py-3">
-                <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
-                  <StatusIcon size={10} />
-                  {meta.label}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold mb-1.5 ${pillCls}`}>
+              <div key={status} className="p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
+                    <StatusIcon size={10} />
+                    {meta.label}
+                  </span>
+                  <span aria-hidden="true" className="text-gray-300 text-xs font-bold">→</span>
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold ${pillCls}`}>
                     <PillIcon size={11} />
                     {btnLabel}
                   </span>
-                  <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
                 </div>
+                <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
               </div>
             );
           })}
@@ -197,83 +230,95 @@ export default function StaffHelpGuide({ onStartTutorial }) {
             const meta = itemPill(status);
             const StatusIcon = meta.icon;
             return (
-              <div key={status} className="flex items-start gap-3 py-3">
-                <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
-                  <StatusIcon size={10} />
-                  {meta.label}
-                </span>
-                <p className="text-xs text-gray-500 leading-relaxed flex-1">{desc}</p>
+              <div key={status} className="p-3.5 bg-gray-50/60 rounded-2xl border border-gray-100 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
+                    <StatusIcon size={10} />
+                    {meta.label}
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-gray-200/70 text-gray-500 text-[10px] font-extrabold uppercase tracking-wide">
+                    Automatic
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
               </div>
             );
           })}
         </div>
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* Rental statuses + alteration flags */}
-      <SettingsCard
+      <CollapsibleCard
         icon={Ticket}
-        iconClass="bg-indigo-50 text-indigo-600"
         title="Rental statuses"
-        desc="What each transaction badge means — and whether it needs you"
+        subtitle="What each transaction badge means — and whether it needs you"
+        storageKey="help-staff-rentals-open"
+        defaultOpen={false}
+        badge={countBadge(transactionStatuses.length + alterationStatuses.length, 'badge')}
       >
-        <div className="divide-y divide-gray-100/60">
+        <div className="grid gap-2 sm:grid-cols-2">
           {transactionStatuses.map(({ key, Icon, desc }) => {
             const meta = txPill(key);
             return (
-              <div key={key} className="flex items-start gap-3 py-3">
+              <div key={key} className="flex items-start gap-3 p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100 min-w-0">
                 <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${meta.bg} ${meta.text} ${meta.border}`}>
                   <Icon size={10} />
                   {key}
                 </span>
-                <p className="text-xs text-gray-500 leading-relaxed flex-1">{desc}</p>
+                <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
               </div>
             );
           })}
           {alterationStatuses.map(({ key, cls, desc }) => (
-            <div key={key} className="flex items-start gap-3 py-3">
+            <div key={key} className="flex items-start gap-3 p-3.5 bg-amber-50/60 rounded-2xl border border-amber-100 min-w-0">
               <span className={`shrink-0 inline-flex items-center px-2 py-1 rounded-full border text-[10px] font-bold ${cls}`}>
                 {key}
               </span>
-              <p className="text-xs text-gray-500 leading-relaxed flex-1">{desc}</p>
+              <p className="text-xs text-gray-500 leading-relaxed">{desc}</p>
             </div>
           ))}
         </div>
-        <p className="text-[11px] text-gray-400">When an alteration flag is set, its badge replaces the booking status — only one badge per row.</p>
-      </SettingsCard>
+        <p className="text-[11px] text-gray-400 mt-3">When an alteration flag is set, its badge replaces the booking status — only one badge per row.</p>
+      </CollapsibleCard>
 
       {/* Dashboard labels */}
-      <SettingsCard
+      <CollapsibleCard
         icon={LayoutDashboard}
-        iconClass="bg-emerald-50 text-emerald-600"
         title="Dashboard labels"
-        desc="Everyday terms on the staff dashboard"
+        subtitle="Everyday terms on the staff dashboard"
+        storageKey="help-staff-dashboard-open"
+        defaultOpen={false}
+        badge={countBadge(dashboardTerms.length, 'term')}
       >
-        <div className="divide-y divide-gray-100/60">
+        <div className="grid gap-2 md:grid-cols-2">
           {dashboardTerms.map(({ Icon, title, desc }) => (
-            <div key={title} className="flex items-start gap-3 py-3">
-              <span className="shrink-0 w-9 h-9 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-500">
+            <div key={title} className="flex items-start gap-3 p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100 min-w-0">
+              <span className="shrink-0 w-9 h-9 rounded-xl bg-white border border-gray-100 flex items-center justify-center text-[#bf4a53]">
                 <Icon size={16} />
               </span>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0">
                 <p className="text-sm font-bold text-gray-900">{title}</p>
                 <p className="text-xs text-gray-500 leading-relaxed mt-0.5">{desc}</p>
               </div>
             </div>
           ))}
         </div>
-      </SettingsCard>
+      </CollapsibleCard>
 
       {/* FAQ */}
-      <SettingsCard
+      <CollapsibleCard
         icon={HelpCircle}
-        iconClass="bg-amber-50 text-amber-600"
         title="Frequently Asked Questions"
+        subtitle="Tap a question for the answer"
+        storageKey="help-staff-faq-open"
+        defaultOpen={false}
+        badge={countBadge(allFaqs.length, 'question')}
       >
         <Accordion
-          items={[...staffFaqs, ...extraStaffFaqs]}
+          items={allFaqs}
           renderAnswer={(f) => <p className="text-sm text-gray-600 leading-relaxed">{f.a}</p>}
         />
-      </SettingsCard>
+      </CollapsibleCard>
     </div>
   );
 }
