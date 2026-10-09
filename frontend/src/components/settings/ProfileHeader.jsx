@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { User, Pencil, Save, X, Phone, MapPin, Heart, Mail } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { User, Pencil, Save, X, Phone, MapPin, Heart, Mail, Camera, Loader2, Trash2 } from 'lucide-react';
 import { api } from '../../utils/api';
+import { resolveAvatarUrl } from '../../utils/images';
+import PhotoCropper from '../PhotoCropper';
 import { ITEM_TYPES } from './constants';
 import {
   INPUT_LIMITS,
@@ -19,6 +21,78 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
   const [staffError, setStaffError] = useState('');
   const [staffSaving, setStaffSaving] = useState(false);
   const [staffMsg, setStaffMsg] = useState('');
+
+  // Profile photo (all roles): resolved to a stable public URL — `avatars/`
+  // keys live in the public catalog bucket, unique per upload, so no signing
+  // round-trip and no stale-cache risk.
+  const avatarPath = profile?.avatarPath || null;
+  const avatarUrl = resolveAvatarUrl(avatarPath);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+  const [cropSrc, setCropSrc] = useState(null);
+  const fileRef = useRef(null);
+
+  const closeCropper = () => {
+    setCropSrc((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  };
+
+  // File pick → circular crop/zoom modal → upload the cropped result.
+  const handleAvatarFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAvatarError('');
+    if (!file.type.startsWith('image/')) {
+      setAvatarError('Choose an image file (JPEG, PNG, or WebP).');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setAvatarError('Photo must be 10MB or smaller.');
+      return;
+    }
+    if (cropSrc) URL.revokeObjectURL(cropSrc);
+    setCropSrc(URL.createObjectURL(file));
+  };
+
+  const handleCropConfirm = async (data) => {
+    closeCropper();
+    setAvatarUploading(true);
+    try {
+      // Already a 512px cropped JPEG from the cropper; the server
+      // re-normalizes to WebP as the last line of defense.
+      const updated = await api.post('/auth/me/avatar', {
+        fileName: 'avatar.jpg',
+        contentType: 'image/jpeg',
+        data,
+      });
+      if (onProfileUpdated) onProfileUpdated(updated);
+    } catch (err) {
+      setAvatarError(err?.message || 'Could not upload photo. Try again.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleCropError = () => {
+    closeCropper();
+    setAvatarError('Could not read that photo. Try another file.');
+  };
+
+  const handleRemoveAvatar = async () => {
+    setAvatarError('');
+    setAvatarUploading(true);
+    try {
+      const updated = await api.delete('/auth/me/avatar');
+      if (onProfileUpdated) onProfileUpdated(updated);
+    } catch (err) {
+      setAvatarError(err?.message || 'Could not remove photo. Try again.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
 
   const handleSaveCustomer = () => {
     const nm = (localCustomer.name || '').trim();
@@ -104,9 +178,56 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
       <div className="relative px-5 md:px-8">
         {/* Avatar + edit button row */}
         <div className="-mt-12 md:-mt-14 mb-4 flex items-end justify-between gap-3">
-          <div className="w-24 h-24 md:w-28 md:h-28 rounded-full bg-white p-[3px] shadow-lg shrink-0">
-            <div className="w-full h-full rounded-full bg-gradient-to-br from-[#fce4e6] to-[#f8d0d4] flex items-center justify-center">
-              <User className="w-10 h-10 md:w-12 md:h-12 text-[#bf4a53]" strokeWidth={1.5} />
+          <div className="flex items-end gap-2">
+            <div className="relative shrink-0">
+              <div className="w-24 h-24 md:w-28 md:h-28 rounded-full bg-white p-[3px] shadow-lg">
+                {avatarUrl ? (
+                  <img
+                    src={avatarUrl}
+                    alt="Profile photo"
+                    className="w-full h-full rounded-full object-cover bg-gradient-to-br from-[#fce4e6] to-[#f8d0d4]"
+                  />
+                ) : (
+                  <div className="w-full h-full rounded-full bg-gradient-to-br from-[#fce4e6] to-[#f8d0d4] flex items-center justify-center">
+                    <User className="w-10 h-10 md:w-12 md:h-12 text-[#bf4a53]" strokeWidth={1.5} />
+                  </div>
+                )}
+                {avatarUploading && (
+                  <div className="absolute inset-0 rounded-full bg-white/70 flex items-center justify-center">
+                    <Loader2 size={22} className="text-[#bf4a53] animate-spin" />
+                  </div>
+                )}
+              </div>
+              {/* Change photo */}
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={avatarUploading}
+                aria-label={avatarUrl ? 'Change profile photo' : 'Add profile photo'}
+                title={avatarUrl ? 'Change profile photo' : 'Add profile photo'}
+                className="absolute -bottom-1 -right-1 w-10 h-10 rounded-full bg-[#bf4a53] text-white border-[3px] border-white shadow-md flex items-center justify-center hover:bg-[#a63f47] transition-colors disabled:opacity-60"
+              >
+                <Camera size={16} />
+              </button>
+              {/* Remove photo (edit mode only) */}
+              {avatarUrl && isEditing && !avatarUploading && (
+                <button
+                  type="button"
+                  onClick={handleRemoveAvatar}
+                  aria-label="Remove profile photo"
+                  title="Remove profile photo"
+                  className="absolute -top-1 -right-1 w-8 h-8 rounded-full bg-white text-red-500 border border-red-200 shadow-md flex items-center justify-center hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarFile}
+              />
             </div>
           </div>
 
@@ -118,6 +239,17 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
             </button>
           )}
         </div>
+        {avatarError && (
+          <p className="text-xs text-red-500 font-semibold -mt-2 mb-4">{avatarError}</p>
+        )}
+        {cropSrc && (
+          <PhotoCropper
+            src={cropSrc}
+            onCancel={closeCropper}
+            onConfirm={handleCropConfirm}
+            onError={handleCropError}
+          />
+        )}
 
         {/* Name + role + desktop edit button */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
