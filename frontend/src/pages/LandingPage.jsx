@@ -372,7 +372,6 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
                 ))}
               </div>
 
-              <p className="text-center text-xs text-gray-400 mt-8">You've reached the end of featured pieces</p>
             </>
           )}
 

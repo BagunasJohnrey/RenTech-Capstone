@@ -140,13 +140,36 @@ export default function CustomerRentalFlow({
     d.setDate(d.getDate() + rentalDefaults.return_days_after_event);
     return toLocalYmd(d);
   }, [eventDate, rentalDefaults.return_days_after_event]);
-  const [useAccountDetails, setUseAccountDetails] = useState(true);
   const [customer, setCustomer] = useState({
     name: customerInfo?.name || '',
     contact: customerInfo?.contact || '',
     address: customerInfo?.address || '',
     notes: '',
   });
+  // One-time profile sync: the profile often arrives AFTER mount (async
+  // fetch), leaving the prefilled fields empty. Fill once when it lands —
+  // but only into still-pristine fields, so a typed value is never clobbered.
+  // The dirty-check snapshot below is refreshed with the same values, so the
+  // auto-fill itself never counts as "unsaved entries".
+  const profileSyncedRef = useRef(false);
+  useEffect(() => {
+    if (profileSyncedRef.current || !customerInfo) return;
+    profileSyncedRef.current = true;
+    const synced = {
+      name: customerInfo.name || '',
+      contact: customerInfo.contact || '',
+      address: customerInfo.address || '',
+    };
+    setCustomer((prev) => ({
+      ...prev,
+      name: prev.name || synced.name,
+      contact: prev.contact || synced.contact,
+      address: prev.address || synced.address,
+    }));
+    if (initialFormRef.current) {
+      initialFormRef.current = { ...initialFormRef.current, ...synced };
+    }
+  }, [customerInfo]);
   const [paymentMethod, setPaymentMethod] = useState('gcash');
   // Drives the payment step's UI: Maya QRPh shows a single method (the customer
   // picks their own app when scanning), PayMongo keeps the GCash/Card tiles.
@@ -385,20 +408,6 @@ export default function CustomerRentalFlow({
     if (!el) return;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 20) loadMore();
   }, [loadMore]);
-
-  const toggleAccountDetails = (useAccount) => {
-    setUseAccountDetails(useAccount);
-    if (useAccount) {
-      setCustomer({
-        name: customerInfo?.name || '',
-        contact: customerInfo?.contact || '',
-        address: customerInfo?.address || '',
-        notes: customer.notes,
-      });
-    } else {
-      setCustomer({ name: '', contact: '', address: '', notes: customer.notes });
-    }
-  };
 
   const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
     month: 'short', day: '2-digit', year: 'numeric',
@@ -799,38 +808,25 @@ export default function CustomerRentalFlow({
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-wide">Who is this booking for?</label>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <button onClick={() => toggleAccountDetails(true)}
-                    className={`py-3 px-4 rounded-xl text-sm font-bold border transition-all ${
-                      useAccountDetails ? 'bg-[#bf4a53] text-white border-[#bf4a53] shadow-sm' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'}`}>
-                    {customerInfo?.name ? `Me (${customerInfo.name.split(' ')[0]})` : 'Me'}
-                  </button>
-                  <button onClick={() => toggleAccountDetails(false)}
-                    className={`py-3 px-4 rounded-xl text-sm font-bold border transition-all ${
-                      !useAccountDetails ? 'bg-[#bf4a53] text-white border-[#bf4a53] shadow-sm' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'}`}>
-                    Someone else
-                  </button>
-                </div>
-              </div>
-
+              {/* Contact Details — always prefilled from the customer's
+                  profile, always editable (the "Someone else" toggle was
+                  removed: bookings are account-bound server-side). */}
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Contact Details</h4>
                 <Field type="text" label="Full Name" placeholder="Full Name" value={customer.name}
                   onChange={(e) => { setCustomer({ ...customer, name: sanitizeName(e.target.value) }); clearFieldError('name'); }}
-                  className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails}
+                  className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`}
                   maxLength={INPUT_LIMITS.NAME_MAX}
                   error={fieldErrors.name || undefined} />
                 <div className="grid grid-cols-2 gap-3">
                   <Field type="tel" label="Contact No." placeholder="Contact No." value={customer.contact}
                     onChange={(e) => { setCustomer({ ...customer, contact: sanitizePhone(e.target.value) }); clearFieldError('contact'); }}
-                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.contact ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails} inputMode="numeric"
+                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.contact ? 'border-red-300 bg-red-50' : ''}`} inputMode="numeric"
                     maxLength={INPUT_LIMITS.PHONE_LENGTH}
                     error={fieldErrors.contact || undefined} />
                   <Field type="text" label="Address" placeholder="Address" value={customer.address}
                     onChange={(e) => { setCustomer({ ...customer, address: sanitizeAddress(e.target.value) }); clearFieldError('address'); }}
-                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`} disabled={useAccountDetails}
+                    className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`}
                     maxLength={INPUT_LIMITS.ADDRESS_MAX}
                     error={fieldErrors.address || undefined} />
                 </div>
