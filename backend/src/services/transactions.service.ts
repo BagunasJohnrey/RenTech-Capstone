@@ -11,7 +11,7 @@ import { sendSms, applyTemplate } from './semaphore.service.js';
 import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { verifyDiscountPin } from './auth.service.js';
-import { getBusinessRules, getFeatureFlags } from './settings.service.js';
+import { getBusinessRules, getFeatureFlags, isSmsEnabled } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 
 // After an item is returned it enters a cleaning window of this many days
@@ -340,7 +340,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   try {
     const customerProfile = await prisma.profile.findUnique({ where: { id: data.customerId } });
     const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
-    const wantsBookingSms = !prefs || prefs.booking !== false;
+    // Global kill-switch ANDs on top of the per-account opt-out (manual staff
+    // sends bypass this on purpose — only automatic texts are gated).
+    const smsGloballyOn = await isSmsEnabled().catch(() => true);
+    const wantsBookingSms = smsGloballyOn && (!prefs || prefs.booking !== false);
     if (customerProfile?.phone && wantsBookingSms) {
       const template = await prisma.smsTemplate.findFirst({ where: { name: 'booking_confirmation' } });
       const message = template?.content

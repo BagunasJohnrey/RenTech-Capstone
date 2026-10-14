@@ -4,7 +4,7 @@ import { createAuditLog } from '../utils/audit.js';
 import { sendSms, applyTemplate } from './semaphore.service.js';
 import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
-import { getBusinessRules } from './settings.service.js';
+import { getBusinessRules, isSmsEnabled } from './settings.service.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 
 export async function sendManualSms(params: {
@@ -125,8 +125,11 @@ export async function autoNotifyOverdue() {
 
     // Respect customer opt-out (notifyPrefs.lateReturn === false → skip SMS,
     // still notify staff). A null/undefined pref means "on" (default).
+    // The global kill-switch ANDs on top: SMS OFF skips the text but the
+    // status flip, email path, and staff alert below still run.
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
-    const wantsSms = !prefs || prefs.lateReturn !== false;
+    const smsGloballyOn = await isSmsEnabled().catch(() => true);
+    const wantsSms = smsGloballyOn && (!prefs || prefs.lateReturn !== false);
     // Email follows the same late-alert opt-out plus the master email switch.
     const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
 
@@ -224,7 +227,10 @@ export async function notifyOverdue3Days() {
   for (const tx of txs) {
     const daysOverdue = Math.max(escalationDays, Math.ceil((now.getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)));
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
-    const wantsSms = !prefs || prefs.lateReturn !== false;
+    // Global kill-switch ANDs on top of the per-account opt-out (same shape
+    // as autoNotifyOverdue: status/email/staff-alert paths still run).
+    const smsGloballyOn = await isSmsEnabled().catch(() => true);
+    const wantsSms = smsGloballyOn && (!prefs || prefs.lateReturn !== false);
     const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
 
     // Escalation email (Brevo, best-effort) alongside the SMS path.
@@ -290,7 +296,9 @@ export async function notifyDueToday() {
     // Text the customer their due-today reminder (if they have a phone + opted in).
     let sent = false;
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
-    const wantsSms = !prefs || prefs.reminder !== false;
+    // Global kill-switch ANDs on top of the per-account opt-out.
+    const smsGloballyOn = await isSmsEnabled().catch(() => true);
+    const wantsSms = smsGloballyOn && (!prefs || prefs.reminder !== false);
     const wantsEmail = !prefs || (prefs.email !== false && prefs.reminder !== false);
 
     // Due-today email (Brevo, best-effort) alongside the SMS path.

@@ -279,24 +279,28 @@ export async function getIntegrationsStatus(req: AuthenticatedRequest, res: Resp
     ) {
       return res.json({ ...integrationsCache.body });
     }
-const [ai, semaphore, paymongo, maya, brevo] = await Promise.all([
+const [ai, semaphore, paymongo, maya, brevo, smsEnabled, emailEnabled] = await Promise.all([
     geminiService.checkAiHealth(),
     semaphoreService.checkSemaphoreHealth(),
     paymongoService.checkPaymongoHealth(),
     mayaService.checkMayaHealth(),
     brevoService.checkBrevoHealth(),
+    settingsService.isSmsEnabled(),
+    settingsService.isEmailEnabled(),
    ]);
     // The AI health probe covers all three model providers (gemini → groq →
     // openrouter); expose each under its own key so the UI can show one row
-    // per provider.
+    // per provider. `enabled` carries the admin global kill-switch so the UI
+    // can badge Semaphore/Brevo as Disabled (effective send = global AND
+    // per-account pref).
     const body = {
       gemini: ai,
       groq: ai.providers?.groq,
       openrouter: ai.providers?.openrouter,
-      semaphore,
+      semaphore: { ...semaphore, enabled: smsEnabled },
    paymongo,
    maya,
-   brevo,
+   brevo: { ...brevo, enabled: emailEnabled },
       checkedAt: new Date().toISOString(),
     };
     integrationsCache = { at: Date.now(), body };

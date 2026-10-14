@@ -150,6 +150,21 @@ describe('POST /api/transactions', () => {
     vi.mocked(prisma.profile.findUnique).mockImplementation(orig!);
   });
 
+  it('should skip booking SMS when the global SMS switch is OFF (booking still succeeds)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const orig = await setupBookingSmsTest(null);
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'false' });
+
+    const res = await request(app)
+      .post('/api/transactions')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ customerId: 'customer-id-111', itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
+
+    expect(res.status).toBe(201);
+    expect(prisma.sentSms.create).not.toHaveBeenCalled();
+    vi.mocked(prisma.profile.findUnique).mockImplementation(orig!);
+  });
+
   it('should reject when customer posts directly (customers use /bookings)', async () => {
     const res = await request(app)
       .post('/api/transactions')

@@ -154,6 +154,61 @@ describe('email templates (branded, fee-policy aware)', () => {
   });
 });
 
+describe('global email kill-switch (messaging_email_enabled)', () => {
+  it('lifecycle emails are skipped when OFF (no network call)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { sendBookingConfirmationEmail } = await import('../src/services/brevo.service.js');
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_email_enabled', value: 'false' });
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const result = await sendBookingConfirmationEmail('customer@example.com', {
+        customerName: 'Maria',
+        itemName: 'Red Gown',
+        pickupDate: '01/10/2026',
+        dueDate: '01/13/2026',
+        rentalFee: 1500,
+        downpayment: 750,
+        balance: 750,
+        bookingCode: 'RT-ABC12345',
+      });
+      expect(result).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('lifecycle emails still send when ON', async () => {
+    const { sendBookingConfirmationEmail } = await import('../src/services/brevo.service.js');
+    // setup.ts default: no rule row -> ON; blank BREVO_API_KEY -> simulated.
+    const result = await sendBookingConfirmationEmail('customer@example.com', {
+      customerName: 'Maria',
+      itemName: 'Red Gown',
+      pickupDate: '01/10/2026',
+      dueDate: '01/13/2026',
+      rentalFee: 1500,
+      downpayment: 750,
+      balance: 750,
+      bookingCode: 'RT-ABC12345',
+    });
+    expect(result).not.toBeNull();
+    expect(result?.simulated).toBe(true);
+  });
+
+  it('auth emails bypass the kill-switch (verification still sends when OFF)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { sendVerificationEmail } = await import('../src/services/brevo.service.js');
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_email_enabled', value: 'false' });
+    const result = await sendVerificationEmail(
+      'customer@example.com',
+      'Maria',
+      'http://localhost:5173/verify-email?token=abc',
+    );
+    expect(result.simulated).toBe(true);
+  });
+});
+
 describe('GET /api/settings/integrations-status (brevo row)', () => {
   const app = express();
   app.use(express.json());
@@ -174,5 +229,31 @@ describe('GET /api/settings/integrations-status (brevo row)', () => {
     expect(res.body.brevo.simulated).toBe(true);
     expect(res.body).toHaveProperty('semaphore');
     expect(res.body).toHaveProperty('paymongo');
+  });
+
+  it('exposes the messaging kill-switches as enabled flags (default ON)', async () => {
+    const res = await request(app)
+      .get('/api/settings/integrations-status')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    // No rule rows in the mock DB -> both default ON.
+    expect(res.body.brevo.enabled).toBe(true);
+    expect(res.body.semaphore.enabled).toBe(true);
+  });
+
+  it('reports enabled:false when a switch is flipped off', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findUnique
+      .mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'true' })
+      .mockResolvedValueOnce({ key: 'messaging_email_enabled', value: 'false' });
+
+    const res = await request(app)
+      .get('/api/settings/integrations-status')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.semaphore.enabled).toBe(true);
+    expect(res.body.brevo.enabled).toBe(false);
   });
 });

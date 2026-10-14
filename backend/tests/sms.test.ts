@@ -168,6 +168,72 @@ describe('SMS scheduler service (Phase 2.4)', () => {
   });
 });
 
+describe('Global SMS kill-switch (messaging_sms_enabled)', () => {
+  const baseTx = {
+    id: 'tx-ovd-1',
+    status: 'Active',
+    dueDate: new Date(Date.now() - 2 * 86400000), // 2 days overdue
+    rentalDate: new Date(Date.now() - 5 * 86400000),
+    balance: 1500,
+    overdueSmsSent: false,
+    overdueEscalationSent: false,
+    customer: { id: 'customer-id-111', name: 'Customer User', phone: '09171234567', notifyPrefs: null },
+    item: { id: 1, name: 'Gown' },
+  };
+
+  async function reload() {
+    return import('../src/services/sms.service.js');
+  }
+
+  it('autoNotifyOverdue OFF: skips the text but still flips status + alerts staff', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([baseTx]);
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'false' });
+    const svc = await reload();
+    global.fetch = vi.fn();
+    const out = await svc.autoNotifyOverdue();
+    expect(out.length).toBe(1);
+    expect(out[0].status).toBe('skipped');
+    expect((global.fetch as any).mock.calls.length).toBe(0); // no provider call
+    // Status flip + once-guard still run (derived state is not delivery).
+    const statusCall = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.status === 'Overdue');
+    expect(statusCall).toBeTruthy();
+    const sentCall = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.overdueSmsSent === true);
+    expect(sentCall).toBeTruthy();
+    // Staff in-app alert still fires.
+    expect(prisma.notification.createMany).toHaveBeenCalled();
+  });
+
+  it('notifyDueToday OFF: no text, reminder still marked done', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const dueTodayTx = { ...baseTx, id: 'tx-due-1', dueDate: new Date(), dueReminderSent: false };
+    prisma.transaction.findMany.mockResolvedValueOnce([dueTodayTx]);
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'false' });
+    const svc = await reload();
+    global.fetch = vi.fn();
+    const out = await svc.notifyDueToday();
+    expect(out.length).toBe(1);
+    expect(out[0].sent).toBe(false);
+    expect((global.fetch as any).mock.calls.length).toBe(0);
+    const doneCall = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.dueReminderSent === true);
+    expect(doneCall).toBeTruthy();
+  });
+
+  it('manual sends bypass the kill-switch (staff intent always works)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'false' });
+    const svc = await reload();
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([{ message_id: 'm1' }]) });
+    const sent = await svc.sendManualSms({
+      profileId: 'customer-id-111',
+      message: 'Manual staff message',
+      sentById: 'staff-id-456',
+    });
+    expect(sent.status).toBe('sent');
+    expect((global.fetch as any).mock.calls.length).toBe(1);
+  });
+});
+
 describe('DELETE /api/sms/history/:id (admin log cleanup)', () => {
   it('admin can delete a log row', async () => {
     const { prisma } = await import('../src/config/database.js');

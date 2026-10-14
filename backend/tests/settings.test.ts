@@ -143,6 +143,46 @@ describe('SMS templates CRUD', () => {
   });
 });
 
+describe('Messaging kill-switch flags', () => {
+  it('default ON when no rule row exists', async () => {
+    const { isSmsEnabled, isEmailEnabled } = await import('../src/services/settings.service.js');
+    // setup.ts default: businessRule.findUnique resolves null (no row).
+    await expect(isSmsEnabled()).resolves.toBe(true);
+    await expect(isEmailEnabled()).resolves.toBe(true);
+  });
+
+  it('reads OFF when the rule is "false"', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { isSmsEnabled, isEmailEnabled } = await import('../src/services/settings.service.js');
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'false' });
+    await expect(isSmsEnabled()).resolves.toBe(false);
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_email_enabled', value: 'false' });
+    await expect(isEmailEnabled()).resolves.toBe(false);
+  });
+
+  it('reads ON when the rule is "true"', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { isSmsEnabled, isEmailEnabled } = await import('../src/services/settings.service.js');
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'true' });
+    await expect(isSmsEnabled()).resolves.toBe(true);
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_email_enabled', value: 'true' });
+    await expect(isEmailEnabled()).resolves.toBe(true);
+  });
+
+  it('persists the kill-switch through PUT /rules (admin, audited)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.upsert.mockResolvedValueOnce({ key: 'messaging_sms_enabled', value: 'false' });
+
+    const res = await request(app)
+      .put('/api/settings/rules')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ messaging_sms_enabled: 'false' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ messaging_sms_enabled: 'false' });
+  });
+});
+
 describe('Rate limiter', () => {
   it('should allow requests within limit', () => {
     const limiter = createRateLimiter(5, 60_000);
