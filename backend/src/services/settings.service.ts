@@ -46,6 +46,33 @@ export async function getPaymentGateway(): Promise<'paymongo' | 'maya'> {
   return rules.payment_gateway === 'maya' ? 'maya' : 'paymongo';
 }
 
+// Global messaging kill-switches (admin-controlled via BusinessRule).
+// Absent key = ON (fail-open), so existing installs keep sending until an
+// admin deliberately flips a switch off. Values are 'true'/'false' strings.
+export const SMS_ENABLED_KEY = 'messaging_sms_enabled';
+export const EMAIL_ENABLED_KEY = 'messaging_email_enabled';
+
+async function isRuleEnabled(key: string): Promise<boolean> {
+  try {
+    const row = await prisma.businessRule.findUnique({ where: { key } });
+    return row?.value !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+// Global Semaphore SMS switch — gates automatic scheduler/booking texts.
+// Manual staff sends (sendManualSms) intentionally bypass this.
+export async function isSmsEnabled(): Promise<boolean> {
+  return isRuleEnabled(SMS_ENABLED_KEY);
+}
+
+// Global Brevo email switch — gates lifecycle/order emails sent through
+// sendBestEffort. Auth emails (verification/reset) bypass this on purpose.
+export async function isEmailEnabled(): Promise<boolean> {
+  return isRuleEnabled(EMAIL_ENABLED_KEY);
+}
+
 export async function updateBusinessRules(data: Record<string, string>) {
   const results: Record<string, string> = {};
   for (const [key, value] of Object.entries(data)) {

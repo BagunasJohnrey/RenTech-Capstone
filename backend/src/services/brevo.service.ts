@@ -12,6 +12,7 @@
 
 import { env } from '../config/env.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { isEmailEnabled } from './settings.service.js';
 import {
   verificationEmail,
   passwordResetEmail,
@@ -116,6 +117,13 @@ export async function sendEmail(params: {
 /** Order/lifecycle emails: best-effort — log + swallow so email never blocks a booking. */
 async function sendBestEffort(to: string, built: { subject: string; html: string; text: string }): Promise<SendResult | null> {
   if (!isSendableEmail(to)) return null;
+  // Global kill-switch (admin Integrations tab) — auth emails bypass this
+  // (they call sendEmail directly) so verification/reset always work.
+  try {
+    if (!(await isEmailEnabled())) return null;
+  } catch {
+    // fail-open: if the flag can't be read, attempt the send as before
+  }
   try {
     return await sendEmail({ to, ...built });
   } catch (err) {
