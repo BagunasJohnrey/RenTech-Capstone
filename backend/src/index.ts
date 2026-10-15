@@ -121,7 +121,21 @@ app.listen(env.PORT, () => {
   // service-role path (storage uploads, auth.admin.*) fails confusingly
   // (e.g. RLS violations on backup uploads). Claims only, never the secret.
   import('./config/supabase.js').then(
-    ({ supabaseKeyRole }) => console.log(`[supabase] service key role: ${supabaseKeyRole()}`),
+    ({ supabaseKeyRole }) => {
+      const role = supabaseKeyRole();
+      console.log(`[supabase] service key role: ${role}`);
+      // An anon (or wrong-project) key here degrades every service-role path
+      // — storage uploads fail with RLS 403s, auth.admin.* calls fail — while
+      // the server otherwise looks healthy. Fail loud at boot instead of
+      // surfacing as mysterious per-request 500s.
+      if (!role.startsWith('service_role')) {
+        console.error(
+          '[supabase] FATAL: SUPABASE_SERVICE_ROLE_KEY is not a service_role key ' +
+          '(got "' + role + '"). Storage uploads, auth.admin calls and backups WILL fail. ' +
+          'Paste the service_role key (NOT the anon key) from the same Supabase project as SUPABASE_URL, then restart.'
+        );
+      }
+    },
     () => {}
   );
 

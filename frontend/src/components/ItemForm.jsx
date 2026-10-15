@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { X, Camera, Shirt, Loader2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Camera, Shirt, Loader2, SwitchCamera, ImagePlus } from 'lucide-react';
 import BottomSheet from './BottomSheet';
 import { storageService } from '../services';
 import { useToast } from './Toast';
@@ -107,6 +108,14 @@ export default function ItemForm({
   const [imagePath, setImagePath] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [uploading, setUploading] = useState(false);
+  // In-app camera capture (staff add/edit): live preview modal fed by
+  // getUserMedia, with a native `<input capture>` fallback for browsers that
+  // block camera access (denied permission, insecure context).
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [facingMode, setFacingMode] = useState('environment');
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const cameraInputRef = useRef(null);
   const [onSale, setOnSale] = useState(initial.onSale ?? false);
   const [discountPct, setDiscountPct] = useState(initial.discountPct ?? '');
   const [salePrice, setSalePrice] = useState(initial.salePrice ?? '');
@@ -195,9 +204,10 @@ export default function ItemForm({
     });
 
   // Upload the file to Supabase Storage via a server-side signed upload.
-  const handleFileChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file || file.type.startsWith('blob:')) return;
+  // Shared by the gallery picker, the native camera input, and the in-app
+  // camera capture below — one pipeline (downscale → upload → preview).
+  const uploadPhotoFile = async (file) => {
+    if (!file) return;
     setUploading(true);
     try {
       const downsized = await downscaleImage(file);
@@ -208,7 +218,7 @@ export default function ItemForm({
       const contentType = downsized
         ? (downsized.webp ? 'image/webp' : 'image/jpeg')
         : (file.type.startsWith('image/') ? file.type : 'image/jpeg');
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
+      const safeName = (file.name || `camera-${Date.now()}.webp`).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
       const { path } = await storageService.upload(
         `${Date.now()}-${safeName}`,
         contentType,
@@ -221,6 +231,98 @@ export default function ItemForm({
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || file.type.startsWith('blob:')) return;
+    await uploadPhotoFile(file);
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks()?.forEach((t) => t.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
+
+  const closeCamera = () => {
+    stopCamera();
+    setCameraOpen(false);
+  };
+
+  // Prefer the in-app preview; when camera access is unavailable (denied,
+  // insecure context, no device) fall back to the OS camera via the native
+  // capture input instead of showing a dead preview.
+  const openCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      cameraInputRef.current?.click();
+      return;
+    }
+    setCameraOpen(true);
+  };
+
+  // (Re)start the preview whenever the modal opens or the lens flips.
+  // `ideal` (not `exact`) so single-camera desktops still resolve instead of
+  // throwing OverconstrainedError.
+  // Escape closes just the camera (capture phase runs before the form's own
+  // useEscapeClose bubble listener, so the form stays open).
+  useEffect(() => {
+    if (!cameraOpen) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        closeCamera();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    let cancelled = false;
+    stopCamera();
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: { ideal: facingMode } }, audio: false })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCameraOpen(false);
+          cameraInputRef.current?.click();
+        }
+      });
+    return () => {
+      cancelled = true;
+      document.removeEventListener('keydown', onKey, true);
+      stopCamera();
+    };
+  }, [cameraOpen, facingMode]);
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      toastError('Camera is not ready yet');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d')?.drawImage(video, 0, 0);
+    canvas.toBlob(
+      async (blob) => {
+        if (!blob) {
+          toastError('Could not capture photo');
+          return;
+        }
+        closeCamera();
+        await uploadPhotoFile(new File([blob], `camera-${Date.now()}.webp`, { type: 'image/webp' }));
+      },
+      'image/webp',
+      0.92
+    );
   };
 
   const handleSubmit = (e) => {
@@ -474,20 +576,82 @@ export default function ItemForm({
                     </button>
                   </>
                 ) : (
-                  <label className="cursor-pointer text-center p-4">
-                    <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+                  <div className="text-center p-4">
+                    <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" id="item-photo-gallery" />
+                    {/* Native OS camera — fallback when in-app capture is unavailable */}
+                    <input
+                      ref={cameraInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
                     {uploading ? (
-                      <Loader2 size={28} className="text-[#bf4a53] mx-auto mb-1 animate-spin" />
+                      <>
+                        <Loader2 size={28} className="text-[#bf4a53] mx-auto mb-1 animate-spin" />
+                        <p className="text-xs font-bold text-gray-400 uppercase">Uploading…</p>
+                      </>
                     ) : (
-                      <Camera size={28} className="text-gray-400 mx-auto mb-1" />
+                      <>
+                        <Camera size={28} className="text-gray-400 mx-auto mb-2" />
+                        <div className="flex items-center justify-center gap-2">
+                          <label
+                            htmlFor="item-photo-gallery"
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-white bg-[#bf4a53] hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
+                          >
+                            <ImagePlus size={14} /> Choose photo
+                          </label>
+                          <button
+                            type="button"
+                            onClick={openCamera}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-[#bf4a53] bg-[#bf4a53]/10 hover:bg-[#bf4a53]/20 rounded-xl transition-colors"
+                          >
+                            <Camera size={14} /> Take photo
+                          </button>
+                        </div>
+                      </>
                     )}
-                    <p className="text-xs font-bold text-gray-400 uppercase">
-                      {uploading ? 'Uploading…' : 'Tap to upload photo'}
-                    </p>
-                  </label>
+                  </div>
                 )}
               </div>
             </div>
+          )}
+          {/* In-app camera capture modal — portaled to document.body so it
+              escapes the sheet's transform (which traps `fixed` children
+              inside the white panel) and paints above every sheet layer,
+              same z as the QR scanner's camera layer. */}
+          {cameraOpen && createPortal(
+            <div className="fixed inset-0 z-[400] bg-black/90 flex flex-col items-center justify-center p-4" role="dialog" aria-label="Take item photo">
+              <video ref={videoRef} autoPlay playsInline muted className="w-full max-w-md rounded-2xl bg-black aspect-[3/4] object-cover" />
+              <div className="flex items-center gap-3 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setFacingMode((f) => (f === 'environment' ? 'user' : 'environment'))}
+                  aria-label="Flip camera"
+                  className="p-3 bg-white/15 text-white rounded-full hover:bg-white/25 transition-colors"
+                >
+                  <SwitchCamera size={20} />
+                </button>
+                <button
+                  type="button"
+                  onClick={capturePhoto}
+                  aria-label="Capture photo"
+                  className="p-4 bg-[#bf4a53] text-white rounded-full hover:bg-red-700 transition-colors shadow-lg"
+                >
+                  <Camera size={24} />
+                </button>
+                <button
+                  type="button"
+                  onClick={closeCamera}
+                  aria-label="Close camera"
+                  className="p-3 bg-white/15 text-white rounded-full hover:bg-white/25 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>,
+            document.body
           )}
 
           {showSale && role === 'Admin' && (
