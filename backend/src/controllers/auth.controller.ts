@@ -173,8 +173,9 @@ export async function signup(req: Request, res: Response, next: NextFunction) {
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
     const { email, password } = req.body;
-    // Log the shape (never the password) so production 400s are self-diagnosing.
-    console.log('[login] email type:', typeof email, '| password type:', typeof password, '| length:', typeof password === 'string' ? password.length : 'N/A');
+    // Log the shape (never the password or its length) so production 400s
+    // are self-diagnosing without leaking anything brute-forceable.
+    console.log('[login] email type:', typeof email, '| password type:', typeof password);
     // Trusted-device check: an rt_mfa_trusted cookie (HMAC-bound to this
     // email, set after a TOTP/backup-code pass within the last 30 days) lets
     // this browser skip the challenge on login.
