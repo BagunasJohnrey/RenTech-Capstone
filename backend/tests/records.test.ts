@@ -95,8 +95,57 @@ describe('Historical records import', () => {
     })).rejects.toMatchObject({ statusCode: 400 });
   });
 
-  it('splitCsvLine handles quoted commas and escaped quotes', async () => {
+  it('re-importing the same rows skips duplicates (no double forecast)', async () => {
+    const { prisma } = await import('../src/config/database.js');
     const s = await svc();
+    // First import lands both rows.
+    prisma.historicalRecord.findMany.mockResolvedValueOnce([]);
+    const first = await s.importRecords({
+      fileName: 'logbook.csv', buffer: Buffer.from(CSV_OK, 'utf-8'), importedById: 'staff-id-456',
+    });
+    expect(first).toMatchObject({ imported: 2, skippedDuplicates: 0 });
+    // Second import of the same file: everything matches, nothing saved.
+    vi.clearAllMocks();
+    prisma.historicalRecord.findMany.mockResolvedValueOnce([
+      { customerName: 'Maria Santos', category: 'Gown', address: 'Balayan, Batangas', eventDate: new Date('2024-12-15T00:00:00'), price: 2500 },
+      { customerName: null, category: 'Barong', address: 'Calatagan Batangas', eventDate: new Date('2024-12-20T00:00:00'), price: 1200 },
+    ]);
+    const second = await s.importRecords({
+      fileName: 'logbook.csv', buffer: Buffer.from(CSV_OK, 'utf-8'), importedById: 'staff-id-456',
+    });
+    expect(second).toMatchObject({ imported: 0, skippedDuplicates: 2 });
+    expect(prisma.historicalRecord.createMany).not.toHaveBeenCalled();
+  });
+
+  it('ignores fully-empty trailing rows (pasted-sheet phantom rows)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const s = await svc();
+    prisma.historicalRecord.findMany.mockResolvedValueOnce([]);
+    const csv =
+      'name,category,address,event_date,price\n' +
+      'Maria,Gown,Balayan,2024-12-15,2500\n' +
+      '\n' +
+      ',,,,\n' +
+      '   \n';
+    const out = await s.importRecords({
+      fileName: 'logbook.csv', buffer: Buffer.from(csv, 'utf-8'), importedById: 'staff-id-456',
+    });
+    expect(out.imported).toBe(1);
+
+    // Same for xlsx: whitespace-only trailing rows are dropped.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('logbook');
+    ws.addRow(['name', 'category', 'address', 'event_date', 'price']);
+    ws.addRow(['Juan', 'Suit', 'Taal', '2024-12-10', 1800]);
+    ws.addRow(['   ', ' ', null, null, null]);
+    const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+    vi.clearAllMocks();
+    prisma.historicalRecord.findMany.mockResolvedValueOnce([]);
+    const out2 = await s.importRecords({ fileName: 'logbook.xlsx', buffer, importedById: 'staff-id-456' });
+    expect(out2.imported).toBe(1);
+  });
+
+  it('splitCsvLine handles quoted commas and escaped quotes', async () => {    const s = await svc();
     expect(s.splitCsvLine('a,"Balayan, Batangas",c')).toEqual(['a', 'Balayan, Batangas', 'c']);
     expect(s.splitCsvLine('"say ""hi""",b')).toEqual(['say "hi"', 'b']);
   });

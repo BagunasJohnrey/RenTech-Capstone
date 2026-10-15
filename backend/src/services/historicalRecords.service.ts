@@ -111,7 +111,13 @@ function parseCsvRows(text: string): { headers: (string | null)[]; body: string[
   while (lines.length && lines[0].trim() === '') lines.shift();
   if (!lines.length) return { headers: [], body: [] };
   const headers = splitCsvLine(lines[0]).map(normalizeHeader);
-  const body = lines.slice(1).filter((l) => l.trim() !== '').map(splitCsvLine);
+  // Drop fully-empty rows (trailing ",,,," lines, stray spaces) — pasted
+  // sheets almost always carry invisible blank rows at the bottom, and those
+  // are not data errors worth blocking an import over.
+  const body = lines
+    .slice(1)
+    .map(splitCsvLine)
+    .filter((cells) => cells.some((c) => c.trim() !== ''));
   return { headers, body };
 }
 
@@ -137,7 +143,12 @@ async function parseXlsxRows(buffer: Buffer): Promise<{ headers: (string | null)
   // Skip leading blank rows.
   while (rows.length && rows[0].every((v) => v === null || v === undefined || String(v).trim() === '')) rows.shift();
   if (!rows.length) return { headers: [], body: [] };
-  return { headers: rows[0].map(normalizeHeader), body: rows.slice(1) };
+  // Drop fully-empty body rows (trailing formatted/whitespace rows Excel
+  // keeps in the used range) — same rule as the CSV parser above.
+  const body = rows.slice(1).filter(
+    (r) => !r.every((v) => v === null || v === undefined || String(v).trim() === '')
+  );
+  return { headers: rows[0].map(normalizeHeader), body };
 }
 
 function resolveColumns(headers: (string | null)[]): { missing: string[]; indexOf: Record<string, number> } {
@@ -204,7 +215,7 @@ export async function importRecords(params: {
   fileName: string;
   buffer: Buffer;
   importedById: string;
-}): Promise<{ imported: number; categories: string[] }> {
+}): Promise<{ imported: number; skippedDuplicates: number; categories: string[] }> {
   const { fileName, buffer, importedById } = params;
   if (!ALLOWED_EXT.test(fileName)) {
     throw new AppError(400, 'Only .csv and .xlsx files can be imported');
@@ -237,8 +248,35 @@ export async function importRecords(params: {
     throw new AppError(400, `${errors.length} row(s) need fixing`, { errors: errors.slice(0, 25) });
   }
 
+  // Duplicate guard: an exact match on every field (name/category/address/
+  // day/price) is a re-import, not a new rental — importing the same file
+  // twice must not double the forecast. Day-level date match (time ignored)
+  // so Excel time components can't sneak past the check.
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const rowKey = (r: { customerName: string | null; category: string; address: string; eventDate: Date; price: number }) =>
+    [r.customerName ?? '', r.category.toLowerCase(), r.address.toLowerCase(), dayKey(r.eventDate), r.price].join('|');
+  let existingKeys = new Set<string>();
+  try {
+    const existing = await prisma.historicalRecord.findMany({
+      select: { customerName: true, category: true, address: true, eventDate: true, price: true },
+    });
+    existingKeys = new Set(existing.map((e) => rowKey({
+      customerName: e.customerName,
+      category: e.category,
+      address: e.address,
+      eventDate: e.eventDate,
+      price: e.price,
+    })));
+  } catch { /* dedupe is best-effort — import proceeds without it */ }
+  const fresh = rows.filter((r) => !existingKeys.has(rowKey(r)));
+  const skippedDuplicates = rows.length - fresh.length;
+
+  if (fresh.length === 0) {
+    return { imported: 0, skippedDuplicates, categories: [...new Set(rows.map((r) => r.category))].sort() };
+  }
+
   await prisma.historicalRecord.createMany({
-    data: rows.map((r) => ({ ...r, source: 'import', importedById })),
+    data: fresh.map((r) => ({ ...r, source: 'import', importedById })),
   });
 
   // Forecast + dashboard caches move — refresh so the new history shows up.
@@ -248,11 +286,11 @@ export async function importRecords(params: {
     await createAuditLog({
       action: 'records.import', entity: 'records', entityId: 'bulk-import',
       performedById: importedById,
-      newValue: { fileName, imported: rows.length },
+      newValue: { fileName, imported: fresh.length, skippedDuplicates },
     });
   } catch { /* audit is non-critical */ }
 
-  return { imported: rows.length, categories: [...new Set(rows.map((r) => r.category))].sort() };
+  return { imported: fresh.length, skippedDuplicates, categories: [...new Set(fresh.map((r) => r.category))].sort() };
 }
 
 export async function listRecords(params: { limit?: number; offset?: number }) {
