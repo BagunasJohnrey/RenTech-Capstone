@@ -79,6 +79,11 @@ export async function sendManualSms(params: {
 //  - On the day a rental goes overdue we text the customer ONCE (overdueSmsSent
 //    once-guard). If the send fails the flag stays false so the NEXT scheduler
 //    tick retries — but once it succeeds we never double-send.
+//  - Reminder EMAILS have their own once-guards (overdueEmailSent /
+//    overdueEscalationEmailSent / dueReminderEmailSent), flipped on send
+//    independently of the SMS outcome. Gating email on the SMS flag meant any
+//    transaction with a failing SMS (invalid phone, SMS outage) re-sent its
+//    Brevo email every 60s tick indefinitely.
 //  - After overdue_escalation_days (default 3) still-overdue rentals get ONE
 //    escalation text (overdueEscalationSent once-guard).
 //  - Customers with no phone are marked sent immediately (nothing to send) so
@@ -134,10 +139,18 @@ export async function autoNotifyOverdue() {
     const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
 
     // Overdue email (Brevo, best-effort) — sent alongside the SMS path so the
-    // customer gets the notice on both channels unless opted out.
-    if (tx.customer.email && wantsEmail) {
+    // customer gets the notice on both channels unless opted out. It carries
+    // its OWN once-guard (overdueEmailSent): the SMS flag must stay false on
+    // SMS failure so the text retries, but a delivered email must never
+    // re-send — coupling the two caused a every-60s Brevo duplicate flood.
+    if (tx.customer.email && wantsEmail && !tx.overdueEmailSent) {
       try {
-        await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
+        const emailResult = await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
+        if (emailResult) {
+          await prisma.transaction.update({ where: { id: tx.id }, data: { overdueEmailSent: true } });
+        }
+        // Null (disabled/failed send) leaves the flag false: nothing was
+        // delivered, so retrying next tick is harmless.
       } catch { /* email is non-critical */ }
     }
 
@@ -233,10 +246,15 @@ export async function notifyOverdue3Days() {
     const wantsSms = smsGloballyOn && (!prefs || prefs.lateReturn !== false);
     const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
 
-    // Escalation email (Brevo, best-effort) alongside the SMS path.
-    if (tx.customer.email && wantsEmail) {
+    // Escalation email (Brevo, best-effort) alongside the SMS path. Own
+    // once-guard (overdueEscalationEmailSent) — see autoNotifyOverdue: the SMS
+    // flag staying false for retry must not drag the email along with it.
+    if (tx.customer.email && wantsEmail && !tx.overdueEscalationEmailSent) {
       try {
-        await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
+        const emailResult = await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
+        if (emailResult) {
+          await prisma.transaction.update({ where: { id: tx.id }, data: { overdueEscalationEmailSent: true } });
+        }
       } catch { /* email is non-critical */ }
     }
 
@@ -301,15 +319,20 @@ export async function notifyDueToday() {
     const wantsSms = smsGloballyOn && (!prefs || prefs.reminder !== false);
     const wantsEmail = !prefs || (prefs.email !== false && prefs.reminder !== false);
 
-    // Due-today email (Brevo, best-effort) alongside the SMS path.
-    if (tx.customer.email && wantsEmail) {
+    // Due-today email (Brevo, best-effort) alongside the SMS path. Own
+    // once-guard (dueReminderEmailSent): an SMS failure leaves dueReminderSent
+    // false for retry, which must not re-send an already delivered email.
+    if (tx.customer.email && wantsEmail && !tx.dueReminderEmailSent) {
       try {
-        await sendDueReminderEmail(
+        const emailResult = await sendDueReminderEmail(
           tx.customer.email,
           tx.customer.name,
           tx.item.name,
           tx.dueDate.toLocaleDateString('en-PH'),
         );
+        if (emailResult) {
+          await prisma.transaction.update({ where: { id: tx.id }, data: { dueReminderEmailSent: true } });
+        }
       } catch { /* email is non-critical */ }
     }
     if (tx.customer.phone && wantsSms) {

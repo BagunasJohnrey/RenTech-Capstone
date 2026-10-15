@@ -296,7 +296,18 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
         overdueEscalationSent: bool(r.overdueEscalationSent),
         damageReason: strOrNull(r.damageReason), notes: strOrNull(r.notes),
         alterationStatus: strOrNull(r.alterationStatus), size: strOrNull(r.size),
-        measurements: jsonOrNull(r.measurements), paymentIntentId: strOrNull(r.paymentIntentId),
+        measurements: jsonOrNull(r.measurements),
+        // Gateway rename (Sept 2026): current backups carry gateway* keys;
+        // pre-rename files carry paymentIntentId — accept both. Unknown keys
+        // would throw in Prisma and silently skip the row, so the old name
+        // must not be passed through verbatim.
+        gateway: strOrNull(r.gateway),
+        gatewayPaymentId: strOrNull(r.gatewayPaymentId ?? r.paymentIntentId),
+        // Reminder email once-guards (Oct 2026) — old backups lack them and
+        // default to false (one re-send at most after a restore, then quiet).
+        dueReminderEmailSent: bool(r.dueReminderEmailSent),
+        overdueEmailSent: bool(r.overdueEmailSent),
+        overdueEscalationEmailSent: bool(r.overdueEscalationEmailSent),
         createdAt: dateOrNow(r.createdAt), updatedAt: dateOrNow(r.updatedAt),
       };
       // txNumber is autoincrement — never written (avoids sequence clashes).
@@ -320,7 +331,10 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
       if (!parent) throw new Error('missing transaction');
       const data: Row = {
         transactionId, amount, method, type,
-        paymongoPiId: strOrNull(r.paymongoPiId),
+        // Gateway rename (Sept 2026) — see transaction note above. gateway is
+        // required in the schema, so fall back to the historic default.
+        gateway: strOrNull(r.gateway) ?? 'paymongo',
+        gatewayRef: strOrNull(r.gatewayRef ?? r.paymongoPiId),
         status: str(r.status) ?? 'pending', createdAt: dateOrNow(r.createdAt),
       };
       await upsertById(m.payment, id, data, { ...data, createdAt: undefined });

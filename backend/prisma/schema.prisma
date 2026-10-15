@@ -142,10 +142,17 @@ model Transaction {
   releasePhoto    String?           @map("release_photo")
   returnPhoto     String?           @map("return_photo")
   dueReminderSent Boolean           @default(false) @map("due_reminder_sent")
+  // Email once-guards (independent of the SMS flags above). The scheduler used
+  // to gate reminder emails on the SMS delivery flags, so any transaction
+  // whose SMS kept failing (bad phone, SMS outage) re-sent its Brevo email
+  // every 60s tick indefinitely. Each email now flips its own flag on send.
+  dueReminderEmailSent      Boolean @default(false) @map("due_reminder_email_sent")
   noShowNotified  Boolean           @default(false) @map("no_show_notified")
   overdueSmsSent        Boolean     @default(false) @map("overdue_sms_sent")
   overdueSmsRetried     Boolean     @default(false) @map("overdue_sms_retried")
   overdueEscalationSent Boolean     @default(false) @map("overdue_escalation_sent")
+  overdueEmailSent          Boolean @default(false) @map("overdue_email_sent")
+  overdueEscalationEmailSent Boolean @default(false) @map("overdue_escalation_email_sent")
   damageReason    String?           @map("damage_reason")
   notes           String?
   // Garment alteration workflow: null = no alteration needed,

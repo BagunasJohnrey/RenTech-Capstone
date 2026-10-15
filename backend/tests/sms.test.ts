@@ -168,6 +168,111 @@ describe('SMS scheduler service (Phase 2.4)', () => {
   });
 });
 
+describe('Reminder emails are decoupled from SMS delivery (no Brevo duplicates)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // NOTE: earlier fixtures omitted customer.email, so the email path was never
+  // exercised — that is how the per-minute duplicate flood slipped through.
+  const emailedCustomer = { id: 'customer-id-111', name: 'Customer User', email: 'customer@example.com', phone: '09171234567', notifyPrefs: null };
+
+  async function reload() {
+    return import('../src/services/sms.service.js');
+  }
+
+  // Prisma is mocked (see setup.ts): observe email behavior through the
+  // transaction.update payloads rather than the network (Brevo sends are
+  // simulated in tests and never touch fetch).
+  async function flagUpdates(flag: string) {
+    const { prisma } = await import('../src/config/database.js');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return prisma.transaction.update.mock.calls.filter((c: any) => c[0]?.data && flag in c[0].data);
+  }
+
+  it('overdue: SMS failure still marks overdueEmailSent (email sent once, SMS retries)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-ovd-email', status: 'Active',
+      dueDate: new Date(Date.now() - 2 * 86400000),
+      rentalDate: new Date(Date.now() - 5 * 86400000),
+      balance: 1500, overdueSmsSent: false, overdueEmailSent: false,
+      customer: emailedCustomer, item: { id: 1, name: 'Gown' },
+    }]);
+    const svc = await reload();
+    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
+    const out = await svc.autoNotifyOverdue();
+    expect(out[0].status).toBe('failed'); // SMS still retries next tick
+    const emailCalls = await flagUpdates('overdueEmailSent');
+    expect(emailCalls.length).toBe(1);
+    expect(emailCalls[0][0].data.overdueEmailSent).toBe(true);
+    // …but the SMS flag stays false so the text (not the email) retries.
+    expect((await flagUpdates('overdueSmsSent')).filter((c: any) => c[0].data.overdueSmsSent === true).length).toBe(0);
+  });
+
+  it('overdue: emailed tx is NOT emailed again on the next tick', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-ovd-email', status: 'Overdue',
+      dueDate: new Date(Date.now() - 2 * 86400000),
+      rentalDate: new Date(Date.now() - 5 * 86400000),
+      balance: 1500, overdueSmsSent: false, overdueEmailSent: true,
+      customer: emailedCustomer, item: { id: 1, name: 'Gown' },
+    }]);
+    const svc = await reload();
+    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
+    await svc.autoNotifyOverdue();
+    expect(await flagUpdates('overdueEmailSent')).toHaveLength(0);
+    expect((global.fetch as any).mock.calls.length).toBe(1); // SMS retry still attempted
+  });
+
+  it('due-today: SMS failure still marks dueReminderEmailSent, no re-email next tick', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const dueTx = {
+      id: 'tx-due-email', status: 'Active', dueDate: new Date(),
+      rentalDate: new Date(Date.now() - 86400000),
+      balance: 1500, dueReminderSent: false, dueReminderEmailSent: false,
+      customer: emailedCustomer, item: { id: 1, name: 'Gown' },
+    };
+    prisma.transaction.findMany.mockResolvedValueOnce([dueTx]);
+    const svc = await reload();
+    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
+    const out = await svc.notifyDueToday();
+    expect(out[0].sent).toBe(false);
+    expect(await flagUpdates('dueReminderEmailSent')).toHaveLength(1);
+
+    vi.clearAllMocks();
+    prisma.transaction.findMany.mockResolvedValueOnce([{ ...dueTx, dueReminderEmailSent: true }]);
+    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
+    await svc.notifyDueToday();
+    expect(await flagUpdates('dueReminderEmailSent')).toHaveLength(0);
+  });
+
+  it('escalation: SMS failure still marks overdueEscalationEmailSent, no re-email next tick', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const escTx = {
+      id: 'tx-esc-email', status: 'Overdue',
+      dueDate: new Date(Date.now() - 4 * 86400000),
+      rentalDate: new Date(Date.now() - 7 * 86400000),
+      balance: 1500, overdueEscalationSent: false, overdueEscalationEmailSent: false,
+      customer: emailedCustomer, item: { id: 1, name: 'Gown' },
+    };
+    prisma.transaction.findMany.mockResolvedValueOnce([escTx]);
+    prisma.businessRule.findMany.mockResolvedValue([]);
+    const svc = await reload();
+    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
+    await svc.notifyOverdue3Days();
+    expect(await flagUpdates('overdueEscalationEmailSent')).toHaveLength(1);
+
+    vi.clearAllMocks();
+    prisma.transaction.findMany.mockResolvedValueOnce([{ ...escTx, overdueEscalationEmailSent: true }]);
+    prisma.businessRule.findMany.mockResolvedValue([]);
+    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
+    await svc.notifyOverdue3Days();
+    expect(await flagUpdates('overdueEscalationEmailSent')).toHaveLength(0);
+  });
+});
+
 describe('Global SMS kill-switch (messaging_sms_enabled)', () => {
   const baseTx = {
     id: 'tx-ovd-1',
