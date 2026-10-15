@@ -155,6 +155,52 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     revenueTrend.push({ label, revenue });
   }
 
+  // Logbook companions (unverified paper history): same window as the ledger
+  // revenue above, but reported SEPARATELY — never merged in. The UI renders
+  // them as "+₱X · N logbook" footnotes so every peso total stays traceable
+  // to collected payments. Unfiltered KPIs show the current month, so the
+  // companion defaults to the same month.
+  const histWhere: any = {};
+  if (filter?.start || filter?.end) {
+    histWhere.eventDate = {};
+    if (filter?.start) histWhere.eventDate.gte = filter.start;
+    if (filter?.end) histWhere.eventDate.lt = filter.end;
+  } else {
+    histWhere.eventDate = {
+      gte: new Date(now.getFullYear(), now.getMonth(), 1),
+      lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+    };
+  }
+  let logbookRevenue = 0;
+  let logbookRentals = 0;
+  try {
+    const agg = await prisma.historicalRecord.aggregate({
+      where: histWhere,
+      _sum: { price: true },
+      _count: { id: true },
+    });
+    logbookRevenue = agg._sum.price ?? 0;
+    logbookRentals = agg._count.id;
+  } catch { /* enrichment only — KPIs stay ledger-pure */ }
+
+  // Previous-window logbook (mirrors prevRevenue above) so the Revenue card's
+  // % change compares combined-vs-combined instead of combined-vs-ledger.
+  let prevLogbookRevenue = 0;
+  let prevLogbookRentals = 0;
+  if (filter?.start) {
+    const end = filter.end || new Date();
+    const rangeMs = end.getTime() - filter.start.getTime();
+    try {
+      const agg = await prisma.historicalRecord.aggregate({
+        where: { eventDate: { gte: new Date(filter.start.getTime() - rangeMs), lt: filter.start } },
+        _sum: { price: true },
+        _count: { id: true },
+      });
+      prevLogbookRevenue = agg._sum.price ?? 0;
+      prevLogbookRentals = agg._count.id;
+    } catch { /* enrichment only */ }
+  }
+
   return {
     activeRentals,
     overdueReturns,
@@ -166,6 +212,11 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     todayRevenue,
     revenueTrend,
     totalRevenue,
+    // Logbook companions — same window, separate figures (see above).
+    logbookRevenue,
+    logbookRentals,
+    prevLogbookRevenue,
+    prevLogbookRentals,
     totalItems,
     availableItems,
     inUseItems,
@@ -407,6 +458,28 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       select: { createdAt: true, itemId: true },
     });
 
+    // Imported logbook history (HistoricalRecord) joins the same series:
+    // each row is one past rental carrying its own category + event date.
+    // These rows are analytical-only everywhere else — the forecast is the
+    // one place they count, which is exactly what lengthens the history and
+    // sharpens the category split.
+    const catOf = new Map<number, string>();
+    try {
+      const items = await prisma.inventoryItem.findMany({ select: { id: true, category: true } });
+      for (const it of items) catOf.set(it.id, it.category || 'Other');
+    } catch { /* category split is enrichment — never fail the forecast */ }
+    let historyRows: { eventDate: Date; category: string }[] = [];
+    try {
+      historyRows = await prisma.historicalRecord.findMany({
+        where: { eventDate: { gte: firstMonth } },
+        select: { eventDate: true, category: true },
+      });
+    } catch { /* no history yet — forecast runs on transactions alone */ }
+    const points: { date: Date; category: string }[] = [
+      ...rows.map((t) => ({ date: t.createdAt, category: catOf.get(t.itemId) || 'Other' })),
+      ...historyRows.map((h) => ({ date: h.eventDate, category: (h.category || '').trim() || 'Other' })),
+    ];
+
     if (granularity === 'weekly') {
       const now = new Date();
       const firstMonday = startOfWeekMonday(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (FORECAST_WEEKS - 1) * 7));
@@ -421,7 +494,7 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       }
       const weeklyCounts = weeks.map((w, i) => {
         const end = i + 1 < weeks.length ? weeks[i + 1].start : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-        return rows.filter(t => t.createdAt >= w.start && t.createdAt < end).length;
+        return points.filter(t => t.date >= w.start && t.date < end).length;
       });
       const series = buildForecastSeries(weeklyCounts, period);
       const nextLabels = [1, 2, 3].map(i => {
@@ -444,13 +517,14 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
         projections: projectForward(series.values, weeks.map(w => w.label), nextLabels),
         byCategory: [],
         historyMonths,
+        historyPoints: historyRows.length,
         confidence,
         confidenceNote: `Last ${FORECAST_WEEKS} weeks · ${confidence} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
       };
     }
 
     const monthlyCounts = months.map(m =>
-      rows.filter(t => t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1).length
+      points.filter(t => t.date.getFullYear() === m.year && t.date.getMonth() === m.month - 1).length
     );
 
     const series = buildForecastSeries(monthlyCounts, period);
@@ -463,22 +537,17 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
 
     // Per-category series over the same month buckets (top categories by
     // volume) so the UI can show which lines are actually driving demand.
-    const catOf = new Map<number, string>();
-    try {
-      const items = await prisma.inventoryItem.findMany({ select: { id: true, category: true } });
-      for (const it of items) catOf.set(it.id, it.category || 'Other');
-    } catch { /* category split is enrichment — never fail the forecast */ }
+    // `points` already carries resolved categories (live items + imports).
     const totals = new Map<string, number>();
-    for (const t of rows) {
-      const c = catOf.get(t.itemId) || 'Other';
-      totals.set(c, (totals.get(c) || 0) + 1);
+    for (const t of points) {
+      totals.set(t.category, (totals.get(t.category) || 0) + 1);
     }
     const topCats = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, FORECAST_TOP_CATEGORIES).map(e => e[0]);
     const byCategory = topCats.map(category => {
       const counts = months.map(m =>
-        rows.filter(t =>
-          (catOf.get(t.itemId) || 'Other') === category &&
-          t.createdAt.getFullYear() === m.year && t.createdAt.getMonth() === m.month - 1
+        points.filter(t =>
+          t.category === category &&
+          t.date.getFullYear() === m.year && t.date.getMonth() === m.month - 1
         ).length
       );
       const catSma = sma(counts, period);
@@ -509,6 +578,7 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       projections,
       byCategory,
       historyMonths: months.length,
+      historyPoints: historyRows.length,
       confidence: forecastConfidence(months.length),
       confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${forecastConfidence(months.length)} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
     };
@@ -653,8 +723,25 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     revenueByCategory[cat] = (revenueByCategory[cat] || 0) + p.amount;
   }
 
+  // Logbook demand per category (counts only — no pesos, no item linkage
+  // needed): same window, separate map. The Category Performance card renders
+  // these as "+N logbook" companions next to the live utilisation bars.
+  const histCatWhere: any = {};
+  if (filter?.start) histCatWhere.eventDate = { gte: filter.start };
+  if (filter?.end) histCatWhere.eventDate = { ...histCatWhere.eventDate, lt: filter.end };
+  const historyByCategory: Record<string, number> = {};
+  try {
+    const groups = await prisma.historicalRecord.groupBy({
+      by: ['category'],
+      where: histCatWhere,
+      _count: { id: true },
+    });
+    for (const g of groups) historyByCategory[g.category] = g._count.id;
+  } catch { /* enrichment only */ }
+
   return {
     categoryBreakdown,
+    historyByCategory,
     topRented,
     underperforming,
     revenueByMonth,
@@ -681,11 +768,15 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
 // change while on Tasks still refetches — cheap correctness over cleverness).
 export async function getDataVersion() {
   return cacheOrCompute('dataVersion', async () => {
-    const [maxTx, txCount, maxItem, itemCount] = await Promise.all([
+    const [maxTx, txCount, maxItem, itemCount, recordCount] = await Promise.all([
       prisma.transaction.aggregate({ _max: { updatedAt: true } }),
       prisma.transaction.count(),
       prisma.inventoryItem.aggregate({ _max: { updatedAt: true } }),
       prisma.inventoryItem.count(),
+      // Logbook imports/deletes move the BI numbers too (forecast, KPIs,
+      // category companions) — count them so the 15s freshness poll refetches
+      // after an import instead of sitting on stale cards.
+      prisma.historicalRecord.count().catch(() => 0),
     ]);
     const version = Math.max(
       maxTx._max.updatedAt?.getTime() ?? 0,
@@ -695,6 +786,7 @@ export async function getDataVersion() {
       version,
       txCount,
       itemCount,
+      recordCount,
       // ISO for debugging (which write moved the needle); numeric `version`
       // is what the client compares.
       at: new Date(version || Date.now()).toISOString(),

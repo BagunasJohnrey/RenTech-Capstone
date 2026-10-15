@@ -383,6 +383,16 @@ vi.mock('../src/config/database.js', () => {
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    historicalRecord: {
+      createMany: vi.fn().mockImplementation((args) => Promise.resolve({ count: args.data?.length ?? 0 })),
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { price: 0 }, _count: { id: 0 } }),
+      groupBy: vi.fn().mockResolvedValue([]),
+      delete: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id })),
+    },
     // vi.fn so tests can assert the ledger actually wrapped its writes.
     $transaction: vi.fn((fn: any) => Promise.resolve(fn(mockPrisma))),
     $disconnect: vi.fn(),

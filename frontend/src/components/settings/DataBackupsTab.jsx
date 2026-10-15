@@ -4,6 +4,7 @@ import { settingsService } from '../../services/settings';
 import { aiService } from '../../services/ai';
 import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
 import CollapsibleCard from './CollapsibleCard';
+import HistoryImportPanel from './HistoryImportPanel';
 import AIReportModal from '../AIReportModal';
 
 const fmtBytes = (n) => {
@@ -286,6 +287,9 @@ export default function DataBackupsTab() {
 
   return (
     <>
+      {/* Past-records import lives here for Admin (Staff get the same panel
+          directly in their Settings) — same component, same API. */}
+      <HistoryImportPanel />
       <CollapsibleCard
         icon={Database}
         iconClass="bg-sky-50 text-sky-600"

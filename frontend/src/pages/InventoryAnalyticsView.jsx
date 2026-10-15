@@ -56,7 +56,28 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
     );
   }
 
-  const { items, topByRevenue, topByUtilization, topByFrequency } = data;
+  const { items, topByRevenue, topByUtilization, topByFrequency, topCategories } = data;
+
+  // Top cards rank LINES (categories), not pieces — clicking one filters the
+  // Item Performance table below to that line. Older backends omit
+  // topCategories, so fall back to deriving from the item tops.
+  const deriveCats = (list, metric) => {
+    const m = new Map();
+    for (const it of list) {
+      const e = m.get(it.category) || { category: it.category, revenue: 0, utilization: 0, rentals: 0, units: 0, historyRentals: 0, _u: 0 };
+      e.revenue += it.revenueGenerated || 0;
+      e._u += it.utilizationPct || 0;
+      e.rentals += it.totalRentals || 0;
+      e.units += 1;
+      m.set(it.category, e);
+    }
+    return [...m.values()].map(e => ({ ...e, utilization: e.units ? Math.round(e._u / e.units) : 0 }));
+  };
+  const cats = topCategories ?? {
+    byRevenue: deriveCats(topByRevenue, 'revenue'),
+    byUtilization: deriveCats(topByUtilization, 'utilization'),
+    byFrequency: deriveCats(topByFrequency, 'rentals'),
+  };
 
   const categories = [...new Set(items.map(i => i.category))].sort();
   // Canonical lifecycle order; only statuses present in the data get a pill.
@@ -129,26 +150,27 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
         </div>
       )}
 
-      {/* Top Performers — 1-up on phones, 2-up on tablet (3rd spans full),
-          3-up on desktop */}
+      {/* Top Performers (by CATEGORY line) — 1-up on phones, 2-up on tablet (3rd spans full),
+          3-up on desktop. Tapping a line filters the Item Performance table below. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
           <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
             <DollarSign size={20} className="text-emerald-500" /> Top by Revenue
           </h3>
           <div className="space-y-2">
-            {topByRevenue.map((item) => (
-              <button key={item.id} type="button" onClick={() => onViewItemTransactions?.(item)}
-                title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+            {cats.byRevenue.map((cat) => (
+              <button key={cat.category} type="button" onClick={() => { setCategoryFilter(cat.category); setPage(0); }}
+                title={`Show ${cat.category} items below`}
                 className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(topByRevenue, item, 'revenueGenerated')}.</span>
-                  <span className="text-xs font-semibold text-gray-900 truncate">{item.name}</span>
+                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(cats.byRevenue, cat, 'revenue')}. </span>
+                  <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
+                  <span className="text-[10px] text-gray-400 shrink-0">{cat.units} pc{cat.units === 1 ? '' : 's'}</span>
                 </div>
-                <span className="text-xs font-bold text-emerald-600 shrink-0">₱{item.revenueGenerated.toLocaleString()}</span>
+                <span className="text-xs font-bold text-emerald-600 shrink-0">₱{cat.revenue.toLocaleString()}</span>
               </button>
             ))}
-            {topByRevenue.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
+            {cats.byRevenue.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
           </div>
         </div>
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
@@ -156,18 +178,19 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
             <TrendingUp size={20} className="text-blue-500" /> Top by Utilization
           </h3>
           <div className="space-y-2">
-            {topByUtilization.map((item) => (
-              <button key={item.id} type="button" onClick={() => onViewItemTransactions?.(item)}
-                title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+            {cats.byUtilization.map((cat) => (
+              <button key={cat.category} type="button" onClick={() => { setCategoryFilter(cat.category); setPage(0); }}
+                title={`Show ${cat.category} items below`}
                 className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(topByUtilization, item, 'utilizationPct')}.</span>
-                  <span className="text-xs font-semibold text-gray-900 truncate">{item.name}</span>
+                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(cats.byUtilization, cat, 'utilization')}.</span>
+                  <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
+                  <span className="text-[10px] text-gray-400 shrink-0">{cat.units} pc{cat.units === 1 ? '' : 's'}</span>
                 </div>
-                <span className="text-xs font-bold text-blue-600 shrink-0">{item.utilizationPct}%</span>
+                <span className="text-xs font-bold text-blue-600 shrink-0">{cat.utilization}%</span>
               </button>
             ))}
-            {topByUtilization.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
+            {cats.byUtilization.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
           </div>
         </div>
         <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm md:col-span-2 xl:col-span-1">
@@ -175,18 +198,21 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
             <RotateCcw size={20} className="text-orange-500" /> Top by Frequency
           </h3>
           <div className="space-y-2">
-            {topByFrequency.map((item) => (
-              <button key={item.id} type="button" onClick={() => onViewItemTransactions?.(item)}
-                title={onViewItemTransactions ? `View transactions for ${item.name}` : undefined}
+            {cats.byFrequency.map((cat) => (
+              <button key={cat.category} type="button" onClick={() => { setCategoryFilter(cat.category); setPage(0); }}
+                title={`Show ${cat.category} items below`}
                 className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(topByFrequency, item, 'totalRentals')}.</span>
-                  <span className="text-xs font-semibold text-gray-900 truncate">{item.name}</span>
+                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(cats.byFrequency, cat, 'rentals')}.</span>
+                  <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
+                  {cat.historyRentals > 0 && (
+                    <span className="text-[10px] font-bold text-violet-600 bg-violet-50 rounded-full px-1.5 py-0.5 shrink-0">+{cat.historyRentals}</span>
+                  )}
                 </div>
-                <span className="text-xs font-bold text-orange-600 shrink-0">{item.totalRentals}x</span>
+                <span className="text-xs font-bold text-orange-600 shrink-0">{cat.rentals}x</span>
               </button>
             ))}
-            {topByFrequency.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
+            {cats.byFrequency.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
           </div>
         </div>
       </div>

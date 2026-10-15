@@ -8,6 +8,7 @@ import NotificationsTab from '../components/settings/NotificationsTab';
 import IntegrationsTab from '../components/settings/IntegrationsTab';
 import TeamTab from '../components/settings/TeamTab';
 import AccountActions from '../components/settings/AccountActions';
+import HistoryImportPanel from '../components/settings/HistoryImportPanel';
 import HelpGuide from './HelpGuide';
 import StaffHelpGuide from './StaffHelpGuide';
 
@@ -77,6 +78,10 @@ export default function ProfileSettingsView({
 
       {/* Staff-only Help Guide (Admin has the shared guide as a tab above) */}
       {role === 'Staff' && <StaffHelpGuide />}
+
+      {/* Past-records import — Staff transcribe logbooks here (Admin gets the
+          same panel inside the Data & Backups tab instead). Forecast-only. */}
+      {role === 'Staff' && <HistoryImportPanel />}
 
       {/* Sign Out */}
       <AccountActions onRequestLogout={onRequestLogout} />

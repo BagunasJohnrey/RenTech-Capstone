@@ -172,6 +172,62 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
     const rankedByUtilization = [...analytics].sort((a, b) => b.utilizationPct - a.utilizationPct);
     const rankedByFrequency = [...analytics].sort((a, b) => b.totalRentals - a.totalRentals);
 
+    // Category rollups for the "Top by" cards: the cards rank LINES (Gown,
+    // Barong…), not individual pieces. Logbook history rides along as a count
+    // companion (same window) — revenue/utilisation stay ledger-pure since a
+    // logbook row has no item link.
+    const catAgg = new Map<string, { revenue: number; utilSum: number; rentals: number; units: number }>();
+    for (const a of analytics) {
+      const e = catAgg.get(a.category) || { revenue: 0, utilSum: 0, rentals: 0, units: 0 };
+      e.revenue += a.revenueGenerated;
+      e.utilSum += a.utilizationPct;
+      e.rentals += a.totalRentals;
+      e.units += 1;
+      catAgg.set(a.category, e);
+    }
+    let historyByCat: Record<string, number> = {};
+    try {
+      const histWhere: any = {};
+      if (startDate || endDate) {
+        histWhere.eventDate = {};
+        if (startDate) histWhere.eventDate.gte = startDate;
+        if (endDate) histWhere.eventDate.lt = endDate;
+      }
+      const groups = await prisma.historicalRecord.groupBy({
+        by: ['category'], where: histWhere, _count: { id: true },
+      });
+      for (const g of groups) historyByCat[g.category] = g._count.id;
+    } catch { /* enrichment only */ }
+    const topCategories = [...catAgg.entries()].map(([category, e]) => ({
+      category,
+      revenue: e.revenue,
+      utilization: e.units > 0 ? Math.round(e.utilSum / e.units) : 0,
+      rentals: e.rentals,
+      units: e.units,
+      historyRentals: historyByCat[category] || 0,
+    }));
+
+    // Logbook companions for the Total Rentals card (same window, separate
+    // figures — per-item attribution is impossible without an item link, so
+    // only the window totals ride along; revenue stays ledger-pure).
+    let logbookRevenue = 0;
+    let logbookRentals = 0;
+    try {
+      const histWhere: any = {};
+      if (startDate || endDate) {
+        histWhere.eventDate = {};
+        if (startDate) histWhere.eventDate.gte = startDate;
+        if (endDate) histWhere.eventDate.lt = endDate;
+      }
+      const agg = await prisma.historicalRecord.aggregate({
+        where: histWhere,
+        _sum: { price: true },
+        _count: { id: true },
+      });
+      logbookRevenue = agg._sum.price ?? 0;
+      logbookRentals = agg._count.id;
+    } catch { /* enrichment only */ }
+
     return {
       items: analytics,
       summary: {
@@ -179,10 +235,18 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
         totalRevenue: analytics.reduce((s, i) => s + i.revenueGenerated, 0),
         totalRentals: analytics.reduce((s, i) => s + i.totalRentals, 0),
         avgUtilization: analytics.length > 0 ? Math.round(analytics.reduce((s, i) => s + i.utilizationPct, 0) / analytics.length) : 0,
+        logbookRevenue,
+        logbookRentals,
       },
       topByRevenue: rankedByRevenue.slice(0, 5),
       topByUtilization: rankedByUtilization.slice(0, 5),
       topByFrequency: rankedByFrequency.slice(0, 5),
+      // Category-ranked variants of the above (Top cards rank lines, not pieces).
+      topCategories: {
+        byRevenue: [...topCategories].sort((a, b) => b.revenue - a.revenue).slice(0, 5),
+        byUtilization: [...topCategories].sort((a, b) => b.utilization - a.utilization).slice(0, 5),
+        byFrequency: [...topCategories].sort((a, b) => b.rentals - a.rentals).slice(0, 5),
+      },
     };
   });
 }

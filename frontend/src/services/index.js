@@ -9,5 +9,6 @@ export { customerService } from './customer';
 export { notificationsService } from './notifications';
 export { settingsService } from './settings';
 export { smsService } from './sms';
+export { recordsService } from './records';
 export { aiService } from './ai';
 export { exportService } from './export';

@@ -1,4 +1,6 @@
 // Category performance: utilisation vs revenue-share bars per category.
+// Logbook demand (imported paper history, counts only) renders as a "+N
+// logbook" companion — never merged into utilisation or revenue.
 // Pure presentational.
 import { fmt } from './shared';
 
@@ -16,7 +18,14 @@ export default function CategoryPerformance({ utilData }) {
             return (
               <div key={u.category}>
                 <div className="flex justify-between items-center mb-1.5">
-                  <span className="text-sm font-semibold text-gray-700 capitalize">{u.category}</span>
+                  <span className="text-sm font-semibold text-gray-700 capitalize">
+                    {u.category}
+                    {u.history > 0 && (
+                      <span className="ml-1.5 text-[10px] font-bold text-violet-600 bg-violet-50 rounded-full px-1.5 py-0.5 align-middle">
+                        +{u.history} logbook
+                      </span>
+                    )}
+                  </span>
                   <div className="flex items-center gap-3 text-xs">
                     <span className="text-gray-500">{u.rate}% utilised</span>
                     <span className="font-bold text-gray-900">{u.revenue > 0 ? fmt(u.revenue) : '—'}</span>

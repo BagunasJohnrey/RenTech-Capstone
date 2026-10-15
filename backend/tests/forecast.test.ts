@@ -99,3 +99,27 @@ describe('GET /api/dashboard/forecast granularity=weekly', () => {
     expect(res.body.errorPct).toBeNull();
   });
 });
+
+describe('forecast includes imported logbook history', () => {
+  it('monthly counts + byCategory union transactions and HistoricalRecords', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const txDate = new Date(); txDate.setDate(txDate.getDate() - 5);
+    const histDate = new Date(); histDate.setDate(histDate.getDate() - 10);
+    prisma.transaction.findMany.mockResolvedValueOnce([{ createdAt: txDate, itemId: 1 }]);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, category: 'Suit' }]);
+    prisma.historicalRecord.findMany.mockResolvedValueOnce([{ eventDate: histDate, category: 'Gown' }]);
+
+    const res = await request(app)
+      .get('/api/dashboard/forecast')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    // Both demand points land somewhere in the windowed series.
+    expect(res.body.counts.reduce((a: number, b: number) => a + b, 0)).toBe(2);
+    // …and the response says how much of it came from the logbook.
+    expect(res.body.historyPoints).toBe(1);
+    const cats = (res.body.byCategory ?? []).map((c: { category: string }) => c.category);
+    expect(cats).toContain('Gown');
+    expect(cats).toContain('Suit');
+  });
+});

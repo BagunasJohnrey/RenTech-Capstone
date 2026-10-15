@@ -446,10 +446,15 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const prevMonthRev = kpis?.prevMonthRevenue || 0;
   // Overall answers "all time": show lifetime collected with no comparison
   // badge. Windowed tabs show the window's collected vs the previous window.
+  // The headline is COMBINED (ledger + logbook) on windowed tabs so a past
+  // month with paper history reads its full business total; the card below
+  // always labels the split so collected money stays distinguishable.
   const isOverallView = timeRange === 'Overall';
-  const displayRev = isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev;
-  const displayPrev = isOverallView ? 0 : prevMonthRev;
-  const revChange = prevMonthRev > 0 ? ((thisMonthRev - prevMonthRev) / prevMonthRev) * 100 : 0;
+  const logbookRev = isOverallView ? 0 : (kpis?.logbookRevenue || 0);
+  const prevLogbookRev = isOverallView ? 0 : (kpis?.prevLogbookRevenue || 0);
+  const displayRev = isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev + logbookRev;
+  const displayPrev = isOverallView ? 0 : prevMonthRev + prevLogbookRev;
+  const revChange = displayPrev > 0 ? ((displayRev - displayPrev) / displayPrev) * 100 : 0;
   // The revenue KPI follows the active tab (the backend already scopes the
   // figure to the window) — so the label must follow it too instead of always
   // reading "Monthly Revenue".
@@ -475,12 +480,14 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
 
   const catBreakdown = insightsData?.categoryBreakdown || {};
   const catRevenue = insightsData?.revenueByCategory || {};
+  const catHistory = insightsData?.historyByCategory || {};
 
   const utilData = Object.entries(catBreakdown).map(([cat, s]) => ({
     category: cat,
     rate: s.total > 0 ? Math.round((s.rented / s.total) * 100) : 0,
     total: s.total,
     revenue: catRevenue[cat] || 0,
+    history: catHistory[cat] || 0,
   }));
 
   const underperforming = insightsData?.underperforming || [];
@@ -771,6 +778,11 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         <KpiCards
           thisMonthRev={displayRev} prevMonthRev={displayPrev} revChange={revChange}
           revLabel={revLabel} revSub={revSub} revVsLabel={revVsLabel}
+          // Logbook companions: windowed like their cards — except Overall,
+          // where the ledger figure is all-time but the companion defaults to
+          // the current month, so it stays hidden there instead of lying.
+          logbookRevenue={timeRange === 'Overall' ? 0 : (kpis?.logbookRevenue || 0)}
+          logbookRentals={analyticsSummary?.logbookRentals || 0}
           rentedCount={rentedCount} totalItems={totalItems}
           smaVals={smaVals} latestSmaVal={latestSmaVal} forecastRev={forecastRev}
           avgPriceKnown={avgPriceKnown}

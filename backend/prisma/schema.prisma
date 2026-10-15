@@ -58,6 +58,7 @@ model Profile {
   sentMessages   SentSms[]              @relation("SentMessages")
   sentByMessages SentSms[]              @relation("SentByMessages")
   emailTokens    EmailToken[]
+  importedRecords HistoricalRecord[] @relation("ImportedRecords")
 
   @@map("profiles")
 }
@@ -210,6 +211,29 @@ model PromoCode {
   transactions Transaction[]
 
   @@map("promo_codes")
+}
+
+// Imported historical rental records (paper logbooks, pre-system walk-ins).
+// ANALYTICAL ONLY: feeds the demand forecast + category split. Deliberately
+// NOT Transaction rows — real transactions drive availability, revenue KPIs
+// and the reminder scheduler, so synthetic history rows there would corrupt
+// operations (and spam overdue reminders for every past-due import).
+model HistoricalRecord {
+  id           String   @id @default(uuid())
+  customerName String?  @map("customer_name")
+  category     String
+  address      String
+  eventDate    DateTime @map("event_date")
+  price        Float
+  source       String   @default("import")
+  importedById String?  @map("imported_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  importedBy Profile? @relation("ImportedRecords", fields: [importedById], references: [id], onDelete: SetNull)
+
+  @@index([eventDate])
+  @@index([category])
+  @@map("historical_records")
 }
 
 model Payment {

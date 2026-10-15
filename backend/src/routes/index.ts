@@ -13,6 +13,7 @@ import notificationRoutes from './notifications.routes.js';
 import settingsRoutes from './settings.routes.js';
 import promoCodesRoutes from './promoCodes.routes.js';
 import exportRoutes from './export.routes.js';
+import historicalRecordsRoutes from './historicalRecords.routes.js';
 
 const router = Router();
 
@@ -80,5 +81,6 @@ router.use('/notifications', notificationRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/promo-codes', promoCodesRoutes);
 router.use('/export', exportRoutes);
+router.use('/records', historicalRecordsRoutes);
 
 export default router;

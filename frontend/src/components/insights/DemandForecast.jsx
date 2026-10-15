@@ -110,6 +110,11 @@ export default function DemandForecast({
               {activeForecast.confidenceNote}
             </span>
           )}
+          {activeForecast?.historyPoints > 0 && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-violet-50 text-violet-700">
+              incl. {activeForecast.historyPoints} logbook record{activeForecast.historyPoints === 1 ? '' : 's'}
+            </span>
+          )}
           {forecastProvisional && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700">
               Early forecast — still learning

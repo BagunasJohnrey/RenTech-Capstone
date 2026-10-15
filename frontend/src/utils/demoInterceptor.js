@@ -56,6 +56,13 @@ const CUSTOMERS = {
 const DEMO_ASSISTED = { id: 'demo-staff-profile', name: 'Kai (Demo Staff)' };
 const DEMO_RELEASED = { id: 's-2', name: 'Ana (Demo Staff 2)' };
 
+// Imported logbook history (demo): in-memory HistoricalRecord rows so the
+// Settings import panel behaves realistically in demo mode.
+let demoRecords = [
+  { id: 'rec-demo-1', customerName: 'Maria Santos', category: 'Gown', address: 'Balayan, Batangas', eventDate: day(-40), price: 2500, source: 'import', createdAt: day(-2) },
+  { id: 'rec-demo-2', customerName: null, category: 'Barong', address: 'Calatagan, Batangas', eventDate: day(-25), price: 1200, source: 'import', createdAt: day(-2) },
+];
+
 const tx = (id, itemId, customerId, status, startOff, dueOff, fee, paid) => {
   const item = items.find((i) => i.id === itemId);
   const customer = CUSTOMERS[customerId];
@@ -714,6 +721,39 @@ function route(method, path, body) {
     // Signed-URL resolution for bucket paths. Demo images are absolute URLs
     // already, so this only fires for uploaded demo paths — echo a placeholder.
     return { value: { url: IMG('demo-' + Math.abs(hash(path)) % 50) } };
+  }
+
+  // Historical records import (demo): stats / list / import / delete against
+  // the in-memory demoRecords store so the Settings panel works in demo mode.
+  if (P(/^\/records\/stats/) && method === 'GET') {
+    const cats = {};
+    demoRecords.forEach((r) => { cats[r.category] = (cats[r.category] || 0) + 1; });
+    const dates = demoRecords.map((r) => r.eventDate).sort();
+    return {
+      value: {
+        total: demoRecords.length,
+        oldest: dates[0] ?? null,
+        newest: dates[dates.length - 1] ?? null,
+        categories: Object.entries(cats).map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count),
+      },
+    };
+  }
+  if (P(/^\/records$/) && method === 'GET') {
+    const sorted = [...demoRecords].sort((a, b) => (a.eventDate < b.eventDate ? 1 : -1));
+    return { value: { rows: sorted, total: sorted.length } };
+  }
+  if (P(/^\/records\/import/) && method === 'POST') {
+    const created = {
+      id: 'rec-demo-' + Date.now(), customerName: 'Demo Import', category: 'Gown',
+      address: 'Balayan, Batangas', eventDate: day(-10), price: 2000,
+      source: 'import', createdAt: day(0),
+    };
+    demoRecords.push(created);
+    return { value: { imported: 1, categories: ['Gown'] } };
+  }
+  if (P(/^\/records\/(.+)$/) && method === 'DELETE') {
+    demoRecords = demoRecords.filter((x) => x.id !== P(/^\/records\/(.+)$/)[1]);
+    return { value: { id: P(/^\/records\/(.+)$/)[1] } };
   }
 
   // Fallback: unknown endpoints shouldn't crash the app — return empty-ish.
