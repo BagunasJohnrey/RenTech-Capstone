@@ -580,7 +580,15 @@ function route(method, path, body) {
     return t ? { value: clone(t) } : { status: 404, error: 'Not found' };
   }
   if (path === '/transactions' && method === 'GET') {
-    return { value: { transactions: clone(transactions) } };
+    // Production `listTransactions` scopes Customer lists to their own rows
+    // (`where.customerId = profileId`) and only then exposes each row's latest
+    // payment proof. Without the scope the demo customer's Home mixed in other
+    // customers' rentals and the seeded manual-QR resume booking (6666) fell
+    // outside the visible window, so the T9 resume flow couldn't be demoed.
+    const rows = role === 'Customer'
+      ? transactions.filter((t) => t.customerId === 'demo-customer-profile')
+      : transactions;
+    return { value: { transactions: clone(rows) } };
   }
   if (path === '/transactions' && method === 'POST') {
     const it = items.find((i) => i.id === body.itemId);
