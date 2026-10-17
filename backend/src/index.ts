@@ -8,6 +8,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { requestId } from './middleware/requestId.js';
 import { rateLimiter } from './middleware/rateLimiter.js';
 import { csrfGuard } from './middleware/csrfGuard.js';
+import { isAllowedOrigin } from './utils/origins.js';
 import routes from './routes/index.js';
 import webhookRoutes from './routes/webhooks.routes.js';
 import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNotify } from './services/sms.service.js';
@@ -55,7 +56,17 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
+// Browser origins come from the shared allowlist (FRONTEND_URL + optional
+// ALLOWED_ORIGINS + www/apex twins) so CORS and the CSRF guard always agree —
+// e.g. an old shared link to a previous deployment host keeps working.
+app.use(cors({
+  origin: (origin, callback) => {
+    // No Origin header: same-origin navigations, curl, server-to-server calls.
+    if (!origin) return callback(null, true);
+    callback(null, isAllowedOrigin(origin));
+  },
+  credentials: true,
+}));
 app.use(requestId);
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 

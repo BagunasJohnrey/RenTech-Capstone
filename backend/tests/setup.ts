@@ -20,6 +20,8 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
 process.env.SUPABASE_ANON_KEY = 'test-anon-key';
 process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
 process.env.FRONTEND_URL = 'http://localhost:5173';
+// CSRF/CORS allowlist wiring: an extra legacy origin must pass the guard.
+process.env.ALLOWED_ORIGINS = 'https://legacy.example.com';
 process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
 // Brevo: blank key forces the simulated (no-network) send path in tests.

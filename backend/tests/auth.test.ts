@@ -401,6 +401,38 @@ describe('CSRF Guard', () => {
     expect(res.status).toBe(403);
   });
 
+  it('should allow an extra ALLOWED_ORIGINS entry (legacy deployment host)', async () => {
+    const res = await request(app)
+      .post('/api/auth/logout')
+      .set('Origin', 'https://legacy.example.com');
+
+    expect(res.status).toBe(200);
+  });
+
+  it('should reject the opaque "null" origin sent by some in-app browsers', async () => {
+    const res = await request(app)
+      .post('/api/auth/logout')
+      .set('Origin', 'null');
+
+    expect(res.status).toBe(403);
+  });
+
+  it('should reject a disallowed Referer when no Origin header is present', async () => {
+    const res = await request(app)
+      .post('/api/auth/logout')
+      .set('Referer', 'https://evil-site.com/sign-in');
+
+    expect(res.status).toBe(403);
+  });
+
+  it('should allow an allowlisted Referer when no Origin header is present', async () => {
+    const res = await request(app)
+      .post('/api/auth/logout')
+      .set('Referer', 'https://legacy.example.com/sign-in');
+
+    expect(res.status).toBe(200);
+  });
+
   it('should allow same-origin POST', async () => {
     const res = await request(app)
       .post('/api/auth/logout')

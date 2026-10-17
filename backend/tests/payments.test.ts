@@ -8,6 +8,7 @@ vi.mock('../src/config/env.js', () => ({
     PAYMONGO_WEBHOOK_SECRET: 'whsec_mock',
     PAYMONGO_PUBLIC_KEY: 'pk_test_mock',
     FRONTEND_URL: 'http://localhost:5173',
+    ALLOWED_ORIGINS: [],
     NODE_ENV: 'test',
     PORT: 3001,
     SUPABASE_URL: 'https://test.supabase.co',

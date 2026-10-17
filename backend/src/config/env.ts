@@ -13,6 +13,12 @@ export const env = {
   PORT: parseInt(process.env.PORT || '3001', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
+  // Extra browser origins allowed for CORS + the CSRF guard (comma-separated),
+  // beyond FRONTEND_URL. Needed after a domain migration: shared/bookmarked
+  // links that still point at the old frontend host must not 403 on login.
+  // www/apex twins of every entry are allowed automatically.
+  ALLOWED_ORIGINS: (process.env.ALLOWED_ORIGINS || '')
+    .split(',').map((o) => o.trim()).filter(Boolean),
 
   SUPABASE_URL: requireEnv('SUPABASE_URL'),
   SUPABASE_SERVICE_ROLE_KEY: requireEnv('SUPABASE_SERVICE_ROLE_KEY'),

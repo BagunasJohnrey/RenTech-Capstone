@@ -1,4 +1,13 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "rentech-myleneboutique\\.vercel\\.app" }],
+      "destination": "https://www.myleneboutique.shop/:path*",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://rentech-capstone.onrender.com/api/$1" },
     { "source": "/((?!assets/).*)", "destination": "/index.html" }

@@ -7,6 +7,7 @@ vi.mock('../src/config/env.js', () => ({
     PAYMONGO_SECRET_KEY: '',
     PAYMONGO_SIMULATE: true,
     NODE_ENV: 'production',
+    ALLOWED_ORIGINS: [],
   },
 }));
 

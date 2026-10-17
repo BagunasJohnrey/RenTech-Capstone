@@ -23,6 +23,7 @@ vi.mock('../src/config/env.js', () => ({
     PAYMONGO_SIMULATE: true,
     NODE_ENV: 'test',
     FRONTEND_URL: 'http://localhost:5173',
+    ALLOWED_ORIGINS: [],
   },
 }));
 
