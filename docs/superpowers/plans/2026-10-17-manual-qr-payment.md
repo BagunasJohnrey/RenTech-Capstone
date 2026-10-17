@@ -22,7 +22,7 @@
 - **All new UI matches the existing theme (explicit requirement, spec §8):** brand `#bf4a53`, white `rounded-2xl/3xl` cards with `border-gray-100/80 shadow-sm`, amber=pending / emerald=approved / red=rejected, bottom-sheet modals on mobile (mirror `ReleaseItemModal`), lucide-react only, toast feedback, no `alert()`.
 - **Route ordering:** in `payments.routes.ts` the `/proofs` routes MUST be declared before `GET /:id`.
 - **DDL is additive only:** `npx prisma db push --skip-generate` (routes via `DIRECT_URL`), then **stop the backend** → `npx prisma generate` → restart. Never re-add `db push` to the Render build command.
-- **Do not touch PayMongo/Maya behavior.** Full backend suite (currently 626 passing) and `npx tsc --noEmit` must stay green after every task; frontend `npm run build` must pass.
+- **Do not touch PayMongo/Maya behavior.** Full backend suite (measured at execution start 2026-10-17: **642 passing**; the earlier "626" was stale) and `npx tsc --noEmit` must stay green after every task; frontend `npm run build` must pass.
 
 ## Review Focus
 
