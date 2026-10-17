@@ -5,6 +5,10 @@ import { useToast } from '../Toast';
 import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
 import CollapsibleCard from './CollapsibleCard';
 import Toggle from './Toggle';
+import PaymentQrManager from './PaymentQrManager';
+
+// Human labels for the active gateway, used in toasts + the selector copy.
+const GATEWAY_LABELS = { paymongo: 'PayMongo', maya: 'Maya QRPh', manual: 'Manual QR' };
 
 const INTEGRATIONS = [
   { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Primary AI for outfit suggestions & business insights.', icon: Sparkles, iconClass: 'bg-purple-50 text-purple-600' },
@@ -205,7 +209,7 @@ export default function IntegrationsTab() {
     setGatewaySaving(true);
     try {
       await settingsService.updateRules({ payment_gateway: value });
-      toastSuccess(`Downpayments now use ${value === 'maya' ? 'Maya QRPh' : 'PayMongo'}.`);
+      toastSuccess(`Downpayments now use ${GATEWAY_LABELS[value] ?? value}.`);
     } catch (err) {
       setGateway(previous);
       toastError(err?.message || 'Could not change the payment gateway.');
@@ -291,6 +295,11 @@ export default function IntegrationsTab() {
             <p className="text-xs text-gray-500 mt-0.5">
               Used for new booking downpayments. Takes effect immediately; existing bookings are unaffected.
             </p>
+            {gateway === 'manual' && (
+              <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed">
+                Customers pay by scanning your QR and uploading a screenshot for staff review.
+              </p>
+            )}
           </div>
           <select
             aria-label="Payment Gateway"
@@ -301,8 +310,10 @@ export default function IntegrationsTab() {
           >
             <option value="paymongo">PayMongo</option>
             <option value="maya">Maya QRPh</option>
+            <option value="manual">Manual QR (InstaPay / bank app)</option>
           </select>
         </div>
+        {gateway === 'manual' && <PaymentQrManager />}
         {GROUPS.map((group) => (
           <section key={group.title} aria-label={group.title}>
             <div className="flex items-baseline justify-between gap-2 mb-2 px-1">
