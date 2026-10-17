@@ -93,7 +93,15 @@ export default function HistoryImportPanel() {
       const data = await fileToBase64(file);
       const res = await recordsService.importFile({ fileName: file.name, data });
       setResult(res);
-      toastSuccess(`Imported ${res.imported} record${res.imported === 1 ? '' : 's'} — forecast updated`);
+      if (res.imported > 0) {
+        toastSuccess(
+          `Imported ${res.imported} new record${res.imported === 1 ? '' : 's'}` +
+          (res.skippedDuplicates > 0 ? ` · ${res.skippedDuplicates} already-imported skipped` : '') +
+          ' — forecast updated'
+        );
+      } else {
+        toastSuccess(`Nothing new — all ${res.skippedDuplicates} row${res.skippedDuplicates === 1 ? ' was' : 's were'} already imported`);
+      }
       setPage(0);
       await load(0);
     } catch (err) {
@@ -145,6 +153,7 @@ export default function HistoryImportPanel() {
           <span className="font-bold">category</span>, <span className="font-bold">address</span>,{' '}
           <span className="font-bold">event date</span>, <span className="font-bold">price</span> required).
           They lengthen the forecast history and sharpen the per-category split — and nothing else uses them.
+          Re-importing the same file is safe: exact duplicates are detected and skipped, never doubled.
         </p>
 
         {stats?.total > 0 && (
@@ -191,8 +200,14 @@ export default function HistoryImportPanel() {
           <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200/70 rounded-xl px-3 py-2.5 text-xs text-emerald-800">
             <CheckCircle2 size={15} className="shrink-0 mt-0.5" />
             <span>
-              Imported <span className="font-extrabold">{result.imported}</span> record{result.imported === 1 ? '' : 's'}
-              {result.categories?.length > 0 && <> in {result.categories.join(', ')}</>}. The forecast already includes them.
+              {result.imported > 0 ? (
+                <>Imported <span className="font-extrabold">{result.imported}</span> new record{result.imported === 1 ? '' : 's'}
+                {result.categories?.length > 0 && <> in {result.categories.join(', ')}</>}</>
+              ) : (
+                <>Nothing new — every row was already imported</>
+              )}
+              {result.skippedDuplicates > 0 && <> · <span className="font-extrabold">{result.skippedDuplicates}</span> duplicate{result.skippedDuplicates === 1 ? '' : 's'} skipped</>}.
+              {result.imported > 0 && ' The forecast already includes them.'}
             </span>
           </div>
         )}
