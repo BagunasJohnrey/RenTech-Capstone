@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw, Maximize2, Tag, Wallet } from 'lucide-react';
+import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw, Maximize2, Tag, Wallet, Clock } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
 import { usePayments } from '../hooks/usePayments';
 import { usePaymongo } from '../hooks/usePaymongo';
@@ -18,7 +18,10 @@ import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
 import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../utils/promoLabel';
 import { promoService } from '../services/promo';
+import { submitProof } from '../services/payments';
+import { downscaleToJpeg } from '../utils/file';
 import BookingQR from './BookingQR';
+import ManualQrPayment from './ManualQrPayment';
 import BottomSheet from './BottomSheet';
 import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
 import { downloadReceiptImage } from '../utils/receiptImage';
@@ -114,7 +117,7 @@ export default function CustomerRentalFlow({
   // Suggested rental period, minimum downpayment, and the active payment
   // gateway come from the admin's business rules (public endpoint) — fall back
   // to the 3-day / ₱200 / PayMongo defaults.
-  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'paymongo' });
+  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'paymongo', manual_qr_codes: [], store_contact: '' });
   useEffect(() => {
     let cancelled = false;
     api.get('/settings/rental-defaults')
@@ -124,7 +127,9 @@ export default function CustomerRentalFlow({
           rental_period_days: d.rental_period_days,
           return_days_after_event: d.return_days_after_event || 1,
           min_downpayment: d.min_downpayment || 0,
-          payment_gateway: d.payment_gateway === 'maya' ? 'maya' : 'paymongo',
+          payment_gateway: d.payment_gateway === 'maya' ? 'maya' : d.payment_gateway === 'manual' ? 'manual' : 'paymongo',
+          manual_qr_codes: Array.isArray(d.manual_qr_codes) ? d.manual_qr_codes : [],
+          store_contact: d.store_contact || '',
         });
         setDownpaymentAmount(d.min_downpayment || 200);
         // Dates stay empty until the customer taps them — no auto-suggest.
@@ -173,6 +178,7 @@ export default function CustomerRentalFlow({
   // Drives the payment step's UI: Maya QRPh shows a single method (the customer
   // picks their own app when scanning), PayMongo keeps the GCash/Card tiles.
   const isMayaGateway = rentalDefaults.payment_gateway === 'maya';
+  const isManualGateway = rentalDefaults.payment_gateway === 'manual';
   // Prefill size from the customer's saved "usual sizes" (Settings) when available.
   const savedSizes = useMemo(() => {
     try { const v = JSON.parse(localStorage.getItem(LS_SIZES)); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -194,6 +200,19 @@ export default function CustomerRentalFlow({
   // True when the booking completed on the no-keys simulated path (dev/test
   // only) — the receipt says so instead of claiming a real gateway payment.
   const [simulatedPay, setSimulatedPay] = useState(false);
+  // Manual QR checkout: the screenshot IS the payment evidence. `manualTx`
+  // holds a booking created before a failed proof upload so retries only
+  // re-upload the proof instead of duplicating the booking.
+  const [proofChannel, setProofChannel] = useState('');
+  const [proofReference, setProofReference] = useState('');
+  const [proofFile, setProofFile] = useState(null);
+  const [manualTx, setManualTx] = useState(null);
+  useEffect(() => {
+    if (!proofChannel && rentalDefaults.manual_qr_codes.length > 0) {
+      setProofChannel(rentalDefaults.manual_qr_codes[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rentalDefaults.manual_qr_codes]);
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(null);
   const [promoError, setPromoError] = useState('');
@@ -460,6 +479,7 @@ export default function CustomerRentalFlow({
     size: selectedSize || undefined,
     measurements: Object.keys(measurements).length ? measurements : undefined,
     paymentMethod,
+    paymentPath: isManualGateway ? 'manual' : undefined,
   });
 
   const handleApplyPromo = async (codeOverride) => {
@@ -517,6 +537,46 @@ export default function CustomerRentalFlow({
       setIsProcessingPayment(true);
       setConfirmError('');
       try {
+        // Manual QR checkout: no gateway charge — the customer sends the
+        // downpayment to the boutique's QR, then submits a screenshot for
+        // staff review. The booking is created ONCE; retries only re-upload
+        // the proof (see `manualTx`).
+        if (isManualGateway) {
+          if (rentalDefaults.manual_qr_codes.length === 0) {
+            setConfirmError('Payment QR not yet set up — please contact the boutique.');
+            return;
+          }
+          if (!proofFile) {
+            setConfirmError('Please upload your payment screenshot before submitting.');
+            return;
+          }
+          if (proofFile.size > 5 * 1024 * 1024) {
+            setConfirmError('Screenshot must be 5 MB or smaller.');
+            return;
+          }
+          const created = manualTx || (await onSubmitBooking(buildBookingData()));
+          if (!manualTx) setManualTx(created);
+          try {
+            const data = await downscaleToJpeg(proofFile, 1280, 0.85);
+            if (!data) throw new Error('Could not read that image — try another screenshot.');
+            await submitProof(created.id, {
+              data,
+              contentType: 'image/jpeg',
+              reference: proofReference.trim() || undefined,
+              channel: proofChannel || undefined,
+            });
+          } catch (proofErr) {
+            // Booking stays (no rollback like the gateway path) — the customer
+            // retries here or resumes from My Rentals.
+            setConfirmError(proofErr?.message || 'Your booking is saved — upload your payment proof to continue.');
+            return;
+          }
+          setManualTx(null);
+          setConfirmedTx(created);
+          setPaymentSuccess(true);
+          setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
+          return;
+        }
         // Create the booking first so we have a real transaction id.
         const created = await onSubmitBooking(buildBookingData());
         // FIX A: create a real PayMongo payment intent, then open the drop-in UI.
@@ -810,8 +870,8 @@ export default function CustomerRentalFlow({
         {paymentSuccess && (
           <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center space-y-4">
             <CheckCircle2 size={56} className="text-emerald-500 animate-bounce" />
-            <p className="font-bold text-gray-900 text-xl">Payment Confirmed!</p>
-            <p className="text-sm text-gray-500">Redirecting to your receipt…</p>
+            <p className="font-bold text-gray-900 text-xl">{isManualGateway ? 'Submitted for review!' : 'Payment Confirmed!'}</p>
+            <p className="text-sm text-gray-500">{isManualGateway ? 'Sending you to your receipt…' : 'Redirecting to your receipt…'}</p>
           </div>
         )}
 
@@ -1080,7 +1140,21 @@ export default function CustomerRentalFlow({
                   promise a routing choice we don't have (and QRPh has no card
                   rail). PayMongo's drop-in does the choosing itself, so its
                   tiles stay. */}
-              {isMayaGateway ? (
+              {/* Manual QR: the customer pays from their own app, then submits
+                  a screenshot for staff review — see ManualQrPayment. */}
+              {isManualGateway ? (
+                <ManualQrPayment
+                  qrCodes={rentalDefaults.manual_qr_codes}
+                  channel={proofChannel}
+                  onChannelChange={setProofChannel}
+                  reference={proofReference}
+                  onReferenceChange={setProofReference}
+                  file={proofFile}
+                  onFileChange={setProofFile}
+                  disabled={isProcessingPayment}
+                  storeContact={rentalDefaults.store_contact}
+                />
+              ) : isMayaGateway ? (
                 <>
                   <div className="text-center pb-2">
                     <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
@@ -1265,12 +1339,23 @@ export default function CustomerRentalFlow({
 
           {step === 3 && confirmedTx && (
             <div className="space-y-5">
+              {isManualGateway && (
+                <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">
+                  <Clock size={17} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-extrabold text-amber-800">Payment submitted for review</p>
+                    <p className="text-[11px] text-amber-700 leading-snug mt-0.5">
+                      We'll confirm your booking once our team verifies your payment screenshot.
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-50 via-white to-white border border-emerald-100 px-5 py-6 text-center">
                 <div className="w-16 h-16 rounded-full bg-emerald-500 text-white flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/30">
                   <CheckCircle2 size={32} />
                 </div>
                 <h3 className="text-xl font-extrabold text-gray-900 tracking-tight">Booking Confirmed!</h3>
-                <p className="text-gray-500 text-xs font-medium mt-1">Your reservation has been secured.</p>
+                <p className="text-gray-500 text-xs font-medium mt-1">{isManualGateway ? 'Your booking is waiting for payment verification.' : 'Your reservation has been secured.'}</p>
                 <p className="inline-block mt-3 font-mono text-xs font-bold text-white bg-[#bf4a53] rounded-full px-4 py-1.5 tracking-wider shadow-sm">{bookingCode(confirmedTx)}</p>
               </div>
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
@@ -1299,9 +1384,12 @@ export default function CustomerRentalFlow({
                   <div className="flex justify-between gap-4"><span className="text-gray-500 shrink-0">Notes</span><span className="text-right text-gray-700">{confirmedTx.notes || customer.notes}</span></div>
                 )}
                 <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex justify-between"><span className="text-gray-500">Balance (remaining)</span><span className="font-bold">₱{txBalance(confirmedTx).toLocaleString()}</span></div>
-                <div className="bg-white border-2 border-[#bf4a53] rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm">
-                  <span className="text-sm font-bold text-gray-900">Paid now <span className="font-medium text-gray-400">(downpayment)</span></span>
-                  <span className="font-extrabold text-[#bf4a53] text-xl">₱{txDownpayment(confirmedTx).toLocaleString()}</span>
+                <div className={`bg-white border-2 rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm ${isManualGateway ? 'border-amber-200' : 'border-[#bf4a53]'}`}>
+                  <span className="text-sm font-bold text-gray-900">
+                    {isManualGateway ? 'Downpayment' : 'Paid now'}{' '}
+                    <span className="font-medium text-gray-400">({isManualGateway ? 'under review' : 'downpayment'})</span>
+                  </span>
+                  <span className={`font-extrabold text-xl tabular-nums ${isManualGateway ? 'text-amber-600' : 'text-[#bf4a53]'}`}>₱{txDownpayment(confirmedTx).toLocaleString()}</span>
                 </div>
                 {txBalance(confirmedTx) > 0 && (
                   <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white px-4 py-3 text-left">
@@ -1353,6 +1441,13 @@ export default function CustomerRentalFlow({
           )}
         </div>
 
+        {/* Step-2 failures (manual guards, gateway rejections) render here —
+            pinned above the footer so they're visible wherever the body is
+            scrolled. (Previously only step 3 displayed confirmError.) */}
+        {step === 2 && confirmError && (
+          <p role="alert" className="mx-5 mt-3 text-xs text-center text-red-500 font-medium bg-red-50 py-2 rounded-lg">{confirmError}</p>
+        )}
+
         {step < 3 && (
           <div className="p-4 border-t bg-gray-50/50 flex gap-3">
             <button onClick={handleFooterLeft} className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
@@ -1362,7 +1457,7 @@ export default function CustomerRentalFlow({
               onClick={handleNext}
               disabled={navigating || (step === 1 && (availability.checking || availability.available === false || isCleaning))}
               className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : (navigating ? 'Processing…' : 'Confirm Payment')} <ChevronRight size={16} />
+              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : (navigating ? 'Processing…' : isManualGateway ? 'Submit booking for review' : 'Confirm Payment')} <ChevronRight size={16} />
             </button>
           </div>
         )}
