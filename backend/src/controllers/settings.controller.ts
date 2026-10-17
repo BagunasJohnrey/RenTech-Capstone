@@ -63,6 +63,9 @@ export async function getRentalDefaults(_req: AuthenticatedRequest, res: Respons
 
 export async function updateRules(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
+    if (typeof req.body.manual_qr_codes === 'string') {
+      settingsService.assertValidManualQrCodes(req.body.manual_qr_codes);
+    }
     const result = await settingsService.updateBusinessRules(req.body);
     try {
       await createAuditLog({

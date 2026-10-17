@@ -10,6 +10,54 @@ export async function getBusinessRules() {
   return map;
 }
 
+export type ManualQrCode = { id: string; label: string; accountName: string; imagePath: string };
+
+const MAX_QR_CODES = 10;
+const QR_PATH_RE = /^qrcodes\/[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+const isValidQrEntry = (q: unknown): q is ManualQrCode => {
+  if (!q || typeof q !== 'object') return false;
+  const e = q as Record<string, unknown>;
+  return (
+    typeof e.id === 'string' && e.id.length > 0 && e.id.length <= 64 &&
+    typeof e.label === 'string' && e.label.length > 0 && e.label.length <= 40 &&
+    typeof e.accountName === 'string' && e.accountName.length <= 60 &&
+    typeof e.imagePath === 'string' && e.imagePath.length <= 220 &&
+    !e.imagePath.includes('..') && QR_PATH_RE.test(e.imagePath)
+  );
+};
+
+// Tolerant reader for the public rental-defaults endpoint — bad or partial
+// data degrades to [] / dropped entries, it never throws.
+export function parseManualQrCodes(raw: string | undefined | null): ManualQrCode[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isValidQrEntry).slice(0, MAX_QR_CODES);
+  } catch {
+    return [];
+  }
+}
+
+// Strict validator for PUT /settings/rules — an admin typo must 400, not
+// silently produce a customer-facing empty QR panel.
+export function assertValidManualQrCodes(raw: string): ManualQrCode[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new AppError(400, 'manual_qr_codes must be valid JSON');
+  }
+  if (!Array.isArray(parsed)) throw new AppError(400, 'manual_qr_codes must be a JSON array');
+  if (parsed.length > MAX_QR_CODES) throw new AppError(400, `At most ${MAX_QR_CODES} QR codes are allowed`);
+  const codes = parseManualQrCodes(raw);
+  if (codes.length !== parsed.length) {
+    throw new AppError(400, 'Invalid QR entry — id, label, accountName and imagePath are required (imagePath must start with qrcodes/)');
+  }
+  return codes;
+}
+
 // Public rental-suggestion defaults (never the full rules/templates) so
 // booking flows can prefill sensibly without leaking sensitive settings.
 // `payment_gateway` is included (not sensitive) so the booking form can render
@@ -23,7 +71,8 @@ export async function getRentalDefaults() {
     rental_period_days: parseInt(rules.rental_period_days ?? '3', 10) || 3,
     return_days_after_event: parseInt(rules.return_days_after_event ?? '1', 10) || 1,
     min_downpayment: parseInt(rules.min_downpayment ?? '200', 10) || 0,
-    payment_gateway: rules.payment_gateway === 'maya' ? 'maya' : 'paymongo',
+    payment_gateway: rules.payment_gateway === 'maya' ? 'maya' : rules.payment_gateway === 'manual' ? 'manual' : 'paymongo',
+    manual_qr_codes: parseManualQrCodes(rules.manual_qr_codes),
     store_name: rules.business_name ?? '',
     store_contact: rules.business_contact ?? '',
     store_address: rules.business_address ?? '',
@@ -41,9 +90,11 @@ export async function getFeatureFlags() {
 
 // Which payment gateway new charges use. Unknown or absent values fall back to
 // 'paymongo' so a typo in the rule can't take the booking flow down.
-export async function getPaymentGateway(): Promise<'paymongo' | 'maya'> {
+export async function getPaymentGateway(): Promise<'paymongo' | 'maya' | 'manual'> {
   const rules = await getBusinessRules();
-  return rules.payment_gateway === 'maya' ? 'maya' : 'paymongo';
+  if (rules.payment_gateway === 'maya') return 'maya';
+  if (rules.payment_gateway === 'manual') return 'manual';
+  return 'paymongo';
 }
 
 // Global messaging kill-switches (admin-controlled via BusinessRule).
