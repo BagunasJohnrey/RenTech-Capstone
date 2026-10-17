@@ -1243,7 +1243,7 @@ export async function recordPayment(
     throw new AppError(400, 'Transaction is already closed');
   }
 
-  const validMethods = ['cash', 'gcash', 'card'];
+  const validMethods = ['cash', 'gcash', 'card', 'instapay'];
   const normalizedMethod = method.toLowerCase().trim();
   if (!validMethods.includes(normalizedMethod)) {
     throw new AppError(400, `Invalid payment method. Must be one of: ${validMethods.join(', ')}`);

@@ -5,10 +5,11 @@ import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import {
   getPaymentGateway,
-  getRentalDefaults,
   parseManualQrCodes,
   assertValidManualQrCodes,
 } from '../src/services/settings.service.js';
+import { applyPaymentToTransaction } from '../src/services/payments.ledger.js';
+import { recordPayment } from '../src/services/transactions.service.js';
 
 const app = express();
 app.use(express.json());
@@ -78,5 +79,63 @@ describe('PUT /api/settings/rules validates manual_qr_codes', () => {
       .set('Authorization', 'Bearer admin-token')
       .send({ manual_qr_codes: 'not-json' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('ledger credits a manual proof', () => {
+  it('writes a manual/instapay payment row and moves totals', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', status: 'Active', rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 0, balance: 5000,
+    });
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+
+    const result = await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 5000, gateway: 'manual', gatewayRef: 'proof_p1', method: 'instapay',
+    });
+
+    expect(result).toMatchObject({ duplicate: false, totalPaid: 5000, balance: 0 });
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ gateway: 'manual', gatewayRef: 'proof_p1', method: 'instapay', status: 'succeeded' }),
+    }));
+  });
+
+  it('treats a repeated gatewayRef as a duplicate', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', status: 'Active', rentalFee: 5000, totalPaid: 5000, balance: 0, latePenalty: 0, damageFee: 0,
+    });
+    prisma.payment.findUnique.mockResolvedValueOnce({ id: 'pay-existing' });
+    const result = await applyPaymentToTransaction({
+      transactionId: 'tx-1', amount: 5000, gateway: 'manual', gatewayRef: 'proof_p1', method: 'instapay',
+    });
+    expect(result.duplicate).toBe(true);
+  });
+});
+
+describe('recordPayment accepts instapay', () => {
+  it('rejects an unknown method', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', status: 'Active', rentalFee: 5000, totalPaid: 0, latePenalty: 0, damageFee: 0, payments: [],
+    });
+    await expect(recordPayment('tx-1', 'staff-1', 200, 'bitcoin')).rejects.toThrow(/Invalid payment method/);
+  });
+
+  it('accepts instapay', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', status: 'Active', rentalFee: 5000, totalPaid: 0, latePenalty: 0, damageFee: 0, payments: [],
+    });
+    // recordPayment uses the ARRAY form of $transaction — the default mock only
+    // supports the callback form, so resolve it explicitly for this test.
+    (prisma.$transaction as any).mockResolvedValueOnce([
+      { id: 'pay-1', amount: 200, method: 'instapay' },
+      { id: 'tx-1', totalPaid: 200, balance: 4800 },
+    ]);
+    await expect(recordPayment('tx-1', 'staff-1', 200, 'instapay')).resolves.toBeDefined();
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ method: 'instapay' }),
+    }));
   });
 });

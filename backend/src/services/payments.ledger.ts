@@ -26,9 +26,9 @@ export type CreditResult = {
 export async function applyPaymentToTransaction(input: {
   transactionId: string;
   amount: number;
-  gateway: 'paymongo' | 'maya';
+  gateway: 'paymongo' | 'maya' | 'manual';
   gatewayRef: string;
-  method: 'gcash' | 'card' | 'maya';
+  method: 'gcash' | 'card' | 'maya' | 'instapay';
 }): Promise<CreditResult> {
   const outcome = await prisma.$transaction(async (tx) => {
     const current = await tx.transaction.findUnique({ where: { id: input.transactionId } });
