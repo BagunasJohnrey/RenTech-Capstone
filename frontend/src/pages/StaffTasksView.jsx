@@ -7,6 +7,7 @@ import ReleaseItemModal from '../components/ReleaseItemModal';
 import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
 import SmsLogPanel from '../components/SmsLogPanel';
+import PaymentProofsQueue from '../components/PaymentProofsQueue';
 import { isReleased } from '../hooks/useTransactions';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
@@ -626,6 +627,10 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
           </div>
         </div>
+
+        {/* Payments to verify — manual-QR proofs + unpaid manual checkouts.
+            Always visible at the top of the queues; "All clear" is a real state. */}
+        <PaymentProofsQueue role={role} />
 
         {/* Pickup + Overdue — paired action queues (latest 5 each).
             Unknown (digest still pending, list empty) → skeleton cards, never
