@@ -1,8 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets, Tag, Copy, Check, CalendarClock, Sparkle, ScanLine } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
+import PaymentProofModal from '../components/PaymentProofModal';
+import { transactionsService } from '../services/transactions';
+import { normalizeTx } from '../hooks/useTransactions';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
 import { Skeleton, SkeletonList, FeaturedSkeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
@@ -28,6 +31,24 @@ export default function DashboardView({ role, transactions, inventory, transacti
   const kpis = useKpis(role);
   const { qr_codes: qrCodesOn } = useFeatureFlags();
   const [showCleaningQueue, setShowCleaningQueue] = useState(false);
+
+  // My Rentals manual-payment resume. The parent owns the transactions list
+  // (no refetch prop), so a submitted payment proof refreshes through this
+  // local overlay — real server data from the same list endpoint App loads.
+  // The overlay is dropped whenever the parent list changes (it is then
+  // equal-or-newer), so it can never mask a fresh load.
+  const [proofModalTx, setProofModalTx] = useState(null);
+  const [txOverlay, setTxOverlay] = useState(null);
+  useEffect(() => { setTxOverlay(null); }, [transactions]);
+  const refreshBookings = useCallback(async () => {
+    try {
+      const data = await transactionsService.list();
+      const raw = data?.transactions ?? data ?? [];
+      setTxOverlay(new Map(raw.map((t) => [t.id, normalizeTx(t)])));
+    } catch {
+      // Fetch failed — keep showing the parent's rows; a later load catches up.
+    }
+  }, []);
 
   // Live promo codes for the customer "Promotions & Offers" section.
   const [promos, setPromos] = useState([]);
@@ -82,7 +103,10 @@ export default function DashboardView({ role, transactions, inventory, transacti
     const recommended = sortByCategory(prefs.length > 0 && preferred.length > 0 ? preferred : available).slice(0, 4);
     const myRentals = (transactions || [])
       .filter((tx) => tx.status === 'Active' || tx.status === 'Overdue' || tx.status === 'Reserved')
-      .slice(0, 3);
+      .slice(0, 3)
+      // Prefer the fresh server row when the proof overlay has one (payment
+      // proofs just submitted/changed server-side since the parent load).
+      .map((tx) => (txOverlay ? txOverlay.get(tx.id) ?? tx : tx));
     const onSale = available
       .filter((i) => getSaleInfo(i).active)
       .slice(0, 4);
@@ -279,7 +303,13 @@ export default function DashboardView({ role, transactions, inventory, transacti
               <SkeletonList count={3} />
             ) : (
             <div className="space-y-3">
-              {myRentals.map((tx) => (
+              {myRentals.map((tx) => {
+                // Payment-proof state for manual QR checkouts. `paymentProofs`
+                // is customer-payload only — guard before indexing.
+                const proof = Array.isArray(tx.paymentProofs) ? tx.paymentProofs[0] : null;
+                const unpaidManual = !proof || proof.status === 'rejected';
+                const canResume = unpaidManual && (tx.paymentPath === 'manual' || tx.gateway === 'manual' || (!tx.gateway && tx.totalPaid < (tx.downpayment || 0)));
+                return (
                 <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
                     <ShoppingBag size={16} className="text-[#bf4a53]" />
@@ -287,10 +317,28 @@ export default function DashboardView({ role, transactions, inventory, transacti
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-gray-900 truncate">{itemName(tx)}</p>
                     <p className="text-xs text-gray-500 truncate">Due {tx.dueDate ? new Date(tx.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</p>
+                    {proof?.status === 'rejected' && proof.rejectionReason && (
+                      <p className="text-[11px] text-red-500 truncate">{proof.rejectionReason}</p>
+                    )}
+                    {canResume && (
+                      <button onClick={() => setProofModalTx(tx)} className="mt-1 text-xs font-semibold text-[#bf4a53] hover:underline">
+                        Upload payment proof
+                      </button>
+                    )}
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
+                    {proof?.status === 'pending' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Payment under review</span>
+                    ) : proof?.status === 'rejected' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">Payment not verified</span>
+                    ) : canResume ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">Unpaid</span>
+                    ) : null}
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
             )}
           </div>
@@ -298,6 +346,14 @@ export default function DashboardView({ role, transactions, inventory, transacti
 
         {/* End of results */}
         <p className="text-center text-xs text-gray-400 pt-4 pb-2">You've reached the end of your feed</p>
+
+        {proofModalTx && (
+          <PaymentProofModal
+            tx={proofModalTx}
+            onClose={() => setProofModalTx(null)}
+            onSubmitted={refreshBookings}
+          />
+        )}
       </div>
     );
   }
