@@ -59,6 +59,7 @@ model Profile {
   sentByMessages SentSms[]              @relation("SentByMessages")
   emailTokens    EmailToken[]
   importedRecords HistoricalRecord[] @relation("ImportedRecords")
+  reviewedProofs PaymentProof[] @relation("ProofReviewer")
 
   @@map("profiles")
 }
@@ -163,6 +164,9 @@ model Transaction {
   measurements    Json?             @map("measurements")
   gateway          String?          @map("gateway")
   gatewayPaymentId String?          @map("gateway_payment_id")
+  // Which checkout path this booking was created through. 'manual' = static
+  // QR + staff-reviewed proof (drives the awaiting-proof chase list).
+  paymentPath     String?           @map("payment_path")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
@@ -174,6 +178,7 @@ model Transaction {
   promoCode     PromoCode?     @relation(fields: [promoCodeId], references: [id])
   notifications Notification[]
   payments      Payment[]
+  paymentProofs PaymentProof[]
   sentSms       SentSms[]
 
   @@index([itemId, status])
@@ -252,6 +257,32 @@ model Payment {
   @@index([transactionId])
   @@index([createdAt])
   @@map("payments")
+}
+
+// Customer-submitted manual-QR payment evidence (screenshot + reference).
+// Approval is the only event that credits money; it flows through
+// payments.ledger.ts with gatewayRef = 'proof_<id>' so a double-approve is
+// idempotent. Rejection moves nothing and allows a new submission.
+model PaymentProof {
+  id              String    @id @default(uuid())
+  transactionId   String    @map("transaction_id")
+  amount          Float
+  reference       String?
+  channel         String?
+  imagePath       String    @map("image_path")
+  status          String    @default("pending")
+  rejectionReason String?   @map("rejection_reason")
+  reviewedById    String?   @map("reviewed_by_id")
+  reviewedAt      DateTime? @map("reviewed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+  reviewedBy  Profile?    @relation("ProofReviewer", fields: [reviewedById], references: [id])
+
+  @@index([status, createdAt])
+  @@index([transactionId])
+  @@index([reviewedById])
+  @@map("payment_proofs")
 }
 
 model Notification {
