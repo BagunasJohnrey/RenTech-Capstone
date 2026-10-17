@@ -333,6 +333,15 @@ vi.mock('../src/config/database.js', () => {
       create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'pay-new', ...args.data })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
     },
+    paymentProof: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'proof-new', status: 'pending', createdAt: new Date(), ...args.data })),
+      update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     notification: {
       findMany: vi.fn().mockResolvedValue([]),
       findFirst: vi.fn().mockResolvedValue(null),

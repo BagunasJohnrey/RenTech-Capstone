@@ -1,4 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../src/services/storage.service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/storage.service.js')>();
+  return { ...actual, uploadFile: vi.fn() };
+});
+
 import request from 'supertest';
 import express from 'express';
 import routes from '../src/routes/index.js';
@@ -12,7 +18,9 @@ import { applyPaymentToTransaction } from '../src/services/payments.ledger.js';
 import { recordPayment } from '../src/services/transactions.service.js';
 
 const app = express();
-app.use(express.json());
+// Mirror the production body limit (index.ts, 25mb) so the 5MB decoded proof
+// cap is exercised by the service, not rejected by body-parser first.
+app.use(express.json({ limit: '25mb' }));
 app.use('/api', routes);
 app.use(errorHandler);
 
@@ -163,5 +171,102 @@ describe('recordPayment route accepts instapay', () => {
     expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ method: 'instapay' }),
     }));
+  });
+});
+
+const proofBody = {
+  data: Buffer.from('fake-image-bytes').toString('base64'),
+  contentType: 'image/jpeg',
+  reference: '000123456789',
+  channel: 'gcash-1',
+};
+
+// customer-token resolves to the Profile whose id is 'customer-id-111'
+// (see tests/setup.ts) — req.user.id is the profile id, not the auth id.
+const manualTx = {
+  id: 'tx-1', txNumber: 1001, status: 'Active', customerId: 'customer-id-111',
+  rentalFee: 5000, downpayment: 200, totalPaid: 0, balance: 5000, gateway: null, paymentPath: null,
+  item: { name: 'Barong' }, customer: { name: 'Ana' },
+};
+
+describe('POST /api/bookings/:id/payment-proof', () => {
+  it('uploads, stores, marks paymentPath, and alerts staff+admin', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { uploadFile } = await import('../src/services/storage.service.js');
+    (uploadFile as any).mockResolvedValueOnce({ path: 'rental/tx-1/proof-1.webp', thumbPath: null, public: false });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx });
+    prisma.paymentProof.findFirst.mockResolvedValueOnce(null);
+    prisma.profile.findMany.mockResolvedValueOnce([{ id: 'staff-1' }, { id: 'admin-1' }]);
+
+    const res = await request(app)
+      .post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token')
+      .send(proofBody);
+
+    expect(res.status).toBe(201);
+    expect(res.body.proof).toMatchObject({ status: 'pending', amount: 200, reference: '000123456789' });
+    expect(prisma.paymentProof.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ transactionId: 'tx-1', amount: 200, imagePath: 'rental/tx-1/proof-1.webp' }),
+    }));
+    expect(prisma.transaction.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'tx-1' }, data: { paymentPath: 'manual' },
+    }));
+    expect(prisma.notification.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.arrayContaining([expect.objectContaining({ profileId: 'staff-1', type: 'payment_proof' })]),
+    }));
+  });
+
+  it('403s another customer\'s booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx, customerId: 'someone-else' });
+    const res = await request(app).post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token').send(proofBody);
+    expect(res.status).toBe(403);
+    expect(prisma.paymentProof.create).not.toHaveBeenCalled();
+  });
+
+  it('400s a cancelled booking', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx, status: 'Cancelled' });
+    const res = await request(app).post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token').send(proofBody);
+    expect(res.status).toBe(400);
+  });
+
+  it('400s when the downpayment is already settled', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx, totalPaid: 200 });
+    const res = await request(app).post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token').send(proofBody);
+    expect(res.status).toBe(400);
+  });
+
+  it('400s a booking with an active gateway charge', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx, gateway: 'maya' });
+    const res = await request(app).post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token').send(proofBody);
+    expect(res.status).toBe(400);
+  });
+
+  it('409s while a proof is already pending', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx });
+    prisma.paymentProof.findFirst.mockResolvedValueOnce({ id: 'proof-live', status: 'pending' });
+    const res = await request(app).post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token').send(proofBody);
+    expect(res.status).toBe(409);
+  });
+
+  it('400s an oversize screenshot before uploading', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { uploadFile } = await import('../src/services/storage.service.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx });
+    prisma.paymentProof.findFirst.mockResolvedValueOnce(null);
+    const big = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64');
+    const res = await request(app).post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token').send({ ...proofBody, data: big });
+    expect(res.status).toBe(400);
+    expect(uploadFile).not.toHaveBeenCalled();
   });
 });

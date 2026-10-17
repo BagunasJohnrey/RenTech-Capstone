@@ -19,6 +19,7 @@ export const createBookingSchema = z.object({
     promoCode: z.string().optional(),
     size: z.string().optional(),
     measurements: z.record(z.any()).optional(),
+    paymentPath: z.enum(['manual']).optional(),
   }),
 });
 
@@ -52,7 +53,7 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
     // SECURITY: the rental price is NEVER taken from the client. It is derived
     // server-side from the item (sale-aware) in transactions.service.createRental;
     // only an optional promo code is accepted, and it is resolved server-side.
-    const { itemId, rentalDate, dueDate, downpayment, notes, promoCode, size, measurements } = req.body;
+    const { itemId, rentalDate, dueDate, downpayment, notes, promoCode, size, measurements, paymentPath } = req.body;
 
     const tx = await transactionService.createRental({
       customerId: req.user.id,
@@ -64,6 +65,7 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
       promoCode,
       size,
       measurements,
+      paymentPath,
       requireMinimumDownpayment: true, // customers must pay the flat minimum downpayment (default ₱200)
     });
 

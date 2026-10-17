@@ -67,6 +67,7 @@ interface CreateRentalInput {
   // downpayment when the money actually lands (pre-creating a row here would
   // double-count it). The staff controller forces this false for customers.
   downpaymentCash?: boolean;
+  paymentPath?: 'manual';
 }
 
 export async function createRental(data: CreateRentalInput, processedById?: string) {
@@ -248,6 +249,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           // (body sizes that differ from the garment's base size). Staff can
           // override later; manual-size bookings skip this entirely.
           alterationStatus: data.measurements && Object.keys(data.measurements).length > 0 ? 'pending' : null,
+          paymentPath: data.paymentPath === 'manual' ? 'manual' : null,
         },
         include: {
           customer: { select: { id: true, name: true, email: true } },

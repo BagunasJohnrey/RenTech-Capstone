@@ -5,6 +5,7 @@ import { requireRole } from '../middleware/rbac.js';
 import { createRateLimiter } from '../middleware/rateLimiter.js';
 import { Role } from '../types/index.js';
 import * as customerController from '../controllers/customer.controller.js';
+import * as paymentProofsController from '../controllers/paymentProofs.controller.js';
 
 const catalogRouter = Router();
 const bookingRouter = Router();
@@ -15,6 +16,12 @@ catalogRouter.get('/:id', customerController.getCatalogItem);
 
 bookingRouter.use(authMiddleware, requireRole(Role.Customer));
 bookingRouter.post('/', validate(customerController.createBookingSchema), customerController.createBooking);
+bookingRouter.post(
+  '/:id/payment-proof',
+  createRateLimiter(10, 3_600_000),
+  validate(paymentProofsController.submitProofSchema),
+  paymentProofsController.submitProof,
+);
 bookingRouter.get('/', customerController.getBookings);
 bookingRouter.get('/:id', customerController.getBookingDetail);
 
