@@ -478,7 +478,7 @@ export async function listTransactions(params: {
   // than the latest change. Filtered/paginated/customer views bypass the
   // cache and hit the DB directly so they stay exact.
   const isHotPath = params.role !== 'Customer' && !params.status && !params.offset && (params.limit ?? 500) >= 500;
-  const compute = () => listTransactionsUncached(where, params.limit ?? 500, params.offset || 0);
+  const compute = () => listTransactionsUncached(where, params.limit ?? 500, params.offset || 0, params.role === 'Customer');
   const transactions = isHotPath
     ? await cacheOrCompute('transactions:staff:full', compute)
     : await compute();
@@ -486,12 +486,21 @@ export async function listTransactions(params: {
   return { transactions, total: transactions.length };
 }
 
-async function listTransactionsUncached(where: Record<string, unknown>, take: number, skip: number) {
+async function listTransactionsUncached(where: Record<string, unknown>, take: number, skip: number, includeLatestProof = false) {
   return prisma.transaction.findMany({
     where,
     include: {
       customer: { select: { id: true, name: true, phone: true, address: true } },
       item: { select: { id: true, name: true, category: true } },
+      ...(includeLatestProof
+        ? {
+            paymentProofs: {
+              orderBy: { createdAt: 'desc' as const },
+              take: 1,
+              select: { status: true, rejectionReason: true, amount: true, createdAt: true },
+            },
+          }
+        : {}),
     },
     orderBy: { createdAt: 'desc' },
     take,

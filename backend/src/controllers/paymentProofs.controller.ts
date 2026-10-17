@@ -23,3 +23,37 @@ export async function submitProof(req: AuthenticatedRequest, res: Response, next
     next(err);
   }
 }
+
+export const approveProofSchema = z.object({
+  body: z.object({ amount: z.coerce.number().positive().optional() }),
+});
+
+export const rejectProofSchema = z.object({
+  body: z.object({ reason: z.string().min(5).max(300) }),
+});
+
+export async function listProofs(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await paymentProofsService.listProofQueue(Number(req.query.limit) || 50));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function approveProof(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    res.json(await paymentProofsService.approveProof(String(req.params.id), req.user.id, req.body.amount));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function rejectProof(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    res.json(await paymentProofsService.rejectProof(String(req.params.id), req.user.id, req.body.reason));
+  } catch (err) {
+    next(err);
+  }
+}

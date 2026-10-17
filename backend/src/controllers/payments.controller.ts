@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import * as paymongoService from '../services/paymongo.service.js';
 import { prisma } from '../config/database.js';
-import { getBusinessRules, getPaymentGateway } from '../services/settings.service.js';
+import { getBusinessRules, getPaymentGateway, parseManualQrCodes } from '../services/settings.service.js';
 import { env } from '../config/env.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
@@ -53,6 +53,16 @@ export async function createPaymentIntent(req: AuthenticatedRequest, res: Respon
     }
 
     const gateway = await getPaymentGateway();
+
+    if (gateway === 'manual') {
+      const manualRules = await getBusinessRules();
+      return res.json({
+        gateway: 'manual',
+        amount,
+        qrCodes: parseManualQrCodes(manualRules.manual_qr_codes),
+        simulated: false,
+      });
+    }
 
     if (gateway === 'maya') {
       const { createQrPayment } = await import('../services/maya.service.js');

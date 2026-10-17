@@ -1,7 +1,9 @@
 import { prisma } from '../config/database.js';
 import * as storageService from './storage.service.js';
 import { AppError } from '../middleware/errorHandler.js';
-// Task 5 adds: applyPaymentToTransaction, createNotification, createAuditLog
+import { applyPaymentToTransaction } from './payments.ledger.js';
+import { createNotification } from './notifications.service.js';
+import { createAuditLog } from '../utils/audit.js';
 
 export const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 
@@ -86,5 +88,163 @@ export async function submitProof(
     reference: proof.reference ?? null,
     channel: proof.channel ?? null,
     createdAt: proof.createdAt,
+  };
+}
+
+export async function listProofQueue(limit = 50) {
+  const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const [pendingRows, pendingCount, manualTx] = await Promise.all([
+    prisma.paymentProof.findMany({
+      where: { status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+      take,
+      include: {
+        transaction: {
+          select: {
+            id: true, txNumber: true, status: true, downpayment: true, totalPaid: true, balance: true,
+            rentalDate: true, dueDate: true,
+            item: { select: { name: true } },
+            customer: { select: { id: true, name: true, phone: true, address: true } },
+          },
+        },
+      },
+    }),
+    prisma.paymentProof.count({ where: { status: 'pending' } }),
+    prisma.transaction.findMany({
+      where: { paymentPath: 'manual', status: { in: ['Active', 'Reserved'] } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: {
+        item: { select: { name: true } },
+        customer: { select: { id: true, name: true, phone: true } },
+        paymentProofs: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { status: true, rejectionReason: true, createdAt: true },
+        },
+      },
+    }),
+  ]);
+
+  const awaiting = manualTx
+    .filter((t) => t.totalPaid < t.downpayment && t.paymentProofs[0]?.status !== 'pending')
+    .map((t) => ({
+      id: t.id, txNumber: t.txNumber, downpayment: t.downpayment, totalPaid: t.totalPaid,
+      balance: t.balance, rentalDate: t.rentalDate, dueDate: t.dueDate,
+      item: t.item, customer: t.customer, latestProof: t.paymentProofs[0] ?? null,
+    }))
+    .slice(0, take);
+
+  return { pending: pendingRows, awaiting, counts: { pending: pendingCount, awaiting: awaiting.length } };
+}
+
+export async function approveProof(proofId: string, reviewerId: string, amountOverride?: number) {
+  const proof = await prisma.paymentProof.findUnique({
+    where: { id: proofId },
+    include: {
+      transaction: {
+        select: {
+          id: true, txNumber: true, status: true, customerId: true,
+          rentalFee: true, latePenalty: true, damageFee: true, totalPaid: true, downpayment: true,
+          item: { select: { name: true } },
+        },
+      },
+    },
+  });
+  if (!proof) throw new AppError(404, 'Payment proof not found');
+  if (proof.status !== 'pending') throw new AppError(409, 'This proof was already reviewed');
+  const tx = proof.transaction;
+  if (tx.status === 'Cancelled') throw new AppError(400, 'This booking was cancelled');
+
+  const amount = amountOverride ?? proof.amount;
+  const outstanding = Math.max(0, tx.rentalFee + tx.latePenalty + tx.damageFee - tx.totalPaid);
+  if (!(amount > 0)) throw new AppError(400, 'Amount must be greater than 0');
+  if (amount > outstanding) {
+    throw new AppError(400, `Amount exceeds the outstanding balance of ₱${outstanding.toLocaleString()}`);
+  }
+
+  const credit = await applyPaymentToTransaction({
+    transactionId: tx.id,
+    amount,
+    gateway: 'manual',
+    gatewayRef: `proof_${proof.id}`,
+    method: 'instapay',
+  });
+
+  // Conditional reconcile — a racing reject loses cleanly.
+  const updated = await prisma.paymentProof.updateMany({
+    where: { id: proof.id, status: 'pending' },
+    data: { status: 'approved', reviewedById: reviewerId, reviewedAt: new Date() },
+  });
+  if (updated.count === 0) {
+    const fresh = await prisma.paymentProof.findUnique({ where: { id: proof.id } });
+    if (fresh?.status !== 'approved') throw new AppError(409, 'This proof was just reviewed by someone else');
+  }
+
+  await createNotification({
+    profileId: tx.customerId,
+    transactionId: tx.id,
+    type: 'payment_proof_approved',
+    title: 'Payment verified',
+    message: `We verified your payment of ₱${amount.toLocaleString()} for ${tx.item?.name ?? 'your booking'}. Your booking is confirmed.`,
+  });
+
+  await createAuditLog({
+    action: 'payment_proof.approve',
+    entity: 'payment_proof',
+    entityId: proof.id,
+    performedById: reviewerId,
+    newValue: { transactionId: tx.id, amount, gatewayRef: `proof_${proof.id}` },
+  });
+
+  return {
+    proof: {
+      id: proof.id, status: 'approved', amount, reference: proof.reference,
+      channel: proof.channel, createdAt: proof.createdAt,
+    },
+    totalPaid: credit.totalPaid,
+    balance: credit.balance,
+  };
+}
+
+export async function rejectProof(proofId: string, reviewerId: string, reason: string) {
+  const proof = await prisma.paymentProof.findUnique({
+    where: { id: proofId },
+    include: {
+      transaction: {
+        select: { id: true, txNumber: true, customerId: true, item: { select: { name: true } } },
+      },
+    },
+  });
+  if (!proof) throw new AppError(404, 'Payment proof not found');
+  if (proof.status !== 'pending') throw new AppError(409, 'This proof was already reviewed');
+
+  const updated = await prisma.paymentProof.updateMany({
+    where: { id: proof.id, status: 'pending' },
+    data: { status: 'rejected', rejectionReason: reason, reviewedById: reviewerId, reviewedAt: new Date() },
+  });
+  if (updated.count === 0) throw new AppError(409, 'This proof was just reviewed by someone else');
+
+  await createNotification({
+    profileId: proof.transaction.customerId,
+    transactionId: proof.transaction.id,
+    type: 'payment_proof_rejected',
+    title: 'Payment proof needs attention',
+    message: `We couldn't verify your payment for ${proof.transaction.item?.name ?? 'your booking'}: ${reason}. You can upload a new proof from My Rentals.`,
+  });
+
+  await createAuditLog({
+    action: 'payment_proof.reject',
+    entity: 'payment_proof',
+    entityId: proof.id,
+    performedById: reviewerId,
+    newValue: { reason },
+  });
+
+  return {
+    proof: {
+      id: proof.id, status: 'rejected', rejectionReason: reason, amount: proof.amount,
+      reference: proof.reference, channel: proof.channel, createdAt: proof.createdAt,
+    },
   };
 }

@@ -270,3 +270,154 @@ describe('POST /api/bookings/:id/payment-proof', () => {
     expect(uploadFile).not.toHaveBeenCalled();
   });
 });
+
+describe('proof review', () => {
+  const pendingProof = {
+    id: 'proof-1', status: 'pending', amount: 200, reference: 'R1', channel: 'gcash-1',
+    createdAt: new Date(), transaction: {
+      id: 'tx-1', txNumber: 1001, status: 'Active', customerId: 'auth-customer-id',
+      rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 0, downpayment: 200,
+      item: { name: 'Barong' },
+    },
+  };
+
+  it('GET /proofs requires staff or admin', async () => {
+    const res = await request(app).get('/api/payments/proofs').set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /proofs returns pending rows and awaiting bookings', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findMany.mockResolvedValueOnce([pendingProof]);
+    prisma.paymentProof.count.mockResolvedValueOnce(1);
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-9', txNumber: 1009, downpayment: 200, totalPaid: 0, balance: 5000,
+      status: 'Reserved', rentalDate: new Date(), dueDate: new Date(),
+      item: { name: 'Gown' }, customer: { id: 'c1', name: 'Bea', phone: '0917' },
+      paymentProofs: [{ status: 'rejected', rejectionReason: 'Blurry', createdAt: new Date() }],
+    }]);
+    const res = await request(app).get('/api/payments/proofs').set('Authorization', 'Bearer staff-token');
+    expect(res.status).toBe(200);
+    expect(res.body.pending).toHaveLength(1);
+    expect(res.body.awaiting).toHaveLength(1);
+    expect(res.body.counts).toEqual({ pending: 1, awaiting: 1 });
+  });
+
+  it('approve credits through the ledger and reconciles the proof', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findUnique.mockResolvedValueOnce(pendingProof);   // service read
+    prisma.transaction.findUnique.mockResolvedValueOnce({                 // ledger read
+      id: 'tx-1', status: 'Active', rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 0, balance: 5000,
+    });
+    prisma.payment.findUnique.mockResolvedValueOnce(null);
+    const res = await request(app)
+      .post('/api/payments/proofs/proof-1/approve')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ amount: 200 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ totalPaid: 200, balance: 4800 });
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ gateway: 'manual', gatewayRef: 'proof_proof-1', method: 'instapay', amount: 200 }),
+    }));
+    expect(prisma.paymentProof.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'proof-1', status: 'pending' },
+      data: expect.objectContaining({ status: 'approved' }),
+    }));
+  });
+
+  it('approve is idempotent (duplicate ledger result still reconciles)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findUnique.mockResolvedValueOnce(pendingProof);
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', status: 'Active', rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 200, balance: 4800,
+    });
+    prisma.payment.findUnique.mockResolvedValueOnce({ id: 'pay-existing' }); // already credited
+    const res = await request(app)
+      .post('/api/payments/proofs/proof-1/approve')
+      .set('Authorization', 'Bearer admin-token')
+      .send({});
+    expect(res.status).toBe(200);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(prisma.paymentProof.updateMany).toHaveBeenCalled();
+  });
+
+  it('approve 400s an amount above the outstanding balance', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findUnique.mockResolvedValueOnce(pendingProof);
+    const res = await request(app)
+      .post('/api/payments/proofs/proof-1/approve')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ amount: 999999 });
+    expect(res.status).toBe(400);
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it('approve 409s a non-pending proof', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findUnique.mockResolvedValueOnce({ ...pendingProof, status: 'rejected' });
+    const res = await request(app)
+      .post('/api/payments/proofs/proof-1/approve')
+      .set('Authorization', 'Bearer staff-token')
+      .send({});
+    expect(res.status).toBe(409);
+  });
+
+  it('reject stores the reason, notifies the customer, moves no money', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findUnique.mockResolvedValueOnce(pendingProof);
+    const res = await request(app)
+      .post('/api/payments/proofs/proof-1/reject')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ reason: 'Screenshot is blurry' });
+    expect(res.status).toBe(200);
+    expect(prisma.paymentProof.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'rejected', rejectionReason: 'Screenshot is blurry' }),
+    }));
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+    expect(prisma.notification.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: 'payment_proof_rejected' }),
+    }));
+  });
+
+  it('reject 400s a too-short reason (zod)', async () => {
+    const res = await request(app)
+      .post('/api/payments/proofs/proof-1/reject')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ reason: 'no' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/payments/create-intent manual branch', () => {
+  it('returns qrCodes without charging or writing a gateway id', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findMany
+      .mockResolvedValueOnce([{ key: 'min_downpayment', value: '200' }])
+      .mockResolvedValueOnce([{ key: 'payment_gateway', value: 'manual' }])
+      .mockResolvedValueOnce([{ key: 'manual_qr_codes', value: JSON.stringify([{ id: 'gcash-1', label: 'GCash', accountName: 'Mylene S.', imagePath: 'qrcodes/gcash-1.webp' }]) }]);
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', status: 'Active', customerId: 'customer-id-111', downpayment: 200, totalPaid: 0,
+      rentalFee: 5000, latePenalty: 0, damageFee: 0, balance: 5000, payments: [],
+    });
+    const res = await request(app)
+      .post('/api/payments/create-intent')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ transactionId: 'tx-1', amount: 200 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ gateway: 'manual', amount: 200, simulated: false });
+    expect(res.body.qrCodes).toHaveLength(1);
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('customer booking list carries the latest proof', () => {
+  it('includes one paymentProof on the customer path', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([]);
+    const res = await request(app).get('/api/bookings').set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(200);
+    expect(prisma.transaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({ paymentProofs: expect.anything() }),
+    }));
+  });
+});
