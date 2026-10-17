@@ -772,6 +772,14 @@ function route(method, path, body) {
       t.balance = Math.max(0, (t.rentalFee ?? 0) - t.totalPaid);
       t.paymentProofs = [{ status: 'approved', rejectionReason: null, amount, createdAt: proof.createdAt }];
     }
+    // Mirror the backend's customer notification (POST /payments/proofs/:id/approve
+    // -> createNotification type payment_proof_approved) so the demo shows it too.
+    notifications.unshift({
+      id: 'n-proof-' + Date.now(), type: 'payment_proof_approved',
+      title: 'Payment verified',
+      message: `We verified your payment for ${t?.item?.name ?? 'your booking'}. Your booking is confirmed.`,
+      transactionId: t?.id ?? null, isRead: false, createdAt: new Date().toISOString(),
+    });
     return { value: { proof: clone(proof), totalPaid: t?.totalPaid ?? amount, balance: t?.balance ?? 0 } };
   }
   if (P(/^\/payments\/proofs\/([^/]+)\/reject$/) && method === 'POST') {
@@ -785,6 +793,13 @@ function route(method, path, body) {
     if (t) {
       t.paymentProofs = [{ status: 'rejected', rejectionReason: proof.rejectionReason, amount: proof.amount, createdAt: proof.createdAt }];
     }
+    // Mirror the backend's customer notification on reject.
+    notifications.unshift({
+      id: 'n-proof-' + Date.now(), type: 'payment_proof_rejected',
+      title: 'Payment proof needs attention',
+      message: `We couldn't verify your payment for ${t?.item?.name ?? 'your booking'}: ${proof.rejectionReason}. You can upload a new proof from My Rentals.`,
+      transactionId: t?.id ?? null, isRead: false, createdAt: new Date().toISOString(),
+    });
     return { value: { proof: clone(proof) } };
   }
   if (P(/^\/payments\/transaction\/(.+)\/status$/)) {

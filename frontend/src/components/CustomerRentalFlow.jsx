@@ -93,6 +93,7 @@ export default function CustomerRentalFlow({
   onClose,
   onSubmitBooking,
   onCancelBooking,
+  onProofSubmitted,
   inline,
 }) {
   const [step, setStep] = useState(() => (preselectedItem ? 1 : 0));
@@ -558,13 +559,16 @@ export default function CustomerRentalFlow({
           if (!manualTx) setManualTx(created);
           try {
             const data = await downscaleToJpeg(proofFile, 1280, 0.85);
-            if (!data) throw new Error('Could not read that image — try another screenshot.');
-            await submitProof(created.id, {
+            if (!data) throw new Error('Could not read that image �?" try another screenshot.');
+            const submitted = await submitProof(created.id, {
               data,
               contentType: 'image/jpeg',
               reference: proofReference.trim() || undefined,
               channel: proofChannel || undefined,
             });
+            // Let the parent fold the pending proof into its transactions list
+            // so Home shows "Payment under review" without a reload.
+            onProofSubmitted?.(created, submitted?.proof);
           } catch (proofErr) {
             // Booking stays (no rollback like the gateway path) — the customer
             // retries here or resumes from My Rentals.

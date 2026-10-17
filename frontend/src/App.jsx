@@ -651,6 +651,22 @@ export default function RentechApp() {
     return created;
   };
 
+  // Manual-QR proof submitted inside the booking flow: fold the pending proof
+  // into the parent transactions list so Home shows "Payment under review"
+  // immediately (the flow no longer needs a reload / resume round-trip).
+  const handleProofSubmitted = (created, proof) => {
+    if (!created?.id) return;
+    const entry = proof ?? {
+      status: 'pending', rejectionReason: null,
+      amount: created.downpayment ?? 0, createdAt: new Date().toISOString(),
+    };
+    setTransactions((prev) => prev.map((t) => (
+      t.id === created.id
+        ? normalizeTx({ ...t, paymentPath: 'manual', paymentProofs: [entry] })
+        : t
+    )));
+  };
+
   const handleAddStaff = async (newStaff) => {
     const created = await addStaff(newStaff);
     toastSuccess('Staff account created — share the one-time password');
@@ -1147,6 +1163,7 @@ export default function RentechApp() {
             onClose={() => setCustomerRental(null)}
             onSubmitBooking={handleSubmitBooking}
             onCancelBooking={handleCancelBooking}
+            onProofSubmitted={handleProofSubmitted}
           />
         </Suspense>
         )}
