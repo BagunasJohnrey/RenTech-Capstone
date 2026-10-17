@@ -13,6 +13,7 @@ import { useLockScroll } from '../hooks/useLockScroll';
 import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useToast } from './Toast';
 import SwapItemModal from './SwapItemModal';
+import ManualQrPanel from './ManualQrPanel';
 
 export default function ReleaseItemModal({ transaction: initialTx, onClose, onReleased, onSwapItem }) {
   // Local copy: an in-sheet item swap replaces the garment (and fee) without
@@ -106,6 +107,8 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   // Online — Cash tab is cash-only.
   const [payChannel, setPayChannel] = useState('cash');
   const [gateway, setGateway] = useState('paymongo');
+  const [manualQrCodes, setManualQrCodes] = useState([]);
+  const [manualChannel, setManualChannel] = useState('');
   const [gatewayLoading, setGatewayLoading] = useState(false);
   const [gatewayIntent, setGatewayIntent] = useState(null);
   const [gatewayQrUrl, setGatewayQrUrl] = useState(null);
@@ -127,12 +130,24 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   }, [outstandingBalance]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which gateway online charges use (admin Settings → payment_gateway).
+  // 'manual' shows the boutique's own QR for the staff to display at the counter.
   useEffect(() => {
     api.get('/settings/rental-defaults')
-      .then((d) => { if (d?.payment_gateway === 'maya') setGateway('maya'); else setGateway('paymongo'); })
+      .then((d) => {
+        if (d?.payment_gateway === 'maya') setGateway('maya');
+        else if (d?.payment_gateway === 'manual') setGateway('manual');
+        else setGateway('paymongo');
+        const codes = Array.isArray(d?.manual_qr_codes) ? d.manual_qr_codes : [];
+        setManualQrCodes(codes);
+        if (codes[0]) setManualChannel(codes[0].id);
+      })
       .catch(() => {});
     return () => { pollStopRef.current = true; };
   }, []);
+
+  // Channel label for the manual-transfer note (falls back to the first QR).
+  const manualChannelLabel = manualQrCodes.find((q) => q.id === manualChannel)?.label
+    || manualQrCodes[0]?.label || 'InstaPay';
 
   useEffect(() => () => { if (photoUrl) URL.revokeObjectURL(photoUrl); }, [photoUrl]);
 
@@ -214,6 +229,30 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
       await pollGatewayStatus(Number(tx.totalPaid ?? 0) || 0, outstandingBalance);
     } catch (err) {
       setPayError(err?.message || 'Could not start the online payment.');
+    } finally {
+      setGatewayLoading(false);
+    }
+  };
+
+  // Manual gateway: the customer pays the boutique's own QR, the staff member
+  // verifies it in person and records the full outstanding as an instapay
+  // payment through the same cash record path. Release stays gated on ₱0.
+  const handleManualRecord = async () => {
+    setPayError('');
+    if (outstandingBalance <= 0) { setPayError('Nothing left to collect.'); return; }
+    setGatewayLoading(true);
+    try {
+      const res = await api.post(`/transactions/${tx.id}/payments`, {
+        amount: outstandingBalance,
+        method: 'instapay',
+        notes: `${manualChannelLabel} transfer — verified in person`,
+      });
+      setTx((prev) => ({ ...prev, totalPaid: res.totalPaid, balance: res.balance }));
+      // Balance is now ₱0 — drop the record-payment flag so the release
+      // validation doesn't re-check the (stale) cash amount field.
+      setRecordPayment(false);
+    } catch (err) {
+      setPayError(err?.message || 'Could not record the payment.');
     } finally {
       setGatewayLoading(false);
     }
@@ -438,7 +477,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                   onClick={() => { setPayChannel('online'); setPayError(''); }}
                   className={`py-2 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
                 >
-                  {gateway === 'maya' ? <QrCode size={12} /> : <CreditCard size={12} />} Online
+                  {gateway === 'paymongo' ? <CreditCard size={12} /> : <QrCode size={12} />} Online
                 </button>
               </div>
               {payChannel === 'cash' ? (
@@ -458,6 +497,24 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 </div>
               </div>
               </>
+              ) : gateway === 'manual' ? (
+              <div className="space-y-3">
+                <ManualQrPanel
+                  qrCodes={manualQrCodes}
+                  channel={manualChannel}
+                  onChannelChange={setManualChannel}
+                  note="Verify the transfer in your payment app before recording it."
+                />
+                <button
+                  type="button"
+                  onClick={handleManualRecord}
+                  disabled={gatewayLoading || manualQrCodes.length === 0}
+                  className="w-full py-2.5 rounded-2xl font-bold text-xs bg-[#bf4a53] text-white hover:bg-[#a83d46] disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Banknote size={14} />
+                  {gatewayLoading ? 'Recording…' : 'Customer has paid — record payment'}
+                </button>
+              </div>
               ) : (
               <>
               <div className="bg-blue-50/70 border border-blue-100 rounded-2xl p-3 text-xs text-gray-600">

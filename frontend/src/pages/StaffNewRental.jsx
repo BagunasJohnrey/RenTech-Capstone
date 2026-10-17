@@ -10,6 +10,7 @@ import CollapsibleSection from '../components/CollapsibleSection';
 import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
 import BottomSheet from '../components/BottomSheet';
+import ManualQrPanel from '../components/ManualQrPanel';
 import { inventoryService } from '../services/inventory';
 import { promoService } from '../services/promo';
 import { promoDiscountLabel } from '../utils/promoLabel';
@@ -69,15 +70,26 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const [returnDays, setReturnDays] = useState(1);
   const [minDownpayment, setMinDownpayment] = useState(200);
   const [gateway, setGateway] = useState('paymongo');
+  const [manualQrCodes, setManualQrCodes] = useState([]);
+  const [manualChannel, setManualChannel] = useState('');
   useEffect(() => {
     api.get('/settings/rental-defaults')
       .then((d) => {
         if (d?.return_days_after_event) setReturnDays(d.return_days_after_event);
         if (d?.min_downpayment) setMinDownpayment(d.min_downpayment);
-        if (d?.payment_gateway === 'maya') setGateway('maya'); else setGateway('paymongo');
+        if (d?.payment_gateway === 'maya') setGateway('maya');
+        else if (d?.payment_gateway === 'manual') setGateway('manual');
+        else setGateway('paymongo');
+        const codes = Array.isArray(d?.manual_qr_codes) ? d.manual_qr_codes : [];
+        setManualQrCodes(codes);
+        if (codes[0]) setManualChannel(codes[0].id);
       })
       .catch(() => {});
   }, []);
+
+  // Channel label for the manual-transfer note (falls back to the first QR).
+  const manualChannelLabel = manualQrCodes.find((q) => q.id === manualChannel)?.label
+    || manualQrCodes[0]?.label || 'InstaPay';
 
   // Existing bookings for the selected item (active/overdue/returned) => unavailable dates,
   // including the 1-day cleaning window after a return. Sourced from the backend so it
@@ -529,11 +541,53 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       }
       // Online collects the downpayment through the gateway right after the
       // booking is created; cash just records it with the booking.
-      if (payChannel === 'online') submitBookingOnline();
-      else submitBooking();
+      // Manual gateway collects the downpayment at the counter: the booking is
+      // created, then staff record the verified InstaPay transfer. Cash records
+      // it with the booking; a real gateway charges it after creation.
+      if (payChannel === 'online') {
+        if (gateway === 'manual') submitBookingManual();
+        else submitBookingOnline();
+      } else submitBooking();
       return;
     }
     setStep(s => s + 1);
+  };
+
+  // Manual collection: create the booking, then record the verified InstaPay
+  // transfer as the downpayment through the same record path the counter uses.
+  // No gateway intent, no polling — the staff member verified it in person. On
+  // a failed record the booking still stands and the balance falls due at pickup.
+  const submitBookingManual = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setCollectError('');
+    try {
+      const created = await createBookingRecord();
+      const amt = Number(totals.downpayment) || 0;
+      if (amt > 0) {
+        try {
+          const res = await api.post(`/transactions/${created.id}/payments`, {
+            amount: amt,
+            method: 'instapay',
+            notes: `${manualChannelLabel} transfer — verified in person`,
+          });
+          setCreatedTx({ ...created, totalPaid: res.totalPaid, balance: res.balance });
+        } catch (recErr) {
+          setCreatedTx(created);
+          setCollectError(recErr?.message || 'Booking saved — record the downpayment at pickup.');
+        }
+      } else {
+        setCreatedTx(created);
+      }
+      setSubmitting(false);
+      submittingRef.current = false;
+      setStep(4);
+    } catch (err) {
+      setError(err?.message || 'Failed to create rental. Please try again.');
+      setSubmitting(false);
+      submittingRef.current = false;
+    }
   };
 
   // Online collection: the booking is created first (an intent needs a
@@ -1208,13 +1262,25 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     onClick={() => setPayChannel('online')}
                     className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
                   >
-                    {gateway === 'maya' ? <QrCode size={14} /> : <CreditCard size={14} />} Online
+                    {gateway === 'paymongo' ? <CreditCard size={14} /> : <QrCode size={14} />} Online
                   </button>
                 </div>
                 {payChannel === 'cash' ? (
                   <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 rounded-xl px-3.5 py-3">
                     Collect <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} in cash</span> at the counter — it is recorded with the booking. The remaining ₱{totals.balance.toLocaleString()} is settled at pickup.
                   </p>
+                ) : gateway === 'manual' ? (
+                  <div className="space-y-3">
+                    <p className="text-xs text-gray-500 leading-relaxed bg-blue-50/70 border border-blue-100 rounded-xl px-3.5 py-3">
+                      Collect <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via InstaPay QR</span> — show the QR to the customer, then Confirm to record the verified payment.
+                    </p>
+                    <ManualQrPanel
+                      qrCodes={manualQrCodes}
+                      channel={manualChannel}
+                      onChannelChange={setManualChannel}
+                      note="Verify the transfer in your payment app before confirming."
+                    />
+                  </div>
                 ) : (
                   <div className="space-y-3">
                     <p className="text-xs text-gray-500 leading-relaxed bg-blue-50/70 border border-blue-100 rounded-xl px-3.5 py-3">
@@ -1392,7 +1458,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors shadow flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {submitting || collecting ? <Loader2 size={16} className="animate-spin" /> : null}
-                {step === 3 ? (collecting ? 'Collecting…' : submitting ? 'Processing…' : payChannel === 'online' ? 'Create & Collect Online' : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
+                {step === 3 ? (collecting ? 'Collecting…' : submitting ? 'Processing…' : payChannel === 'online' ? (gateway === 'manual' ? 'Create & Record Payment' : 'Create & Collect Online') : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
               </button>
             </>
           )}

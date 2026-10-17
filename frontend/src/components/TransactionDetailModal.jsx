@@ -14,6 +14,7 @@ import { TX_STATUS_PILLS } from '../utils/statusColors';
 import { api } from '../utils/api';
 import { paymentsService } from '../services/payments';
 import { usePaymongo } from '../hooks/usePaymongo';
+import ManualQrPanel from './ManualQrPanel';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -82,6 +83,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // online = real gateway charge (PayMongo drop-in / Maya QR) on the staff device.
   const [payChannel, setPayChannel] = useState('counter');
   const [gateway, setGateway] = useState('paymongo');
+  const [manualQrCodes, setManualQrCodes] = useState([]);
+  const [manualChannel, setManualChannel] = useState('');
   const [gatewayLoading, setGatewayLoading] = useState(false);
   const [gatewayIntent, setGatewayIntent] = useState(null);
   const [gatewayQrUrl, setGatewayQrUrl] = useState(null);
@@ -131,8 +134,16 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     // Prefill the full outstanding so Record ₱X is one tap.
     if (!payAmount && tx?.balance > 0) setPayAmount(String(Math.max(0, tx.balance)));
     // Which gateway new charges use (admin Settings → payment_gateway).
+    // 'manual' shows the boutique's own QR for the counter staff to display.
     api.get('/settings/rental-defaults')
-      .then((d) => { if (d?.payment_gateway === 'maya') setGateway('maya'); else setGateway('paymongo'); })
+      .then((d) => {
+        if (d?.payment_gateway === 'maya') setGateway('maya');
+        else if (d?.payment_gateway === 'manual') setGateway('manual');
+        else setGateway('paymongo');
+        const codes = Array.isArray(d?.manual_qr_codes) ? d.manual_qr_codes : [];
+        setManualQrCodes(codes);
+        if (codes[0]) setManualChannel(codes[0].id);
+      })
       .catch(() => {});
     setShowPayModal(true);
   };
@@ -283,6 +294,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const paidSoFar = Number(tx.totalPaid ?? 0) || 0;
   const paidPct = rentalTotal > 0 ? Math.min(100, Math.round((paidSoFar / rentalTotal) * 100)) : 0;
   const outstandingBalance = Math.max(0, tx.balance ?? 0);
+  // Channel label for the manual-transfer note (falls back to the first QR).
+  const manualChannelLabel = manualQrCodes.find((q) => q.id === manualChannel)?.label
+    || manualQrCodes[0]?.label || 'InstaPay';
   // Returned stays payable (damage fee settled post-return); only Cancelled
   // is terminal. Return itself requires a zero balance (backend enforces too).
   const canRecordPayment = (role === 'Admin' || role === 'Staff')
@@ -305,6 +319,40 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       const res = await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: 'cash', notes: payNotes || undefined });
       // Payments post outside the transactions hook — drop the cached full
       // record so the next open re-reads instead of serving stale totals.
+      invalidateTxCache(tx.id);
+      setTx(prev => ({
+        ...prev,
+        totalPaid: res.totalPaid,
+        balance: res.balance,
+        payments: [...(prev.payments || []), res.payment],
+      }));
+      setPaySuccess(true);
+      setTimeout(() => {
+        setPayClosing(true);
+        setTimeout(() => { setShowPayModal(false); setPayClosing(false); setPaySuccess(false); setPayAmount(''); setPayNotes(''); }, 150);
+      }, 1200);
+    } catch (err) {
+      setPayError(err?.message || 'Failed to record payment');
+    } finally {
+      setPayLoading(false);
+    }
+  };
+
+  // Manual gateway: the customer pays the boutique's own QR; the staff member
+  // verifies it in person then records it here as an instapay payment. Same
+  // record path/merge as the counter cash flow — the method/notes differ.
+  const handleManualRecord = async () => {
+    setPayError('');
+    const amt = Number(payAmount);
+    if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
+    if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
+    setPayLoading(true);
+    try {
+      const res = await api.post(`/transactions/${tx.id}/payments`, {
+        amount: amt,
+        method: 'instapay',
+        notes: `${manualChannelLabel} transfer — verified in person`,
+      });
       invalidateTxCache(tx.id);
       setTx(prev => ({
         ...prev,
@@ -850,7 +898,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   <Banknote size={24} className="text-green-600" />
                 </div>
                 <p className="font-bold text-lg text-gray-900">Payment Recorded</p>
-                <p className="text-sm text-gray-500 mt-1">₱{Number(payAmount).toLocaleString()} via {payChannel === 'online' ? (gateway === 'maya' ? 'Maya' : 'PayMongo') : 'cash'}</p>
+                <p className="text-sm text-gray-500 mt-1">₱{Number(payAmount).toLocaleString()} via {payChannel === 'online' ? (gateway === 'maya' ? 'Maya' : gateway === 'manual' ? manualChannelLabel : 'PayMongo') : 'cash'}</p>
               </div>
             ) : (
               <>
@@ -884,7 +932,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                     onClick={() => { setPayChannel('online'); setPayError(''); }}
                     className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
                   >
-                    {gateway === 'maya' ? <QrCode size={14} /> : <CreditCard size={14} />} Online
+                    {gateway === 'paymongo' ? <CreditCard size={14} /> : <QrCode size={14} />} Online
                   </button>
                 </div>
 
@@ -930,6 +978,23 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {payLoading ? 'Recording...' : `Record ₱${Number(payAmount || 0).toLocaleString()}`}
+                </button>
+                </>
+                ) : gateway === 'manual' ? (
+                <>
+                <ManualQrPanel
+                  qrCodes={manualQrCodes}
+                  channel={manualChannel}
+                  onChannelChange={setManualChannel}
+                  note="Verify the transfer in your payment app before recording it."
+                />
+                {payError && <p className="text-xs text-red-500 font-medium">{payError}</p>}
+                <button
+                  onClick={handleManualRecord}
+                  disabled={payLoading || manualQrCodes.length === 0}
+                  className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {payLoading ? 'Recording...' : 'Customer has paid — record payment'}
                 </button>
                 </>
                 ) : (
