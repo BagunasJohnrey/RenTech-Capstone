@@ -641,6 +641,9 @@ export default function RentechApp() {
       promoCode: bookingData.promoCode || undefined,
       size: bookingData.size || undefined,
       measurements: bookingData.measurements || undefined,
+      // Manual QR checkout marker — drives the staff "awaiting proof" chase
+      // list. Without this passthrough the field never leaves the client.
+      paymentPath: bookingData.paymentPath || undefined,
     });
     setTransactions((prev) => [normalizeTx(created), ...prev]);
     if (created.itemId) markItemStatus(created.itemId, 'Active'); // FIX C
