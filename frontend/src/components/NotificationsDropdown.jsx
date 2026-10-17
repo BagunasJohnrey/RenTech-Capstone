@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Bell, ShoppingBag, CalendarClock, Clock, CheckCircle2,
   AlertTriangle, Smartphone, MessageCircle, XCircle, X, Circle, Trash2, CheckCheck, Inbox, FileText,
+  ClipboardCheck, ShieldCheck, ShieldAlert,
 } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { Skeleton } from '../components/Skeleton';
@@ -22,6 +23,9 @@ export const TYPE_CONFIG = {
   reminder: { icon: Smartphone, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Reminder' },
   customer_message: { icon: MessageCircle, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Customer Message' },
   ai_report: { icon: FileText, iconBg: 'bg-violet-50', iconColor: 'text-violet-600', chip: 'Report' },
+  payment_proof: { icon: ClipboardCheck, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Payment Proof' },
+  payment_proof_approved: { icon: ShieldCheck, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500', chip: 'Payment Verified' },
+  payment_proof_rejected: { icon: ShieldAlert, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Payment Issue' },
   default: { icon: Bell, iconBg: 'bg-gray-100', iconColor: 'text-gray-500', chip: 'Notification' },
 };
 
@@ -77,7 +81,7 @@ export const targetTabForNotification = (type, role) => {
     if (role === 'Staff') return 'Tasks';
     return 'History';
   }
-  if (role === 'Staff' && ['new_booking', 'due_today', 'overdue', 'late_return', 'no_show', 'reminder'].includes(type)) {
+  if (role === 'Staff' && ['new_booking', 'due_today', 'overdue', 'late_return', 'no_show', 'reminder', 'payment_proof'].includes(type)) {
     return 'Tasks';
   }
   if (!type || type === 'default') return role === 'Customer' ? 'Home' : 'Dashboard';

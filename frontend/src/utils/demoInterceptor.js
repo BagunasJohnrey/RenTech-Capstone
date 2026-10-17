@@ -74,6 +74,8 @@ const tx = (id, itemId, customerId, status, startOff, dueOff, fee, paid) => {
     rentalDate: day(startOff), dueDate: day(dueOff),
     date: day(startOff),
     rentalFee: fee, downpayment: Math.round(fee * 0.5), totalPaid: paid,
+    balance: Math.max(0, fee - paid),
+    paymentPath: null, paymentProofs: [],
     latePenalty: 0, damageFee: 0,
     notes: '', size: item?.size ?? null,
     item: item ? { id: item.id, name: item.name, category: item.category, image: item.image, price: item.price } : null,
@@ -88,10 +90,33 @@ let transactions = [
   tx('33333333-3333-4333-8333-333333333333', 1, 'demo-customer-profile', 'Returned', -10, -6, 3500, 3500),
   tx('44444444-4444-4444-8444-444444444444', 6, 'c-maria', 'Reserved', 1, 4, 3800, 0),
   tx('55555555-5555-4555-8555-555555555555', 8, 'demo-customer-profile', 'Active', -1, 3, 2600, 1300),
+  // Manual-QR booking for the demo customer: unpaid with a rejected proof, so
+  // the My Rentals resume flow and the "Awaiting proof" queue tab are demo-able.
+  tx('66666666-6666-4666-8666-666666666666', 4, 'demo-customer-profile', 'Reserved', 1, 4, 2000, 0),
 ];
 // One picked-up rental carries handover photo proof, so the demo exercises
 // the "Released" transaction state like the real app does.
 transactions.find((t) => t.itemId === 8).releasePhoto = 'demo/release.jpg';
+
+// Manual-QR payment proofs (demo): the in-memory review queue. The seeded
+// pending proof belongs to Maria's booking (4444); the rejected one belongs to
+// the demo customer's booking (6666), which the awaiting tab lists.
+const DEMO_QR_CODES = [{ id: 'demo-qr-1', label: 'GCash', accountName: 'Mylene S.', imagePath: '' }];
+const DEMO_PAYMENT_GATEWAY = 'manual';
+
+let paymentProofs = [
+  { id: 'proof-demo-1', transactionId: '44444444-4444-4444-8444-444444444444', amount: 1900, reference: 'GCASH-889122', channel: 'demo-qr-1', imagePath: '', status: 'pending', rejectionReason: null, reviewedAt: null, createdAt: new Date(Date.now() - 25 * 60 * 1000).toISOString() },
+  { id: 'proof-demo-2', transactionId: '66666666-6666-4666-8666-666666666666', amount: 1000, reference: 'BPI-447199', channel: 'demo-qr-1', imagePath: '', status: 'rejected', rejectionReason: 'Screenshot was blurry — the reference number was unreadable.', reviewedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString() },
+];
+// Mirror each proof onto its booking (latest only, like the customer list) and
+// flag the booking as a manual checkout.
+for (const p of paymentProofs) {
+  const t = transactions.find((x) => x.id === p.transactionId);
+  if (t) {
+    t.paymentPath = 'manual';
+    t.paymentProofs = [{ status: p.status, rejectionReason: p.rejectionReason, amount: p.amount, createdAt: p.createdAt }];
+  }
+}
 
 let notifications = [
   { id: 'n11', type: 'customer_message', title: 'Message from Maria Santos', message: 'Hi! Can I move my fitting to Friday afternoon instead?', transactionId: '44444444-4444-4444-8444-444444444444', isRead: false, createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString() },
@@ -435,9 +460,43 @@ function route(method, path, body) {
     );
     created.rentalDate = body.rentalDate ?? day(0);
     created.dueDate = body.dueDate ?? day(3);
+    // Manual checkouts stay unpaid until staff approve the proof — don't
+    // pre-credit the intended downpayment like the gateway path does.
+    if (body.paymentPath === 'manual') {
+      created.paymentPath = 'manual';
+      created.totalPaid = 0;
+      created.balance = created.rentalFee;
+    }
     transactions.unshift(created);
     if (it) { it.status = 'Rented'; it.effectiveStatus = 'Rented'; }
     return { value: clone(created) };
+  }
+  if (P(/^\/bookings\/([^/]+)\/payment-proof$/) && method === 'POST') {
+    const txId = P(/^\/bookings\/([^/]+)\/payment-proof$/)[1];
+    const t = transactions.find((x) => x.id === txId);
+    if (!t) return { status: 404, error: 'Booking not found (demo)' };
+    if (role === 'Customer' && t.customerId !== 'demo-customer-profile') {
+      return { status: 403, error: 'Not your booking (demo)' };
+    }
+    if (t.status === 'Cancelled') return { status: 400, error: 'This booking was cancelled (demo)' };
+    if ((t.downpayment ?? 0) > 0 && (t.totalPaid ?? 0) >= t.downpayment) {
+      return { status: 400, error: 'The downpayment is already settled for this booking (demo)' };
+    }
+    if (paymentProofs.some((p) => p.transactionId === txId && p.status === 'pending')) {
+      return { status: 409, error: 'A payment proof is already under review (demo)' };
+    }
+    const proof = {
+      id: 'proof-' + Date.now(), transactionId: txId,
+      amount: t.downpayment ?? 0,
+      reference: (body.reference ?? '').trim() || null,
+      channel: body.channel ?? null,
+      imagePath: '', status: 'pending', rejectionReason: null, reviewedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    paymentProofs.unshift(proof);
+    t.paymentPath = 'manual';
+    t.paymentProofs = [{ status: 'pending', rejectionReason: null, amount: proof.amount, createdAt: proof.createdAt }];
+    return { value: { proof: clone(proof) } };
   }
 
   // ---- Transactions ----
@@ -601,7 +660,7 @@ function route(method, path, body) {
   // ---- Settings ----
   if (path === '/settings/flags') return { value: { features: {} } };
   if (path === '/settings/rules') return { value: { minDownpaymentPct: 50, latePenaltyPerDay: 100, overdueEscalationDays: 3, dataRetentionMonths: 12 } };
-  if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false, rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'paymongo', store_name: 'RenTech Boutique', store_contact: '0917 123 4567', store_address: 'Balayan, Batangas' } };
+  if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false, rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: DEMO_PAYMENT_GATEWAY, manual_qr_codes: clone(DEMO_QR_CODES), store_name: 'RenTech Boutique', store_contact: '0917 123 4567', store_address: 'Balayan, Batangas' } };
   if (path === '/settings/sms-templates') return { value: [] };
   if (path === '/settings/integrations-status') return { value: { gemini: { configured: false }, groq: { configured: false }, openrouter: { configured: false }, paymongo: { configured: false }, semaphore: { configured: false } } };
   if (path === '/settings/backups' && method === 'GET') return { value: clone(demoBackups) };
@@ -638,12 +697,76 @@ function route(method, path, body) {
   if (P(/^\/promo-codes\/public/)) return { value: [] };
   if (P(/^\/promo-codes\/validate/)) return { status: 404, error: 'Promo code not found (demo)' };
   if (P(/^\/promo-codes/)) return { value: [] };
-    if (P(/^\/payments\/create-intent/)) return { value: { simulated: true, id: 'demo-intent' } };
-    if (P(/^\/payments\/transaction\/(.+)\/status$/)) {
-      const txId = P(/^\/payments\/transaction\/(.+)\/status$/)[1];
-      return { value: { status: 'succeeded', totalPaid: 2000, balance: 3000, gateway: 'maya', transactionId: txId } };
+  if (P(/^\/payments\/create-intent/)) {
+    if (DEMO_PAYMENT_GATEWAY === 'manual') {
+      return { value: { gateway: 'manual', amount: body.amount ?? 0, qrCodes: clone(DEMO_QR_CODES), simulated: false } };
     }
-    if (P(/^\/payments\/(.+)$/)) return { value: { id: P(/^\/payments\/(.+)$/)[1], status: 'succeeded', simulated: true } };
+    return { value: { simulated: true, id: 'demo-intent' } };
+  }
+  if (P(/^\/payments\/proofs$/) && method === 'GET') {
+    const pending = paymentProofs
+      .filter((p) => p.status === 'pending')
+      .map((p) => {
+        const t = transactions.find((x) => x.id === p.transactionId);
+        return {
+          ...clone(p),
+          transaction: t ? {
+            id: t.id, txNumber: t.txNumber, status: t.status,
+            downpayment: t.downpayment, totalPaid: t.totalPaid,
+            balance: t.balance ?? Math.max(0, (t.rentalFee ?? 0) - (t.totalPaid ?? 0)),
+            rentalDate: t.rentalDate, dueDate: t.dueDate,
+            item: t.item ? { name: t.item.name } : null,
+            customer: t.customer,
+          } : null,
+        };
+      });
+    const awaiting = transactions
+      .filter((t) => t.paymentPath === 'manual' && (t.status === 'Active' || t.status === 'Reserved') && (t.totalPaid ?? 0) < (t.downpayment ?? 0))
+      .filter((t) => !paymentProofs.some((p) => p.transactionId === t.id && p.status === 'pending'))
+      .map((t) => ({
+        id: t.id, txNumber: t.txNumber, downpayment: t.downpayment, totalPaid: t.totalPaid,
+        balance: t.balance ?? Math.max(0, (t.rentalFee ?? 0) - (t.totalPaid ?? 0)),
+        rentalDate: t.rentalDate, dueDate: t.dueDate,
+        item: t.item ? { name: t.item.name } : null,
+        customer: t.customer,
+        latestProof: t.paymentProofs?.[0] ?? null,
+      }));
+    return { value: { pending, awaiting, counts: { pending: pending.length, awaiting: awaiting.length } } };
+  }
+  if (P(/^\/payments\/proofs\/([^/]+)\/approve$/) && method === 'POST') {
+    const proof = paymentProofs.find((p) => p.id === P(/^\/payments\/proofs\/([^/]+)\/approve$/)[1]);
+    if (!proof) return { status: 404, error: 'Payment proof not found (demo)' };
+    if (proof.status !== 'pending') return { status: 409, error: 'This proof was already reviewed (demo)' };
+    const amount = Number(body.amount) > 0 ? Number(body.amount) : proof.amount;
+    const t = transactions.find((x) => x.id === proof.transactionId);
+    proof.status = 'approved';
+    proof.amount = amount;
+    proof.reviewedAt = new Date().toISOString();
+    if (t) {
+      t.totalPaid = (t.totalPaid ?? 0) + amount;
+      t.balance = Math.max(0, (t.rentalFee ?? 0) - t.totalPaid);
+      t.paymentProofs = [{ status: 'approved', rejectionReason: null, amount, createdAt: proof.createdAt }];
+    }
+    return { value: { proof: clone(proof), totalPaid: t?.totalPaid ?? amount, balance: t?.balance ?? 0 } };
+  }
+  if (P(/^\/payments\/proofs\/([^/]+)\/reject$/) && method === 'POST') {
+    const proof = paymentProofs.find((p) => p.id === P(/^\/payments\/proofs\/([^/]+)\/reject$/)[1]);
+    if (!proof) return { status: 404, error: 'Payment proof not found (demo)' };
+    if (proof.status !== 'pending') return { status: 409, error: 'This proof was already reviewed (demo)' };
+    proof.status = 'rejected';
+    proof.rejectionReason = body.reason ?? 'Rejected (demo)';
+    proof.reviewedAt = new Date().toISOString();
+    const t = transactions.find((x) => x.id === proof.transactionId);
+    if (t) {
+      t.paymentProofs = [{ status: 'rejected', rejectionReason: proof.rejectionReason, amount: proof.amount, createdAt: proof.createdAt }];
+    }
+    return { value: { proof: clone(proof) } };
+  }
+  if (P(/^\/payments\/transaction\/(.+)\/status$/)) {
+    const txId = P(/^\/payments\/transaction\/(.+)\/status$/)[1];
+    return { value: { status: 'succeeded', totalPaid: 2000, balance: 3000, gateway: 'maya', transactionId: txId } };
+  }
+  if (P(/^\/payments\/(.+)$/)) return { value: { id: P(/^\/payments\/(.+)$/)[1], status: 'succeeded', simulated: true } };
   if (path === '/ai/chat') {
     return {
       value: {
