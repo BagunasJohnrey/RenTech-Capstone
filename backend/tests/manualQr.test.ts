@@ -388,6 +388,68 @@ describe('proof review', () => {
   });
 });
 
+describe('resubmit after reject', () => {
+  it('accepts a fresh proof (201) and re-alerts staff', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { uploadFile } = await import('../src/services/storage.service.js');
+
+    // 1) staff rejects the first proof.
+    prisma.paymentProof.findUnique.mockResolvedValueOnce({
+      id: 'proof-1', status: 'pending', amount: 200, reference: 'R1', channel: 'gcash-1',
+      createdAt: new Date(), transaction: {
+        id: 'tx-1', txNumber: 1001, status: 'Active', customerId: 'auth-customer-id',
+        rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 0, downpayment: 200,
+        item: { name: 'Barong' },
+      },
+    });
+    const reject = await request(app)
+      .post('/api/payments/proofs/proof-1/reject')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ reason: 'Screenshot is blurry' });
+    expect(reject.status).toBe(200);
+
+    // 2) the customer resubmits — the rejected proof must NOT block a new one
+    // (only a still-pending proof should 409). The 201 also re-fires the direct
+    // staff fan-out, bypassing notifyStaffMembers' dedupe.
+    (uploadFile as any).mockResolvedValueOnce({ path: 'rental/tx-1/proof-2.webp', thumbPath: null, public: false });
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx });
+    prisma.paymentProof.findFirst.mockResolvedValueOnce(null);
+    prisma.profile.findMany.mockResolvedValueOnce([{ id: 'staff-1' }]);
+    const resubmit = await request(app)
+      .post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token')
+      .send(proofBody);
+
+    expect(resubmit.status).toBe(201);
+    expect(resubmit.body.proof).toMatchObject({ status: 'pending' });
+    expect(prisma.paymentProof.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ transactionId: 'tx-1', imagePath: 'rental/tx-1/proof-2.webp' }),
+    }));
+    expect(prisma.notification.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.arrayContaining([expect.objectContaining({ profileId: 'staff-1', type: 'payment_proof' })]),
+    }));
+  });
+});
+
+describe('proof submit rate limit', () => {
+  it('429s after 10 submissions in the window', async () => {
+    // The route carries createRateLimiter(10, 1h) at customer.routes.ts:21.
+    // tests/setup.ts clears every keyed store before each test, so the first
+    // ten requests are allowed and the eleventh is blocked.
+    const send = () => request(app)
+      .post('/api/bookings/tx-1/payment-proof')
+      .set('Authorization', 'Bearer customer-token')
+      .send(proofBody);
+
+    for (let i = 0; i < 10; i++) {
+      const res = await send();
+      expect(res.status).not.toBe(429);
+    }
+    const blocked = await send();
+    expect(blocked.status).toBe(429);
+  });
+});
+
 describe('POST /api/payments/create-intent manual branch', () => {
   it('returns qrCodes without charging or writing a gateway id', async () => {
     const { prisma } = await import('../src/config/database.js');

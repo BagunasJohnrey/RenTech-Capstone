@@ -12,6 +12,7 @@ export function usePaymentProofs(enabled) {
   const key = 'payment-proofs:queue';
   const [data, setData] = useState(() => cache.get(key) ?? null);
   const [loading, setLoading] = useState(!cache.has(key));
+  const [error, setError] = useState(null);
   const fetchedAt = useRef(cache.get(`${key}:at`) ?? 0);
 
   const refresh = useCallback(async () => {
@@ -21,10 +22,15 @@ export function usePaymentProofs(enabled) {
       cache.set(`${key}:at`, Date.now());
       fetchedAt.current = Date.now();
       setData(fresh);
-    } catch {
-      // keep last good data; the poll retries
-    } finally {
+      setError(null);
       setLoading(false);
+    } catch (err) {
+      // Keep the last good queue for the poll to refresh silently. On a FIRST
+      // load there is no last-good data — surface the error and hold the
+      // loading state so a failure is never mistaken for an empty queue
+      // ("All clear" / a 0 badge) on the money-verification surface.
+      setError(err);
+      if (cache.has(key)) setLoading(false);
     }
   }, []);
 
@@ -35,7 +41,7 @@ export function usePaymentProofs(enabled) {
     return () => clearInterval(t);
   }, [enabled, refresh]);
 
-  return { data, loading, refresh };
+  return { data, loading, error, refresh };
 }
 
 export default usePaymentProofs;
