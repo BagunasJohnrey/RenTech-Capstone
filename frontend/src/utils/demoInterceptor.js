@@ -500,6 +500,23 @@ function route(method, path, body) {
   }
 
   // ---- Transactions ----
+  // Counter payment record (cash / instapay) — mirrors POST /transactions/:id/payments
+  // so the staff collect surfaces (counter QR + Record Payment) work in the demo.
+  if (P(/^\/transactions\/[0-9a-f-]+\/payments$/) && method === 'POST') {
+    const t = transactions.find((x) => path.includes(x.id));
+    if (!t) return { status: 404, error: 'Transaction not found (demo)' };
+    const amount = Number(body.amount) || 0;
+    if (amount <= 0) return { status: 400, error: 'Payment amount must be greater than 0' };
+    t.totalPaid = (t.totalPaid ?? 0) + amount;
+    t.balance = Math.max(0, (t.rentalFee ?? 0) - t.totalPaid);
+    const payment = {
+      id: 'pay-demo-' + Date.now(), transactionId: t.id, amount,
+      method: body.method ?? 'cash', type: t.balance <= 0 ? 'full' : 'partial',
+      status: 'completed', createdAt: new Date().toISOString(),
+    };
+    t.payments = [...(t.payments || []), payment];
+    return { value: { payment, totalPaid: t.totalPaid, balance: t.balance } };
+  }
   if (path === '/transactions/upcoming') return { value: clone(transactions.filter((t) => t.status === 'Active' || t.status === 'Reserved')) };
   if (P(/^\/transactions\/[0-9a-f-]+\/return$/) && method === 'PUT') {
     const t = transactions.find((x) => x.id === body.id || path.includes(x.id));
