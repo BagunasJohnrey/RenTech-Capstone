@@ -352,10 +352,10 @@ export async function getPaymentGateway(): Promise<'paymongo' | 'maya' | 'manual
 }
 ```
 
-Update `getRentalDefaults` (line ~26):
+Update `getRentalDefaults` (line ~26). **Do NOT call `getPaymentGateway()` here** — that would add a second `businessRule.findMany` read and break the existing `maya.test.ts` rental-defaults tests (they mock exactly one read). Derive inline from the already-loaded `rules`:
 
 ```ts
-    payment_gateway: (await getPaymentGateway()),
+    payment_gateway: rules.payment_gateway === 'maya' ? 'maya' : rules.payment_gateway === 'manual' ? 'manual' : 'paymongo',
     manual_qr_codes: parseManualQrCodes(rules.manual_qr_codes),
 ```
 
@@ -631,10 +631,8 @@ describe('POST /api/bookings/:id/payment-proof', () => {
 ```ts
 import { prisma } from '../config/database.js';
 import * as storageService from './storage.service.js';
-import { applyPaymentToTransaction } from './payments.ledger.js';
-import { createNotification } from './notifications.service.js';
-import { createAuditLog } from '../utils/audit.js';
 import { AppError } from '../middleware/errorHandler.js';
+// Task 5 adds: applyPaymentToTransaction, createNotification, createAuditLog
 
 export const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 
@@ -965,7 +963,7 @@ describe('customer booking list carries the latest proof', () => {
 
 - [ ] **Step 2: Run to confirm failures** — `npx vitest run tests/manualQr.test.ts`
 
-- [ ] **Step 3: Implement the service functions** (append to `paymentProofs.service.ts`)
+- [ ] **Step 3: Implement the service functions** (first add the imports `applyPaymentToTransaction`, `createNotification`, `createAuditLog` at the top of `paymentProofs.service.ts`, then append the functions)
 
 ```ts
 export async function listProofQueue(limit = 50) {
