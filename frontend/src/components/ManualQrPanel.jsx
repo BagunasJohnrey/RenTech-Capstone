@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ScanLine, X } from 'lucide-react';
 import { publicUrlFor } from '../utils/images';
 
@@ -70,8 +71,8 @@ export default function ManualQrPanel({ qrCodes = [], channel, onChannelChange, 
         </p>
       )}
 
-      {lightbox && (
-        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
+      {lightbox && createPortal(
+        <div className="fixed inset-0 z-[10000] bg-black/70 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
           <div className="bg-white rounded-3xl p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-bold text-gray-900">{lightbox.label}</p>
@@ -89,7 +90,8 @@ export default function ManualQrPanel({ qrCodes = [], channel, onChannelChange, 
             )}
             {lightbox.accountName && <p className="mt-2 text-center text-xs text-gray-500">{lightbox.accountName}</p>}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

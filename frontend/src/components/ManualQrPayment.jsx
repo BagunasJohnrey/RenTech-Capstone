@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ScanLine, X, Upload } from 'lucide-react';
 import { publicUrlFor } from '../utils/images';
 
@@ -101,19 +102,20 @@ export default function ManualQrPayment({
             </button>
           </div>
         ) : (
-          <label className={`flex items-center justify-center gap-2 w-full py-4 rounded-2xl border-2 border-dashed cursor-pointer transition-colors ${
+          <label className={`flex flex-col items-center justify-center gap-1.5 w-full px-4 py-5 text-center rounded-2xl border-2 border-dashed cursor-pointer transition-colors ${
             disabled ? 'border-gray-200 text-gray-300' : 'border-gray-300 text-gray-500 hover:border-[#bf4a53] hover:text-[#bf4a53]'
           }`}>
-            <Upload size={16} />
-            <span className="text-sm font-semibold">Upload screenshot (PNG, JPG, WebP — max 5 MB)</span>
+            <Upload size={22} />
+            <span className="text-sm font-bold">Upload screenshot</span>
+            <span className="text-[11px] font-medium text-gray-400">PNG, JPG or WebP · max 5 MB</span>
             <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" disabled={disabled}
               onChange={(e) => onFileChange(e.target.files?.[0] || null)} />
           </label>
         )}
       </div>
 
-      {lightbox && (
-        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
+      {lightbox && createPortal(
+        <div className="fixed inset-0 z-[10000] bg-black/70 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
           <div className="bg-white rounded-3xl p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-bold text-gray-900">{lightbox.label}</p>
@@ -131,7 +133,8 @@ export default function ManualQrPayment({
             )}
             {lightbox.accountName && <p className="mt-2 text-center text-xs text-gray-500">{lightbox.accountName}</p>}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
