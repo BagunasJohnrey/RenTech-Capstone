@@ -139,3 +139,29 @@ describe('recordPayment accepts instapay', () => {
     }));
   });
 });
+
+describe('recordPayment route accepts instapay', () => {
+  it('POST /api/transactions/:id/payments records an instapay payment', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-1', status: 'Active', rentalFee: 5000, totalPaid: 0, latePenalty: 0, damageFee: 0, payments: [],
+    });
+    // Same array-form override as the service test above: the default mock only
+    // supports the callback form of $transaction.
+    (prisma.$transaction as any).mockResolvedValueOnce([
+      { id: 'pay-1', amount: 200, method: 'instapay' },
+      { id: 'tx-1', totalPaid: 200, balance: 4800 },
+    ]);
+
+    const res = await request(app)
+      .post('/api/transactions/tx-1/payments')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ amount: 200, method: 'instapay' });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ totalPaid: 200, balance: 4800 });
+    expect(prisma.payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ method: 'instapay' }),
+    }));
+  });
+});

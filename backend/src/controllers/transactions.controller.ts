@@ -337,7 +337,7 @@ export async function getUpcomingReturns(req: AuthenticatedRequest, res: Respons
 export const recordPaymentSchema = z.object({
   body: z.object({
     amount: z.number().positive(),
-    method: z.enum(['cash', 'gcash', 'card']),
+    method: z.enum(['cash', 'gcash', 'card', 'instapay']),
     notes: z.string().optional(),
   }),
 });
