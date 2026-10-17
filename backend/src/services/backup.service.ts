@@ -99,7 +99,7 @@ async function safeFind<T>(fn: () => Promise<T[] | null | undefined>): Promise<T
 // table is best-effort so a missing mock/table never fails the whole backup).
 export async function collectBackupData() {
   const p = prisma as unknown as Record<string, { findMany?: (args?: unknown) => Promise<unknown[]> } | undefined>;
-  const [smsTemplates, businessRules, profiles, inventoryItems, promoCodes, transactions, payments, notifications, sentSms, auditLogs] =
+  const [smsTemplates, businessRules, profiles, inventoryItems, promoCodes, transactions, payments, paymentProofs, notifications, sentSms, auditLogs] =
     await Promise.all([
       safeFind(() => p.smsTemplate?.findMany?.({}) ?? Promise.resolve([])),
       safeFind(() => p.businessRule?.findMany?.({}) ?? Promise.resolve([])),
@@ -108,6 +108,7 @@ export async function collectBackupData() {
       safeFind(() => (p.promoCode as { findMany?: (args?: unknown) => Promise<unknown[]> } | undefined)?.findMany?.({}) ?? Promise.resolve([])),
       safeFind(() => p.transaction?.findMany?.({}) ?? Promise.resolve([])),
       safeFind(() => p.payment?.findMany?.({}) ?? Promise.resolve([])),
+      safeFind(() => p.paymentProof?.findMany?.({}) ?? Promise.resolve([])),
       safeFind(() => p.notification?.findMany?.({}) ?? Promise.resolve([])),
       safeFind(() => p.sentSms?.findMany?.({}) ?? Promise.resolve([])),
       safeFind(() => p.auditLog?.findMany?.({}) ?? Promise.resolve([])),
@@ -120,6 +121,7 @@ export async function collectBackupData() {
     promo_codes: promoCodes,
     transactions,
     payments,
+    payment_proofs: paymentProofs,
     notifications,
     sent_sms: sentSms,
     audit_logs: auditLogs,

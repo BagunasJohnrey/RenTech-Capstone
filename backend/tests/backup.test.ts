@@ -316,6 +316,72 @@ describe('POST /api/settings/backups/import (admin restore)', () => {
     expect(auditCall).toBeDefined();
   });
 
+  it('round-trips payment proofs from a full backup payload', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // inventoryItem.findUnique: item upsert check, then the transaction FK check.
+    prisma.inventoryItem.findUnique
+      .mockResolvedValueOnce({ id: 7, name: 'Test Barong' })
+      .mockResolvedValueOnce({ id: 7, name: 'Test Barong' });
+    // transaction.findUnique: transaction create-path check, payment FK check,
+    // then the payment-proof parent check.
+    prisma.transaction.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'tx-test-1' })
+      .mockResolvedValueOnce({ id: 'tx-test-1' });
+
+    const payload = basePayload();
+    payload.tables.payment_proofs = [{
+      id: 'proof-test-1', transactionId: 'tx-test-1', amount: 500,
+      reference: 'REF-001', channel: 'instapay',
+      imagePath: 'rental/proofs/proof-test-1.webp',
+      status: 'approved', reviewedById: 'admin-id-789',
+      reviewedAt: new Date().toISOString(),
+    }];
+
+    const res = await request(app)
+      .post('/api/settings/backups/import')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ payload });
+
+    expect(res.status).toBe(200);
+    expect(res.body.restored.payment_proofs).toBe(1);
+    expect(res.body.skipped).toEqual({});
+    // The restored row itself (not just the counter) carries the proof data.
+    const proofCall = prisma.paymentProof.create.mock.calls.find(
+      (c) => (c[0] as { data: { id: string } }).data.id === 'proof-test-1'
+    );
+    expect(proofCall).toBeDefined();
+    expect((proofCall![0] as { data: Record<string, unknown> }).data).toMatchObject({
+      transactionId: 'tx-test-1', amount: 500, reference: 'REF-001',
+      channel: 'instapay', imagePath: 'rental/proofs/proof-test-1.webp',
+      status: 'approved', reviewedById: 'admin-id-789', rejectionReason: null,
+      reviewedAt: expect.any(String),
+    });
+  });
+
+  it('skips payment proofs whose parent transaction is missing', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app)
+      .post('/api/settings/backups/import')
+      .set('Authorization', 'Bearer admin-token')
+      .send({
+        payload: {
+          version: 2,
+          tables: {
+            payment_proofs: [{
+              id: 'proof-orphan', transactionId: 'tx-missing', amount: 100,
+              imagePath: 'rental/proofs/orphan.webp', status: 'pending',
+            }],
+          },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.skipped).toMatchObject({ payment_proofs: 1 });
+    expect(res.body.restored.payment_proofs).toBeUndefined();
+    expect(prisma.paymentProof.create).not.toHaveBeenCalled();
+  });
+
   it('never demotes the performing admin via a foreign backup', async () => {
     const { prisma } = await import('../src/config/database.js');
     const res = await request(app)

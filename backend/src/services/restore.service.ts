@@ -35,6 +35,7 @@ const KNOWN_TABLES = new Set([
   'promo_codes',
   'transactions',
   'payments',
+  'payment_proofs',
   'notifications',
   'sent_sms',
   'audit_logs',
@@ -43,6 +44,7 @@ const KNOWN_TABLES = new Set([
 const ROLES = new Set(['Admin', 'Staff', 'Customer']);
 const ITEM_STATUSES = new Set(['Available', 'Rented', 'Reserved', 'Cleaning', 'OutOfService', 'Deleted']);
 const TX_STATUSES = new Set(['Active', 'Overdue', 'Reserved', 'Returned', 'Cancelled']);
+const PROOF_STATUSES = new Set(['pending', 'approved', 'rejected']);
 
 type Row = Record<string, unknown>;
 type Model = {
@@ -61,6 +63,7 @@ function models(): Record<string, Model> {
     inventoryItem: p.inventoryItem ?? {},
     transaction: p.transaction ?? {},
     payment: p.payment ?? {},
+    paymentProof: p.paymentProof ?? {},
     notification: p.notification ?? {},
     sentSms: p.sentSms ?? {},
     auditLog: p.auditLog ?? {},
@@ -341,6 +344,39 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
       bump(restored, 'payments');
     } catch {
       bump(skipped, 'payments');
+    }
+  }
+
+  // 6b. Payment proofs (manual-QR evidence — parent transaction required;
+  // reviewer is optional and nulled if their profile is gone).
+  for (const r of tables.payment_proofs ?? []) {
+    try {
+      const id = str(r.id);
+      const transactionId = str(r.transactionId);
+      const amount = numOrNull(r.amount);
+      const imagePath = str(r.imagePath);
+      if (!id || !transactionId || amount === null || !imagePath) throw new Error('missing payment proof fields');
+      const parent = await m.transaction.findUnique?.({ where: { id: transactionId } });
+      if (!parent) throw new Error('missing transaction');
+      const reviewedById = str(r.reviewedById);
+      const reviewer = reviewedById ? await m.profile.findUnique?.({ where: { id: reviewedById } }) : null;
+      const status = str(r.status);
+      const data: Row = {
+        transactionId,
+        amount,
+        reference: strOrNull(r.reference),
+        channel: strOrNull(r.channel),
+        imagePath,
+        status: status && PROOF_STATUSES.has(status) ? status : 'pending',
+        rejectionReason: strOrNull(r.rejectionReason),
+        reviewedById: reviewer ? reviewedById : null,
+        reviewedAt: dateOrNull(r.reviewedAt),
+        createdAt: dateOrNow(r.createdAt),
+      };
+      await upsertById(m.paymentProof, id, data, { ...data, createdAt: undefined });
+      bump(restored, 'payment_proofs');
+    } catch {
+      bump(skipped, 'payment_proofs');
     }
   }
 
