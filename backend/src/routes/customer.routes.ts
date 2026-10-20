@@ -23,6 +23,9 @@ bookingRouter.post(
   paymentProofsController.submitProof,
 );
 bookingRouter.get('/', customerController.getBookings);
+// Own QR payment-proof history. Registered before `/:id` so it isn't captured
+// as a booking id.
+bookingRouter.get('/payment-proofs', paymentProofsController.listMyProofs);
 bookingRouter.get('/:id', customerController.getBookingDetail);
 
 // Admin/Staff edit a customer's contact details (name/phone/address/prefs).

@@ -114,7 +114,7 @@ for (const p of paymentProofs) {
   const t = transactions.find((x) => x.id === p.transactionId);
   if (t) {
     t.paymentPath = 'manual';
-    t.paymentProofs = [{ status: p.status, rejectionReason: p.rejectionReason, amount: p.amount, createdAt: p.createdAt }];
+    t.paymentProofs = [{ status: p.status, rejectionReason: p.rejectionReason, amount: p.amount, createdAt: p.createdAt, reviewedAt: p.reviewedAt }];
   }
 }
 
@@ -447,6 +447,23 @@ function route(method, path, body) {
     return it ? { value: clone(it) } : { status: 404, error: 'Not found' };
   }
   if (P(/^\/catalog/)) return { value: clone(items.filter((i) => i.status !== 'Deleted')) };
+  if (P(/^\/bookings\/payment-proofs/) && method === 'GET') {
+    const ownIds = new Set(
+      transactions.filter((t) => t.customerId === 'demo-customer-profile').map((t) => t.id),
+    );
+    const proofs = paymentProofs
+      .filter((p) => ownIds.has(p.transactionId))
+      .map((p) => {
+        const t = transactions.find((x) => x.id === p.transactionId);
+        return {
+          ...clone(p),
+          transaction: t
+            ? { id: t.id, txNumber: t.txNumber, status: t.status, item: t.item ? { name: t.item.name } : null }
+            : null,
+        };
+      });
+    return { value: { proofs } };
+  }
   if (P(/^\/bookings\/(.+)$/) && method === 'GET') {
     const t = transactions.find((x) => x.id === P(/^\/bookings\/(.+)$/)[1]);
     return t ? { value: clone(t) } : { status: 404, error: 'Not found' };
@@ -460,12 +477,33 @@ function route(method, path, body) {
     );
     created.rentalDate = body.rentalDate ?? day(0);
     created.dueDate = body.dueDate ?? day(3);
+    // Mirror the backend: the address entered at booking is saved to the
+    // customer profile so the staff proof queue can show it.
+    if (body.address) {
+      CUSTOMERS['demo-customer-profile'].address = body.address;
+      if (created.customer) created.customer.address = body.address;
+    }
     // Manual checkouts stay unpaid until staff approve the proof — don't
     // pre-credit the intended downpayment like the gateway path does.
     if (body.paymentPath === 'manual') {
+      // Mirrors the real upload-first rule: no screenshot, no booking.
+      if (!body.paymentProof?.data) {
+        return { status: 400, error: 'A payment screenshot is required to book with manual QR payment' };
+      }
       created.paymentPath = 'manual';
       created.totalPaid = 0;
       created.balance = created.rentalFee;
+      const proof = {
+        id: 'proof-' + Date.now(),
+        transactionId: created.id,
+        amount: created.downpayment ?? 0,
+        reference: (body.paymentProof.reference ?? '').trim() || null,
+        channel: body.paymentProof.channel ?? null,
+        imagePath: '', status: 'pending', rejectionReason: null, reviewedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      paymentProofs.unshift(proof);
+      created.paymentProofs = [{ status: proof.status, rejectionReason: null, amount: proof.amount, createdAt: proof.createdAt }];
     }
     transactions.unshift(created);
     if (it) { it.status = 'Rented'; it.effectiveStatus = 'Rented'; }
@@ -551,6 +589,27 @@ function route(method, path, body) {
           createdAt: t.createdAt, performedBy: { ...(t.releasedBy ?? DEMO_RELEASED), role: 'Staff' },
         });
       }
+      // Manual-QR events mirror the backend timeline (derived from proofs).
+      for (const p of paymentProofs.filter((x) => x.transactionId === t.id)) {
+        log.push({
+          id: `proof-submit-${p.id}`, action: 'payment_proof.submit', entity: 'payment_proof',
+          oldValue: null,
+          newValue: { transactionId: t.id, amount: p.amount, reference: p.reference, channel: p.channel },
+          createdAt: p.createdAt, performedBy: t.customer ?? null,
+        });
+        if (p.status === 'approved' || p.status === 'rejected') {
+          log.push({
+            id: `proof-${p.status}-${p.id}`,
+            action: p.status === 'approved' ? 'payment_proof.approve' : 'payment_proof.reject',
+            entity: 'payment_proof',
+            oldValue: null,
+            newValue: { transactionId: t.id, amount: p.amount, reason: p.rejectionReason },
+            createdAt: p.reviewedAt ?? p.createdAt,
+            performedBy: p.reviewedBy ?? { id: 'demo-admin-profile', name: 'Mylene (Demo Admin)' },
+          });
+        }
+      }
+      log.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     }
     return { value: log };
   }
@@ -756,7 +815,33 @@ function route(method, path, body) {
         customer: t.customer,
         latestProof: t.paymentProofs?.[0] ?? null,
       }));
-    return { value: { pending, awaiting, counts: { pending: pending.length, awaiting: awaiting.length } } };
+    const reviewed = paymentProofs
+      .filter((p) => p.status === 'approved' || p.status === 'rejected')
+      .map((p) => {
+        const t = transactions.find((x) => x.id === p.transactionId);
+        return {
+          ...clone(p),
+          reviewedBy: p.reviewedBy ?? { id: 'demo-admin-profile', name: 'Mylene (Demo Admin)' },
+          transaction: t
+            ? {
+                id: t.id, txNumber: t.txNumber, status: t.status,
+                downpayment: t.downpayment, totalPaid: t.totalPaid,
+                balance: t.balance ?? Math.max(0, (t.rentalFee ?? 0) - (t.totalPaid ?? 0)),
+                rentalDate: t.rentalDate, dueDate: t.dueDate,
+                item: t.item ? { name: t.item.name } : null,
+                customer: t.customer,
+              }
+            : null,
+        };
+      });
+    return {
+      value: {
+        pending,
+        awaiting,
+        reviewed,
+        counts: { pending: pending.length, awaiting: awaiting.length, reviewed: reviewed.length },
+      },
+    };
   }
   if (P(/^\/payments\/proofs\/([^/]+)\/approve$/) && method === 'POST') {
     const proof = paymentProofs.find((p) => p.id === P(/^\/payments\/proofs\/([^/]+)\/approve$/)[1]);
@@ -770,7 +855,7 @@ function route(method, path, body) {
     if (t) {
       t.totalPaid = (t.totalPaid ?? 0) + amount;
       t.balance = Math.max(0, (t.rentalFee ?? 0) - t.totalPaid);
-      t.paymentProofs = [{ status: 'approved', rejectionReason: null, amount, createdAt: proof.createdAt }];
+      t.paymentProofs = [{ status: 'approved', rejectionReason: null, amount, createdAt: proof.createdAt, reviewedAt: proof.reviewedAt }];
     }
     // Mirror the backend's customer notification (POST /payments/proofs/:id/approve
     // -> createNotification type payment_proof_approved) so the demo shows it too.
@@ -791,7 +876,7 @@ function route(method, path, body) {
     proof.reviewedAt = new Date().toISOString();
     const t = transactions.find((x) => x.id === proof.transactionId);
     if (t) {
-      t.paymentProofs = [{ status: 'rejected', rejectionReason: proof.rejectionReason, amount: proof.amount, createdAt: proof.createdAt }];
+      t.paymentProofs = [{ status: 'rejected', rejectionReason: proof.rejectionReason, amount: proof.amount, createdAt: proof.createdAt, reviewedAt: proof.reviewedAt }];
     }
     // Mirror the backend's customer notification on reject.
     notifications.unshift({

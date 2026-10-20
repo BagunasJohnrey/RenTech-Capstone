@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle, RotateCcw } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle, RotateCcw, ScanLine } from 'lucide-react';
 import { api } from '../utils/api';
 import { customerLabel, itemLabel, defaultOverdueMessage } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
@@ -8,7 +8,11 @@ import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
 import SmsLogPanel from '../components/SmsLogPanel';
 import PaymentProofsQueue from '../components/PaymentProofsQueue';
+import PaymentProofReviewModal from '../components/PaymentProofReviewModal';
+import AwaitingProofModal from '../components/AwaitingProofModal';
+import { usePaymentProofs } from '../hooks/usePaymentProofs';
 import { isReleased } from '../hooks/useTransactions';
+import { peso } from '../utils/receipt';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
 
@@ -78,6 +82,10 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
   const [smsMessage, setSmsMessage] = useState('');
   const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
   const [releaseTx, setReleaseTx] = useState(null);
+  // Pending QR proofs are money-waiting work, so they join Today's Priority.
+  const proofQueue = usePaymentProofs(role === 'Staff' || role === 'Admin');
+  const [reviewProof, setReviewProof] = useState(null);
+  const [awaitingProof, setAwaitingProof] = useState(null);
 
   const openSmsModal = (tx) => {
     setSmsMessage(defaultOverdueMessage(tx));
@@ -109,6 +117,81 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
     const due = new Date(tx.dueDate || tx.date);
     return due < today;
   });
+
+  // Today's Priority: overdues, then pending QR payment proofs (money waiting
+  // on a human), then pickups due today. One shared list so the count and the
+  // rows can never disagree.
+  const pendingProofs = proofQueue.data?.pending ?? [];
+  // A failed proof fetch must not freeze the card in a skeleton forever — fall
+  // through and render the queues we do have (errors surface in the queue UI).
+  const proofsUnknown = proofQueue.loading && !proofQueue.data && !proofQueue.error;
+  const focusKnown = queuesKnown && !proofsUnknown;
+  const pickupToday = pendingPickup.filter((tx) => {
+    const d = new Date(tx.rentalDate || tx.date);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() === today.getTime();
+  });
+  // One row per booking: a pickup due today that still has a QR proof waiting
+  // is represented by the proof row (annotated "pickup today"), never a second
+  // "Prepare pickup" row for the same booking. Pickups also rank ABOVE the
+  // "needs proof" chase list so a late-arriving GCash proof can't crowd the
+  // day-of pickup work out of the list.
+  const pickupTodayIds = new Set(pickupToday.map((tx) => tx.id));
+  const focusById = new Map();
+  const addFocus = (id, item) => {
+    if (id && focusById.has(id)) return;
+    focusById.set(id, item);
+  };
+
+  for (const tx of overdueItems.slice(0, 2)) {
+    addFocus(tx.id, {
+      key: `od-${tx.id}`,
+      icon: AlertTriangle,
+      tone: 'text-red-500',
+      bg: 'bg-red-50 border-red-200/70',
+      label: `${customerLabel(tx.customer)} — ${itemLabel(tx.item)}`,
+      sub: `${Math.floor((today - new Date(tx.dueDate || tx.date)) / 86400000)}d overdue`,
+      tx,
+    });
+  }
+  for (const p of pendingProofs.slice(0, 2)) {
+    const txId = p.transaction?.id;
+    addFocus(txId, {
+      key: `proof-${p.id}`,
+      icon: ScanLine,
+      tone: 'text-amber-600',
+      bg: 'bg-amber-50 border-amber-200/70',
+      label: `Verify payment proof — ${customerLabel(p.transaction?.customer)}`,
+      sub: `${itemLabel(p.transaction?.item)} · ${peso(p.amount)} claimed${pickupTodayIds.has(txId) ? ' · pickup today' : ''}`,
+      cta: 'Review',
+      action: () => setReviewProof(p),
+    });
+  }
+  for (const tx of pickupToday) {
+    addFocus(tx.id, {
+      key: `pk-${tx.id}`,
+      icon: Package,
+      tone: 'text-blue-600',
+      bg: 'bg-blue-50 border-blue-200/70',
+      label: `Prepare pickup for ${customerLabel(tx.customer)}`,
+      sub: `${itemLabel(tx.item)} due today`,
+      action: () => setReleaseTx(tx),
+    });
+  }
+  for (const t of proofQueue.data?.awaiting ?? []) {
+    addFocus(t.id, {
+      key: `await-${t.id}`,
+      icon: ScanLine,
+      tone: 'text-amber-600',
+      bg: 'bg-amber-50 border-amber-200/70',
+      label: `Payment proof needed — ${customerLabel(t.customer)}`,
+      sub: `${itemLabel(t.item)} · ${peso(t.downpayment)} downpayment${pickupTodayIds.has(t.id) ? ' · pickup today' : ''}`,
+      tx: t,
+      cta: 'Follow up',
+      action: () => setAwaitingProof(t),
+    });
+  }
+  const focusItems = [...focusById.values()].slice(0, 5);
 
   // The sections below need the FULL picture (history + future schedule),
   // which the digest doesn't carry — they render from the real list only.
@@ -248,113 +331,67 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
         <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 lg:p-5">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Today's Priority</p>
-            {(() => {
-              // urgency: overdues first, then pickups due today (Active/Reserved due today), then upcoming tomorrow
-              const now = new Date(); now.setHours(0,0,0,0);
-              const pickupToday = pendingPickup.filter(tx => {
-                const d = new Date(tx.rentalDate || tx.date);
-                d.setHours(0,0,0,0);
-                return d.getTime() === now.getTime();
-              });
-              const focusItems = [
-                ...overdueItems.slice(0, 3).map(tx => ({
-                  key: `od-${tx.id}`,
-                  icon: AlertTriangle,
-                  tone: 'text-red-500',
-                  label: `${customerLabel(tx.customer)} — ${itemLabel(tx.item)}`,
-                  sub: `${Math.floor((now - new Date(tx.dueDate || tx.date)) / 86400000)}d overdue`,
-                })),
-                ...pickupToday.slice(0, 2).map(tx => ({
-                  key: `pk-${tx.id}`,
-                  icon: Undo2,
-                  tone: 'text-emerald-600',
-                  label: `Prepare pickup for ${customerLabel(tx.customer)}`,
-                  sub: `${itemLabel(tx.item)} due today`,
-                })),
-              ].slice(0, 4);
-
-              if (focusItems.length === 0) {
-                if (!queuesKnown) return <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue…</p>;
-                return <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>;
-              }
-              return <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>;
-            })()}
+            {!focusKnown
+              ? <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue…</p>
+              : focusItems.length === 0
+                ? <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>
+                : <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>
+            }
           </div>
 
           <div className="space-y-2">
-            {(() => {
-              const now = new Date(); now.setHours(0,0,0,0);
-              const pickupToday = pendingPickup.filter(tx => {
-                const d = new Date(tx.rentalDate || tx.date); d.setHours(0,0,0,0);
-                return d.getTime() === now.getTime();
-              });
-              const focusItems = [
-                ...overdueItems.slice(0, 3).map(tx => ({
-                  key: `od-${tx.id}`,
-                  icon: AlertTriangle,
-                  tone: 'text-red-500',
-                  bg: 'bg-red-50 border-red-200/70',
-                  label: `${customerLabel(tx.customer)} — ${itemLabel(tx.item)}`,
-                  sub: `${Math.floor((now - new Date(tx.dueDate || tx.date)) / 86400000)}d overdue`,
-                  tx,
-                })),
-                ...pickupToday.slice(0, 2).map(tx => ({
-                  key: `pk-${tx.id}`,
-                  icon: Package,
-                  tone: 'text-blue-600',
-                  bg: 'bg-blue-50 border-blue-200/70',
-                  label: `Prepare pickup for ${customerLabel(tx.customer)}`,
-                  sub: `${itemLabel(tx.item)} due today`,
-                  action: () => setReleaseTx(tx),
-                })),
-              ].slice(0, 4);
-
-              if (focusItems.length === 0) {
-                if (!queuesKnown) {
-                  return (
-                    <div className="space-y-2" aria-label="Loading today's queue">
-                      {[0, 1].map((i) => (
-                        <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 animate-pulse">
-                          <div className="w-4 h-4 rounded-full bg-gray-200 shrink-0" />
-                          <div className="flex-1 space-y-1.5">
-                            <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
-                            <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
-                          </div>
-                        </div>
-                      ))}
+            {!focusKnown ? (
+              // Hold the whole list until BOTH the digest queues and the QR
+              // proof queue are known. Rendering the digest rows first made the
+              // late-arriving GCash proof rows push "Prepare pickup" down mid-
+              // paint (a visible jump/overlap on a slow proof fetch).
+              <div className="space-y-2" aria-label="Loading today's queue">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 animate-pulse">
+                    <div className="w-4 h-4 rounded-full bg-gray-200 shrink-0" />
+                    <div className="flex-1 space-y-1.5">
+                      <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
+                      <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
                     </div>
-                  );
-                }
+                  </div>
+                ))}
+              </div>
+            ) : focusItems.length === 0 ? (
+              <div className="text-center py-6 text-gray-400 text-sm font-medium">
+                Nothing urgent today.
+              </div>
+            ) : (
+              focusItems.map((f) => {
+                const clickable = (f.tx && onNavigateDetail) || f.action;
                 return (
-                  <div className="text-center py-6 text-gray-400 text-sm font-medium">
-                    Nothing urgent today.
+                  <div key={f.key}
+                    onClick={() => { if (f.action) f.action(); else if (f.tx && onNavigateDetail) onNavigateDetail(f.tx); }}
+                    title={f.action || f.tx ? 'View details' : undefined}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all hover:shadow-sm hover:scale-[1.01] ${f.bg} ${clickable ? 'cursor-pointer' : ''}`}>
+                    <f.icon size={16} className={`${f.tone} shrink-0`} />
+                    <div className="flex-1 min-w-0 text-left">
+                      <p className="text-sm font-bold text-gray-900 truncate">{f.label}</p>
+                      <p className="text-[11px] text-gray-500 truncate">{f.sub}</p>
+                    </div>
+                    {f.cta && (
+                      <span className="shrink-0 text-[10px] font-bold text-amber-700 bg-white/80 border border-amber-200 rounded-full px-2 py-0.5">
+                        {f.cta}
+                      </span>
+                    )}
+                    {f.tx && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openSmsModal(f.tx); }}
+                        title="Send SMS reminder"
+                        className="p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm shrink-0">
+                        <MessageCircle size={14} />
+                        <span className="sr-only">Send SMS</span>
+                      </button>
+                    )}
+                    <ChevronRight size={16} className="text-gray-300 shrink-0" />
                   </div>
                 );
-              }
-
-              return focusItems.map((f) => (
-                <div key={f.key}
-                  onClick={() => { if (f.tx && onNavigateDetail) onNavigateDetail(f.tx); else if (f.action) f.action(); }}
-                  title={f.tx ? 'View transaction details' : undefined}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all hover:shadow-sm hover:scale-[1.01] ${f.bg} ${f.tx && onNavigateDetail ? 'cursor-pointer' : ''}`}>
-                  <f.icon size={16} className={`${f.tone} shrink-0`} />
-                  <div className="flex-1 min-w-0 text-left">
-                    <p className="text-sm font-bold text-gray-900 truncate">{f.label}</p>
-                    <p className="text-[11px] text-gray-500 truncate">{f.sub}</p>
-                  </div>
-                  {f.tx && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openSmsModal(f.tx); }}
-                      title="Send SMS reminder"
-                      className="p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm shrink-0">
-                      <MessageCircle size={14} />
-                      <span className="sr-only">Send SMS</span>
-                    </button>
-                  )}
-                  <ChevronRight size={16} className="text-gray-300 shrink-0" />
-                </div>
-              ));
-            })()}
+              })
+            )}
           </div>
         </div>
 
@@ -630,7 +667,10 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
         {/* Payments to verify — manual-QR proofs + unpaid manual checkouts.
             Always visible at the top of the queues; "All clear" is a real state. */}
-        <PaymentProofsQueue role={role} />
+        <PaymentProofsQueue
+          role={role}
+          onChanged={proofQueue.refresh}
+        />
 
         {/* Pickup + Overdue — paired action queues (latest 5 each).
             Unknown (digest still pending, list empty) → skeleton cards, never
@@ -812,6 +852,22 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
       {releaseTx && (
         <ReleaseItemModal transaction={releaseTx} onClose={() => setReleaseTx(null)} onReleased={(updated) => { onRelease(updated); setReleaseTx(null); }} onSwapItem={(updated, prevItemId) => onSwapItem?.(updated, prevItemId)} />
+      )}
+
+      {/* Priority-row proof review (same modal the queue uses). */}
+      {reviewProof && (
+        <PaymentProofReviewModal
+          proof={reviewProof}
+          onClose={() => setReviewProof(null)}
+          onDone={() => { setReviewProof(null); proofQueue.refresh(); }}
+        />
+      )}
+
+      {awaitingProof && (
+        <AwaitingProofModal
+          booking={awaitingProof}
+          onClose={() => setAwaitingProof(null)}
+        />
       )}
 
       {/* Post-send outcome — sent vs queued vs failed, stated honestly. */}

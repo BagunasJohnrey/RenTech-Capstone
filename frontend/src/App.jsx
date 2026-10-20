@@ -641,9 +641,13 @@ export default function RentechApp() {
       promoCode: bookingData.promoCode || undefined,
       size: bookingData.size || undefined,
       measurements: bookingData.measurements || undefined,
+      address: bookingData.address || undefined,
       // Manual QR checkout marker — drives the staff "awaiting proof" chase
       // list. Without this passthrough the field never leaves the client.
       paymentPath: bookingData.paymentPath || undefined,
+      // The screenshot is uploaded + persisted server-side with the booking
+      // itself, so the booking can never exist without its proof.
+      paymentProof: bookingData.paymentProof || undefined,
     });
     setTransactions((prev) => [normalizeTx(created), ...prev]);
     if (created.itemId) markItemStatus(created.itemId, 'Active'); // FIX C

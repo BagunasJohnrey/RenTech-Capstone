@@ -4,6 +4,9 @@ import { prisma } from '../config/database.js';
 import * as inventoryService from '../services/inventory.service.js';
 import * as transactionService from '../services/transactions.service.js';
 import * as customerService from '../services/customer.service.js';
+import * as storageService from '../services/storage.service.js';
+import { MAX_PROOF_BYTES } from '../services/paymentProofs.service.js';
+import { getPaymentGateway } from '../services/settings.service.js';
 import { sendEmail, isSendableEmail } from '../services/brevo.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
@@ -19,7 +22,27 @@ export const createBookingSchema = z.object({
     promoCode: z.string().optional(),
     size: z.string().optional(),
     measurements: z.record(z.any()).optional(),
+    // Address typed in the booking form. Persisted to the customer's profile
+    // with the booking so staff (and later bookings) see the delivery address.
+    address: z.string().trim().min(5, 'Address must be at least 5 characters').max(100).optional(),
     paymentPath: z.enum(['manual']).optional(),
+    // Manual-QR checkouts must carry the screenshot in the same request as the
+    // booking — the server uploads it FIRST and only then creates the booking.
+    paymentProof: z.object({
+      // ~7.1M chars ≈ 5MB decoded; the exact byte cap is enforced on the buffer.
+      data: z.string().min(1).max(7_100_000),
+      contentType: z.enum(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']),
+      reference: z.string().max(40).optional(),
+      channel: z.string().max(40).optional(),
+    }).optional(),
+  }).superRefine((val, ctx) => {
+    if (val.paymentPath === 'manual' && !val.paymentProof) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['paymentProof'],
+        message: 'A payment screenshot is required to book with manual QR payment',
+      });
+    }
   }),
 });
 
@@ -53,23 +76,65 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
     // SECURITY: the rental price is NEVER taken from the client. It is derived
     // server-side from the item (sale-aware) in transactions.service.createRental;
     // only an optional promo code is accepted, and it is resolved server-side.
-    const { itemId, rentalDate, dueDate, downpayment, notes, promoCode, size, measurements, paymentPath } = req.body;
+    const { itemId, rentalDate, dueDate, downpayment, notes, promoCode, size, measurements, address, paymentPath, paymentProof } = req.body;
 
-    const tx = await transactionService.createRental({
-      customerId: req.user.id,
-      itemId,
-      rentalDate,
-      dueDate,
-      downpayment,
-      notes,
-      promoCode,
-      size,
-      measurements,
-      paymentPath,
-      requireMinimumDownpayment: true, // customers must pay the flat minimum downpayment (default ₱200)
-    });
+    // Manual-QR: upload the screenshot BEFORE creating the booking. If storage
+    // fails, the request fails and NO booking exists to clean up — the old
+    // create-then-upload order is what left unpaid bookings needing proof.
+    // Enforce by the CONFIGURED gateway too, not just the client hint, so an
+    // older/cached client cannot create an unpaid manual booking with no proof.
+    const gateway = await getPaymentGateway();
+    const requiresProof = paymentPath === 'manual' || gateway === 'manual';
+    let uploadedProofPath: string | undefined;
+    let proofInput: { imagePath: string; reference?: string; channel?: string } | undefined;
+    if (requiresProof) {
+      if (!paymentProof) {
+        throw new AppError(400, 'A payment screenshot is required to book with manual QR payment');
+      }
+      const buffer = Buffer.from(paymentProof.data, 'base64');
+      if (buffer.length === 0) throw new AppError(400, 'Empty image data');
+      if (buffer.length > MAX_PROOF_BYTES) throw new AppError(400, 'Screenshot must be 5 MB or smaller');
+      const { path } = await storageService.uploadFile(
+        `rental/${req.user.id}/proof-${Date.now()}.jpg`,
+        paymentProof.contentType,
+        buffer,
+      );
+      uploadedProofPath = path;
+      proofInput = {
+        imagePath: path,
+        reference: paymentProof.reference,
+        channel: paymentProof.channel,
+      };
+    }
 
-    res.status(201).json(tx);
+    try {
+      const tx = await transactionService.createRental({
+        customerId: req.user.id,
+        itemId,
+        rentalDate,
+        dueDate,
+        downpayment,
+        notes,
+        promoCode,
+        size,
+        measurements,
+        customerAddress: address,
+        paymentPath: requiresProof ? 'manual' : paymentPath,
+        paymentProof: proofInput,
+        requireMinimumDownpayment: true, // customers must pay the flat minimum downpayment (default ₱200)
+      });
+
+      res.status(201).json(tx);
+    } catch (err) {
+      // Booking (and its proof row) rolled back — remove the already-uploaded
+      // image so a rejected booking can't leave an orphaned screenshot.
+      if (uploadedProofPath) {
+        try {
+          await storageService.removeObject(uploadedProofPath);
+        } catch { /* best effort — never mask the booking error */ }
+      }
+      throw err;
+    }
   } catch (err) {
     next(err);
   }

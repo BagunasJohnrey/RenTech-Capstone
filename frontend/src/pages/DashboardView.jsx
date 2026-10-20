@@ -4,6 +4,7 @@ import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Dr
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import PaymentProofModal from '../components/PaymentProofModal';
+import PaymentHistoryCard from '../components/PaymentHistoryCard';
 import { transactionsService } from '../services/transactions';
 import { normalizeTx } from '../hooks/useTransactions';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
@@ -39,6 +40,8 @@ export default function DashboardView({ role, transactions, inventory, transacti
   // equal-or-newer), so it can never mask a fresh load.
   const [proofModalTx, setProofModalTx] = useState(null);
   const [txOverlay, setTxOverlay] = useState(null);
+  // Bumped after a proof submission so the payment-history card refetches.
+  const [proofHistoryKey, setProofHistoryKey] = useState(0);
   useEffect(() => { setTxOverlay(null); }, [transactions]);
   const refreshBookings = useCallback(async () => {
     try {
@@ -344,6 +347,8 @@ export default function DashboardView({ role, transactions, inventory, transacti
           </div>
         )}
 
+        <PaymentHistoryCard refreshKey={proofHistoryKey} />
+
         {/* End of results */}
         <p className="text-center text-xs text-gray-400 pt-4 pb-2">You've reached the end of your feed</p>
 
@@ -351,7 +356,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
           <PaymentProofModal
             tx={proofModalTx}
             onClose={() => setProofModalTx(null)}
-            onSubmitted={refreshBookings}
+            onSubmitted={() => { refreshBookings(); setProofHistoryKey((k) => k + 1); }}
           />
         )}
       </div>

@@ -38,17 +38,21 @@ export default function ManualQrPayment({
   return (
     <div className="space-y-4">
       {qrCodes.length > 1 && (
-        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-          {qrCodes.map((qr) => (
-            <button key={qr.id} type="button" disabled={disabled} onClick={() => onChannelChange(qr.id)}
-              className={`shrink-0 px-4 py-2 rounded-xl border-2 text-xs font-bold transition-all ${
-                selected?.id === qr.id
-                  ? 'border-[#bf4a53] bg-red-50 text-[#bf4a53]'
-                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-              }`}>
-              {qr.label}
-            </button>
-          ))}
+        <div>
+          <label htmlFor="qr-channel" className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">
+            Payment channel
+          </label>
+          <select
+            id="qr-channel"
+            value={selected?.id || ''}
+            disabled={disabled}
+            onChange={(e) => onChannelChange(e.target.value)}
+            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors disabled:opacity-60"
+          >
+            {qrCodes.map((qr) => (
+              <option key={qr.id} value={qr.id}>{qr.label}</option>
+            ))}
+          </select>
         </div>
       )}
 

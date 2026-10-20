@@ -423,6 +423,50 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     expect(res.body[1]).toMatchObject({ id: 'l2' });
   });
 
+  it('timeline includes QR payment proof submit + review events', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-qr', customerId: 'customer-id-111', itemId: 1,
+      rentalDate: new Date(), dueDate: new Date(),
+      rentalFee: 5000, balance: 4000, status: 'Active',
+      customer: { id: 'customer-id-111', name: 'Customer User' },
+      item: { id: 1, name: 'Test Gown' },
+      payments: [],
+    });
+    prisma.auditLog.findMany.mockResolvedValue([
+      { id: 'l1', action: 'create', entity: 'transaction', entityId: 'tx-qr', performedById: 'staff-id-456', oldValue: null, newValue: {}, createdAt: new Date('2026-01-01') },
+    ]);
+    prisma.paymentProof.findMany.mockResolvedValueOnce([
+      {
+        id: 'proof-1', status: 'approved', amount: 200, reference: 'REF-9', channel: 'qr-1',
+        rejectionReason: null, createdAt: new Date('2026-01-02'), reviewedAt: new Date('2026-01-03'),
+        reviewedById: 'admin-id-789', transaction: { customerId: 'customer-id-111' },
+      },
+    ]);
+    prisma.profile.findMany.mockResolvedValueOnce([
+      { id: 'staff-id-456', name: 'Staff User', role: 'Staff' },
+      { id: 'customer-id-111', name: 'Customer User', role: 'Customer' },
+      { id: 'admin-id-789', name: 'Admin User', role: 'Admin' },
+    ]);
+
+    const res = await request(app)
+      .get('/api/transactions/tx-qr/audits')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(3);
+    expect(res.body[1]).toMatchObject({
+      action: 'payment_proof.submit',
+      entity: 'payment_proof',
+      performedBy: { name: 'Customer User' },
+    });
+    expect(res.body[2]).toMatchObject({
+      action: 'payment_proof.approve',
+      performedBy: { name: 'Admin User' },
+    });
+    expect(res.body[2].newValue).toMatchObject({ transactionId: 'tx-qr', amount: 200 });
+  });
+
   it('GET /transactions/:id/audits rejects customers and unauthenticated', async () => {
     const noAuth = await request(app).get('/api/transactions/tx-1/audits');
     expect(noAuth.status).toBe(401);

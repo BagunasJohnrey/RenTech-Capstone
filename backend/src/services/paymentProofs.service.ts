@@ -93,7 +93,7 @@ export async function submitProof(
 
 export async function listProofQueue(limit = 50) {
   const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
-  const [pendingRows, pendingCount, manualTx] = await Promise.all([
+  const [pendingRows, pendingCount, reviewedRows, reviewedCount, manualTx] = await Promise.all([
     prisma.paymentProof.findMany({
       where: { status: 'pending' },
       orderBy: { createdAt: 'desc' },
@@ -110,17 +110,45 @@ export async function listProofQueue(limit = 50) {
       },
     }),
     prisma.paymentProof.count({ where: { status: 'pending' } }),
+    // Reviewed proofs are terminal (approved/rejected) — the staff history tab.
+    prisma.paymentProof.findMany({
+      where: { status: { in: ['approved', 'rejected'] } },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        status: true,
+        amount: true,
+        reference: true,
+        channel: true,
+        imagePath: true,
+        rejectionReason: true,
+        reviewedAt: true,
+        createdAt: true,
+        reviewedBy: { select: { id: true, name: true } },
+        transaction: {
+          select: {
+            id: true, txNumber: true, status: true, downpayment: true, totalPaid: true, balance: true,
+            rentalDate: true, dueDate: true,
+            item: { select: { name: true } },
+            customer: { select: { id: true, name: true, phone: true, address: true } },
+          },
+        },
+      },
+    }),
+    prisma.paymentProof.count({ where: { status: { in: ['approved', 'rejected'] } } }),
     prisma.transaction.findMany({
       where: { paymentPath: 'manual', status: { in: ['Active', 'Reserved'] } },
-      orderBy: { createdAt: 'desc' },
+      // Soonest pickup first — the chase list exists to unblock releases.
+      orderBy: { rentalDate: 'asc' },
       take: 200,
       include: {
         item: { select: { name: true } },
-        customer: { select: { id: true, name: true, phone: true } },
+        customer: { select: { id: true, name: true, phone: true, address: true } },
         paymentProofs: {
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: { status: true, rejectionReason: true, createdAt: true },
+          select: { status: true, rejectionReason: true, createdAt: true, reviewedAt: true },
         },
       },
     }),
@@ -135,7 +163,44 @@ export async function listProofQueue(limit = 50) {
     }))
     .slice(0, take);
 
-  return { pending: pendingRows, awaiting, counts: { pending: pendingCount, awaiting: awaiting.length } };
+  return {
+    pending: pendingRows,
+    awaiting,
+    reviewed: reviewedRows,
+    counts: { pending: pendingCount, awaiting: awaiting.length, reviewed: reviewedCount },
+  };
+}
+
+// Customer-facing history: every proof the signed-in customer has submitted,
+// newest first, with the booking it belongs to. Scoped by customerId in the
+// query so a customer can never read another customer's proofs.
+export async function listCustomerProofs(customerId: string, limit = 50) {
+  const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  const proofs = await prisma.paymentProof.findMany({
+    where: { transaction: { customerId } },
+    orderBy: { createdAt: 'desc' },
+    take,
+    select: {
+      id: true,
+      status: true,
+      amount: true,
+      reference: true,
+      channel: true,
+      imagePath: true,
+      rejectionReason: true,
+      reviewedAt: true,
+      createdAt: true,
+      transaction: {
+        select: {
+          id: true,
+          txNumber: true,
+          status: true,
+          item: { select: { name: true } },
+        },
+      },
+    },
+  });
+  return { proofs };
 }
 
 export async function approveProof(proofId: string, reviewerId: string, amountOverride?: number) {
@@ -238,7 +303,7 @@ export async function rejectProof(proofId: string, reviewerId: string, reason: s
     entity: 'payment_proof',
     entityId: proof.id,
     performedById: reviewerId,
-    newValue: { reason },
+    newValue: { transactionId: proof.transaction.id, reason },
   });
 
   return {

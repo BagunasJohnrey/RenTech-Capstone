@@ -60,6 +60,9 @@ interface CreateRentalInput {
   staffDiscountPin?: string;
   size?: string;
   measurements?: unknown;
+  // Address typed at booking time (customer flow) — persisted on the profile
+  // inside the booking transaction so the staff queue shows a real address.
+  customerAddress?: string;
   requireMinimumDownpayment?: boolean; // customers must put down the flat min_downpayment floor (default ₱200)
   // Staff-only: the downpayment cash was physically collected at the counter,
   // so write it as a completed Payment row atomically with the booking.
@@ -68,6 +71,14 @@ interface CreateRentalInput {
   // double-count it). The staff controller forces this false for customers.
   downpaymentCash?: boolean;
   paymentPath?: 'manual';
+  // Manual-QR checkout: the proof image is uploaded BEFORE the booking is
+  // created, then its row is inserted inside the same DB transaction as the
+  // booking. A failed upload therefore leaves no booking behind.
+  paymentProof?: {
+    imagePath: string;
+    reference?: string;
+    channel?: string;
+  };
 }
 
 export async function createRental(data: CreateRentalInput, processedById?: string) {
@@ -270,6 +281,36 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
             method: 'cash',
             type: balance <= 0 ? 'full' : 'partial',
             status: 'completed',
+          },
+        });
+      }
+
+      // Keep the saved address in step with what the customer entered for this
+      // booking (new signups may have a blank profile address). Atomic with the
+      // booking so staff never see a booking whose address update was lost.
+      if (data.customerAddress) {
+        await tx.profile.update({
+          where: { id: data.customerId },
+          data: { address: data.customerAddress },
+        });
+      }
+
+      // Manual-QR proof is part of the booking itself: if this insert fails the
+      // whole booking rolls back, so no unpaid booking can exist without the
+      // screenshot staff need to verify. The image was already uploaded by the
+      // caller (and is cleaned up there if this transaction fails).
+      if (data.paymentProof) {
+        if (downpayment <= 0) {
+          throw new AppError(400, 'A downpayment is required to submit a payment proof');
+        }
+        await tx.paymentProof.create({
+          data: {
+            transactionId: created.id,
+            amount: downpayment,
+            reference: data.paymentProof.reference?.trim() || null,
+            channel: data.paymentProof.channel?.trim() || null,
+            imagePath: data.paymentProof.imagePath,
+            status: 'pending',
           },
         });
       }
@@ -1167,7 +1208,17 @@ export async function releaseRental(
 // only (route-guarded); AuditLog has no profile relation, so names resolve
 // via one profile query.
 export async function getTransactionAudits(transactionId: string) {
-  const [txLogs, payLogs] = await Promise.all([
+  type ProofEvent = {
+    id: string;
+    action: string;
+    entity: string;
+    entityId: string;
+    performedById: string | null;
+    oldValue: unknown;
+    newValue: Record<string, unknown>;
+    createdAt: Date;
+  };
+  const [txLogs, payLogs, proofs] = await Promise.all([
     prisma.auditLog.findMany({
       where: { entity: 'transaction', entityId: transactionId },
       orderBy: { createdAt: 'asc' },
@@ -1178,12 +1229,58 @@ export async function getTransactionAudits(transactionId: string) {
       orderBy: { createdAt: 'asc' },
       take: 200,
     }),
+    // Payment proofs carry their own submission + review timestamps, so the
+    // timeline derives QR events here (not from audit logs) — every proof
+    // shows up, including ones submitted before proof auditing existed.
+    prisma.paymentProof.findMany({
+      where: { transactionId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        status: true,
+        amount: true,
+        reference: true,
+        channel: true,
+        rejectionReason: true,
+        createdAt: true,
+        reviewedAt: true,
+        reviewedById: true,
+        transaction: { select: { customerId: true } },
+      },
+    }),
   ]);
+  const proofEvents: ProofEvent[] = proofs.flatMap((p) => {
+    const newValue = { transactionId, amount: p.amount, reference: p.reference, channel: p.channel };
+    const events: ProofEvent[] = [{
+      id: `proof-submit-${p.id}`,
+      action: 'payment_proof.submit',
+      entity: 'payment_proof',
+      entityId: p.id,
+      performedById: p.transaction.customerId,
+      oldValue: null,
+      newValue,
+      createdAt: p.createdAt,
+    }];
+    if (p.status === 'approved' || p.status === 'rejected') {
+      events.push({
+        id: `proof-${p.status}-${p.id}`,
+        action: p.status === 'approved' ? 'payment_proof.approve' : 'payment_proof.reject',
+        entity: 'payment_proof',
+        entityId: p.id,
+        performedById: p.reviewedById,
+        oldValue: null,
+        newValue: { ...newValue, reason: p.rejectionReason },
+        createdAt: p.reviewedAt ?? p.createdAt,
+      });
+    }
+    return events;
+  });
   const logs = [
     ...txLogs,
     ...payLogs.filter(
       (l) => (l.newValue as { transactionId?: string } | null)?.transactionId === transactionId
     ),
+    ...proofEvents,
   ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   // Defense-in-depth: collapse repeat "released" entries to the FIRST one.
   // The release path now logs exactly once (first release wins), but legacy

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../src/services/storage.service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/services/storage.service.js')>();
-  return { ...actual, uploadFile: vi.fn() };
+  return { ...actual, uploadFile: vi.fn(), removeObject: vi.fn() };
 });
 
 import request from 'supertest';
@@ -271,6 +271,113 @@ describe('POST /api/bookings/:id/payment-proof', () => {
   });
 });
 
+describe('POST /api/bookings (manual QR)', () => {
+  const futureDate = (days: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  const bookingBody = {
+    itemId: 1,
+    rentalDate: futureDate(2),
+    dueDate: futureDate(5),
+    downpayment: 2500,
+    address: '123 Test St, Balayan',
+    paymentPath: 'manual',
+    paymentProof: proofBody,
+  };
+
+  it('rejects a manual booking with no screenshot and creates nothing', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { uploadFile } = await import('../src/services/storage.service.js');
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ ...bookingBody, paymentProof: undefined });
+
+    expect(res.status).toBe(400);
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(prisma.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it('uploads the screenshot first, then creates the booking + pending proof atomically', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { uploadFile } = await import('../src/services/storage.service.js');
+    (uploadFile as any).mockResolvedValueOnce({ path: 'rental/customer-id-111/proof-1.webp', thumbPath: null, public: false });
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValueOnce(null);
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send(bookingBody);
+
+    expect(res.status).toBe(201);
+    expect(uploadFile).toHaveBeenCalledWith(
+      expect.stringContaining('rental/customer-id-111/proof-'),
+      'image/jpeg',
+      expect.any(Buffer),
+    );
+    expect(prisma.transaction.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ paymentPath: 'manual', downpayment: 2500 }),
+    }));
+    expect(prisma.paymentProof.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        transactionId: 'tx-new',
+        amount: 2500,
+        imagePath: 'rental/customer-id-111/proof-1.webp',
+        reference: '000123456789',
+        channel: 'gcash-1',
+        status: 'pending',
+      }),
+    }));
+    expect(prisma.profile.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'customer-id-111' },
+      data: { address: '123 Test St, Balayan' },
+    }));
+  });
+
+  it('requires a screenshot whenever the configured gateway is manual, even without paymentPath', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { uploadFile } = await import('../src/services/storage.service.js');
+    // getPaymentGateway() reads the rule; no explicit paymentPath in the body.
+    prisma.businessRule.findMany.mockResolvedValueOnce([{ key: 'payment_gateway', value: 'manual' }]);
+
+    const { paymentPath, paymentProof, ...noPathBody } = bookingBody;
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send(noPathBody);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('payment screenshot is required');
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(prisma.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it('removes the uploaded screenshot when the booking is rejected', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { uploadFile, removeObject } = await import('../src/services/storage.service.js');
+    (uploadFile as any).mockResolvedValueOnce({ path: 'rental/customer-id-111/proof-2.webp', thumbPath: null, public: false });
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Rented',
+    });
+    prisma.transaction.findFirst.mockResolvedValue({ id: 'tx-active' });
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send(bookingBody);
+
+    expect(res.status).toBe(409);
+    expect(removeObject).toHaveBeenCalledWith('rental/customer-id-111/proof-2.webp');
+    expect(prisma.paymentProof.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('proof review', () => {
   const pendingProof = {
     id: 'proof-1', status: 'pending', amount: 200, reference: 'R1', channel: 'gcash-1',
@@ -300,7 +407,47 @@ describe('proof review', () => {
     expect(res.status).toBe(200);
     expect(res.body.pending).toHaveLength(1);
     expect(res.body.awaiting).toHaveLength(1);
-    expect(res.body.counts).toEqual({ pending: 1, awaiting: 1 });
+    expect(res.body.counts).toEqual({ pending: 1, awaiting: 1, reviewed: 0 });
+    // Staff need the customer's address in the awaiting-proof sheet.
+    expect(prisma.transaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        customer: expect.objectContaining({
+          select: expect.objectContaining({ address: true }),
+        }),
+      }),
+    }));
+  });
+
+  it('GET /proofs carries the reviewed history (approved + rejected)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'proof-a', status: 'approved', amount: 200, reviewedAt: new Date(),
+          reviewedBy: { id: 'staff-id-456', name: 'Staff User' },
+          transaction: { id: 'tx-1', txNumber: 1001, status: 'Active', item: { name: 'Barong' }, customer: { id: 'c1', name: 'Bea' } },
+        },
+        {
+          id: 'proof-r', status: 'rejected', amount: 200, rejectionReason: 'Blurry screenshot', reviewedAt: new Date(),
+          reviewedBy: { id: 'staff-id-456', name: 'Staff User' },
+          transaction: { id: 'tx-2', txNumber: 1002, status: 'Reserved', item: { name: 'Gown' }, customer: { id: 'c2', name: 'Ana' } },
+        },
+      ]);
+    prisma.paymentProof.count.mockResolvedValueOnce(0).mockResolvedValueOnce(2);
+    prisma.transaction.findMany.mockResolvedValueOnce([]);
+    const res = await request(app).get('/api/payments/proofs').set('Authorization', 'Bearer staff-token');
+    expect(res.status).toBe(200);
+    expect(res.body.reviewed).toHaveLength(2);
+    expect(res.body.counts).toEqual({ pending: 0, awaiting: 0, reviewed: 2 });
+    expect(res.body.reviewed[1]).toMatchObject({
+      status: 'rejected',
+      rejectionReason: 'Blurry screenshot',
+      reviewedBy: { name: 'Staff User' },
+    });
+    expect(prisma.paymentProof.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { status: { in: ['approved', 'rejected'] } },
+    }));
   });
 
   it('approve credits through the ledger and reconciles the proof', async () => {
@@ -481,5 +628,46 @@ describe('customer booking list carries the latest proof', () => {
     expect(prisma.transaction.findMany).toHaveBeenCalledWith(expect.objectContaining({
       include: expect.objectContaining({ paymentProofs: expect.anything() }),
     }));
+  });
+});
+
+describe('customer payment-proof history', () => {
+  it('returns the signed-in customer\'s own proofs, newest first', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.findMany.mockResolvedValueOnce([
+      {
+        id: 'proof-1', status: 'rejected', amount: 200, reference: 'GCASH-1', channel: 'gcash-1',
+        imagePath: 'rental/tx-1/proof-1.webp', rejectionReason: 'Blurry screenshot',
+        reviewedAt: new Date(), createdAt: new Date(),
+        transaction: { id: 'tx-1', txNumber: 321, status: 'Reserved', item: { name: 'Scarlet Mermaid Terno' } },
+      },
+    ]);
+    const res = await request(app).get('/api/bookings/payment-proofs').set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(200);
+    expect(res.body.proofs).toHaveLength(1);
+    expect(res.body.proofs[0]).toMatchObject({
+      id: 'proof-1',
+      status: 'rejected',
+      rejectionReason: 'Blurry screenshot',
+      transaction: { txNumber: 321, item: { name: 'Scarlet Mermaid Terno' } },
+    });
+    // Scoping is structural: the query filters by the session customer, never
+    // by a client-supplied id.
+    expect(prisma.paymentProof.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { transaction: { customerId: 'customer-id-111' } },
+      orderBy: { createdAt: 'desc' },
+    }));
+  });
+
+  it('403s staff (customer-only route)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const res = await request(app).get('/api/bookings/payment-proofs').set('Authorization', 'Bearer staff-token');
+    expect(res.status).toBe(403);
+    expect(prisma.paymentProof.findMany).not.toHaveBeenCalled();
+  });
+
+  it('401s without a session', async () => {
+    const res = await request(app).get('/api/bookings/payment-proofs');
+    expect(res.status).toBe(401);
   });
 });

@@ -18,7 +18,7 @@ import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
 import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../utils/promoLabel';
 import { promoService } from '../services/promo';
-import { submitProof } from '../services/payments';
+
 import { downscaleToJpeg } from '../utils/file';
 import BookingQR from './BookingQR';
 import ManualQrPayment from './ManualQrPayment';
@@ -201,13 +201,12 @@ export default function CustomerRentalFlow({
   // True when the booking completed on the no-keys simulated path (dev/test
   // only) — the receipt says so instead of claiming a real gateway payment.
   const [simulatedPay, setSimulatedPay] = useState(false);
-  // Manual QR checkout: the screenshot IS the payment evidence. `manualTx`
-  // holds a booking created before a failed proof upload so retries only
-  // re-upload the proof instead of duplicating the booking.
+  // Manual QR checkout: the screenshot IS the payment evidence. It is uploaded
+  // together with the booking (server-side, upload-first), so a failed upload
+  // never leaves an unpaid booking behind.
   const [proofChannel, setProofChannel] = useState('');
   const [proofReference, setProofReference] = useState('');
   const [proofFile, setProofFile] = useState(null);
-  const [manualTx, setManualTx] = useState(null);
   useEffect(() => {
     if (!proofChannel && rentalDefaults.manual_qr_codes.length > 0) {
       setProofChannel(rentalDefaults.manual_qr_codes[0].id);
@@ -479,6 +478,9 @@ export default function CustomerRentalFlow({
     promoCode: promoApplied?.code || undefined,
     size: selectedSize || undefined,
     measurements: Object.keys(measurements).length ? measurements : undefined,
+    // Save the address entered here onto the profile (staff see it in the
+    // payment-proof queue and it prefills future bookings).
+    address: (customer.address || '').trim() || undefined,
     paymentMethod,
     paymentPath: isManualGateway ? 'manual' : undefined,
   });
@@ -540,8 +542,10 @@ export default function CustomerRentalFlow({
       try {
         // Manual QR checkout: no gateway charge — the customer sends the
         // downpayment to the boutique's QR, then submits a screenshot for
-        // staff review. The booking is created ONCE; retries only re-upload
-        // the proof (see `manualTx`).
+        // staff review. The screenshot travels WITH the booking request and
+        // the server uploads it before inserting anything, so a storage
+        // failure means "no booking was created" (never a booking without
+        // proof). Retrying simply retries the whole submission.
         if (isManualGateway) {
           if (rentalDefaults.manual_qr_codes.length === 0) {
             setConfirmError('Payment QR not yet set up — please contact the boutique.');
@@ -555,27 +559,30 @@ export default function CustomerRentalFlow({
             setConfirmError('Screenshot must be 5 MB or smaller.');
             return;
           }
-          const created = manualTx || (await onSubmitBooking(buildBookingData()));
-          if (!manualTx) setManualTx(created);
-          try {
-            const data = await downscaleToJpeg(proofFile, 1280, 0.85);
-            if (!data) throw new Error('Could not read that image �?" try another screenshot.');
-            const submitted = await submitProof(created.id, {
-              data,
-              contentType: 'image/jpeg',
-              reference: proofReference.trim() || undefined,
-              channel: proofChannel || undefined,
-            });
-            // Let the parent fold the pending proof into its transactions list
-            // so Home shows "Payment under review" without a reload.
-            onProofSubmitted?.(created, submitted?.proof);
-          } catch (proofErr) {
-            // Booking stays (no rollback like the gateway path) — the customer
-            // retries here or resumes from My Rentals.
-            setConfirmError(proofErr?.message || 'Your booking is saved — upload your payment proof to continue.');
+          const data = await downscaleToJpeg(proofFile, 1280, 0.85);
+          if (!data) {
+            setConfirmError('Could not read that image — try another screenshot.');
             return;
           }
-          setManualTx(null);
+          let created;
+          try {
+            created = await onSubmitBooking({
+              ...buildBookingData(),
+              paymentProof: {
+                data,
+                contentType: 'image/jpeg',
+                reference: proofReference.trim() || undefined,
+                channel: proofChannel || undefined,
+              },
+            });
+          } catch (bookingErr) {
+            // Deliberately no local rollback: nothing was created server-side.
+            setConfirmError(bookingErr?.message || 'Could not submit your booking — please try again.');
+            return;
+          }
+          // Let the parent fold the pending proof into its transactions list
+          // so Home shows "Payment under review" without a reload.
+          onProofSubmitted?.(created);
           setConfirmedTx(created);
           setPaymentSuccess(true);
           setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
@@ -1461,7 +1468,7 @@ export default function CustomerRentalFlow({
               onClick={handleNext}
               disabled={navigating || (step === 1 && (availability.checking || availability.available === false || isCleaning))}
               className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 shadow transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : (navigating ? 'Processing…' : isManualGateway ? 'Submit booking for review' : 'Confirm Payment')} <ChevronRight size={16} />
+              {step === 0 ? 'Continue' : step === 1 ? (availability.checking ? 'Checking…' : 'Continue to Payment') : (navigating ? 'Processing…' : isManualGateway ? 'Submit booking' : 'Confirm Payment')} <ChevronRight size={16} />
             </button>
           </div>
         )}

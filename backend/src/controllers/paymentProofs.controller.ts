@@ -32,6 +32,16 @@ export const rejectProofSchema = z.object({
   body: z.object({ reason: z.string().min(5).max(300) }),
 });
 
+// Customer's own QR payment-proof history (statuses, rejections, receipts).
+export async function listMyProofs(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    res.json(await paymentProofsService.listCustomerProofs(req.user.id, Number(req.query.limit) || 50));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function listProofs(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     res.json(await paymentProofsService.listProofQueue(Number(req.query.limit) || 50));

@@ -43,6 +43,9 @@ export default function PaymentQrManager({ value, onChange }) {
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
   const [editAccount, setEditAccount] = useState('');
+  const [editPath, setEditPath] = useState('');
+  const [editPreview, setEditPreview] = useState('');
+  const [editUploading, setEditUploading] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -51,6 +54,7 @@ export default function PaymentQrManager({ value, onChange }) {
   const [newLabel, setNewLabel] = useState('');
   const [newAccount, setNewAccount] = useState('');
   const fileRef = useRef(null);
+  const editFileRef = useRef(null);
 
   // IntegrationsTab doesn't carry manual_qr_codes, so the manager loads them
   // itself from GET /settings/rules (the same source it writes back to).
@@ -100,20 +104,7 @@ export default function PaymentQrManager({ value, onChange }) {
     if (!file) return;
     setUploading(true);
     try {
-      // Downscale first (fast + HEIC-safe); fall back to raw base64 bytes.
-      let base64;
-      let contentType;
-      const down = await downscaleToJpeg(file, 1280, 0.85);
-      if (down) {
-        base64 = down;
-        contentType = 'image/jpeg';
-      } else {
-        base64 = await fileToBase64(file);
-        contentType = file.type?.startsWith('image/') ? file.type : 'image/jpeg';
-      }
-      const slug = slugify(newLabel || file.name) || 'qr';
-      const key = `qrcodes/${slug}-${Date.now()}.jpg`;
-      const { path } = await storageService.upload(key, contentType, base64);
+      const path = await uploadQr(file, newLabel || file.name);
       setNewPath(path);
       setNewPreview((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
     } catch (err) {
@@ -121,6 +112,57 @@ export default function PaymentQrManager({ value, onChange }) {
     } finally {
       setUploading(false);
     }
+  };
+
+  const uploadQr = async (file, label) => {
+    // Downscale first (fast + HEIC-safe); fall back to raw base64 bytes.
+    let base64;
+    let contentType;
+    const down = await downscaleToJpeg(file, 1280, 0.85);
+    if (down) {
+      base64 = down;
+      contentType = 'image/jpeg';
+    } else {
+      base64 = await fileToBase64(file);
+      contentType = file.type?.startsWith('image/') ? file.type : 'image/jpeg';
+    }
+    const slug = slugify(label || file.name) || 'qr';
+    const key = `qrcodes/${slug}-${Date.now()}.jpg`;
+    const { path } = await storageService.upload(key, contentType, base64);
+    return path;
+  };
+
+  const handleEditFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setEditUploading(true);
+    try {
+      const path = await uploadQr(file, editLabel || file.name);
+      setEditPath(path);
+      setEditPreview((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(file); });
+    } catch (err) {
+      toastError(err?.message || 'QR image upload failed.');
+    } finally {
+      setEditUploading(false);
+    }
+  };
+
+  const startEdit = (qr) => {
+    setConfirmId(null);
+    setEditingId(qr.id);
+    setEditLabel(qr.label || '');
+    setEditAccount(qr.accountName || '');
+    setEditPath(qr.imagePath || '');
+    setEditPreview((prev) => { if (prev) URL.revokeObjectURL(prev); return ''; });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditUploading(false);
+    setEditPath('');
+    setEditPreview((prev) => { if (prev) URL.revokeObjectURL(prev); return ''; });
+    if (editFileRef.current) editFileRef.current.value = '';
   };
 
   const addCode = async () => {
@@ -138,9 +180,11 @@ export default function PaymentQrManager({ value, onChange }) {
   const saveEdit = async () => {
     if (!editLabel.trim()) { toastError('Label cannot be empty.'); return; }
     const next = codes.map((c) => (
-      c.id === editingId ? { ...c, label: editLabel.trim(), accountName: editAccount.trim() } : c
+      c.id === editingId
+        ? { ...c, label: editLabel.trim(), accountName: editAccount.trim(), imagePath: editPath || c.imagePath }
+        : c
     ));
-    if (await persist(next)) setEditingId(null);
+    if (await persist(next)) cancelEdit();
   };
 
   const removeCode = async (id) => {
@@ -178,7 +222,16 @@ export default function PaymentQrManager({ value, onChange }) {
           {codes.map((qr) => (
             <div key={qr.id} className="flex items-center gap-3 p-3 rounded-2xl bg-gray-50/70 border border-gray-100">
               <span className="w-12 h-12 rounded-xl overflow-hidden bg-white border border-gray-200 shrink-0">
-                <ItemImage image={qr.imagePath} thumb alt={`${qr.label} QR code`} className="w-full h-full object-contain" />
+                {editingId === qr.id && editPreview ? (
+                  <img src={editPreview} alt="QR preview" className="w-full h-full object-contain" />
+                ) : (
+                  <ItemImage
+                    image={editingId === qr.id ? editPath : qr.imagePath}
+                    thumb
+                    alt={`${qr.label} QR code`}
+                    className="w-full h-full object-contain"
+                  />
+                )}
               </span>
               {editingId === qr.id ? (
                 <div className="flex-1 min-w-0 space-y-1.5">
@@ -196,6 +249,18 @@ export default function PaymentQrManager({ value, onChange }) {
                     placeholder="Account name (optional)"
                     className="w-full p-2 bg-white rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#bf4a53]"
                   />
+                  <label className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 min-h-[32px] rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
+                    {editUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                    Replace image
+                    <input
+                      ref={editFileRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleEditFile}
+                      disabled={editUploading || saving}
+                    />
+                  </label>
                 </div>
               ) : (
                 <div className="flex-1 min-w-0">
@@ -209,7 +274,7 @@ export default function PaymentQrManager({ value, onChange }) {
                     <button
                       type="button"
                       onClick={saveEdit}
-                      disabled={saving}
+                      disabled={saving || editUploading}
                       aria-label="Save QR code"
                       className="p-2 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-emerald-600 hover:bg-emerald-50 disabled:opacity-50"
                     >
@@ -217,7 +282,7 @@ export default function PaymentQrManager({ value, onChange }) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setEditingId(null)}
+                      onClick={cancelEdit}
                       aria-label="Cancel edit"
                       className="p-2 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
                     >
@@ -248,7 +313,7 @@ export default function PaymentQrManager({ value, onChange }) {
                   <>
                     <button
                       type="button"
-                      onClick={() => { setEditingId(qr.id); setEditLabel(qr.label || ''); setEditAccount(qr.accountName || ''); }}
+                      onClick={() => startEdit(qr)}
                       aria-label={`Edit ${qr.label}`}
                       className="p-2 min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
                     >

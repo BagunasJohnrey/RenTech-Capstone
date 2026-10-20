@@ -59,6 +59,13 @@ const staffName = (staff) => {
 const auditLabel = (log) => {
   const nv = log?.newValue ?? {};
   if (log?.action === 'create' && log?.entity === 'transaction') return 'Booking created';
+  if (log?.entity === 'payment_proof') {
+    const amt = nv.amount != null ? ` · ₱${Number(nv.amount).toLocaleString()}` : '';
+    if (log.action === 'payment_proof.submit') return `Payment proof submitted${amt}`;
+    if (log.action === 'payment_proof.approve') return `Payment proof approved${amt}`;
+    if (log.action === 'payment_proof.reject') return `Payment proof rejected${nv.reason ? ` · ${nv.reason}` : ''}`;
+  }
+  if (nv.paymentReceived != null) return `Payment recorded · ₱${Number(nv.paymentReceived).toLocaleString()}`;
   if (log?.entity === 'payment') return `Payment recorded${nv.amount != null ? ` · ₱${Number(nv.amount).toLocaleString()}` : ''}`;
   if (nv.released) return 'Item released (pickup)';
   if (nv.status === 'Returned') return 'Item returned';
@@ -655,7 +662,21 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                     <ol className="relative space-y-3 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200">
                       {audits.map((log) => (
                         <li key={log.id} className="relative pl-7">
-                          <span className={`absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-4 ${log?.newValue?.released ? 'bg-blue-500 ring-blue-100' : log?.action === 'create' ? 'bg-violet-500 ring-violet-100' : log?.entity === 'payment' ? 'bg-emerald-500 ring-emerald-100' : 'bg-gray-300 ring-gray-100'}`} />
+                          <span className={`absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-4 ${
+                            log?.entity === 'payment_proof'
+                              ? log?.action === 'payment_proof.reject'
+                                ? 'bg-red-500 ring-red-100'
+                                : log?.action === 'payment_proof.approve'
+                                  ? 'bg-emerald-500 ring-emerald-100'
+                                  : 'bg-amber-500 ring-amber-100'
+                              : log?.newValue?.released
+                                ? 'bg-blue-500 ring-blue-100'
+                                : log?.action === 'create'
+                                  ? 'bg-violet-500 ring-violet-100'
+                                  : log?.entity === 'payment' || log?.newValue?.paymentReceived != null
+                                    ? 'bg-emerald-500 ring-emerald-100'
+                                    : 'bg-gray-300 ring-gray-100'
+                          }`} />
                           <p className="text-xs font-bold text-gray-900">{auditLabel(log)}</p>
                           <p className="text-[11px] text-gray-500">
                             {log?.performedBy?.name || 'System'}

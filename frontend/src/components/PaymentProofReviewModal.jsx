@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle, Calendar, CheckCircle2, ClipboardCheck, Hash,
   MapPin, Package, Phone, X, XCircle, ZoomIn,
@@ -12,6 +12,7 @@ import { approveProof, rejectProof } from '../services/payments';
 import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
 import { peso } from '../utils/receipt';
 import { timeAgo } from './NotificationsDropdown';
+import { api } from '../utils/api';
 
 const fmtDate = (d) => {
   if (!d) return '—';
@@ -27,6 +28,26 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
   const tx = proof?.transaction ?? null;
   const { success: toastSuccess } = useToast();
   const [zoom, setZoom] = useState(false);
+  // Reviewed proofs open read-only from the history tab; only pending proofs
+  // get the approve/reject controls.
+  const reviewed = proof?.status === 'approved' || proof?.status === 'rejected';
+  const approved = proof?.status === 'approved';
+  // The channel is stored as a QR code id (qr-…); resolve the admin's label.
+  const [channelLabels, setChannelLabels] = useState({});
+  useEffect(() => {
+    let active = true;
+    api.get('/settings/rental-defaults')
+      .then((d) => {
+        if (!active) return;
+        const codes = Array.isArray(d?.manual_qr_codes) ? d.manual_qr_codes : [];
+        setChannelLabels(Object.fromEntries(codes.map((c) => [c.id, c.label])));
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+  const channelText = proof?.channel
+    ? (channelLabels[proof.channel] || (/^(demo-)?qr-/.test(proof.channel) ? null : proof.channel))
+    : null;
   // Escape closes the zoom overlay first; the sheet is the fallback when not zoomed.
   useEscapeClose(() => setZoom(false), zoom);
   useEscapeClose(onClose, !zoom);
@@ -83,7 +104,9 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
               <ClipboardCheck size={18} className="text-amber-600" />
             </div>
             <div>
-              <h3 id="dialog-title-review-proof" className="font-bold text-lg text-gray-900">Verify payment</h3>
+              <h3 id="dialog-title-review-proof" className="font-bold text-lg text-gray-900">
+                {reviewed ? (approved ? 'Payment verified' : 'Payment rejected') : 'Verify payment'}
+              </h3>
               <p className="text-xs text-gray-500">Submitted {timeAgo(proof?.createdAt)}</p>
             </div>
           </div>
@@ -195,7 +218,7 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
             </p>
             <div className="mt-2 space-y-1 text-xs text-gray-600">
               <p>Reference: <span className="font-bold text-gray-900">{proof?.reference || '—'}</span></p>
-              <p>Channel: <span className="font-bold text-gray-900">{proof?.channel || '—'}</span></p>
+              <p>Channel: <span className="font-bold text-gray-900">{channelText || '—'}</span></p>
               <p>
                 Downpayment due: <span className="font-bold text-gray-900">{peso(tx?.downpayment)}</span>
                 {' '}· Paid so far: {peso(tx?.totalPaid)}
@@ -203,6 +226,23 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
             </div>
           </div>
 
+          {reviewed ? (
+            <div className={`rounded-2xl border p-4 ${approved ? 'bg-emerald-50 border-emerald-200/70' : 'bg-red-50 border-red-200/70'}`}>
+              <p className={`text-sm font-bold flex items-center gap-1.5 ${approved ? 'text-emerald-700' : 'text-red-700'}`}>
+                {approved ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                {approved ? `${peso(proof?.amount)} credited` : 'Proof rejected'}
+              </p>
+              <p className="mt-1 text-xs text-gray-600">
+                {approved ? 'Verified' : 'Rejected'}
+                {proof?.reviewedAt ? ` ${fmtDate(proof.reviewedAt)}` : ''}
+                {proof?.reviewedBy?.name ? ` · by ${proof.reviewedBy.name}` : ''}
+              </p>
+              {!approved && proof?.rejectionReason && (
+                <p className="mt-2 text-xs font-medium text-red-600">Reason: {proof.rejectionReason}</p>
+              )}
+            </div>
+          ) : (
+          <>
           <div className="space-y-3">
             <div>
               <label htmlFor="proof-approve-amount" className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">
@@ -274,6 +314,8 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
               {guarding ? 'Working…' : 'Reject proof'}
             </button>
           </div>
+          </>
+          )}
 
           {error && (
             <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
