@@ -77,9 +77,13 @@ export default function PaymentHistoryCard({ refreshKey = 0 }) {
           const tx = p.transaction;
           return (
             <div key={p.id} className="flex items-center gap-3 p-4">
-              <span className="w-11 h-11 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0">
-                <ItemImage image={p.imagePath} alt="Payment proof" placeholderSize={16} className="w-full h-full object-cover" />
-              </span>
+              <ItemImage
+                image={p.imagePath}
+                alt="Payment proof"
+                eager
+                placeholderSize={16}
+                className="w-11 h-11 rounded-xl object-cover shrink-0 bg-gray-50 border border-gray-100"
+              />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-gray-900 truncate">
                   {tx?.item?.name || 'Booking'}

@@ -97,15 +97,14 @@ export function defaultSmsMessage(tx) {
   const intent = smsIntent(tx);
 
   if (intent.kind.startsWith('payment')) {
-    const need = Math.max(0, Number(tx?.downpayment || 0) - Number(tx?.totalPaid || 0));
-    const dp = need > 0 ? ` Downpayment due: PHP ${need.toLocaleString('en-PH')}.` : '';
+    // Keep these one GSM segment where possible: no amount, no "booking for".
     if (intent.kind === 'paymentReview') {
-      return `Hi ${name}, we received your payment screenshot for ${item}. It is under review and we will text you once the downpayment is verified.${dp} Thank you!`;
+      return `Hi ${name}, we received your payment screenshot for ${item}. It is under review and we will text you once verified. Thank you!`;
     }
     if (intent.kind === 'paymentRejected') {
-      return `Hi ${name}, we could not verify your payment screenshot for ${item}. Please upload a clearer one from My Rentals so we can complete your booking.${dp} Thank you!`;
+      return `Hi ${name}, we could not verify your payment screenshot for ${item}. Please upload a clearer one in My Rentals. Thank you!`;
     }
-    return `Hi ${name}, your booking for ${item} is waiting on your payment screenshot. Please upload it from My Rentals so we can verify the downpayment before pickup.${dp} Thank you!`;
+    return `Hi ${name}, ${item} is waiting on your payment screenshot. Upload it in My Rentals so we can verify the downpayment. Thank you!`;
   }
 
   if (intent.kind === 'overdue') {

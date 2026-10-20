@@ -102,7 +102,9 @@
   reason form + "Reject proof" instead of showing it permanently. The staff SMS modal is **context-aware**
   (`smsIntent`/`defaultSmsMessage` in `utils/format.js`): manual unpaid → payment missing/review/rejected wording,
   Reserved → pickup reminder, past-due → overdue, else due reminder — a future due date can no longer say "overdue
-  (1 day)". Awaiting-proof rows carry `paymentPath` so the intent is explicit.
+  (1 day)". Awaiting-proof rows carry `paymentPath` so the intent is explicit. Payment-reminder texts are kept short
+  (no amount, ~147 chars for a typical name/item) to stay within one GSM segment. Proof-history thumbnails render
+  `ItemImage` eagerly with direct sizing (no wrapper span) so signed `rental/…` screenshots show in the 44px rows.
 - **Manual QR Payment gateway (done 2026-10-17)**: a third `payment_gateway` BusinessRule value `'manual'` (admin selector in Settings -> Integrations shows "Manual QR (InstaPay / bank app)"). Admin uploads QR images via the `PaymentQrManager` card; the list lives in the `manual_qr_codes` rule. Customer booking flow step 2 renders the shared `ManualQrPayment` panel (public QR + optional reference + screenshot) and submits
            the screenshot WITH `POST /bookings` (upload-first, then booking + proof row in one DB transaction; a
            failed upload creates NO booking — see the atomic-booking bullet); resubmissions after a rejection still use

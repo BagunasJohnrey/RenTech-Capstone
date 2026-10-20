@@ -69,7 +69,9 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
       setSrc(thumbUrlFor(image));
       return;
     }
-    resolveDisplayUrl(image).then((url) => { if (active) setSrc(url || null); });
+    resolveDisplayUrl(image)
+      .then((url) => { if (active) setSrc(url || null); })
+      .catch(() => { if (active) { setSrc(null); settle(); } });
     return () => { active = false; };
     // thumbFailed included: flipping it re-runs to the full-image branch.
   }, [image, inView, thumb, thumbFailed]);

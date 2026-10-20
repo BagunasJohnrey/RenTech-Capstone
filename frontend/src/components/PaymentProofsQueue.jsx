@@ -94,6 +94,7 @@ export default function PaymentProofsQueue({ role, onChanged }) {
       </div>
 
       {!unknown && (
+        <div className="flex justify-center sm:justify-start">
         <div className="inline-flex flex-wrap items-center gap-1 bg-gray-100/80 rounded-2xl px-1.5 py-1.5 mb-4">
           <button
             type="button"
@@ -115,6 +116,7 @@ export default function PaymentProofsQueue({ role, onChanged }) {
           >
             History ({counts.reviewed})
           </button>
+        </div>
         </div>
       )}
 
@@ -256,9 +258,13 @@ export default function PaymentProofsQueue({ role, onChanged }) {
                   title="View payment proof"
                   className="w-full flex items-start gap-3 p-3.5 bg-white rounded-2xl border border-gray-100/80 shadow-[0_1px_2px_rgba(0,0,0,0.02)] text-left transition-all hover:shadow-sm hover:border-gray-200"
                 >
-                  <span className="w-11 h-11 rounded-xl overflow-hidden bg-gray-50 border border-gray-100 shrink-0">
-                    <ItemImage image={p.imagePath} alt="Payment proof" thumb placeholderSize={16} className="w-full h-full object-cover" />
-                  </span>
+                  <ItemImage
+                    image={p.imagePath}
+                    alt="Payment proof"
+                    eager
+                    placeholderSize={16}
+                    className="w-11 h-11 rounded-xl object-cover shrink-0 bg-gray-50 border border-gray-100"
+                  />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
