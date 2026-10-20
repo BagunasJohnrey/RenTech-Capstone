@@ -504,6 +504,15 @@ function route(method, path, body) {
       };
       paymentProofs.unshift(proof);
       created.paymentProofs = [{ status: proof.status, rejectionReason: null, amount: proof.amount, createdAt: proof.createdAt }];
+      notifications.unshift({
+        id: 'notif-' + Date.now(),
+        type: 'payment_proof_pending',
+        title: 'Payment under review',
+        message: `We received your booking for "${created.item?.name ?? 'your item'}" and your payment screenshot. Our team will verify the downpayment before pickup — we'll notify you once it's approved.`,
+        transactionId: created.id,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+      });
     }
     transactions.unshift(created);
     if (it) { it.status = 'Rented'; it.effectiveStatus = 'Rented'; }
@@ -811,6 +820,7 @@ function route(method, path, body) {
         id: t.id, txNumber: t.txNumber, downpayment: t.downpayment, totalPaid: t.totalPaid,
         balance: t.balance ?? Math.max(0, (t.rentalFee ?? 0) - (t.totalPaid ?? 0)),
         rentalDate: t.rentalDate, dueDate: t.dueDate,
+        paymentPath: t.paymentPath,
         item: t.item ? { name: t.item.name } : null,
         customer: t.customer,
         latestProof: t.paymentProofs?.[0] ?? null,

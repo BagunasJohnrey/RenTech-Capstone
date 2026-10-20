@@ -315,7 +315,18 @@ vi.mock('../src/config/database.js', () => {
         _count: { id: 0 },
         _sum: { rentalFee: 0, totalPaid: 0, latePenalty: 0, damageFee: 0 },
       }),
-      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'tx-new', ...args.data })),
+      create: vi.fn().mockImplementation((args) => Promise.resolve({
+        id: 'tx-new',
+        ...args.data,
+        // Mirror Prisma's `include` so post-create notifications can read the
+        // relations the service asks for (item/customer) instead of throwing.
+        ...(args.include?.customer
+          ? { customer: { id: args.data.customerId, name: 'Test Customer', email: 'customer@example.com' } }
+          : {}),
+        ...(args.include?.item
+          ? { item: { id: args.data.itemId, name: 'Test Item', category: 'Gown' } }
+          : {}),
+      })),
       update: vi.fn().mockImplementation((args) => Promise.resolve({ id: args.where.id, ...args.data })),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },

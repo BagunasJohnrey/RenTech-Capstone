@@ -159,6 +159,7 @@ export async function listProofQueue(limit = 50) {
     .map((t) => ({
       id: t.id, txNumber: t.txNumber, downpayment: t.downpayment, totalPaid: t.totalPaid,
       balance: t.balance, rentalDate: t.rentalDate, dueDate: t.dueDate,
+      paymentPath: t.paymentPath,
       item: t.item, customer: t.customer, latestProof: t.paymentProofs[0] ?? null,
     }))
     .slice(0, take);

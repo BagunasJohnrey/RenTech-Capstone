@@ -118,6 +118,23 @@ describe('email templates (branded, fee-policy aware)', () => {
     expect(built.text).toContain('RT-ABC12345');
   });
 
+  it('manual-QR confirmation reads as under review, never paid', () => {
+    const built = bookingConfirmationEmail({
+      customerName: 'Maria',
+      itemName: 'Red Gown',
+      pickupDate: '01/10/2026',
+      dueDate: '01/13/2026',
+      rentalFee: 1500,
+      downpayment: 750,
+      balance: 750,
+      paymentPending: true,
+    });
+    expect(built.subject).toContain('under review');
+    expect(built.subject).not.toContain('confirmed');
+    expect(built.html).toContain('under review');
+    expect(built.text).toContain('under review');
+  });
+
   it('pickup email names the item + due date', () => {
     const built = pickupEmail('Maria', 'Red Gown', '01/13/2026');
     expect(built.html).toContain('Red Gown');

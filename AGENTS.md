@@ -89,9 +89,20 @@
   (400 without `paymentProof`) and creates the pending proof with the booking. Also fixed the missing address: `listProofQueue`
   awaiting rows now select `customer.address`, and the booking form sends its `address` field so `createRental` persists it
   on the `Profile` (in the same `$transaction`) — staff see the typed address in `AwaitingProofModal` even for profiles that
-  previously had none. Tests: 4 new manual-booking cases + awaiting-select/address assertions; **685/685 vitest pass**,
+  previously had none. Tests: 5 new manual-booking/release cases + awaiting-select/address assertions + under-review
+  email; **687/687 vitest pass**,
   backend `tsc` clean, frontend `vite build` passes. Demo check: no-proof 400, proof-pending booking with proof row,
-  awaiting excludes it, saved address returned on the booking.
+  awaiting excludes it, saved address returned on the booking. **Pickup is blocked until the QR payment is resolved**:
+  `releaseRental` 400s a manual booking whose `totalPaid < downpayment`, and the Tasks UI removes those bookings from
+  "Ready for Pickup" (no Release button, no "Prepare pickup" priority row — the awaiting/pending proof row ranks first
+  with "pickup today" annotated). **Customer notifications are honest**: a booking created with a pending proof sends
+  `payment_proof_pending` ("Payment under review", amber), plus an "under review" booking email/SMS — never "Booking
+  Confirmed"; approval later sends "Payment verified", rejection sends the existing "Payment proof needs attention".
+  The review sheet has a **fixed bottom action bar** (Approve & credit + Reject); Reject reveals the 300-char/min-5
+  reason form + "Reject proof" instead of showing it permanently. The staff SMS modal is **context-aware**
+  (`smsIntent`/`defaultSmsMessage` in `utils/format.js`): manual unpaid → payment missing/review/rejected wording,
+  Reserved → pickup reminder, past-due → overdue, else due reminder — a future due date can no longer say "overdue
+  (1 day)". Awaiting-proof rows carry `paymentPath` so the intent is explicit.
 - **Manual QR Payment gateway (done 2026-10-17)**: a third `payment_gateway` BusinessRule value `'manual'` (admin selector in Settings -> Integrations shows "Manual QR (InstaPay / bank app)"). Admin uploads QR images via the `PaymentQrManager` card; the list lives in the `manual_qr_codes` rule. Customer booking flow step 2 renders the shared `ManualQrPayment` panel (public QR + optional reference + screenshot) and submits
            the screenshot WITH `POST /bookings` (upload-first, then booking + proof row in one DB transaction; a
            failed upload creates NO booking — see the atomic-booking bullet); resubmissions after a rejection still use

@@ -54,6 +54,9 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
 
   const [approveAmount, setApproveAmount] = useState(String(proof?.amount ?? ''));
   const [reason, setReason] = useState('');
+  // Reject is a deliberate second step: the reason form stays collapsed until
+  // staff tap Reject, so a stray tap can never bounce a valid payment.
+  const [rejecting, setRejecting] = useState(false);
   const [error, setError] = useState('');
   const { guarding, guard } = useButtonGuard();
 
@@ -242,85 +245,110 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
               )}
             </div>
           ) : (
-          <>
-          <div className="space-y-3">
-            <div>
-              <label htmlFor="proof-approve-amount" className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">
-                Amount to credit
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">₱</span>
-                <input
-                  id="proof-approve-amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  inputMode="decimal"
-                  value={approveAmount}
-                  onChange={(e) => { setApproveAmount(e.target.value); setError(''); }}
-                  className="w-full pl-8 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors"
-                />
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="proof-approve-amount" className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">
+                  Amount to credit
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">₱</span>
+                  <input
+                    id="proof-approve-amount"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={approveAmount}
+                    onChange={(e) => { setApproveAmount(e.target.value); setError(''); }}
+                    className="w-full pl-8 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors"
+                  />
+                </div>
               </div>
+              {(mismatch || belowDownpayment) && (
+                <div className="bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 space-y-0.5">
+                  {mismatch && (
+                    <p className="text-[11px] font-semibold text-amber-700 flex items-center gap-1">
+                      <AlertTriangle size={11} className="shrink-0" /> Differs from the claimed {peso(claimed)} — credit only what you actually verified.
+                    </p>
+                  )}
+                  {belowDownpayment && (
+                    <p className="text-[11px] font-semibold text-amber-700 flex items-center gap-1">
+                      <AlertTriangle size={11} className="shrink-0" /> Below the {peso(tx?.downpayment)} downpayment — this won't fully confirm the booking.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-            {(mismatch || belowDownpayment) && (
-              <div className="bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-2 space-y-0.5">
-                {mismatch && (
-                  <p className="text-[11px] font-semibold text-amber-700 flex items-center gap-1">
-                    <AlertTriangle size={11} className="shrink-0" /> Differs from the claimed {peso(claimed)} — credit only what you actually verified.
-                  </p>
-                )}
-                {belowDownpayment && (
-                  <p className="text-[11px] font-semibold text-amber-700 flex items-center gap-1">
-                    <AlertTriangle size={11} className="shrink-0" /> Below the {peso(tx?.downpayment)} downpayment — this won't fully confirm the booking.
-                  </p>
-                )}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={handleApprove}
-              disabled={guarding || !amountValid}
-              className="w-full py-3 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-sm shadow-red-500/20"
-            >
-              <CheckCircle2 size={15} />
-              {guarding ? 'Working…' : amountValid ? `Approve & credit ${peso(amount)}` : 'Approve & credit'}
-            </button>
-          </div>
-
-          <div className="border-t border-gray-100 pt-4 space-y-3">
-            <div>
-              <label htmlFor="proof-reject-reason" className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">
-                Rejection reason
-              </label>
-              <textarea
-                id="proof-reject-reason"
-                value={reason}
-                onChange={(e) => { setReason(e.target.value.slice(0, 300)); setError(''); }}
-                rows={3}
-                placeholder="e.g. Reference number unreadable — please re-upload a clearer screenshot"
-                className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm leading-relaxed focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all resize-none"
-              />
-              <p className={`text-[11px] text-right font-medium ${reason.trim().length > 0 && reason.trim().length < 5 ? 'text-amber-600' : 'text-gray-400'}`}>
-                {reason.length}/300 · min 5
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleReject}
-              disabled={guarding || reason.trim().length < 5}
-              className="w-full py-3 text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 rounded-2xl transition-all flex items-center justify-center gap-2"
-            >
-              <XCircle size={15} />
-              {guarding ? 'Working…' : 'Reject proof'}
-            </button>
-          </div>
-          </>
-          )}
-
-          {error && (
-            <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
           )}
         </div>
+
+        {/* Fixed action bar: the decision buttons stay visible while the
+            screenshot/details scroll above them, matching the other sheets. */}
+        {!reviewed && (
+          <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-3.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
+            {error && (
+              <p className="mb-3 text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
+            )}
+            {rejecting ? (
+              <div className="space-y-2.5">
+                <div>
+                  <label htmlFor="proof-reject-reason" className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">
+                    Rejection reason
+                  </label>
+                  <textarea
+                    id="proof-reject-reason"
+                    value={reason}
+                    onChange={(e) => { setReason(e.target.value.slice(0, 300)); setError(''); }}
+                    rows={3}
+                    autoFocus
+                    placeholder="e.g. Reference number unreadable — please re-upload a clearer screenshot"
+                    className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm leading-relaxed focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all resize-none"
+                  />
+                  <p className={`text-[11px] text-right font-medium ${reason.trim().length > 0 && reason.trim().length < 5 ? 'text-amber-600' : 'text-gray-400'}`}>
+                    {reason.length}/300 · min 5
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setRejecting(false); setError(''); }}
+                    className="px-4 py-3 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-colors shrink-0"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleReject}
+                    disabled={guarding || reason.trim().length < 5}
+                    className="flex-1 py-3 text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 rounded-2xl transition-all flex items-center justify-center gap-2"
+                  >
+                    <XCircle size={15} />
+                    {guarding ? 'Working…' : 'Reject proof'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setRejecting(true); setError(''); }}
+                  className="px-4 py-3 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-2xl transition-colors shrink-0"
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  disabled={guarding || !amountValid}
+                  className="flex-1 py-3 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-sm shadow-red-500/20"
+                >
+                  <CheckCircle2 size={15} />
+                  {guarding ? 'Working…' : amountValid ? `Approve & credit ${peso(amount)}` : 'Approve & credit'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </BottomSheet>
 
       {zoom && (

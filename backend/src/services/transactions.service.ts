@@ -338,15 +338,28 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     newValue: { transactionId: transaction.id, itemId: data.itemId, customerId: data.customerId, assistedById: processedById ?? null },
   });
 
+  // Manual-QR bookings have money under review at this point, so they get an
+  // honest "payment under review" notice — never a confirmation that implies
+  // the downpayment was already verified.
+  const proofPending = Boolean(data.paymentProof);
+
   // Auto-confirmation notification
   try {
-    await createNotification({
-      profileId: data.customerId,
-      transactionId: transaction.id,
-      type: 'booking_confirmation',
-      title: 'Booking Confirmed',
-      message: `Your rental of "${transaction.item.name}" is confirmed. Due back ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
-    });
+    await createNotification(proofPending
+      ? {
+          profileId: data.customerId,
+          transactionId: transaction.id,
+          type: 'payment_proof_pending',
+          title: 'Payment under review',
+          message: `We received your booking for "${transaction.item.name}" and your payment screenshot. Our team will verify the downpayment before pickup — we'll notify you once it's approved.`,
+        }
+      : {
+          profileId: data.customerId,
+          transactionId: transaction.id,
+          type: 'booking_confirmation',
+          title: 'Booking Confirmed',
+          message: `Your rental of "${transaction.item.name}" is confirmed. Due back ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
+        });
   } catch { /* notification is non-critical */ }
 
   // Staff alert: a new booking was created.
@@ -388,15 +401,17 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     const smsGloballyOn = await isSmsEnabled().catch(() => true);
     const wantsBookingSms = smsGloballyOn && (!prefs || prefs.booking !== false);
     if (customerProfile?.phone && wantsBookingSms) {
-      const template = await prisma.smsTemplate.findFirst({ where: { name: 'booking_confirmation' } });
-      const message = template?.content
-        ? applyTemplate(template.content, {
-            customer: customerProfile.name,
-            item: transaction.item.name,
-            date: end.toLocaleDateString('en-PH'),
-            days: String(Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)))),
-          })
-        : `Hi ${customerProfile.name}, your rental of "${transaction.item.name}" is confirmed. Due back ${end.toLocaleDateString('en-PH')}. Thank you!`;
+      const template = proofPending ? null : await prisma.smsTemplate.findFirst({ where: { name: 'booking_confirmation' } });
+      const message = proofPending
+        ? `Hi ${customerProfile.name}, we received your booking for "${transaction.item.name}". Your payment screenshot is under review. We'll text you once the downpayment is verified.`
+        : template?.content
+          ? applyTemplate(template.content, {
+              customer: customerProfile.name,
+              item: transaction.item.name,
+              date: end.toLocaleDateString('en-PH'),
+              days: String(Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)))),
+            })
+          : `Hi ${customerProfile.name}, your rental of "${transaction.item.name}" is confirmed. Due back ${end.toLocaleDateString('en-PH')}. Thank you!`;
 
       await sendSms(customerProfile.phone, message).then(() =>
         prisma.sentSms.create({
@@ -427,6 +442,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           balance: fee - downpayment,
           bookingCode: `RT-${String(transaction.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`,
           qrCodeDataUri,
+          paymentPending: proofPending,
         });
       }
     } catch { /* email is non-critical */ }
@@ -1110,6 +1126,16 @@ export async function releaseRental(
   if (tx.status === TransactionStatus.Returned) throw new AppError(400, 'Transaction already returned');
   if (tx.status === TransactionStatus.Cancelled) throw new AppError(400, 'Transaction was cancelled');
 
+  // A manual-QR booking whose transfer is still unverified must never be
+  // prepared for pickup: the money may already be on its way, and collecting
+  // it again at the counter would charge the customer twice.
+  if (
+    (tx.paymentPath === 'manual' || tx.gateway === 'manual') &&
+    Number(tx.totalPaid) < Number(tx.downpayment)
+  ) {
+    throw new AppError(400, 'This booking is waiting on a manual QR payment proof — verify the transfer before preparing the pickup');
+  }
+
   // No release until fully paid: the item leaves the shop only once the
   // rental balance (fee − amounts actually credited) is zero. Staff collect
   // it via Record Payment (counter cash or Online tab) — or in the release
@@ -1397,3 +1423,6 @@ export async function recordPayment(
 
   return { payment, totalPaid: newTotalPaid, balance: newBalance };
 }
+
+
+

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle, RotateCcw, ScanLine } from 'lucide-react';
 import { api } from '../utils/api';
-import { customerLabel, itemLabel, defaultOverdueMessage } from '../utils/format';
+import { customerLabel, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
@@ -88,7 +88,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
   const [awaitingProof, setAwaitingProof] = useState(null);
 
   const openSmsModal = (tx) => {
-    setSmsMessage(defaultOverdueMessage(tx));
+    setSmsMessage(defaultSmsMessage(tx));
     setSmsModalTx(tx);
   };
   const closeSmsModal = () => {
@@ -103,12 +103,21 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
   // Full-view modals
   const [sendingSms, setSendingSms] = useState(false);
 
+  // A manual-QR booking is not ready to hand over until the transfer proof has
+  // been approved and the downpayment credited. While it is waiting on the
+  // customer (or on staff verification), it lives in the proof queue instead of
+  // "Ready for Pickup" — releasing it would collect the same money twice.
+  const qrPaymentUnresolved = (tx) =>
+    (tx?.paymentPath === 'manual' || tx?.gateway === 'manual') &&
+    Number(tx?.totalPaid || 0) < Number(tx?.downpayment || 0);
+
   // Ready for Pickup + Overdue queues paint from the digest rows first
   // (fast), then the full list takes over when it lands. Both shapes are
   // FULL records, so the merge is seamless.
-  const pendingPickup = queueTxs.filter(tx =>
+  const pickupBase = queueTxs.filter(tx =>
     (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx)
   );
+  const pendingPickup = pickupBase.filter(tx => !qrPaymentUnresolved(tx));
 
   // Overdue data
   const overdueItems = queueTxs.filter(tx => {
@@ -126,17 +135,18 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
   // through and render the queues we do have (errors surface in the queue UI).
   const proofsUnknown = proofQueue.loading && !proofQueue.data && !proofQueue.error;
   const focusKnown = queuesKnown && !proofsUnknown;
-  const pickupToday = pendingPickup.filter((tx) => {
+  const isPickupToday = (tx) => {
     const d = new Date(tx.rentalDate || tx.date);
     d.setHours(0, 0, 0, 0);
     return d.getTime() === today.getTime();
-  });
-  // One row per booking: a pickup due today that still has a QR proof waiting
-  // is represented by the proof row (annotated "pickup today"), never a second
-  // "Prepare pickup" row for the same booking. Pickups also rank ABOVE the
-  // "needs proof" chase list so a late-arriving GCash proof can't crowd the
-  // day-of pickup work out of the list.
-  const pickupTodayIds = new Set(pickupToday.map((tx) => tx.id));
+  };
+  const pickupToday = pendingPickup.filter(isPickupToday);
+  // Annotate the proof rows with "pickup today" even though unresolved manual
+  // bookings are deliberately excluded from the Ready-for-Pickup queue.
+  const pickupTodayIds = new Set(pickupBase.filter(isPickupToday).map((tx) => tx.id));
+  // One row per booking: a due-today pickup that still has a QR proof pending
+  // (or no proof at all) is represented by the proof row (annotated "pickup
+  // today"), never a second "Prepare pickup" row for the same booking.
   const focusById = new Map();
   const addFocus = (id, item) => {
     if (id && focusById.has(id)) return;
@@ -167,17 +177,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
       action: () => setReviewProof(p),
     });
   }
-  for (const tx of pickupToday) {
-    addFocus(tx.id, {
-      key: `pk-${tx.id}`,
-      icon: Package,
-      tone: 'text-blue-600',
-      bg: 'bg-blue-50 border-blue-200/70',
-      label: `Prepare pickup for ${customerLabel(tx.customer)}`,
-      sub: `${itemLabel(tx.item)} due today`,
-      action: () => setReleaseTx(tx),
-    });
-  }
+  // Chase rows rank ABOVE pickups: an unresolved manual-QR payment blocks the
+  // handover, so the row must say "proof needed" (Follow up) — never "Prepare
+  // pickup" for the same booking.
   for (const t of proofQueue.data?.awaiting ?? []) {
     addFocus(t.id, {
       key: `await-${t.id}`,
@@ -189,6 +191,17 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
       tx: t,
       cta: 'Follow up',
       action: () => setAwaitingProof(t),
+    });
+  }
+  for (const tx of pickupToday) {
+    addFocus(tx.id, {
+      key: `pk-${tx.id}`,
+      icon: Package,
+      tone: 'text-blue-600',
+      bg: 'bg-blue-50 border-blue-200/70',
+      label: `Prepare pickup for ${customerLabel(tx.customer)}`,
+      sub: `${itemLabel(tx.item)} due today`,
+      action: () => setReleaseTx(tx),
     });
   }
   const focusItems = [...focusById.values()].slice(0, 5);
@@ -523,7 +536,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                                 className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="Send SMS">
                                 <MessageCircle size={14} />
                               </button>
-                              {!isReleased(tx) && (tx.status === 'Active' || tx.status === 'Reserved') && (
+                              {!isReleased(tx) && (tx.status === 'Active' || tx.status === 'Reserved') && !qrPaymentUnresolved(tx) && (
                                 <button onClick={(e) => { e.stopPropagation(); setReleaseTx(tx); }}
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors" title="Release Item">
                                   <Package size={14} />
@@ -806,7 +819,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
             <div>
               <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
-              <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
+              <p className="text-xs text-gray-500 font-medium mt-1">{smsIntent(smsModalTx)?.subtitle}</p>
             </div>
             <button onClick={closeSmsModal}
               className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
@@ -817,12 +830,17 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
                 <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
-                <p className="mt-1"><span className="text-gray-500">Due Date:</span> <strong className="text-red-500">{smsModalTx.dueDate || smsModalTx.date}</strong></p>
+                <p className="mt-1">
+                  <span className="text-gray-500">Due Date:</span>{' '}
+                  <strong className={smsIntent(smsModalTx)?.kind === 'overdue' ? 'text-red-500' : 'text-gray-900'}>
+                    {new Date(smsModalTx.dueDate || smsModalTx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </strong>
+                </p>
               </div>
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
-                  <button onClick={() => setSmsMessage(defaultOverdueMessage(smsModalTx))}
+                  <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx))}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
                     title="Restore the default message">
                     <RotateCcw size={11} /> Reset

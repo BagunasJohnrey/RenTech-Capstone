@@ -24,6 +24,7 @@ export const TYPE_CONFIG = {
   customer_message: { icon: MessageCircle, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Customer Message' },
   ai_report: { icon: FileText, iconBg: 'bg-violet-50', iconColor: 'text-violet-600', chip: 'Report' },
   payment_proof: { icon: ClipboardCheck, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Payment Proof' },
+  payment_proof_pending: { icon: ClipboardCheck, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Payment Review' },
   payment_proof_approved: { icon: ShieldCheck, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500', chip: 'Payment Verified' },
   payment_proof_rejected: { icon: ShieldAlert, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Payment Issue' },
   default: { icon: Bell, iconBg: 'bg-gray-100', iconColor: 'text-gray-500', chip: 'Notification' },

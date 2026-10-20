@@ -9,7 +9,7 @@ import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
-import { customerLabel, customerTelLink, itemLabel, defaultOverdueMessage } from '../utils/format';
+import { customerLabel, customerTelLink, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
 import { isReleased } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import BottomSheet from '../components/BottomSheet';
@@ -50,6 +50,12 @@ const SORT_LABELS = Object.fromEntries(SORT_OPTIONS.map((o) => [o.value, o.label
 
 export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, onEditRental, onSwapItem, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
   const isStaff = role !== 'Customer';
+  // Manual-QR bookings whose proof is still awaiting verification (or was
+  // never uploaded) cannot be prepared for pickup — the downpayment recorded
+  // here would double-charge a transfer that is already under review.
+  const qrPaymentUnresolved = (tx) =>
+    (tx?.paymentPath === 'manual' || tx?.gateway === 'manual') &&
+    Number(tx?.totalPaid || 0) < Number(tx?.downpayment || 0);
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
   const initialStatus = (() => {
@@ -77,7 +83,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
 
   const openSmsModal = (tx) => {
-    setSmsMessage(defaultOverdueMessage(tx));
+    setSmsMessage(defaultSmsMessage(tx));
     setSmsModalTx(tx);
   };
   const closeSmsModal = () => {
@@ -190,7 +196,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
       >
         <Eye size={icon} />
       </button>
-      {isStaff && (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx) && (
+      {isStaff && (tx.status === 'Active' || tx.status === 'Reserved') && !isReleased(tx) && !qrPaymentUnresolved(tx) && (
         <button
           onClick={() => setReleaseTx(tx)}
           className={`${pad} text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-full transition-colors`}
@@ -780,7 +786,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
             <div>
               <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
-              <p className="text-xs text-gray-500 font-medium mt-1">Send overdue reminder to customer?</p>
+              <p className="text-xs text-gray-500 font-medium mt-1">{smsIntent(smsModalTx)?.subtitle}</p>
             </div>
             <button onClick={closeSmsModal}
               className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
@@ -791,12 +797,17 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
                 <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
-                <p className="mt-1"><span className="text-gray-500">Due Date:</span> <strong className="text-red-500">{smsModalTx.dueDate || smsModalTx.date}</strong></p>
+                <p className="mt-1">
+                  <span className="text-gray-500">Due Date:</span>{' '}
+                  <strong className={smsIntent(smsModalTx)?.kind === 'overdue' ? 'text-red-500' : 'text-gray-900'}>
+                    {formatDate(smsModalTx.dueDate || smsModalTx.date)}
+                  </strong>
+                </p>
               </div>
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
-                  <button onClick={() => setSmsMessage(defaultOverdueMessage(smsModalTx))}
+                  <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx))}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
                     title="Restore the default message">
                     <RotateCcw size={11} /> Reset

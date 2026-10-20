@@ -198,6 +198,8 @@ export interface BookingDetails {
   balance: number;
   bookingCode?: string;
   qrCodeDataUri?: string;
+  // Manual-QR booking whose screenshot is still awaiting staff verification.
+  paymentPending?: boolean;
 }
 
 function peso(n: number): string {
@@ -206,12 +208,19 @@ function peso(n: number): string {
 
 // ---- Order confirmation (booking created) ----
 export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
+  const pending = d.paymentPending === true;
   const html = shell({
-    eyebrow: 'Order confirmation',
-    heading: `Your rental is confirmed, ${d.customerName}!`,
-    preheader: `Your rental of ${d.itemName} is confirmed`,
+    eyebrow: pending ? 'Booking received' : 'Order confirmation',
+    heading: pending
+      ? `We received your booking, ${d.customerName}!`
+      : `Your rental is confirmed, ${d.customerName}!`,
+    preheader: pending
+      ? `Your payment screenshot is under review`
+      : `Your rental of ${d.itemName} is confirmed`,
     bodyHtml:
-      para(`\u201C${d.itemName}\u201D is reserved for you. Please pick it up on ${d.pickupDate} and return it by ${d.dueDate}.`) +
+      (pending
+        ? para(`\u201C${d.itemName}\u201D is reserved for you. Our team is verifying your downpayment screenshot; we\u2019ll email you as soon as it\u2019s approved.`)
+        : para(`\u201C${d.itemName}\u201D is reserved for you. Please pick it up on ${d.pickupDate} and return it by ${d.dueDate}.`)) +
       (d.bookingCode ? codeChip(d.bookingCode) : '') +
       (d.qrCodeDataUri
         ? `<div style="text-align:center;margin:18px 0 4px;"><img src="${d.qrCodeDataUri}" alt="Booking QR Code" width="160" height="160" style="border-radius:12px;display:block;margin:0 auto;" /></div><p style="text-align:center;font-size:11px;color:${MUTED};margin:6px 0 18px;font-family:${FONT};">Scan to open this booking</p>`
@@ -221,15 +230,21 @@ export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
         ['Pickup', d.pickupDate],
         ['Return by', d.dueDate],
         ['Rental fee', peso(d.rentalFee)],
-        ['Downpayment', peso(d.downpayment)],
+        ['Downpayment', pending ? `${peso(d.downpayment)} (under review)` : peso(d.downpayment)],
         ['Balance', peso(d.balance)],
       ], true) +
-      para('Show this email (or your booking code) at the boutique when you pick up. See you soon!'),
+      para(pending
+        ? 'No action needed right now. We will email you once the payment is verified; the item is released only after the balance is settled.'
+        : 'Show this email (or your booking code) at the boutique when you pick up. See you soon!'),
   });
   return {
-    subject: `Booking confirmed: ${d.itemName}`,
+    subject: pending
+      ? `Booking received \u2014 payment under review: ${d.itemName}`
+      : `Booking confirmed: ${d.itemName}`,
     html,
-    text: `Hi ${d.customerName},\n\nYour rental of "${d.itemName}" is confirmed.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nShow this email at the boutique when you pick up. Thank you!\n\nRenTech · Balayan, Batangas`,
+    text: pending
+      ? `Hi ${d.customerName},\n\nWe received your booking for "${d.itemName}".\nYour downpayment screenshot is under review. We'll email you once it's verified.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment under review: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nRenTech · Balayan, Batangas`
+      : `Hi ${d.customerName},\n\nYour rental of "${d.itemName}" is confirmed.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nShow this email at the boutique when you pick up. Thank you!\n\nRenTech · Balayan, Batangas`,
   };
 }
 

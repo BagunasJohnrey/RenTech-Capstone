@@ -338,6 +338,35 @@ describe('POST /api/bookings (manual QR)', () => {
       where: { id: 'customer-id-111' },
       data: { address: '123 Test St, Balayan' },
     }));
+    // The customer must not be told the booking is confirmed while the
+    // downpayment screenshot is still under review.
+    expect(prisma.notification.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        type: 'payment_proof_pending',
+        title: 'Payment under review',
+      }),
+    }));
+    expect(prisma.notification.create).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: 'booking_confirmation' }),
+    }));
+  });
+
+  it('blocks release while the manual QR payment is unverified', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-manual', status: 'Reserved', paymentPath: 'manual', gateway: null,
+      totalPaid: 0, downpayment: 200, balance: 5000, itemId: 1,
+      item: { id: 1, name: 'Test Gown' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-manual/release')
+      .set('Authorization', 'Bearer staff-token')
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('manual QR payment proof');
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
   });
 
   it('requires a screenshot whenever the configured gateway is manual, even without paymentPath', async () => {
