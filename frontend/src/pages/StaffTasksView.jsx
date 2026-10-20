@@ -131,10 +131,13 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
   // on a human), then pickups due today. One shared list so the count and the
   // rows can never disagree.
   const pendingProofs = proofQueue.data?.pending ?? [];
-  // A failed proof fetch must not freeze the card in a skeleton forever — fall
-  // through and render the queues we do have (errors surface in the queue UI).
-  const proofsUnknown = proofQueue.loading && !proofQueue.data && !proofQueue.error;
-  const focusKnown = queuesKnown && !proofsUnknown;
+  // Paint the digest rows as soon as they land — the proof queue is a separate
+  // request and must never hold the whole card hostage. While it is still in
+  // flight we show a single inline "checking proofs" row, then merge the proof
+  // rows in. A failed proof fetch also falls through (errors surface in the
+  // queue UI) instead of freezing the card.
+  const proofsPending = proofQueue.loading && !proofQueue.data && !proofQueue.error;
+  const focusKnown = queuesKnown;
   const isPickupToday = (tx) => {
     const d = new Date(tx.rentalDate || tx.date);
     d.setHours(0, 0, 0, 0);
@@ -345,19 +348,20 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           <div className="flex items-center justify-between mb-3">
             <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Today's Priority</p>
             {!focusKnown
-              ? <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue…</p>
-              : focusItems.length === 0
-                ? <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>
-                : <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>
+              ? <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue...</p>
+              : proofsPending
+                ? <p className="text-xs text-amber-600 font-semibold">{focusItems.length > 0 ? `${focusItems.length} item${focusItems.length === 1 ? '' : 's'} - checking proofs...` : 'Checking payment proofs...'}</p>
+                : focusItems.length === 0
+                  ? <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>
+                  : <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>
             }
           </div>
 
           <div className="space-y-2">
             {!focusKnown ? (
-              // Hold the whole list until BOTH the digest queues and the QR
-              // proof queue are known. Rendering the digest rows first made the
-              // late-arriving GCash proof rows push "Prepare pickup" down mid-
-              // paint (a visible jump/overlap on a slow proof fetch).
+              // The digest rows paint immediately; the separate proof fetch is
+              // merged in when it lands (with an inline placeholder meanwhile),
+              // so a slow proof request can never hold the card hostage.
               <div className="space-y-2" aria-label="Loading today's queue">
                 {[0, 1, 2, 3].map((i) => (
                   <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 animate-pulse">
@@ -369,12 +373,13 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                   </div>
                 ))}
               </div>
-            ) : focusItems.length === 0 ? (
+            ) : focusItems.length === 0 && !proofsPending ? (
               <div className="text-center py-6 text-gray-400 text-sm font-medium">
                 Nothing urgent today.
               </div>
             ) : (
-              focusItems.map((f) => {
+              <>
+                {focusItems.map((f) => {
                 const clickable = (f.tx && onNavigateDetail) || f.action;
                 return (
                   <div key={f.key}
@@ -403,7 +408,17 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                     <ChevronRight size={16} className="text-gray-300 shrink-0" />
                   </div>
                 );
-              })
+              })}
+              {proofsPending && (
+                <div className="flex items-center gap-3 p-3 rounded-xl border border-amber-100 bg-amber-50/40 animate-pulse" aria-label="Checking payment proofs">
+                  <ScanLine size={16} className="text-amber-400 shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3.5 w-2/3 bg-amber-100 rounded" />
+                    <div className="h-2.5 w-1/3 bg-amber-50 rounded" />
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </div>
         </div>
