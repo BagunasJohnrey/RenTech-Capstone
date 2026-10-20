@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { ShoppingBag, ChevronRight, ChevronLeft, Search, Calendar, User, CheckCircle2, CreditCard as PayIcon, FileText, LayoutDashboard, Sparkles, Package, Settings, ClipboardList, Tag } from 'lucide-react';
+import { ShoppingBag, ChevronRight, ChevronLeft, Search, Calendar, User, CheckCircle2, CreditCard as PayIcon, FileText, LayoutDashboard, Sparkles, Package, Settings, ClipboardList, Tag, ScanLine } from 'lucide-react';
 
 const customerSteps = [
   {
@@ -19,8 +19,8 @@ const customerSteps = [
   },
   {
     icon: PayIcon, title: 'Confirm & Pay',
-    desc: 'Review your booking summary and pay the downpayment via e-wallet.',
-    detail: 'After payment, you get a confirmation with your booking details. Settle the balance at pickup — release stays locked until fully paid.',
+    desc: 'Review your booking and pay the downpayment by e-wallet, or scan the boutique\'s static QR and upload your payment screenshot.',
+    detail: 'Manual QR bookings are received first, then staff verify the screenshot. You\'ll see "Payment under review" until it\'s approved; pickup waits for verification. Settle the balance at pickup.',
   },
 ];
 
@@ -39,6 +39,11 @@ const staffSteps = [
     icon: FileText, title: 'Review & Confirm',
     desc: 'Check the booking summary — customer, dates, item, and pricing.',
     detail: 'Tap "Confirm & Process" to create the rental. A confirmation toast will appear.',
+  },
+  {
+    icon: ScanLine, title: 'Verify QR Payments',
+    desc: 'Manual-QR bookings land in "Payments to verify" on Tasks. Compare the screenshot and reference with the amount claimed, then approve or reject.',
+    detail: 'Approving credits the downpayment through the ledger; rejecting asks the customer to re-upload. An unverified QR booking never appears in Ready for Pickup.',
   },
   {
     icon: CheckCircle2, title: 'Release & Return',
@@ -70,8 +75,8 @@ const adminSteps = [
   },
   {
     icon: CheckCircle2, title: 'Bookings & Returns',
-    desc: 'Process new rentals, scan QR codes, and handle returns — damaged pieces go Out of Service automatically.',
-    detail: 'No-shows and overdue rentals are flagged automatically so you can follow up.',
+    desc: 'Process new rentals, scan QR codes, and handle returns - damaged pieces go Out of Service automatically.',
+    detail: 'Manual-QR payment proofs are approved from Tasks; no-shows and overdue rentals are flagged automatically so you can follow up.',
   },
   {
     icon: Sparkles, title: 'Reports',
@@ -81,7 +86,7 @@ const adminSteps = [
   {
     icon: Settings, title: 'Settings',
     desc: 'Settings is your control room — rental rules and fees, promo codes, SMS templates, and integrations.',
-    detail: 'Set rental rules and fees, create promo codes, edit SMS templates, manage staff accounts, and secure sign-in with MFA (two-factor).',
+    detail: 'Set rental rules and fees, create promo codes, edit SMS templates, manage staff accounts, and secure sign-in with MFA. Choose the payment gateway (PayMongo, Maya, or Manual QR) and upload the shop\'s QR codes under Integrations.',
   },
 ];
 

@@ -41,6 +41,15 @@ const staffWorkflows = [
     ],
   },
   {
+    q: 'Verify a manual-QR payment proof',
+    steps: [
+      'Open Tasks → "Payments to verify" (Needs attention tab). Priority rows also surface proofs waiting on review, including pickups due today.',
+      'Check the screenshot against the claimed amount, reference, and channel. Tap the card to open the full sheet; tap the image to zoom.',
+      'Approve & credit the verified amount — the downpayment is credited through the ledger and the booking can move to Ready for Pickup. Reject requires a reason (min 5 chars) and notifies the customer to re-upload.',
+      'Unverified manual-QR bookings are excluded from Ready for Pickup and cannot be released, even from Records.',
+    ],
+  },
+  {
     q: 'Give a discount (admin PIN at confirmation)',
     steps: [
       'On the review step, move the discount slider to the agreed % — no PIN yet.',
