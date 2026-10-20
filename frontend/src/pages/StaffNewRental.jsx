@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, CreditCard, QrCode, ExternalLink, ScanLine, RotateCcw } from 'lucide-react';
-import QRCode from 'qrcode';
+import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, QrCode, RotateCcw } from 'lucide-react';
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
 import BookingCalendar from '../components/BookingCalendar';
@@ -14,8 +13,6 @@ import ManualQrPanel from '../components/ManualQrPanel';
 import { inventoryService } from '../services/inventory';
 import { promoService } from '../services/promo';
 import { promoDiscountLabel } from '../utils/promoLabel';
-import { paymentsService } from '../services/payments';
-import { usePaymongo } from '../hooks/usePaymongo';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { downloadReceiptImage } from '../utils/receiptImage';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -65,11 +62,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   const todayStr = useMemo(() => todayYmd(), []);
 
-  // Fetch return-days-after-event + minimum downpayment + payment gateway
-  // from admin rules (same floor + gateway as the customer flow).
+  // Fetch return-days-after-event + minimum downpayment from admin rules
+  // (same floor as the customer flow). Payment is always the static QR.
   const [returnDays, setReturnDays] = useState(1);
   const [minDownpayment, setMinDownpayment] = useState(200);
-  const [gateway, setGateway] = useState('paymongo');
   const [manualQrCodes, setManualQrCodes] = useState([]);
   const [manualChannel, setManualChannel] = useState('');
   useEffect(() => {
@@ -77,9 +73,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
       .then((d) => {
         if (d?.return_days_after_event) setReturnDays(d.return_days_after_event);
         if (d?.min_downpayment) setMinDownpayment(d.min_downpayment);
-        if (d?.payment_gateway === 'maya') setGateway('maya');
-        else if (d?.payment_gateway === 'manual') setGateway('manual');
-        else setGateway('paymongo');
         const codes = Array.isArray(d?.manual_qr_codes) ? d.manual_qr_codes : [];
         setManualQrCodes(codes);
         if (codes[0]) setManualChannel(codes[0].id);
@@ -226,19 +219,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // Created transaction — shown on the post-booking receipt step (with QR).
   const [createdTx, setCreatedTx] = useState(null);
 
-  // Payment channel for the downpayment: cash (recorded with the booking) or
-  // online (real gateway charge collected right after the booking is created).
+  // Payment channel for the downpayment: cash (recorded with the booking)
+  // or the static QR transfer (verified in person, then recorded).
   const [payChannel, setPayChannel] = useState('cash');
-  const [collecting, setCollecting] = useState(false);
-  const [gatewayIntent, setGatewayIntent] = useState(null);
-  const [gatewayQrUrl, setGatewayQrUrl] = useState(null);
-  const [gatewayStatus, setGatewayStatus] = useState(null);
-  const [collectError, setCollectError] = useState('');
-  const { openDropIn } = usePaymongo();
   const flags = useFeatureFlags();
-  const pollStopRef = useRef(false);
-  useEffect(() => () => { pollStopRef.current = true; }, []);
-
   // Live availability check (same backend overlap logic as createRental) so
   // staff can't confirm dates that clash with an existing booking.
   const [availability, setAvailability] = useState({ checking: false, available: null, reason: '' });
@@ -539,15 +523,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
         setShowAdminAuth(true);
         return;
       }
-      // Online collects the downpayment through the gateway right after the
-      // booking is created; cash just records it with the booking.
-      // Manual gateway collects the downpayment at the counter: the booking is
-      // created, then staff record the verified InstaPay transfer. Cash records
-      // it with the booking; a real gateway charges it after creation.
-      if (payChannel === 'online') {
-        if (gateway === 'manual') submitBookingManual();
-        else submitBookingOnline();
-      } else submitBooking();
+      // Online uses the boutique's static QR: the booking is created, then
+      // staff record the verified transfer. Cash records it with the booking.
+      if (payChannel === 'online') submitBookingManual();
+      else submitBooking();
       return;
     }
     setStep(s => s + 1);
@@ -590,112 +569,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     }
   };
 
-  // Online collection: the booking is created first (an intent needs a
-  // transaction id), then the downpayment is charged through the gateway.
-  // The receipt lands only after the gateway confirms — Maya via QR + poll,
-  // PayMongo via drop-in + poll. Anything unrecoverable falls back to the
-  // receipt with the balance due at pickup (release stays locked until ₱0).
-  const submitBookingOnline = async () => {
-    if (submittingRef.current) return;
-    submittingRef.current = true;
-    setSubmitting(true);
-    setCollectError('');
-    setGatewayIntent(null);
-    setGatewayQrUrl(null);
-    setGatewayStatus(null);
-    try {
-      const created = await createBookingRecord();
-      // Seed immediately so the poller can merge gateway totals into it.
-      setCreatedTx(created);
-      const amt = Number(totals.downpayment) || 0;
-      let intent;
-      try {
-        intent = await paymentsService.createIntent({ transactionId: created.id, amount: amt });
-      } catch (intentErr) {
-        setCollectError(intentErr?.message || 'Could not start the online payment — collect the downpayment at pickup instead.');
-        setSubmitting(false);
-        submittingRef.current = false;
-        setStep(4);
-        return;
-      }
-      if (intent?.simulated) {
-        setSubmitting(false);
-        submittingRef.current = false;
-        setStep(4);
-        return;
-      }
-      setCollecting(true);
-      if (intent?.gateway === 'maya') {
-        setGatewayIntent(intent);
-        setGatewayStatus('pending');
-        if (intent.qrCodeBody) {
-          try { setGatewayQrUrl(await QRCode.toDataURL(intent.qrCodeBody, { width: 220, margin: 1 })); }
-          catch { setGatewayQrUrl(null); }
-        }
-        pollStopRef.current = false;
-        const ok = await pollBookingPaid(created.id);
-        finishOnlineCollect(created, ok);
-        return;
-      }
-      try {
-        await openDropIn(intent.clientKey, {
-          amount: Math.round(amt * 100),
-          currency: 'PHP',
-          description: `Downpayment for ${selectedItem?.name || 'booking'}`,
-        });
-      } catch (payErr) {
-        setCollecting(false);
-        setCollectError(payErr?.message || 'Payment was cancelled — collect the downpayment at pickup instead.');
-        setSubmitting(false);
-        submittingRef.current = false;
-        setStep(4);
-        return;
-      }
-      setGatewayIntent(intent);
-      setGatewayStatus('pending');
-      pollStopRef.current = false;
-      const ok = await pollBookingPaid(created.id);
-      finishOnlineCollect(created, ok);
-    } catch (err) {
-      setError(err?.message || 'Failed to create rental. Please try again.');
-      setCollecting(false);
-      setSubmitting(false);
-      submittingRef.current = false;
-    }
-  };
-
-  // Polls until the downpayment credit lands (getStatus reports succeeded
-  // once totalPaid covers the booking's downpayment). Resolves false on
-  // timeout/failure/expiry so the caller can fall back to pickup collection.
-  const pollBookingPaid = async (txId) => {
-    for (let i = 0; i < 20; i++) {
-      if (pollStopRef.current) return false;
-      await new Promise((r) => setTimeout(r, 3000));
-      if (pollStopRef.current) return false;
-      try {
-        const s = await paymentsService.getStatus(txId);
-        setGatewayStatus(s?.status ?? null);
-        if (s?.status === 'succeeded') {
-          setCreatedTx((prev) => (prev ? { ...prev, totalPaid: s.totalPaid ?? prev.totalPaid, balance: s.balance ?? prev.balance } : prev));
-          return true;
-        }
-        if (s?.status === 'failed' || s?.status === 'expired') return false;
-      } catch { /* transient blip — keep polling */ }
-    }
-    return false;
-  };
-
-  const finishOnlineCollect = (created, ok) => {
-    setCollecting(false);
-    if (!ok) {
-      setCollectError('Payment not confirmed yet — the booking is saved; collect the downpayment at pickup instead.');
-    }
-    // createdTx was seeded at creation and merged by the poller on success.
-    setCreatedTx((prev) => prev ?? created);
-    setSubmitting(false);
-    submittingRef.current = false;
-    setStep(4);
-  };
 
   const buildBookingPayload = () => ({
     customer: customer.name,
@@ -706,8 +579,8 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     date: customer.rentalDate,
     amount: totals.discountedRate,
     downpayment: totals.downpayment,
-    // Cash tab = money in hand, recorded as a completed payment with the
-    // booking. Online tab = gateway webhook credits it when it lands.
+    // Cash tab = money in hand, recorded with the booking. Online = static QR,
+    // recorded after the staff member verifies the transfer.
     downpaymentCash: payChannel === 'cash',
     balance: totals.balance,
     discountPct: isDiscountApproved ? discountPct : 0,
@@ -1236,10 +1109,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 </div>
 </div>
 
-              {/* Payment — how the ₱{totals.downpayment} downpayment is collected.
-                  Cash records it with the booking; Online charges it through the
-                  gateway right after the booking is created (receipt lands only
-                  after the gateway confirms). */}
+              {/* Payment: how the downpayment is collected. Cash records it with
+                  the booking; Online shows the static QR and records the
+                  verified transfer with the booking. */}
               <div className="bg-white rounded-2xl shadow-sm border p-5 space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <h4 className="font-bold text-sm text-gray-900">Payment</h4>
@@ -1262,14 +1134,14 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     onClick={() => setPayChannel('online')}
                     className={`py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
                   >
-                    {gateway === 'paymongo' ? <CreditCard size={14} /> : <QrCode size={14} />} Online
+                    <QrCode size={14} /> Online
                   </button>
                 </div>
                 {payChannel === 'cash' ? (
                   <p className="text-xs text-gray-500 leading-relaxed bg-gray-50 rounded-xl px-3.5 py-3">
                     Collect <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} in cash</span> at the counter — it is recorded with the booking. The remaining ₱{totals.balance.toLocaleString()} is settled at pickup.
                   </p>
-                ) : gateway === 'manual' ? (
+                ) : (
                   <div className="space-y-3">
                     <p className="text-xs text-gray-500 leading-relaxed bg-blue-50/70 border border-blue-100 rounded-xl px-3.5 py-3">
                       Collect <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via InstaPay QR</span> — show the QR to the customer, then Confirm to record the verified payment.
@@ -1280,35 +1152,6 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       onChannelChange={setManualChannel}
                       note="Verify the transfer in your payment app before confirming."
                     />
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-xs text-gray-500 leading-relaxed bg-blue-50/70 border border-blue-100 rounded-xl px-3.5 py-3">
-                      {gateway === 'maya'
-                        ? <>Charge <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via Maya QRPh</span> — after Confirm, show the QR to the customer to scan. The receipt lands only after Maya confirms.</>
-                        : <>Charge <span className="font-bold text-gray-900">₱{totals.downpayment.toLocaleString()} via PayMongo</span> (GCash / card) — after Confirm, the secure checkout opens on this device. The receipt lands only after the payment succeeds.</>}
-                    </p>
-                    {collecting && gatewayIntent?.gateway === 'maya' && (
-                      <div className="bg-white border border-gray-100 rounded-2xl p-4 flex flex-col items-center gap-2">
-                        {gatewayQrUrl
-                          ? <img src={gatewayQrUrl} alt="Maya payment QR" className="w-44 h-44 rounded-xl border border-gray-100" />
-                          : <QrCode size={40} className="text-gray-300" />}
-                        {gatewayIntent.redirectUrl && (
-                          <a href={gatewayIntent.redirectUrl} target="_blank" rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs font-bold text-[#bf4a53] hover:underline">
-                            <ExternalLink size={12} /> Open Maya checkout
-                          </a>
-                        )}
-                        <p className="text-[11px] font-bold text-amber-600 animate-pulse flex items-center gap-1.5">
-                          <Loader2 size={12} className="animate-spin" /> Waiting for customer payment…
-                        </p>
-                      </div>
-                    )}
-                    {collecting && gatewayIntent?.gateway !== 'maya' && (
-                      <p className="text-[11px] font-bold text-amber-600 animate-pulse flex items-center gap-1.5">
-                        <Loader2 size={12} className="animate-spin" /> Waiting for payment confirmation…
-                      </p>
-                    )}
                   </div>
                 )}
                 {collectError && <p className="text-xs text-red-500 font-medium bg-red-50 rounded-xl px-3.5 py-2.5">{collectError}</p>}
@@ -1454,11 +1297,11 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               </button>
               <button
                 onClick={handleNext}
-                disabled={submitting || collecting || (step >= 2 && (availability.checking || availability.available === false))}
+                disabled={submitting || (step >= 2 && (availability.checking || availability.available === false))}
                 className="flex-[2] py-2.5 rounded-full font-bold text-sm bg-[#bf4a53] text-white hover:bg-red-700 transition-colors shadow flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {submitting || collecting ? <Loader2 size={16} className="animate-spin" /> : null}
-                {step === 3 ? (collecting ? 'Collecting…' : submitting ? 'Processing…' : payChannel === 'online' ? (gateway === 'manual' ? 'Create & Record Payment' : 'Create & Collect Online') : 'Confirm & Process') : availability.checking ? 'Checking…' : 'Continue'}
+                {submitting ? <Loader2 size={16} className="animate-spin" /> : null}
+                {step === 3 ? (submitting ? 'Processing...' : payChannel === 'online' ? 'Create & Record Payment' : 'Confirm & Process') : availability.checking ? 'Checking...' : 'Continue'}
               </button>
             </>
           )}

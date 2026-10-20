@@ -86,7 +86,7 @@ const adminSteps = [
   {
     icon: Settings, title: 'Settings',
     desc: 'Settings is your control room — rental rules and fees, promo codes, SMS templates, and integrations.',
-    detail: 'Set rental rules and fees, create promo codes, edit SMS templates, manage staff accounts, and secure sign-in with MFA. Choose the payment gateway (PayMongo, Maya, or Manual QR) and upload the shop\'s QR codes under Integrations.',
+    detail: 'Set rental rules and fees, create promo codes, edit SMS templates, manage staff accounts, and secure sign-in with MFA. Upload the shop\'s static QR codes under Integrations.',
   },
 ];
 

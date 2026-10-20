@@ -10,7 +10,6 @@ import { rateLimiter } from './middleware/rateLimiter.js';
 import { csrfGuard } from './middleware/csrfGuard.js';
 import { isAllowedOrigin } from './utils/origins.js';
 import routes from './routes/index.js';
-import webhookRoutes from './routes/webhooks.routes.js';
 import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNotify } from './services/sms.service.js';
 import { purgeOldData } from './services/retention.service.js';
 import { ensureBucket } from './services/storage.service.js';
@@ -69,18 +68,6 @@ app.use(cors({
 }));
 app.use(requestId);
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-
-app.use('/api/webhooks', express.raw({ type: 'application/json' }), (req, _res, next) => {
-  if (Buffer.isBuffer(req.body)) {
-    (req as unknown as { rawBody: string }).rawBody = req.body.toString('utf-8');
-    try {
-      req.body = JSON.parse(req.body.toString('utf-8'));
-    } catch {
-      req.body = {};
-    }
-  }
-  next();
-}, webhookRoutes);
 
 app.use(express.json({ limit: '25mb' }));
 app.use(cookieParser());

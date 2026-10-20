@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+
+vi.mock('../src/services/storage.service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/storage.service.js')>();
+  return {
+    ...actual,
+    uploadFile: vi.fn().mockResolvedValue({ path: 'rental/test/proof.jpg' }),
+    removeObject: vi.fn(),
+  };
+});
+
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import type { checkPromo as checkPromoType } from '../src/services/promoCodes.service.js';
@@ -350,7 +360,7 @@ describe('staff bookings: promo codes + PIN-verified counter discount', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000 });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, paymentProof: { data: Buffer.from('fake-image').toString('base64'), contentType: 'image/jpeg' } });
 
     expect(res.status).toBe(201);
     expect(res.body.rentalFee).toBe(5000);

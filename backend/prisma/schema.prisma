@@ -247,7 +247,7 @@ model Payment {
   amount        Float
   method        String
   type          String
-  gateway    String   @default("paymongo")
+  gateway    String   @default("manual")
   gatewayRef String?  @unique @map("gateway_ref")
   status        String   @default("pending")
   createdAt     DateTime @default(now()) @map("created_at")

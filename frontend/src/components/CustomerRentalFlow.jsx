@@ -1,8 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Smartphone, CreditCard, Search, Loader2, CheckCircle2, Check, ScanLine, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw, Maximize2, Tag, Wallet, Clock } from 'lucide-react';
+import { X, Search, Loader2, CheckCircle2, Check, Calendar, ChevronRight, ChevronDown, Download, SlidersHorizontal, RotateCcw, Maximize2, Tag, Wallet, Clock } from 'lucide-react';
 import { usePromo } from '../hooks/usePromo';
-import { usePayments } from '../hooks/usePayments';
-import { usePaymongo } from '../hooks/usePaymongo';
 import ItemImage from './ItemImage';
 import { getSaleInfo } from './ItemCard';
 import { inventoryService } from '../services/inventory';
@@ -13,7 +11,6 @@ import CollapsibleSection from './CollapsibleSection';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useButtonGuard } from '../hooks/useButtonGuard';
-import { useToast } from './Toast';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
 import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../utils/promoLabel';
@@ -92,7 +89,6 @@ export default function CustomerRentalFlow({
   customerInfo,
   onClose,
   onSubmitBooking,
-  onCancelBooking,
   onProofSubmitted,
   inline,
 }) {
@@ -116,9 +112,9 @@ export default function CustomerRentalFlow({
 
   const [eventDate, setEventDate] = useState('');
   // Suggested rental period, minimum downpayment, and the active payment
-  // gateway come from the admin's business rules (public endpoint) — fall back
-  // to the 3-day / ₱200 / PayMongo defaults.
-  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'paymongo', manual_qr_codes: [], store_contact: '' });
+  // method come from the admin's business rules (public endpoint) — payment is
+  // always the boutique's static QR. Falls back to 3 days / ₱200.
+  const [rentalDefaults, setRentalDefaults] = useState({ rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: 'manual', manual_qr_codes: [], store_contact: '' });
   useEffect(() => {
     let cancelled = false;
     api.get('/settings/rental-defaults')
@@ -128,7 +124,7 @@ export default function CustomerRentalFlow({
           rental_period_days: d.rental_period_days,
           return_days_after_event: d.return_days_after_event || 1,
           min_downpayment: d.min_downpayment || 0,
-          payment_gateway: d.payment_gateway === 'maya' ? 'maya' : d.payment_gateway === 'manual' ? 'manual' : 'paymongo',
+          payment_gateway: 'manual',
           manual_qr_codes: Array.isArray(d.manual_qr_codes) ? d.manual_qr_codes : [],
           store_contact: d.store_contact || '',
         });
@@ -175,11 +171,9 @@ export default function CustomerRentalFlow({
       initialFormRef.current = { ...initialFormRef.current, ...synced };
     }
   }, [customerInfo]);
-  const [paymentMethod, setPaymentMethod] = useState('gcash');
-  // Drives the payment step's UI: Maya QRPh shows a single method (the customer
-  // picks their own app when scanning), PayMongo keeps the GCash/Card tiles.
-  const isMayaGateway = rentalDefaults.payment_gateway === 'maya';
-  const isManualGateway = rentalDefaults.payment_gateway === 'manual';
+  // The boutique's static QR is the only payment method: customers scan, pay
+  // from their own bank/wallet app, then upload a screenshot for staff review.
+  const isManualGateway = true;
   // Prefill size from the customer's saved "usual sizes" (Settings) when available.
   const savedSizes = useMemo(() => {
     try { const v = JSON.parse(localStorage.getItem(LS_SIZES)); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -198,9 +192,6 @@ export default function CustomerRentalFlow({
   const [confirmedTx, setConfirmedTx] = useState(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
-  // True when the booking completed on the no-keys simulated path (dev/test
-  // only) — the receipt says so instead of claiming a real gateway payment.
-  const [simulatedPay, setSimulatedPay] = useState(false);
   // Manual QR checkout: the screenshot IS the payment evidence. It is uploaded
   // together with the booking (server-side, upload-first), so a failed upload
   // never leaves an unpaid booking behind.
@@ -324,9 +315,6 @@ export default function CustomerRentalFlow({
   useEffect(() => { stepBodyRef.current?.scrollTo?.(0, 0); }, [step]);
 
   const { validate: validatePromo, listPublic: listPublicPromos } = usePromo();
-  const { createIntent } = usePayments();
-  const { openDropIn } = usePaymongo();
-  const { info: toastInfo } = useToast();
 
   const clearFieldError = (field) => {
     setFieldErrors(prev => ({ ...prev, [field]: '' }));
@@ -481,8 +469,7 @@ export default function CustomerRentalFlow({
     // Save the address entered here onto the profile (staff see it in the
     // payment-proof queue and it prefills future bookings).
     address: (customer.address || '').trim() || undefined,
-    paymentMethod,
-    paymentPath: isManualGateway ? 'manual' : undefined,
+    paymentPath: 'manual',
   });
 
   const handleApplyPromo = async (codeOverride) => {
@@ -588,75 +575,6 @@ export default function CustomerRentalFlow({
           setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
           return;
         }
-        // Create the booking first so we have a real transaction id.
-        const created = await onSubmitBooking(buildBookingData());
-        // FIX A: create a real PayMongo payment intent, then open the drop-in UI.
-        // Transient failures (server cold start / network blip) get ONE retry
-        // before we give up — rolling back a committed booking over a hiccup
-        // is what made "Confirm Payment" glitch until a refresh fixed it.
-        let intent;
-        try {
-          intent = await createIntent({ transactionId: created.id, amount: Number(downpaymentAmount) });
-        } catch (payErr) {
-          const transient = !payErr?.status || payErr?.status >= 500 || payErr?.name === 'TimeoutError';
-          if (transient) {
-            try {
-              await new Promise((r) => setTimeout(r, 1200));
-              intent = await createIntent({ transactionId: created.id, amount: Number(downpaymentAmount) });
-            } catch (retryErr) {
-              setConfirmError(retryErr?.message || payErr?.message || 'Payment failed. Please try again.');
-              if (onCancelBooking) await onCancelBooking(created);
-              return;
-            }
-          } else {
-            // Definitive rejection (403/400/…): retrying can't help.
-            setConfirmError(payErr?.message || 'Payment failed. Please try again.');
-            // Roll back the committed booking so we don't leave an orphaned rental.
-            if (onCancelBooking) await onCancelBooking(created);
-            return;
-          }
-        }
-        // No gateway configured: dev/test path only. Never presented as a
-        // real payment — the receipt carries a test-mode note instead.
-        if (intent.simulated) {
-          toastInfo('Payment gateway not configured — simulating successful payment.');
-          setSimulatedPay(true);
-          setPaymentSuccess(true);
-          setConfirmedTx(created);
-          setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
-          return;
-        }
-        setSimulatedPay(false);
-
-        // Maya: the customer leaves for Maya's hosted page and comes back at
-        // /payment-return. We CANNOT claim success here — only the webhook (or
-        // that page's polling) knows whether they actually paid, so the step
-        // ends by navigating away instead of showing a receipt.
-        if (intent.gateway === 'maya') {
-          setIsProcessingPayment(false);
-          window.location.assign(intent.redirectUrl);
-          return;
-        }
-
-        // PayMongo: hosted drop-in with a synchronous outcome. It resolves
-        // ONLY on a successful gateway payment and rejects on cancel/failure —
-        // so reaching past this line means Maya/PayMongo confirmed the money.
-        // Anything else rolls the fresh booking back instead of stranding an
-        // unpaid rental behind a "confirmed" receipt.
-        try {
-          await openDropIn(intent.clientKey, {
-            amount: Number(downpaymentAmount) * 100,
-            currency: 'PHP',
-            description: `Rental downpayment for ${selectedItem?.name || 'item'}`,
-          });
-        } catch (payErr) {
-          setConfirmError(payErr?.message || 'Payment was cancelled or failed.');
-          if (onCancelBooking) await onCancelBooking(created);
-          return;
-        }
-        setPaymentSuccess(true);
-        setConfirmedTx(created);
-        setTimeout(() => { setPaymentSuccess(false); setStep(3); }, 1500);
       } catch (err) {
         setConfirmError(err?.message || 'Booking failed. Please try again.');
       } finally {
@@ -1144,16 +1062,9 @@ export default function CustomerRentalFlow({
 
           {step === 2 && (
             <div className="space-y-5">
-              {/* Maya QRPh is a single rail, not a menu: the customer scans one
-                  QR with whichever app they already use (Maya, GCash, or any
-                  QRPh bank). So we present ONE method and list the apps as
-                  supported-but-not-selectable — offering separate buttons would
-                  promise a routing choice we don't have (and QRPh has no card
-                  rail). PayMongo's drop-in does the choosing itself, so its
-                  tiles stay. */}
-              {/* Manual QR: the customer pays from their own app, then submits
-                  a screenshot for staff review — see ManualQrPayment. */}
-              {isManualGateway ? (
+              {/* Static QR: the customer pays from their own app, then submits
+                  a screenshot for staff review - see ManualQrPayment. */}
+              {isManualGateway && (
                 <ManualQrPayment
                   qrCodes={rentalDefaults.manual_qr_codes}
                   channel={proofChannel}
@@ -1165,51 +1076,6 @@ export default function CustomerRentalFlow({
                   disabled={isProcessingPayment}
                   storeContact={rentalDefaults.store_contact}
                 />
-              ) : isMayaGateway ? (
-                <>
-                  <div className="text-center pb-2">
-                    <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
-                    <p className="text-sm text-gray-500">Pay your downpayment securely with Maya.</p>
-                  </div>
-                  <div className="p-5 rounded-2xl border-2 border-[#bf4a53] bg-red-50/60 shadow-sm flex items-center gap-4 text-left">
-                    <span className="w-12 h-12 rounded-2xl bg-[#bf4a53] text-white flex items-center justify-center shrink-0">
-                      <ScanLine size={24} />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-gray-900">Maya / QRPh</p>
-                      <p className="text-xs text-gray-600 leading-snug mt-0.5">
-                        One QR — scan with your Maya app, GCash, or any QRPh bank app.
-                      </p>
-                      <p className="text-[11px] text-gray-500 mt-1">
-                        You'll be redirected to Maya. Your booking completes only after Maya confirms the payment.
-                      </p>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="text-center pb-2">
-                    <h3 className="font-bold text-lg text-gray-900">Payment Method</h3>
-                    <p className="text-sm text-gray-500">Pay your downpayment securely with PayMongo.</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button onClick={() => setPaymentMethod('gcash')}
-                      className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
-                        paymentMethod === 'gcash' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                      <Smartphone size={28} className={paymentMethod === 'gcash' ? 'text-[#bf4a53]' : 'text-gray-400'} />
-                      <span className="text-sm font-bold text-gray-900">GCash</span>
-                    </button>
-                    <button onClick={() => setPaymentMethod('card')}
-                      className={`p-6 rounded-2xl border-2 flex flex-col items-center gap-3 transition-all ${
-                        paymentMethod === 'card' ? 'border-[#bf4a53] bg-red-50 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                      <CreditCard size={28} className={paymentMethod === 'card' ? 'text-[#bf4a53]' : 'text-gray-400'} />
-                      <span className="text-sm font-bold text-gray-900">Card</span>
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-gray-400 text-center -mt-2">
-                    A secure PayMongo checkout opens here. Your booking completes only after your payment succeeds.
-                  </p>
-                </>
               )}
                 {/* Pay-now vs pay-later: the customer pays ONLY the downpayment
                     now — the rest is settled at pickup (release is locked until ₱0). */}
@@ -1435,11 +1301,6 @@ export default function CustomerRentalFlow({
                       </div>
                     </div>
                   </div>
-                )}
-                {simulatedPay && (
-                  <p className="text-[11px] text-gray-500 bg-gray-100 rounded-xl px-3 py-2 leading-snug text-center">
-                    Test mode — no real payment was processed.
-                  </p>
                 )}
               </div>
               {confirmError && (

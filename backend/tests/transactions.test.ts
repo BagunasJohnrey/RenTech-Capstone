@@ -1,6 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+
+vi.mock('../src/services/storage.service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/storage.service.js')>();
+  return {
+    ...actual,
+    uploadFile: vi.fn().mockResolvedValue({ path: 'rental/test/proof.jpg' }),
+    removeObject: vi.fn(),
+  };
+});
+
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 
@@ -18,6 +28,12 @@ const futureDate = (days: number) => {
 };
 const PICKUP = futureDate(2);
 const DUE = futureDate(5);
+const PROOF = {
+  paymentProof: {
+    data: Buffer.from('fake-image').toString('base64'),
+    contentType: 'image/jpeg',
+  },
+};
 
 describe('POST /api/transactions', () => {
   it('should create rental when admin', async () => {
@@ -89,7 +105,7 @@ describe('POST /api/transactions', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, downpaymentCash: true });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, downpaymentCash: true, ...PROOF });
 
     expect(res.status).toBe(201);
     expect(prisma.payment.create).not.toHaveBeenCalled();

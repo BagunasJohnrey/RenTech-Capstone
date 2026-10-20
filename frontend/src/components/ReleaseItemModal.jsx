@@ -1,10 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Camera, Package, User, Calendar, Scissors, Banknote, CreditCard, Repeat, QrCode, ExternalLink } from 'lucide-react';
-import QRCode from 'qrcode';
+import { X, Camera, Package, User, Calendar, Scissors, Banknote, Repeat, QrCode } from 'lucide-react';
 import { api } from '../utils/api';
 import { storageService } from '../services';
-import { paymentsService } from '../services/payments';
-import { usePaymongo } from '../hooks/usePaymongo';
 import { getBookingCode } from '../utils/receipt';
 import { customerLabel, itemLabel } from '../utils/format';
 import { fileToBase64, downscaleToJpeg } from '../utils/file';
@@ -102,19 +99,12 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   const [payAmount, setPayAmount] = useState('');
   const [payError, setPayError] = useState('');
   const [paySuccess, setPaySuccess] = useState(false);
-  // Pickup collection channel: cash (manual record) or online gateway
-  // (PayMongo drop-in / Maya QR shown to the customer). GCash/card go through
-  // Online — Cash tab is cash-only.
+  // Pickup collection channel: cash (recorded at the counter) or the
+  // boutique's static QR, verified in person and then recorded.
   const [payChannel, setPayChannel] = useState('cash');
-  const [gateway, setGateway] = useState('paymongo');
   const [manualQrCodes, setManualQrCodes] = useState([]);
   const [manualChannel, setManualChannel] = useState('');
   const [gatewayLoading, setGatewayLoading] = useState(false);
-  const [gatewayIntent, setGatewayIntent] = useState(null);
-  const [gatewayQrUrl, setGatewayQrUrl] = useState(null);
-  const [gatewayStatus, setGatewayStatus] = useState(null);
-  const { openDropIn } = usePaymongo();
-  const pollStopRef = useRef(false);
 
   const outstandingBalance = Math.max(0, tx.balance ?? 0);
   // Full payment is required before the item leaves the shop (backend
@@ -129,22 +119,16 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
     }
   }, [outstandingBalance]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Which gateway online charges use (admin Settings → payment_gateway).
-  // 'manual' shows the boutique's own QR for the staff to display at the counter.
+  // Load the boutique's static QR codes for counter collection.
   useEffect(() => {
     api.get('/settings/rental-defaults')
       .then((d) => {
-        if (d?.payment_gateway === 'maya') setGateway('maya');
-        else if (d?.payment_gateway === 'manual') setGateway('manual');
-        else setGateway('paymongo');
         const codes = Array.isArray(d?.manual_qr_codes) ? d.manual_qr_codes : [];
         setManualQrCodes(codes);
         if (codes[0]) setManualChannel(codes[0].id);
       })
       .catch(() => {});
-    return () => { pollStopRef.current = true; };
   }, []);
-
   // Channel label for the manual-transfer note (falls back to the first QR).
   const manualChannelLabel = manualQrCodes.find((q) => q.id === manualChannel)?.label
     || manualQrCodes[0]?.label || 'InstaPay';
@@ -165,74 +149,6 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
     setPhotoUrl('');
   };
 
-  // Online poll: success = the ledger actually moved (balance down), not just
-  // a "succeeded" label — after the booking is secured, getStatus reports
-  // succeeded from the downpayment while a new pickup charge is still pending.
-  const pollGatewayStatus = async (paidAtStart, balanceAtStart) => {
-    pollStopRef.current = false;
-    for (let i = 0; i < 20; i++) {
-      if (pollStopRef.current) return false;
-      await new Promise((r) => setTimeout(r, 3000));
-      if (pollStopRef.current) return false;
-      try {
-        const s = await paymentsService.getStatus(tx.id);
-        setGatewayStatus(s?.status ?? null);
-        const paidNow = Number(s?.totalPaid ?? paidAtStart) || 0;
-        const balanceNow = Math.max(0, s?.balance ?? balanceAtStart);
-        if (paidNow > paidAtStart || balanceNow < balanceAtStart) {
-          setTx((prev) => ({ ...prev, totalPaid: s.totalPaid ?? prev.totalPaid, balance: s.balance ?? prev.balance }));
-          setPayAmount(String(Math.max(0, s?.balance ?? 0)));
-          if (balanceNow <= 0) return true;
-          return false;
-        }
-        if (s?.status === 'failed' || s?.status === 'expired') return false;
-      } catch { /* transient blip — keep polling */ }
-    }
-    return false;
-  };
-
-  const handleGatewayCharge = async () => {
-    setPayError('');
-    const amt = Number(payAmount);
-    if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
-    if (amt !== outstandingBalance) { setPayError(`Full payment required — collect ₱${outstandingBalance.toLocaleString()}`); return; }
-    setGatewayLoading(true);
-    setGatewayStatus(null);
-    try {
-      const intent = await paymentsService.createIntent({ transactionId: tx.id, amount: amt });
-      if (intent?.simulated) {
-        setPayError('Online payments are not configured (simulated) — use Cash instead.');
-        return;
-      }
-      if (intent?.gateway === 'maya') {
-        setGatewayIntent(intent);
-        setGatewayStatus('pending');
-        if (intent.qrCodeBody) {
-          try { setGatewayQrUrl(await QRCode.toDataURL(intent.qrCodeBody, { width: 220, margin: 1 })); }
-          catch { setGatewayQrUrl(null); }
-        }
-        await pollGatewayStatus(Number(tx.totalPaid ?? 0) || 0, outstandingBalance);
-        return;
-      }
-      try {
-        await openDropIn(intent.clientKey, {
-          amount: Math.round(amt * 100),
-          currency: 'PHP',
-          description: `Pickup payment for booking ${getBookingCode(tx)}`,
-        });
-      } catch (payErr) {
-        setPayError(payErr?.message || 'Payment was cancelled or failed.');
-        return;
-      }
-      setGatewayIntent(intent);
-      setGatewayStatus('pending');
-      await pollGatewayStatus(Number(tx.totalPaid ?? 0) || 0, outstandingBalance);
-    } catch (err) {
-      setPayError(err?.message || 'Could not start the online payment.');
-    } finally {
-      setGatewayLoading(false);
-    }
-  };
 
   // Manual gateway: the customer pays the boutique's own QR, the staff member
   // verifies it in person and records the full outstanding as an instapay
@@ -260,10 +176,6 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
 
   const handleRelease = () => {
     if (!photoFile) { setError('Please capture the pre-rental condition photo'); return; }
-    if (requiresPayment && payChannel === 'online') {
-      setPayError('Waiting for the online payment — release unlocks once the balance is ₱0.');
-      return;
-    }
     if (requiresPayment) {
       const amt = Number(payAmount);
       if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
@@ -280,7 +192,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
       try {
       // Payment FIRST, release second: the backend rejects release on any
       // outstanding balance, so charging after would always 400. Cash posts
-      // here; Online must already have landed via the poller above.
+      // here; the static-QR transfer must already be recorded.
       if (requiresPayment && payChannel === 'cash') {
         const amt = Number(payAmount);
         try {
@@ -459,13 +371,13 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                   Outstanding balance: <span className="font-bold text-[#bf4a53]">₱{outstandingBalance.toLocaleString()}</span> — collect it now, then release.
                 </p>
               </div>
-              {/* Channel switch: cash (manual) vs online gateway */}
+              {/* Channel switch: cash vs the boutique's static QR */}
               <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-2xl" role="tablist" aria-label="Pickup payment channel">
                 <button
                   type="button"
                   role="tab"
                   aria-selected={payChannel === 'cash'}
-                  onClick={() => { setPayChannel('cash'); setPayError(''); pollStopRef.current = true; }}
+                  onClick={() => { setPayChannel('cash'); setPayError(''); }}
                   className={`py-2 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'cash' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
                 >
                   <Banknote size={12} /> Cash
@@ -477,7 +389,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                   onClick={() => { setPayChannel('online'); setPayError(''); }}
                   className={`py-2 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 ${payChannel === 'online' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
                 >
-                  {gateway === 'paymongo' ? <CreditCard size={12} /> : <QrCode size={12} />} Online
+                  <QrCode size={12} /> Online
                 </button>
               </div>
               {payChannel === 'cash' ? (
@@ -497,7 +409,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 </div>
               </div>
               </>
-              ) : gateway === 'manual' ? (
+              ) : (
               <div className="space-y-3">
                 <ManualQrPanel
                   qrCodes={manualQrCodes}
@@ -515,52 +427,6 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                   {gatewayLoading ? 'Recording…' : 'Customer has paid — record payment'}
                 </button>
               </div>
-              ) : (
-              <>
-              <div className="bg-blue-50/70 border border-blue-100 rounded-2xl p-3 text-xs text-gray-600">
-                {gateway === 'maya'
-                  ? <>Collect via <span className="font-bold text-gray-900">Maya QRPh</span> — show the QR to the customer to scan. Release unlocks once paid.</>
-                  : <>Collect via <span className="font-bold text-gray-900">PayMongo</span> (GCash / card) — the checkout opens on this device for the customer to pay now.</>}
-              </div>
-              {gatewayIntent?.gateway === 'maya' && (
-                <div className="bg-white border border-gray-100 rounded-2xl p-4 flex flex-col items-center gap-2">
-                  {gatewayQrUrl
-                    ? <img src={gatewayQrUrl} alt="Maya payment QR" className="w-44 h-44 rounded-xl border border-gray-100" />
-                    : <QrCode size={40} className="text-gray-300" />}
-                  {gatewayIntent.redirectUrl && (
-                    <a href={gatewayIntent.redirectUrl} target="_blank" rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-xs font-bold text-[#bf4a53] hover:underline">
-                      <ExternalLink size={12} /> Open Maya checkout
-                    </a>
-                  )}
-                  {gatewayIntent.expiresAt && (
-                    <p className="text-[11px] text-gray-400">QR valid for 1 hour · expires {new Date(gatewayIntent.expiresAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}</p>
-                  )}
-                  {gatewayStatus && (
-                    <p className="text-[11px] font-bold text-amber-600 animate-pulse">Waiting for customer payment…</p>
-                  )}
-                </div>
-              )}
-              {!gatewayIntent ? (
-                <button
-                  type="button"
-                  onClick={handleGatewayCharge}
-                  disabled={gatewayLoading}
-                  className="w-full py-2.5 rounded-2xl font-bold text-xs bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                >
-                  {gateway === 'maya' ? <QrCode size={14} /> : <CreditCard size={14} />}
-                  {gatewayLoading ? 'Starting…' : gateway === 'maya' ? `Generate Maya QR for ₱${outstandingBalance.toLocaleString()}` : `Collect ₱${outstandingBalance.toLocaleString()} via PayMongo`}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => { pollStopRef.current = true; setGatewayIntent(null); setGatewayQrUrl(null); setGatewayStatus(null); setPayError(''); }}
-                  className="w-full py-2.5 rounded-2xl font-bold text-xs bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-                >
-                  Start a fresh charge
-                </button>
-              )}
-              </>
               )}
               {payError && <p className="text-[11px] text-red-500 font-medium">{payError}</p>}
             </div>
@@ -586,7 +452,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                     ? 'bg-blue-600 hover:bg-blue-700 shadow-sm active:scale-[0.98]'
                     : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 }`}>
-                {releasing ? 'Releasing...' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Waiting for payment…' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
+                {releasing ? 'Releasing...' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Record payment first' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
               </button>
             </div>
           </div>
@@ -602,10 +468,6 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
             // and let the parent merge + fix inventory statuses.
             setTx((prev) => ({ ...prev, ...updated }));
             clearPhoto();
-            pollStopRef.current = true;
-            setGatewayIntent(null);
-            setGatewayQrUrl(null);
-            setGatewayStatus(null);
             setPayChannel('cash');
             setSwapOpen(false);
             toastSuccess(`Swapped to ${updated?.item?.name ?? 'new item'} — capture its photo`);

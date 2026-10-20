@@ -26,7 +26,7 @@ const staffWorkflows = [
   {
     q: 'Process a return',
     steps: [
-      'Find the Active/Overdue rental (Dashboard priority list or Records). Returns are accepted only when fully paid — if a balance shows, tap "Record Payment" first (Cash tab or Online via PayMongo/Maya QR).',
+      'Find the Active/Overdue rental (Dashboard priority list or Records). Returns are accepted only when fully paid — if a balance shows, tap "Record Payment" first (Cash tab or Online via the static QR).',
       'Then tap "Process Return". Good condition → Confirm: the item goes to the Cleaning queue.',
       'Damaged → pick a reason (required), optionally type a custom damage fee (blank = the store default), and Confirm: the item goes straight Out of Service. A damage fee may leave a new balance, which stays payable on the Returned record.',
       'Add a condition photo and notes if useful, then Confirm. The button locks while it saves so a double-tap files it once.',
@@ -36,7 +36,7 @@ const staffWorkflows = [
     q: 'Release an item for pickup',
     steps: [
       'Open the Reserved booking → "Release". Full payment is required first — the sheet shows Cash / Online tabs when a balance is due.',
-      'Cash: amount is locked to the full balance — one tap collects it and releases. Online: generate the PayMongo checkout or Maya QR, let the customer pay, and the sheet unlocks once the balance hits ₱0.',
+      'Cash: amount is locked to the full balance — one tap collects it and releases. Online: show the static shop QR, let the customer pay, record the verified transfer, and the sheet unlocks once the balance hits ₱0.',
       'Capture the condition photo, flag alteration if the piece needs fitting work, and confirm — the rental goes Active.',
     ],
   },

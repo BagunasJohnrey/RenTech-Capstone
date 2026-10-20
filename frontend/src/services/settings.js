@@ -16,7 +16,7 @@ export const settingsService = {
 
   deleteSmsTemplate: (id) => api.delete(`/settings/sms-templates/${id}`),
 
-  // Admin-only: live connectivity/health for Gemini, Semaphore, PayMongo.
+  // Admin-only: live connectivity/health for Gemini, Semaphore, and Brevo.
   // Pass { fresh: true } to bypass the 60s server cache (manual Refresh).
   getIntegrationsStatus: (opts) =>
     api.get(`/settings/integrations-status${opts?.fresh ? '?fresh=1' : ''}`),

@@ -34,30 +34,6 @@ export const env = {
 
   DATABASE_URL: requireEnv('DATABASE_URL'),
 
-  PAYMONGO_SECRET_KEY: process.env.PAYMONGO_SECRET_KEY || '',
-  PAYMONGO_PUBLIC_KEY: process.env.PAYMONGO_PUBLIC_KEY || '',
-  PAYMONGO_WEBHOOK_SECRET: process.env.PAYMONGO_WEBHOOK_SECRET || '',
-  // Pre-integration escape hatch: PAYMONGO_SIMULATE=true lets the booking flow
-  // complete end-to-end (fake succeeded intents, `simulated: true`) even in
-  // production. NO real money moves — set the real key and remove this flag
-  // the moment PayMongo is integrated.
-  PAYMONGO_SIMULATE: process.env.PAYMONGO_SIMULATE === 'true',
-
-  // Maya Pay with Maya (QRPh). Empty keys ⇒ simulated payments; a production
-  // deploy without MAYA_SIMULATE=true hard-fails rather than faking a payment.
-  // MAYA_WEBHOOK_ALLOWED_IPS is Maya's published webhook IP list; when empty the
-  // allowlist is skipped and the secret-key re-check carries the trust alone.
-  MAYA_PUBLIC_KEY: process.env.MAYA_PUBLIC_KEY || '',
-  MAYA_SECRET_KEY: process.env.MAYA_SECRET_KEY || '',
-  MAYA_ENV: process.env.MAYA_ENV === 'production' ? 'production' : 'sandbox',
-  MAYA_SIMULATE: process.env.MAYA_SIMULATE === 'true',
-  MAYA_WEBHOOK_ALLOWED_IPS: (process.env.MAYA_WEBHOOK_ALLOWED_IPS || '')
-    .split(',').map((ip) => ip.trim()).filter(Boolean),
-  // Optional absolute override for the Maya API host. Empty in production.
-  // Exists so the integration can be driven end-to-end against the local mock
-  // (backend/scripts/mock-maya.mts) before real merchant credentials exist.
-  MAYA_BASE_URL: process.env.MAYA_BASE_URL || '',
-
   SEMAPHORE_API_KEY: process.env.SEMAPHORE_API_KEY || '',
 
   // Brevo (formerly Sendinblue) transactional email — verification, password

@@ -1,6 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+
+vi.mock('../src/services/storage.service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/services/storage.service.js')>();
+  return {
+    ...actual,
+    uploadFile: vi.fn().mockResolvedValue({ path: 'rental/test/proof.jpg' }),
+    removeObject: vi.fn(),
+  };
+});
+
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 
@@ -18,6 +28,15 @@ const futureDate = (days: number) => {
 };
 const PICKUP = futureDate(2);
 const DUE = futureDate(5);
+
+// Every booking now requires the static-QR payment screenshot (the only
+// payment path). A tiny base64 payload is enough for the mocked upload.
+const PROOF = {
+  paymentProof: {
+    data: Buffer.from('fake-image').toString('base64'),
+    contentType: 'image/jpeg',
+  },
+};
 
 describe('GET /api/catalog', () => {
   it('should list available items without auth', async () => {
@@ -89,7 +108,7 @@ describe('POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500 });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500, ...PROOF });
 
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('id');
@@ -140,7 +159,7 @@ describe('POST /api/bookings', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500 });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 2500, ...PROOF });
 
     expect(res.status).toBe(409);
   });

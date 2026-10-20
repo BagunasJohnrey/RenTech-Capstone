@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, MessageSquare, CreditCard, RefreshCw, Sparkles, Mail, QrCode } from 'lucide-react';
+import { ShieldCheck, MessageSquare, RefreshCw, Sparkles, Mail } from 'lucide-react';
 import { settingsService } from '../../services/settings';
 import { useToast } from '../Toast';
 import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils/cache';
@@ -7,24 +7,18 @@ import CollapsibleCard from './CollapsibleCard';
 import Toggle from './Toggle';
 import PaymentQrManager from './PaymentQrManager';
 
-// Human labels for the active gateway, used in toasts + the selector copy.
-const GATEWAY_LABELS = { paymongo: 'PayMongo', maya: 'Maya QRPh', manual: 'Manual QR' };
-
 const INTEGRATIONS = [
   { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Primary AI for outfit suggestions & business insights.', icon: Sparkles, iconClass: 'bg-purple-50 text-purple-600' },
   { key: 'groq', name: 'Groq AI', desc: 'Low-latency AI fallback (tier 2) for stylist & reports.', icon: Sparkles, iconClass: 'bg-violet-50 text-violet-600' },
   { key: 'openrouter', name: 'OpenRouter AI', desc: 'Free-model AI fallback (tier 3) for stylist & reports.', icon: Sparkles, iconClass: 'bg-fuchsia-50 text-fuchsia-600' },
   { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Automatic return reminders & booking confirmations. Off pauses autos only — manual staff sends still work.', icon: MessageSquare, iconClass: 'bg-blue-50 text-blue-600' },
   { key: 'brevo', name: 'Brevo Email', desc: 'Booking/pickup/return & reminder emails. Off pauses those — verification + password-reset emails still send.', icon: Mail, iconClass: 'bg-rose-50 text-[#bf4a53]' },
-  { key: 'paymongo', name: 'PayMongo Payments', desc: 'GCash & credit card downpayments via hosted checkout.', icon: CreditCard, iconClass: 'bg-emerald-50 text-emerald-600' },
-  { key: 'maya', name: 'Maya QR / QRPh', desc: 'Maya wallet & QRPh downpayments via scan or redirect.', icon: QrCode, iconClass: 'bg-sky-50 text-sky-600' },
 ];
 
 // Card groups render in this order (badge count still uses INTEGRATIONS).
 const GROUPS = [
   { title: 'Automatic Messaging', sub: 'Global switches — pausing stops automatic sends', keys: ['semaphore', 'brevo'] },
   { title: 'AI Providers', sub: 'Stylist suggestions & business reports', keys: ['gemini', 'groq', 'openrouter'] },
-  { title: 'Payments', sub: 'Downpayment gateways (the selector above chooses the active one)', keys: ['paymongo', 'maya'] },
 ];
 const INTEGRATION_BY_KEY = Object.fromEntries(INTEGRATIONS.map((i) => [i.key, i]));
 
@@ -150,11 +144,6 @@ export default function IntegrationsTab() {
   const [integrations, setIntegrations] = useState(() => readCache(CACHE_KEYS.INTEGRATIONS)?.data ?? null);
   const [checkedAt, setCheckedAt] = useState(() => readCache(CACHE_KEYS.INTEGRATIONS)?.at ?? null);
   const [integrationsLoading, setIntegrationsLoading] = useState(false);
-  // Which gateway new downpayments use. Backed by the `payment_gateway`
-  // business rule; defaults to PayMongo so a deploy of this feature is a no-op
-  // until an admin deliberately flips it.
-  const [gateway, setGateway] = useState('paymongo');
-  const [gatewaySaving, setGatewaySaving] = useState(false);
   // Global messaging kill-switches (admin-only, backed by BusinessRule).
   // Absent rule = on. Effective send = global ON && per-account pref ON.
   const [smsEnabled, setSmsEnabled] = useState(true);
@@ -188,14 +177,13 @@ export default function IntegrationsTab() {
     loadIntegrations(false);
   }, [loadIntegrations]);
 
-  // Read the live rules so the gateway selector AND the kill-switches show
-  // the real settings, not guesses.
+  // Read the live rules so the messaging kill-switches show the real
+  // settings, not guesses.
   useEffect(() => {
     let cancelled = false;
     settingsService.getRules()
       .then((rules) => {
         if (cancelled) return;
-        if (rules?.payment_gateway) setGateway(rules.payment_gateway);
         if (rules?.messaging_sms_enabled !== undefined) setSmsEnabled(rules.messaging_sms_enabled !== 'false');
         if (rules?.messaging_email_enabled !== undefined) setEmailEnabled(rules.messaging_email_enabled !== 'false');
       })
@@ -203,20 +191,6 @@ export default function IntegrationsTab() {
     return () => { cancelled = true; };
   }, []);
 
-  const handleGatewayChange = async (value) => {
-    const previous = gateway;
-    setGateway(value);
-    setGatewaySaving(true);
-    try {
-      await settingsService.updateRules({ payment_gateway: value });
-      toastSuccess(`Downpayments now use ${GATEWAY_LABELS[value] ?? value}.`);
-    } catch (err) {
-      setGateway(previous);
-      toastError(err?.message || 'Could not change the payment gateway.');
-    } finally {
-      setGatewaySaving(false);
-    }
-  };
 
   // Global kill-switch flip (admin-only rule). Optimistic with rollback so
   // the switch never lies; refreshes the status probe so the badge follows.
@@ -258,7 +232,7 @@ export default function IntegrationsTab() {
       icon={ShieldCheck}
       iconClass="bg-emerald-50 text-emerald-600"
       title="System Integrations"
-      subtitle="Global switches for automatic messaging, plus live status for AI, SMS, email and payments"
+      subtitle="Static QR payment setup, global messaging switches, and live status for AI, SMS and email"
       storageKey="settings-integrations-open"
       badge={
         integrations ? (
@@ -289,31 +263,16 @@ export default function IntegrationsTab() {
         <p className="lg:hidden text-[11px] font-semibold text-gray-400 tabular-nums -mt-1">{statusLabel}</p>
       )}
       <div className="space-y-5">
-        <div className="flex items-center justify-between gap-3 p-4 rounded-2xl bg-white border border-[#bf4a53]/20">
+        <div className="flex items-start justify-between gap-3 p-4 rounded-2xl bg-white border border-[#bf4a53]/20">
           <div className="min-w-0">
-            <p className="font-bold text-sm text-gray-900">Payment Gateway</p>
+            <p className="font-bold text-sm text-gray-900">Static QR payments</p>
             <p className="text-xs text-gray-500 mt-0.5">
-              Used for new booking downpayments. Takes effect immediately; existing bookings are unaffected.
+              Customers pay by scanning your QR and uploading a screenshot for staff review.
             </p>
-            {gateway === 'manual' && (
-              <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed">
-                Customers pay by scanning your QR and uploading a screenshot for staff review.
-              </p>
-            )}
           </div>
-          <select
-            aria-label="Payment Gateway"
-            value={gateway}
-            onChange={(e) => handleGatewayChange(e.target.value)}
-            disabled={gatewaySaving}
-            className="shrink-0 text-xs font-bold px-3 py-2 rounded-full bg-gray-100 text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 disabled:opacity-50"
-          >
-            <option value="paymongo">PayMongo</option>
-            <option value="maya">Maya QRPh</option>
-            <option value="manual">Manual QR (InstaPay / bank app)</option>
-          </select>
+          <span className="shrink-0 text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 bg-emerald-50 rounded-full px-2.5 py-1">Active</span>
         </div>
-        {gateway === 'manual' && <PaymentQrManager />}
+        <PaymentQrManager />
         {GROUPS.map((group) => (
           <section key={group.title} aria-label={group.title}>
             <div className="flex items-baseline justify-between gap-2 mb-2 px-1">

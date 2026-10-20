@@ -22,7 +22,7 @@ const ASSET_MAX_REQUESTS = 600;
 // limit on. We deliberately do NOT read the header ourselves: taking the
 // leftmost entry is the most client-controlled value in the chain, so an
 // attacker rotating X-Forwarded-For would get an unlimited number of buckets
-// (and, on /api/webhooks/maya, an unlimited number of secret-key re-checks).
+// (and, on any legacy webhook route, unlimited outbound probes).
 export function clientIp(req: Request): string {
   return req.ip || req.socket?.remoteAddress || 'unknown';
 }

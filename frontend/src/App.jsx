@@ -20,7 +20,6 @@ import LoginPage from './pages/LoginPage';
 import ForgotPasswordView from './pages/ForgotPasswordView';
 import VerifyEmailView from './pages/VerifyEmailView';
 import OAuthErrorView from './pages/OAuthErrorView';
-import PaymentReturnView from './pages/PaymentReturnView';
 import PrivacyPolicyView from './pages/PrivacyPolicyView';
 import TermsOfServiceView from './pages/TermsOfServiceView';
 import GoogleSignupDetails from './components/GoogleSignupDetails';
@@ -512,18 +511,6 @@ export default function RentechApp() {
     return created;
   };
 
-  // Roll back a customer booking that was committed before payment confirmation.
-  // Cancels the transaction server-side and reverts the item to Available locally.
-  const handleCancelBooking = async (created) => {
-    try {
-      await cancelTransaction(created.id);
-    } catch {
-      // best-effort: still clean up local state below
-    }
-    setTransactions((prev) => prev.filter((t) => t.id !== created.id));
-    if (created.itemId) markItemStatus(created.itemId, 'Available');
-  };
-
   // Process return (FIX D: surface errors). A damaged return takes the item
   // OUT of rotation (skips cleaning); an intact return goes to Cleaning.
   const handleProcessReturn = async (txId, isDamaged, _isLate, returnPhoto, damageReason, damageFee) => {
@@ -905,12 +892,6 @@ export default function RentechApp() {
     return <VerifyEmailView />;
   }
 
-  // Landing page for a customer returning from a Maya QRPh payment. Renders
-  // above the isLoggedIn gate on purpose: they may land here in a new tab.
-  if (location.pathname === '/payment-return') {
-    return <PaymentReturnView />;
-  }
-
   // OAuth error landing — the backend redirects failed Google sign-ins here
   // (e.g. the email already belongs to an email/password account). Public.
   if (location.pathname === '/oauth-error') {
@@ -1166,7 +1147,6 @@ export default function RentechApp() {
             customerInfo={customerInfo}
             onClose={() => setCustomerRental(null)}
             onSubmitBooking={handleSubmitBooking}
-            onCancelBooking={handleCancelBooking}
             onProofSubmitted={handleProofSubmitted}
           />
         </Suspense>

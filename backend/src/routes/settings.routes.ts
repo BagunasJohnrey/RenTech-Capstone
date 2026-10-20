@@ -37,7 +37,7 @@ router.post('/backups/:id/upload', requireRole(Role.Admin), requireMfaAdmin, set
 router.get('/backups/:id/download', requireRole(Role.Admin), requireMfaAdmin, settingsController.downloadBackup);
 
 // Admin-only: live connectivity/health probe for external integrations
-// (Gemini AI, Semaphore SMS, PayMongo payments).
+// (Gemini AI, Semaphore SMS, Brevo email).
 router.get('/integrations-status', requireRole(Role.Admin), requireMfaAdmin, settingsController.getIntegrationsStatus);
 
 export default router;

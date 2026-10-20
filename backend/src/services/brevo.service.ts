@@ -1,6 +1,6 @@
 // Brevo (formerly Sendinblue) transactional email delivery.
 //
-// Mirrors the semaphore/paymongo service shape: plain fetch against the Brevo
+// Mirrors the semaphore service shape: plain fetch against the Brevo
 // REST API (no SDK dependency), 10s timeout, simulated success in dev/test
 // when no key is configured, loud failure in production.
 //

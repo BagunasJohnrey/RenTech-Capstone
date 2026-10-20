@@ -245,7 +245,8 @@ describe('GET /api/settings/integrations-status (brevo row)', () => {
     expect(res.body.brevo.configured).toBe(false);
     expect(res.body.brevo.simulated).toBe(true);
     expect(res.body).toHaveProperty('semaphore');
-    expect(res.body).toHaveProperty('paymongo');
+    expect(res.body).not.toHaveProperty('paymongo');
+    expect(res.body).not.toHaveProperty('maya');
   });
 
   it('exposes the messaging kill-switches as enabled flags (default ON)', async () => {

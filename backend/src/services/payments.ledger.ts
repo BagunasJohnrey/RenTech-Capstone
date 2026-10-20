@@ -9,9 +9,9 @@ export type CreditResult = {
   balance: number;
 };
 
-// The single crediting path for every gateway. Both webhooks and the polling
-// fallback call this, so idempotency, balance math, and payment classification
-// are defined exactly once.
+// The single crediting path for the boutique's static-QR payments. Staff
+// approval of a payment proof calls this, so idempotency, balance math, and
+// payment classification are defined exactly once.
 //
 // `gatewayRef` is the idempotency anchor (unique in the schema): a gateway that
 // retries a delivery, or a customer who retried after a QR expiry and whose
@@ -26,9 +26,9 @@ export type CreditResult = {
 export async function applyPaymentToTransaction(input: {
   transactionId: string;
   amount: number;
-  gateway: 'paymongo' | 'maya' | 'manual';
+  gateway: 'manual';
   gatewayRef: string;
-  method: 'gcash' | 'card' | 'maya' | 'instapay';
+  method: 'instapay';
 }): Promise<CreditResult> {
   const outcome = await prisma.$transaction(async (tx) => {
     const current = await tx.transaction.findUnique({ where: { id: input.transactionId } });
@@ -47,8 +47,8 @@ export async function applyPaymentToTransaction(input: {
       return { duplicate: true, totalPaid: current.totalPaid, balance: current.balance };
     }
 
-    // Never credit more than is outstanding. Maya confirms what the customer
-    // actually sent, but the books can never exceed the amount owed.
+    // Never credit more than is outstanding. The screenshot amount is what the
+    // customer actually sent, but the books can never exceed the amount owed.
     const outstanding = Math.max(
       0,
       current.rentalFee + current.latePenalty + current.damageFee - current.totalPaid,

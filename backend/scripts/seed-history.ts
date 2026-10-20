@@ -117,11 +117,11 @@ async function main() {
       const payments: SeedPayment[] = [];
 
       if (status !== 'Cancelled' && downpayment > 0) {
-        // Downpayment at booking: counter cash or online gateway.
+        // Downpayment at booking: counter cash or a static-QR transfer.
         const online = Math.random() < 0.3;
-        const gw1 = online ? pick(['paymongo', 'paymongo', 'maya']) : null;
+        const gw1 = online ? 'manual' : null;
         payments.push({
-          amount: downpayment, method: !online ? 'cash' : gw1 === 'maya' ? 'maya' : pick(['gcash', 'card']),
+          amount: downpayment, method: !online ? 'cash' : 'instapay',
           status: online ? 'succeeded' : 'completed',
           gateway: gw1, gatewayRef: online ? `seed_${randomUUID().replace(/-/g, '')}` : null,
           createdAt, type: 'downpayment',
@@ -134,9 +134,9 @@ async function main() {
             const settled = Math.random() < 0.94;
             const amt = settled ? rest : Math.round(rest / 2);
             const on2 = Math.random() < 0.25;
-            const gw2 = on2 ? pick(['paymongo', 'maya']) : null;
+            const gw2 = on2 ? 'manual' : null;
             payments.push({
-              amount: amt, method: !on2 ? 'cash' : gw2 === 'maya' ? 'maya' : pick(['gcash', 'card']),
+              amount: amt, method: !on2 ? 'cash' : 'instapay',
               status: on2 ? 'succeeded' : 'completed',
               gateway: gw2, gatewayRef: on2 ? `seed_${randomUUID().replace(/-/g, '')}` : null,
               createdAt: paidAt > now ? new Date(now) : paidAt,
@@ -200,7 +200,7 @@ async function main() {
         payments: {
           create: t.payments.map((p) => ({
             amount: p.amount, method: p.method, type: p.type,
-            gateway: p.gateway ?? 'paymongo', gatewayRef: p.gatewayRef, status: p.status, createdAt: p.createdAt,
+            gateway: p.gateway ?? 'manual', gatewayRef: p.gatewayRef, status: p.status, createdAt: p.createdAt,
           })),
         },
       },

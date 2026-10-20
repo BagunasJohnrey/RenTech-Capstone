@@ -335,8 +335,8 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
       const data: Row = {
         transactionId, amount, method, type,
         // Gateway rename (Sept 2026) — see transaction note above. gateway is
-        // required in the schema, so fall back to the historic default.
-        gateway: strOrNull(r.gateway) ?? 'paymongo',
+        // required in the schema, so fall back to the static-QR default.
+        gateway: strOrNull(r.gateway) ?? 'manual',
         gatewayRef: strOrNull(r.gatewayRef ?? r.paymongoPiId),
         status: str(r.status) ?? 'pending', createdAt: dateOrNow(r.createdAt),
       };

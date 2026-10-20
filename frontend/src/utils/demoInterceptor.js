@@ -755,7 +755,7 @@ function route(method, path, body) {
   if (path === '/settings/rules') return { value: { minDownpaymentPct: 50, latePenaltyPerDay: 100, overdueEscalationDays: 3, dataRetentionMonths: 12 } };
   if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false, rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: DEMO_PAYMENT_GATEWAY, manual_qr_codes: clone(DEMO_QR_CODES), store_name: 'RenTech Boutique', store_contact: '0917 123 4567', store_address: 'Balayan, Batangas' } };
   if (path === '/settings/sms-templates') return { value: [] };
-  if (path === '/settings/integrations-status') return { value: { gemini: { configured: false }, groq: { configured: false }, openrouter: { configured: false }, paymongo: { configured: false }, semaphore: { configured: false } } };
+  if (path === '/settings/integrations-status') return { value: { gemini: { configured: false }, groq: { configured: false }, openrouter: { configured: false }, semaphore: { configured: false } } };
   if (path === '/settings/backups' && method === 'GET') return { value: clone(demoBackups) };
   if (path === '/settings/backups' && method === 'POST') {
     const meta = { id: 'backup-demo-' + Date.now(), createdAt: new Date().toISOString(), createdBy: 'demo-admin-profile', totalRows: 48, tables: { profiles: 5, inventory_items: items.length, transactions: transactions.length }, storageFiles: items.length * 2, storageBytes: 3200000, storageIncomplete: false, sizeBytes: 20480, filename: 'backup-demo-' + Date.now() + '.json', uploaded: true, source: 'both' };
@@ -790,12 +790,6 @@ function route(method, path, body) {
   if (P(/^\/promo-codes\/public/)) return { value: [] };
   if (P(/^\/promo-codes\/validate/)) return { status: 404, error: 'Promo code not found (demo)' };
   if (P(/^\/promo-codes/)) return { value: [] };
-  if (P(/^\/payments\/create-intent/)) {
-    if (DEMO_PAYMENT_GATEWAY === 'manual') {
-      return { value: { gateway: 'manual', amount: body.amount ?? 0, qrCodes: clone(DEMO_QR_CODES), simulated: false } };
-    }
-    return { value: { simulated: true, id: 'demo-intent' } };
-  }
   if (P(/^\/payments\/proofs$/) && method === 'GET') {
     const pending = paymentProofs
       .filter((p) => p.status === 'pending')
@@ -897,11 +891,6 @@ function route(method, path, body) {
     });
     return { value: { proof: clone(proof) } };
   }
-  if (P(/^\/payments\/transaction\/(.+)\/status$/)) {
-    const txId = P(/^\/payments\/transaction\/(.+)\/status$/)[1];
-    return { value: { status: 'succeeded', totalPaid: 2000, balance: 3000, gateway: 'maya', transactionId: txId } };
-  }
-  if (P(/^\/payments\/(.+)$/)) return { value: { id: P(/^\/payments\/(.+)$/)[1], status: 'succeeded', simulated: true } };
   if (path === '/ai/chat') {
     return {
       value: {

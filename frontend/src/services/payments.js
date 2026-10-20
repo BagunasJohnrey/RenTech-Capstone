@@ -1,16 +1,8 @@
 import { api } from '../utils/api';
 
-// Payments (PayMongo / Maya QRPh) API calls.
+// Static-QR payment proof API calls. The customer uploads a screenshot and
+// staff approve or reject it; approval is the only action that moves money.
 export const paymentsService = {
-  createIntent: ({ transactionId, amount }) =>
-    api.post('/payments/create-intent', { transactionId, amount }),
-
-  get: (id) => api.get(`/payments/${id}`),
-
-  // Coarse payment status for a booking. Also the self-heal path: if a Maya
-  // webhook never landed, polling this credits the payment server-side.
-  getStatus: (transactionId) => api.get(`/payments/transaction/${transactionId}/status`),
-
   // Manual QR proof workflow: customer uploads a screenshot, staff review the
   // queue (approve credits through the ledger, reject lets the customer retry).
   submitProof: (bookingId, payload) => api.post(`/bookings/${bookingId}/payment-proof`, payload),

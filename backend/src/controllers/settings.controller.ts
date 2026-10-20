@@ -6,8 +6,6 @@ import * as restoreService from '../services/restore.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import * as geminiService from '../services/gemini.service.js';
 import * as semaphoreService from '../services/semaphore.service.js';
-import * as paymongoService from '../services/paymongo.service.js';
-import * as mayaService from '../services/maya.service.js';
 import * as brevoService from '../services/brevo.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 
@@ -259,8 +257,8 @@ export async function importBackup(req: AuthenticatedRequest, res: Response, nex
 }
 
 // Admin "System Integrations" status — live-probes Gemini, Semaphore,
-// PayMongo, and Brevo in parallel (each with its own timeout) so one down
-// service can't delay or mask the others. Never throws; each provider reports
+// and Brevo in parallel (each with its own timeout) so one down service
+// can't delay or mask the others. Never throws; each provider reports
 // its own status.
 //
 // Short server-side cache: each check fans out to 6 external probes, so the
@@ -282,11 +280,9 @@ export async function getIntegrationsStatus(req: AuthenticatedRequest, res: Resp
     ) {
       return res.json({ ...integrationsCache.body });
     }
-const [ai, semaphore, paymongo, maya, brevo, smsEnabled, emailEnabled] = await Promise.all([
+const [ai, semaphore, brevo, smsEnabled, emailEnabled] = await Promise.all([
     geminiService.checkAiHealth(),
     semaphoreService.checkSemaphoreHealth(),
-    paymongoService.checkPaymongoHealth(),
-    mayaService.checkMayaHealth(),
     brevoService.checkBrevoHealth(),
     settingsService.isSmsEnabled(),
     settingsService.isEmailEnabled(),
@@ -301,8 +297,6 @@ const [ai, semaphore, paymongo, maya, brevo, smsEnabled, emailEnabled] = await P
       groq: ai.providers?.groq,
       openrouter: ai.providers?.openrouter,
       semaphore: { ...semaphore, enabled: smsEnabled },
-   paymongo,
-   maya,
    brevo: { ...brevo, enabled: emailEnabled },
       checkedAt: new Date().toISOString(),
     };

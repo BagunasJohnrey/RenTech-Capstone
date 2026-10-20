@@ -26,10 +26,8 @@ app.use(errorHandler);
 
 const QR = { id: 'gcash-1', label: 'GCash', accountName: 'Mylene S.', imagePath: 'qrcodes/gcash-1.webp' };
 
-describe('getPaymentGateway manual', () => {
-  it('returns manual when the rule says so', async () => {
-    const { prisma } = await import('../src/config/database.js');
-    prisma.businessRule.findMany.mockResolvedValueOnce([{ key: 'payment_gateway', value: 'manual' }]);
+describe('getPaymentGateway', () => {
+  it('always returns manual (the legacy rule is ignored)', async () => {
     expect(await getPaymentGateway()).toBe('manual');
   });
 });
@@ -623,28 +621,6 @@ describe('proof submit rate limit', () => {
     }
     const blocked = await send();
     expect(blocked.status).toBe(429);
-  });
-});
-
-describe('POST /api/payments/create-intent manual branch', () => {
-  it('returns qrCodes without charging or writing a gateway id', async () => {
-    const { prisma } = await import('../src/config/database.js');
-    prisma.businessRule.findMany
-      .mockResolvedValueOnce([{ key: 'min_downpayment', value: '200' }])
-      .mockResolvedValueOnce([{ key: 'payment_gateway', value: 'manual' }])
-      .mockResolvedValueOnce([{ key: 'manual_qr_codes', value: JSON.stringify([{ id: 'gcash-1', label: 'GCash', accountName: 'Mylene S.', imagePath: 'qrcodes/gcash-1.webp' }]) }]);
-    prisma.transaction.findUnique.mockResolvedValueOnce({
-      id: 'tx-1', status: 'Active', customerId: 'customer-id-111', downpayment: 200, totalPaid: 0,
-      rentalFee: 5000, latePenalty: 0, damageFee: 0, balance: 5000, payments: [],
-    });
-    const res = await request(app)
-      .post('/api/payments/create-intent')
-      .set('Authorization', 'Bearer customer-token')
-      .send({ transactionId: 'tx-1', amount: 200 });
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ gateway: 'manual', amount: 200, simulated: false });
-    expect(res.body.qrCodes).toHaveLength(1);
-    expect(prisma.transaction.update).not.toHaveBeenCalled();
   });
 });
 

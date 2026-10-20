@@ -6,7 +6,6 @@ import * as transactionService from '../services/transactions.service.js';
 import * as customerService from '../services/customer.service.js';
 import * as storageService from '../services/storage.service.js';
 import { MAX_PROOF_BYTES } from '../services/paymentProofs.service.js';
-import { getPaymentGateway } from '../services/settings.service.js';
 import { sendEmail, isSendableEmail } from '../services/brevo.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
@@ -76,15 +75,14 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
     // SECURITY: the rental price is NEVER taken from the client. It is derived
     // server-side from the item (sale-aware) in transactions.service.createRental;
     // only an optional promo code is accepted, and it is resolved server-side.
-    const { itemId, rentalDate, dueDate, downpayment, notes, promoCode, size, measurements, address, paymentPath, paymentProof } = req.body;
+    const { itemId, rentalDate, dueDate, downpayment, notes, promoCode, size, measurements, address, paymentProof } = req.body;
 
     // Manual-QR: upload the screenshot BEFORE creating the booking. If storage
     // fails, the request fails and NO booking exists to clean up — the old
     // create-then-upload order is what left unpaid bookings needing proof.
-    // Enforce by the CONFIGURED gateway too, not just the client hint, so an
-    // older/cached client cannot create an unpaid manual booking with no proof.
-    const gateway = await getPaymentGateway();
-    const requiresProof = paymentPath === 'manual' || gateway === 'manual';
+    // Every booking now uses this path (the boutique's static QR is the only
+    // payment method), so the proof is always required.
+    const requiresProof = true;
     let uploadedProofPath: string | undefined;
     let proofInput: { imagePath: string; reference?: string; channel?: string } | undefined;
     if (requiresProof) {
@@ -119,7 +117,7 @@ export async function createBooking(req: AuthenticatedRequest, res: Response, ne
         size,
         measurements,
         customerAddress: address,
-        paymentPath: requiresProof ? 'manual' : paymentPath,
+        paymentPath: 'manual',
         paymentProof: proofInput,
         requireMinimumDownpayment: true, // customers must pay the flat minimum downpayment (default ₱200)
       });
