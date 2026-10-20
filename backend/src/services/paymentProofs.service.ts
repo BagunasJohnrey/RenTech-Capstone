@@ -4,6 +4,7 @@ import { AppError } from '../middleware/errorHandler.js';
 import { applyPaymentToTransaction } from './payments.ledger.js';
 import { createNotification } from './notifications.service.js';
 import { createAuditLog } from '../utils/audit.js';
+import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
 
 export const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 
@@ -62,6 +63,9 @@ export async function submitProof(
   if (tx.paymentPath !== 'manual') {
     await prisma.transaction.update({ where: { id: transactionId }, data: { paymentPath: 'manual' } });
   }
+  // The queue is cached like the dashboard digest; invalidate it now so the
+  // staff Tasks page sees this (or a re-submitted) proof on its next load.
+  clearDataCache();
 
   // Direct fan-out — bypasses notifyStaffMembers' dedupe so every
   // resubmission re-alerts.
@@ -93,6 +97,16 @@ export async function submitProof(
 
 export async function listProofQueue(limit = 50) {
   const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  // Same TTL cache as the today-digest: the Tasks page reads this on every
+  // mount (and the priority card + queue each mount a hook), so repeat hits
+  // must not re-run five pooler queries. All proof/booking mutations call
+  // clearDataCache(), and the dashboard warmer refills this key in the
+  // background, so a warm Tasks visit paints digest rows AND proof rows
+  // together from one cached snapshot.
+  return cacheOrCompute(`proof-queue:${take}`, () => listProofQueueUncached(take));
+}
+
+async function listProofQueueUncached(take: number) {
   const [pendingRows, pendingCount, reviewedRows, reviewedCount, manualTx] = await Promise.all([
     prisma.paymentProof.findMany({
       where: { status: 'pending' },
@@ -246,6 +260,7 @@ export async function approveProof(proofId: string, reviewerId: string, amountOv
     const fresh = await prisma.paymentProof.findUnique({ where: { id: proof.id } });
     if (fresh?.status !== 'approved') throw new AppError(409, 'This proof was just reviewed by someone else');
   }
+  clearDataCache();
 
   await createNotification({
     profileId: tx.customerId,
@@ -290,6 +305,7 @@ export async function rejectProof(proofId: string, reviewerId: string, reason: s
     data: { status: 'rejected', rejectionReason: reason, reviewedById: reviewerId, reviewedAt: new Date() },
   });
   if (updated.count === 0) throw new AppError(409, 'This proof was just reviewed by someone else');
+  clearDataCache();
 
   await createNotification({
     profileId: proof.transaction.customerId,

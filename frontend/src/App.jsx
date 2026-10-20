@@ -15,6 +15,7 @@ import { api, API_ORIGIN } from './utils/api';
 import { todayYmd } from './utils/format';
 import { useToast } from './components/Toast';
 import { useDataVersion } from './hooks/useDataVersion';
+import { prefetchPaymentProofs } from './hooks/usePaymentProofs';
 
 import LoginPage from './pages/LoginPage';
 import ForgotPasswordView from './pages/ForgotPasswordView';
@@ -366,6 +367,9 @@ export default function RentechApp() {
     if (role === 'Admin') {
       loadStaff().catch(() => {});
     }
+    // Staff/admin land on the dashboard first; warm the QR proof queue while
+    // they are there so Tasks opens with digest rows and proof rows together.
+    if (role === 'Admin' || role === 'Staff') prefetchPaymentProofs();
     // Preload the transaction detail chunk while idle so the first popup
     // open never pays the lazy-chunk download on top of mount + data.
     const preload = () => import('./components/TransactionDetailModal').catch(() => {});

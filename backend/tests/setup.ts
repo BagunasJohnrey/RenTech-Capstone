@@ -13,6 +13,10 @@ beforeEach(async () => {
   // above (which would break e.g. the SEMAPHORE_API_KEY-based send path).
   const { clearAllRateLimiters } = await import('../src/middleware/rateLimiter.js');
   clearAllRateLimiters();
+  // The dashboard/proof-queue caches are in-memory too; clear them between
+  // tests so mocked query results never leak into the next case.
+  const { clearDataCache } = await import('../src/utils/ttlCache.js');
+  clearDataCache();
 });
 
 process.env.SUPABASE_URL = 'https://test.supabase.co';

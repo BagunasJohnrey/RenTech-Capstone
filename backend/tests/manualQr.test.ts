@@ -420,6 +420,26 @@ describe('proof review', () => {
     expect(res.status).toBe(403);
   });
 
+  it('serves the queue from cache until a mutation clears it', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { listProofQueue } = await import('../src/services/paymentProofs.service.js');
+    const { clearDataCache } = await import('../src/utils/ttlCache.js');
+    prisma.paymentProof.findMany.mockResolvedValue([]);
+    prisma.paymentProof.count.mockResolvedValue(0);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    clearDataCache();
+
+    await listProofQueue();
+    const afterFirst = prisma.paymentProof.findMany.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+    await listProofQueue();
+    expect(prisma.paymentProof.findMany.mock.calls.length).toBe(afterFirst);
+
+    clearDataCache();
+    await listProofQueue();
+    expect(prisma.paymentProof.findMany.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+
   it('GET /proofs returns pending rows and awaiting bookings', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.paymentProof.findMany.mockResolvedValueOnce([pendingProof]);

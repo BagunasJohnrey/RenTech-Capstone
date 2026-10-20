@@ -184,14 +184,16 @@ app.listen(env.PORT, () => {
 
   // Pre-warm the dashboard cache so the first page load (AI Insights, KPIs,
   // revenue charts) is a cache hit instead of paying the cold-connection +
-  // multi-query cost in front of the user. Errors are non-fatal — the page
-  // just computes on first request as usual.
+  // multi-query cost in front of the user. The QR proof queue rides along so
+  // Tasks can paint its digest rows and proof rows together on the first hit.
+  // Errors are non-fatal — the page just computes on first request as usual.
   Promise.allSettled([
     getKpis(),
     getForecast(3),
     getInsights(),
     getInventoryAnalytics(),
     getTodayTasks(),
+    import('./services/paymentProofs.service.js').then((m) => m.listProofQueue()),
   ]).then(() => console.log('[Cache] dashboard data pre-warmed'));
 
   // Check for overdue / due-today transactions every 1 minute so SMS

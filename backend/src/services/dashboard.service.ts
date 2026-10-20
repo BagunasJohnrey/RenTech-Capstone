@@ -30,6 +30,10 @@ if (!isTestEnv) {
       getForecast(3),
       getInventoryAnalytics(),
       getDataVersion(),
+      // Tasks needs the QR proof queue alongside the digest. Warming it here
+      // keeps the priority card and the verification queue a single cache hit
+      // after any mutation (proofs age fast, so the warmer must include it).
+      import('./paymentProofs.service.js').then((m) => m.listProofQueue()),
       import('./transactions.service.js').then((m) => m.listTransactions({ role: 'Staff' })),
       import('./inventory.service.js').then((m) =>
         Promise.all([
