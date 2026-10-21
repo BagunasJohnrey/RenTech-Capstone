@@ -312,6 +312,28 @@ export function cancellationEmail(customerName: string, itemName: string): Built
   };
 }
 
+// ---- Payment proof rejected ----
+export function proofRejectedEmail(customerName: string, itemName: string, reason: string): BuiltEmail {
+  const safeName = customerName?.trim() || 'there';
+  const html = shell({
+    eyebrow: 'Payment review',
+    heading: `We couldn't verify your payment, ${safeName}`,
+    preheader: `Your payment proof for ${itemName} needs to be re-uploaded`,
+    bodyHtml:
+      para(`We reviewed the payment screenshot for \u201C${itemName}\u201D but couldn't verify it.`) +
+      detailsTable([
+        ['Item', itemName],
+        ['Reason', reason],
+      ], true) +
+      para('Please upload a new proof from My Rentals so we can confirm your booking. Pickup stays on hold until the downpayment is verified.'),
+  });
+  return {
+    subject: `Payment proof needs attention: ${itemName}`,
+    html,
+    text: `Hi ${safeName},\n\nWe couldn't verify your payment proof for "${itemName}".\nReason: ${reason}\n\nPlease upload a new proof from My Rentals. Pickup stays on hold until the downpayment is verified.\n\nRenTech · Balayan, Batangas`,
+  };
+}
+
 // ---- Due-today reminder ----
 export function dueReminderEmail(customerName: string, itemName: string, dueDate: string): BuiltEmail {
   const html = shell({

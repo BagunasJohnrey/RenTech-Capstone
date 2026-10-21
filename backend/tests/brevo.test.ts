@@ -17,6 +17,7 @@ import {
   pickupEmail,
   returnEmail,
   cancellationEmail,
+  proofRejectedEmail,
   dueReminderEmail,
   overdueEmail,
 } from '../src/templates/emailTemplates.js';
@@ -155,6 +156,15 @@ describe('email templates (branded, fee-policy aware)', () => {
     const built = cancellationEmail('Maria', 'Red Gown');
     expect(built.subject).toContain('Red Gown');
     expect(built.html).toContain('cancelled');
+  });
+
+  it('rejected-proof email carries the item, reason, and re-upload ask', () => {
+    const built = proofRejectedEmail('Maria', 'Red Gown', 'Screenshot was blurry');
+    expect(built.subject).toContain('Red Gown');
+    expect(built.subject).toContain('Payment proof');
+    expect(built.html).toContain('Screenshot was blurry');
+    expect(built.html).toContain('upload a new proof');
+    expect(built.text).toContain('Screenshot was blurry');
   });
 
   it('due-reminder email names item + due date', () => {

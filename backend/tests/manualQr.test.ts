@@ -412,6 +412,7 @@ describe('proof review', () => {
       id: 'tx-1', txNumber: 1001, status: 'Active', customerId: 'auth-customer-id',
       rentalFee: 5000, latePenalty: 0, damageFee: 0, totalPaid: 0, downpayment: 200,
       item: { name: 'Barong' },
+      customer: { name: 'Bea', email: 'bea@example.com' },
     },
   };
 

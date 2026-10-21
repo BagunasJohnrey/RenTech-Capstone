@@ -5,6 +5,7 @@ import { applyPaymentToTransaction } from './payments.ledger.js';
 import { createNotification } from './notifications.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
+import { sendProofRejectedEmail, isSendableEmail } from './brevo.service.js';
 
 export const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 
@@ -293,7 +294,11 @@ export async function rejectProof(proofId: string, reviewerId: string, reason: s
     where: { id: proofId },
     include: {
       transaction: {
-        select: { id: true, txNumber: true, customerId: true, item: { select: { name: true } } },
+        select: {
+          id: true, txNumber: true, customerId: true,
+          item: { select: { name: true } },
+          customer: { select: { name: true, email: true } },
+        },
       },
     },
   });
@@ -314,6 +319,18 @@ export async function rejectProof(proofId: string, reviewerId: string, reason: s
     title: 'Payment proof needs attention',
     message: `We couldn't verify your payment for ${proof.transaction.item?.name ?? 'your booking'}: ${reason}. You can upload a new proof from My Rentals.`,
   });
+
+  // Email mirrors the in-app notification (best-effort; lifecycle emails honor
+  // the admin kill-switch and skip walk-in @rentech.invalid addresses).
+  const customer = proof.transaction.customer;
+  if (isSendableEmail(customer?.email)) {
+    await sendProofRejectedEmail(
+      customer.email!,
+      customer.name?.trim() || 'there',
+      proof.transaction.item?.name ?? 'your booking',
+      reason,
+    );
+  }
 
   await createAuditLog({
     action: 'payment_proof.reject',

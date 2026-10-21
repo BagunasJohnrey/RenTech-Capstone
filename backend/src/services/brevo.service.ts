@@ -20,6 +20,7 @@ import {
   pickupEmail,
   returnEmail,
   cancellationEmail,
+  proofRejectedEmail,
   dueReminderEmail,
   overdueEmail,
   staffWelcomeEmail,
@@ -167,6 +168,10 @@ export function sendReturnEmail(
 
 export function sendCancellationEmail(to: string, customerName: string, itemName: string) {
   return sendBestEffort(to, cancellationEmail(customerName, itemName));
+}
+
+export function sendProofRejectedEmail(to: string, customerName: string, itemName: string, reason: string) {
+  return sendBestEffort(to, proofRejectedEmail(customerName, itemName, reason));
 }
 
 export function sendDueReminderEmail(to: string, customerName: string, itemName: string, dueDate: string) {
