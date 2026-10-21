@@ -376,6 +376,23 @@ function forecastConfidence(historyMonths: number): 'low' | 'medium' | 'high' {
   return 'high';
 }
 
+// A backtest error above 100% is not a usable confidence interval — it is a
+// structural break (partial month, sparse weeks, sudden volume jump). Saying
+// "error ±659%" in the UI reads like a bug, so label the variance instead.
+function forecastErrorNote(errorPct: number | null): string {
+  if (errorPct === null || errorPct === undefined) return '';
+  return errorPct > 100 ? ' · high variance' : ` · error ±${errorPct}%`;
+}
+
+// Depth alone is not confidence: 25 months with a ±600% backtest error is not
+// "high confidence". A wide backtest downgrades the badge to low.
+function effectiveConfidence(
+  base: 'low' | 'medium' | 'high',
+  errorPct: number | null,
+): 'low' | 'medium' | 'high' {
+  return errorPct !== null && errorPct !== undefined && errorPct > 100 ? 'low' : base;
+}
+
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 // One honest series builder shared by the monthly and weekly forecast paths:
@@ -507,7 +524,7 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
         return d.toLocaleString('en-US', { month: 'short', day: 'numeric' });
       });
       const historyMonths = (now.getFullYear() - firstMonday.getFullYear()) * 12 + (now.getMonth() - firstMonday.getMonth()) + 1;
-      const confidence = forecastConfidence(historyMonths);
+      const confidence = effectiveConfidence(forecastConfidence(historyMonths), series.errorPct);
       return {
         labels: weeks.map(w => w.label),
         counts: weeklyCounts,
@@ -523,7 +540,7 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
         historyMonths,
         historyPoints: historyRows.length,
         confidence,
-        confidenceNote: `Last ${FORECAST_WEEKS} weeks · ${confidence} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
+        confidenceNote: `Last ${FORECAST_WEEKS} weeks · ${confidence} confidence${forecastErrorNote(series.errorPct)}`,
       };
     }
 
@@ -583,8 +600,8 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       byCategory,
       historyMonths: months.length,
       historyPoints: historyRows.length,
-      confidence: forecastConfidence(months.length),
-      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${forecastConfidence(months.length)} confidence${series.errorPct === null ? '' : ` · error ±${series.errorPct}%`}`,
+      confidence: effectiveConfidence(forecastConfidence(months.length), series.errorPct),
+      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${effectiveConfidence(forecastConfidence(months.length), series.errorPct)} confidence${forecastErrorNote(series.errorPct)}`,
     };
   });
 }
@@ -706,6 +723,7 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
   // payment/tx source already in memory — the month label lets the frontend
   // tell apart "This month · Wk 2" from "Jun 2025 · Wk 2".
   let revenueByWeek: { label: string; revenue: number }[] | undefined;
+  let logbookByWeek: number[] | undefined;
   if (filter?.weekly && filter?.start) {
     const y = filter.start.getFullYear();
     const mo = filter.start.getMonth();
@@ -718,6 +736,22 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
       buckets[weekOf(d.getDate())] += r.amount;
     }
     revenueByWeek = buckets.map((revenue, i) => ({ label: `Wk ${i + 1}`, revenue }));
+    // Imported logbook prices for the same month, bucketed by the recorded
+    // event day. These are full paper-log rentals, not collected payments, so
+    // they ride alongside revenueByWeek (same indices) instead of being merged
+    // into the ledger figure; the chart combines them and labels the split.
+    const logbookBuckets = [0, 0, 0, 0, 0];
+    try {
+      const monthEnd = filter.end || new Date(y, mo + 1, 1);
+      const logRows = await prisma.historicalRecord.findMany({
+        where: { eventDate: { gte: filter.start, lt: monthEnd } },
+        select: { eventDate: true, price: true },
+      });
+      for (const r of logRows) {
+        logbookBuckets[weekOf(r.eventDate.getDate())] += r.price || 0;
+      }
+    } catch { /* enrichment only - chart falls back to collected payments */ }
+    logbookByWeek = logbookBuckets;
   }
 
   const revenueByCategory: Record<string, number> = {};
@@ -743,15 +777,33 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     for (const g of groups) historyByCategory[g.category] = g._count.id;
   } catch { /* enrichment only */ }
 
+  // Imported logbook prices per month, aligned with revenueByMonth. Kept
+  // separate so the ledger figure stays pure; the chart adds them per bar and
+  // the tooltip labels "Collected" vs "Logbook".
+  let logbookByMonth: number[] = [];
+  try {
+    const logRows = await prisma.historicalRecord.findMany({
+      where: histCatWhere,
+      select: { eventDate: true, price: true },
+    });
+    logbookByMonth = filteredMonths.map(m =>
+      logRows
+        .filter(r => inMonth(r.eventDate, m))
+        .reduce((sum, r) => sum + (r.price || 0), 0)
+    );
+  } catch { /* enrichment only - chart falls back to collected payments */ }
+
   return {
     categoryBreakdown,
     historyByCategory,
     topRented,
     underperforming,
     revenueByMonth,
+    logbookByMonth,
     // Only present when a month was pinned (current or past). Other views keep
     // the monthly series (undefined fields are dropped by JSON).
     ...(revenueByWeek ? { revenueByWeek } : {}),
+    ...(logbookByWeek ? { logbookByWeek } : {}),
     // Echo the queried window so the frontend can label the weekly chart for
     // a past month (e.g. "Jun 2025 · Wk 2") instead of assuming "this month".
     ...(filter?.start ? { insightsPeriod: { start: filter.start.toISOString() } } : {}),

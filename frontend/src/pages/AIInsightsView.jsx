@@ -13,7 +13,7 @@ import CategoryPerformance from '../components/insights/CategoryPerformance';
 import InsightsPanel from '../components/insights/InsightsPanel';
 import ReportSection from '../components/insights/ReportSection';
 import SmartListModal from '../components/insights/SmartListModal';
-import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS, fmt } from '../components/insights/shared';
+import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS } from '../components/insights/shared';
 import { api } from '../utils/api';
 import { formatCheckedAgo } from '../utils/cache';
 import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
@@ -454,6 +454,10 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const prevLogbookRev = isOverallView ? 0 : (kpis?.prevLogbookRevenue || 0);
   const displayRev = isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev + logbookRev;
   const displayPrev = isOverallView ? 0 : prevMonthRev + prevLogbookRev;
+  // KpiCards adds the logbook companion to this prop itself, so it must get the
+  // LEDGER figure only. Passing displayRev (already combined) double-counted
+  // the logbook: ₱382,450 collected + ₱356,050 logbook rendered as ₱738,500.
+  const ledgerRevForCard = isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev;
   const revChange = displayPrev > 0 ? ((displayRev - displayPrev) / displayPrev) * 100 : 0;
   // The revenue KPI follows the active tab (the backend already scopes the
   // figure to the window) — so the label must follow it too instead of always
@@ -631,90 +635,117 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const selectedMonthName = isMonthlyView ? SHORT_MONTHS[appliedMonth - 1] : null;
   const monthName = selectedMonthName; // label used in tooltips / empty state
 
+  const lgByWeekAll = Array.isArray(insightsData?.logbookByWeek) ? insightsData.logbookByWeek : [];
+  const lgByMonthAll = Array.isArray(insightsData?.logbookByMonth) ? insightsData.logbookByMonth : [];
   let revChart;
   let revChartEmptyLabel = 'No transaction data yet.';
   if (isMonthlyView && revByWeek && revByWeek.length > 0) {
-    revChart = revByWeek.map(w => ({ label: w.label, full: `${monthName} ${appliedYear} · ${w.label}`, rev: w.revenue }));
+    const daysInMonth = new Date(appliedYear, appliedMonth, 0).getDate();
+    // A 28-day February has no days 29–31, so Wk 5 never exists there. Past
+    // months show Wk 1–4 only (the 3-day Wk 5 tail is called out in the
+    // footnote, never drawn as a fifth bar). The current month keeps Wk 5
+    // because it is the one bar that gets projected.
+    const totalWeeks = viewingCurrentMonth
+      ? Math.min(5, Math.ceil(daysInMonth / 7))
+      : Math.min(4, revByWeek.length);
+    // Past months never draw a fifth bar. Fold the 3-day tail into Wk 4 so
+    // the four bars still sum to the month total the KPI card shows.
+    const tailPay = !viewingCurrentMonth && revByWeek.length > 4 ? (revByWeek[4]?.revenue || 0) : 0;
+    const tailLog = !viewingCurrentMonth && lgByWeekAll.length > 4 ? (lgByWeekAll[4] || 0) : 0;
+    const monthAbbr = SHORT_MONTHS[(appliedMonth ?? 1) - 1];
+    revChart = revByWeek.slice(0, totalWeeks).map((w, i) => {
+      const isTailBar = !viewingCurrentMonth && i === totalWeeks - 1 && (tailPay + tailLog) > 0;
+      const payments = w.revenue + (isTailBar ? tailPay : 0);
+      const logbook = (lgByWeekAll[i] || 0) + (isTailBar ? tailLog : 0);
+      // Hover text carries the actual date range, not just "Wk 2".
+      const startDay = i * 7 + 1;
+      const endDay = isTailBar ? daysInMonth : Math.min(daysInMonth, (i + 1) * 7);
+      return {
+        label: w.label,
+        full: `${monthAbbr} ${startDay}–${endDay}, ${appliedYear} · ${w.label}`,
+        rev: payments + logbook,
+        payments,
+        logbook,
+        ...(isTailBar ? { tailMerged: true, tailDays: daysInMonth - 28 } : {}),
+      };
+    });
     revChartEmptyLabel = isCurrentMonth(appliedYear, appliedMonth)
       ? 'No revenue this month yet.'
       : `No revenue in ${monthName} ${appliedYear}.`;
     if (viewingCurrentMonth) {
-      // Only elapsed weeks are real — weeks that haven't started yet would
-      // render as misleading zero bars ahead of the current week (and push
-      // the Next Wk projection to the far end), so trim them. The last kept
-      // week is still in progress: mark it so the chart renders it lighter,
-      // labels it, and never compares it 1:1 in deltas.
-      const weekIdx = Math.min(4, Math.floor((new Date().getDate() - 1) / 7));
-      revChart = revChart.slice(0, weekIdx + 1);
-      if (revChart.length > 0) revChart[revChart.length - 1] = { ...revChart[revChart.length - 1], wip: true };
-    } else if (appliedMonth) {
-      // A 28-day February has no days 29–31, so Wk 5 can never exist there.
-      const daysInMonth = new Date(appliedYear, appliedMonth, 0).getDate();
-      if (daysInMonth < 29) revChart = revChart.slice(0, 4);
+      // Wk 5 is always the projection, never a partial actual. Weeks 1–4 keep
+      // their real bars; the week we are inside is marked ongoing.
+      const weekIdx = Math.min(totalWeeks - 1, Math.floor((new Date().getDate() - 1) / 7));
+      revChart = revChart.map((e, i) => (i === weekIdx && i < 4 ? { ...e, wip: true } : e));
     }
   } else {
+    // Overall stays ledger-pure to match its Revenue card (the all-time card
+    // deliberately hides the windowed logbook companion). Monthly/Yearly show
+    // the combined bar, same as their cards.
+    const showLogbook = !isOverallView;
     revChart = (revByMonth || [])
-      .map(d => ({ label: d.label || shortMonth(d.label), full: d.label, rev: d.revenue }));
+      .map((d, i) => {
+        const logbook = showLogbook ? (lgByMonthAll[i] || 0) : 0;
+        return {
+          label: d.label || shortMonth(d.label),
+          full: d.label,
+          rev: d.revenue + logbook,
+          payments: d.revenue,
+          logbook,
+        };
+      });
   }
 
-  // Projection bar appended to the chart:
-  //  - Current-month Monthly view: pace-project the REST of this month onto a
-  //    "Next Wk" bar (days-left × daily pace). Past pinned months and the
-  //    Yearly/Overall monthly series keep the full-month SMA->peso projection
-  //    appended as next month's bar.
-  // Blended Next Wk (C1): 0.5 × this month's daily pace + 0.5 × weekly-trend
-  // demand (weekly SMA × average ticket). The demand half needs the weekly
-  // forecast (fetched when the card toggles to weeks); without it the bar is
-  // pace-only rather than guessed. Range whisker = ±1 sample stddev of the
-  // last 4 COMPLETED weeks (hidden with < 2). At month-end there is no pace
-  // left, so the bar becomes the full trend projection — never hidden (C2).
+  // Current month: only Week 5 is projected. Weeks 1–4 stay actual (the week
+  // we are inside is marked ongoing); Wk 5 is always the forecast bar, even
+  // when its own days have started, so a 3-day partial never reads as "old
+  // data". Past months draw Wk 1-4 and get no projection.
   const sampleStd = (xs) => {
     if (xs.length < 2) return 0;
     const m = xs.reduce((a, b) => a + b, 0) / xs.length;
     return Math.sqrt(xs.reduce((a, b) => a + (b - m) * (b - m), 0) / (xs.length - 1));
   };
   let revFootnote = null;
+  // Past months fold the tail into Wk 4 (above), so the four bars match the
+  // month total; no separate Wk 5 footnote is needed.
   if (isMonthlyView) {
-    if (viewingCurrentMonth && revChart.length > 0 && thisMonthRev > 0) {
+    if (viewingCurrentMonth && revChart.length === 5) {
       const now = new Date();
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const daysLeft = Math.max(0, Math.ceil((endOfMonth.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-      const completedWeeks = revChart.filter(e => !e.forecast && !e.wip && e.rev > 0).slice(-4).map(e => e.rev);
-      const whiskerOf = (v) => {
-        if (completedWeeks.length < 2) return null;
-        const sd = sampleStd(completedWeeks);
-        if (!(sd > 0)) return null;
-        return [Math.max(0, Math.round(v - sd)), Math.round(v + sd)];
-      };
-      if (daysLeft > 0) {
-        const dailyPace = thisMonthRev / now.getDate();
-        const paceRest = Math.round(dailyPace * Math.min(7, daysLeft));
-        const wSma = ((weeklyForecast?.sma || []).filter(v => v !== null && v !== undefined));
-        const wLatest = wSma.length > 0 ? wSma[wSma.length - 1] : null;
-        const demand = (wLatest !== null && avgPriceKnown) ? Math.round(wLatest * avgPrice) : null;
-        const blended = demand !== null ? Math.round(0.5 * paceRest + 0.5 * demand) : paceRest;
-        if (blended > 0) {
-          const whisker = whiskerOf(blended);
-          revChart = [...revChart, {
-            label: 'Next Wk', full: 'Projected · next week', rev: blended, forecast: true,
-            ...(whisker ? { whisker } : {}),
-          }];
-          revFootnote = demand !== null
-            ? `Next week blends this month's daily pace with the rental trend × ${fmt(avgPrice)} average ticket.`
-            : null;
-        }
-      } else if (avgPriceKnown && forecastRevValue > 0) {
-        // Month-end: pace is zero by definition — project next month's first
-        // week from the trend instead of hiding the bar. Weekly-scale share
-        // of the monthly peso projection (A1: skipped when price unknown).
-        const wkShare = Math.round(forecastRevValue / 4.33);
-        if (wkShare > 0) {
-          const whisker = whiskerOf(wkShare);
-          revChart = [...revChart, {
-            label: 'Next Wk', full: 'Projected · next month week 1', rev: wkShare, forecast: true,
-            ...(whisker ? { whisker } : {}),
-          }];
-        }
+      const daysInMonth = new Date(appliedYear, appliedMonth, 0).getDate();
+      const weekIdx = Math.min(4, Math.floor((now.getDate() - 1) / 7));
+      // Completed blocks before the current one; when Wk 5 is the current week
+      // its own partial revenue is excluded so it is not counted twice.
+      const completedCount = Math.min(4, weekIdx);
+      const completedWeeks = revChart.slice(0, completedCount).filter(e => e.rev > 0).map(e => e.rev);
+      const completedAvg = completedWeeks.length > 0
+        ? completedWeeks.reduce((a, b) => a + b, 0) / completedWeeks.length
+        : null;
+      const dailyPace = thisMonthRev > 0 ? thisMonthRev / Math.max(1, now.getDate()) : 0;
+      const startDay = 4 * 7 + 1; // Wk 5 starts on day 29
+      const endDay = Math.min(daysInMonth, 5 * 7);
+      const days = Math.max(1, endDay - startDay + 1);
+      const fromWeeks = completedAvg !== null ? completedAvg * (days / 7) : null;
+      const pace = weekIdx >= 4 ? 0 : dailyPace * days;
+      const blended = fromWeeks !== null
+        ? (pace > 0 ? Math.round(0.6 * pace + 0.4 * fromWeeks) : Math.round(fromWeeks))
+        : Math.round(pace);
+      if (blended > 0) {
+        const whisker = (() => {
+          if (completedWeeks.length < 2) return null;
+          const sd = sampleStd(completedWeeks);
+          if (!(sd > 0)) return null;
+          const share = days / 7;
+          return [Math.max(0, Math.round(blended - sd * share)), Math.round(blended + sd * share)];
+        })();
+        revChart[4] = {
+          ...revChart[4], rev: blended, forecast: true, projectedDays: days,
+          ...(whisker ? { whisker } : {}),
+        };
+        revFootnote = weekIdx >= 4
+          ? "Week 5 is projected from this month's completed weeks."
+          : completedAvg !== null
+            ? "Week 5 is projected from this month's completed weeks and daily pace."
+            : "Week 5 is projected from this month's daily pace.";
       }
     }
   // A1 unit-mix guard: forecastRevValue is a rental COUNT when the average
@@ -776,7 +807,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         {/* KPI Cards — 2-up on phones, 3-up on tablets/iPads, 6-up on desktop */}
         <div key={cacheKey} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <KpiCards
-          thisMonthRev={displayRev} prevMonthRev={displayPrev} revChange={revChange}
+          thisMonthRev={ledgerRevForCard} prevMonthRev={displayPrev} revChange={revChange}
           revLabel={revLabel} revSub={revSub} revVsLabel={revVsLabel}
           // Logbook companions: windowed like their cards — except Overall,
           // where the ledger figure is all-time but the companion defaults to

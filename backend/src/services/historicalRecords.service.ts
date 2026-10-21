@@ -9,7 +9,7 @@ import { clearDataCache } from '../utils/ttlCache.js';
 // never touch the live Transaction table (which drives availability, revenue
 // KPIs and the reminder scheduler).
 
-export const MAX_IMPORT_ROWS = 2000;
+export const MAX_IMPORT_ROWS = 5000;
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2MB — logbooks are small text
 const ALLOWED_EXT = /\.(csv|xlsx)$/i;
 

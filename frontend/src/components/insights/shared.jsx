@@ -33,9 +33,21 @@ export const RevenueTooltip = ({ active, payload }) => {
     <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
       <p className="font-bold text-gray-900">{p.full}{p.forecast ? ' (projected)' : ''}</p>
       <p className="text-gray-600">{p.rev <= 0 && !p.forecast ? 'No revenue' : fmt(p.rev)}</p>
+      {!p.forecast && p.rev > 0 && (p.payments != null || p.logbook != null) && (
+        <p className="text-[11px] text-gray-400">
+          Collected {fmt(p.payments || 0)}
+          {p.logbook > 0 ? ` · Logbook ${fmt(p.logbook)}` : ''}
+        </p>
+      )}
+      {p.tailMerged && (
+        <p className="text-[11px] text-gray-400 italic">Includes the final {p.tailDays}-day tail</p>
+      )}
       {p.wip && !p.forecast && <p className="text-[11px] text-gray-400 italic">Still ongoing — naturally lower</p>}
+      {p.forecast && p.projectedDays > 0 && p.projectedDays < 7 && (
+        <p className="text-[11px] text-gray-400 italic">{p.projectedDays}-day week · prorated projection</p>
+      )}
       {p.forecast && Array.isArray(p.whisker) && p.whisker.length === 2 && (
-        <p className="text-[11px] text-gray-400 italic">Usually between {fmt(p.whisker[0])}–{fmt(p.whisker[1])}</p>
+        <p className="text-[11px] text-gray-400 italic">Usually between {fmt(p.whisker[0])}-{fmt(p.whisker[1])}</p>
       )}
     </div>
   );

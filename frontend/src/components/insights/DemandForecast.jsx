@@ -22,6 +22,11 @@ export default function DemandForecast({
   // legend, and flags stay put — only the numbers get translated.
   const [explaining, setExplaining] = useState(false);
   const histMonths = activeForecast?.historyMonths ?? null;
+  // A backtested range is only useful while the error is sane. Once the last
+  // periods swing wildly (structural break, a partial current month, sparse
+  // logbook weeks), ±300–600% is not a range — it is noise that would also
+  // blow up the Y axis and flatten every bar. Hide it and scale to the data.
+  const bandReliable = forecastErrorPct !== null && forecastErrorPct !== undefined && forecastErrorPct <= 100;
   const projRows = (projections || []).filter((p) => p.value !== null && p.value !== undefined);
   // Weekly view: show only points where the average trend line exists (plus
   // the forecast projection). The first period-1 weeks have null SMA while
@@ -43,16 +48,27 @@ export default function DemandForecast({
   // Fixed Y-axis beside the horizontal scroller: same data (invisible bars),
   // height, margins, and explicit domain as the scrolling chart, so ticks
   // always compute identically while the axis itself never scrolls away.
+  // Y axis follows the bars + trend line, never an unreliable band. A 4-digit
+  // count still gets a readable 0…500 scale instead of 0…2110.
   const yPeak = Math.max(
     0,
-    ...displayForecastData.flatMap((d) => [d.count ?? 0, d.sma ?? 0, (d.bandLo ?? 0) + (d.bandSpan ?? 0)])
+    ...displayForecastData.flatMap((d) => (bandReliable
+      ? [d.count ?? 0, d.sma ?? 0, (d.bandLo ?? 0) + (d.bandSpan ?? 0)]
+      : [d.count ?? 0, d.sma ?? 0]))
   );
-  const yDomain = [0, Math.max(10, Math.ceil(yPeak / 10) * 10)];
+  const niceCeil = (n) => {
+    const mag = 10 ** Math.floor(Math.log10(Math.max(1, n)));
+    const norm = n / mag;
+    const step = norm <= 1 ? 1 : norm <= 1.5 ? 1.5 : norm <= 2 ? 2 : norm <= 3 ? 3 : norm <= 5 ? 5 : norm <= 7.5 ? 7.5 : 10;
+    return step * mag;
+  };
+  const yDomain = [0, niceCeil(Math.max(10, yPeak * 1.05))];
+  const yTick = (v) => (v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : v);
   const FixedYAxis = ({ height, top, data }) => (
     <div style={{ width: 42 }} className="shrink-0">
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart data={data} margin={{ top, right: 0, bottom: 8, left: 4 }}>
-          <YAxis domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} />
+          <YAxis domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} tickFormatter={yTick} />
           <Bar dataKey="count" fill="transparent" isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>
@@ -141,7 +157,7 @@ export default function DemandForecast({
             <ComposedChart data={countChart} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} />
-              <YAxis hide domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={0} allowDecimals={false} />
+              <YAxis hide domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={0} allowDecimals={false} tickFormatter={yTick} />
               <Tooltip content={<CustomTooltip />} />
               <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#1f2937" />
             </ComposedChart>
@@ -161,7 +177,7 @@ export default function DemandForecast({
             <ComposedChart data={displayForecastData} margin={{ top: 16, right: 16, bottom: 8, left: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} />
-              <YAxis hide domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={0} allowDecimals={false} />
+              <YAxis hide domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={0} allowDecimals={false} tickFormatter={yTick} />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
@@ -175,12 +191,26 @@ export default function DemandForecast({
                   // but surface the range itself in plain words.
                   const rows = payload.filter((p) => p.name === 'Rentals' || p.name === smaName);
                   if (rows.length === 0) return null;
-                  const hi = month && month.bandLo != null && month.bandSpan != null
+                  const hi = bandReliable && month && month.bandLo != null && month.bandSpan != null
                     ? Math.round((month.bandLo + month.bandSpan) * 10) / 10
                     : null;
                   return (
                     <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm space-y-1">
                       <p className="font-bold text-gray-900">{month?.full || month?.label}</p>
+                      {showingWeekly && month?.full && (() => {
+                        const parts = String(month.full).split(' ');
+                        const idx = SHORT_MONTHS.indexOf(parts[0]);
+                        if (idx === -1 || parts.length < 2) return null;
+                        const start = new Date(2024, idx, Number(parts[1]));
+                        const end = new Date(start);
+                        end.setDate(end.getDate() + 6);
+                        const sameMonth = end.getMonth() === start.getMonth();
+                        return (
+                          <p className="text-[11px] text-gray-400">
+                            Week of {parts[0]} {parts[1]}–{sameMonth ? '' : `${SHORT_MONTHS[end.getMonth()]} `}{end.getDate()}
+                          </p>
+                        );
+                      })()}
                       {rows.map((p, i) => (
                         <p key={i} className="text-gray-600" style={{ color: p.color }}>
                           {p.name}: {p.name === smaName ? Number(p.value).toFixed(1) : p.value}
@@ -198,8 +228,8 @@ export default function DemandForecast({
               {/* Expected-range band: invisible base + visible span stack into
                   the shaded polygon behind the trend line. Zero-span when the
                   error is unknown, so nothing renders then. */}
-              <Area dataKey="bandLo" stackId="band" stroke="none" fill="none" legendType="none" />
-              <Area dataKey="bandSpan" name="Expected range" stackId="band" stroke="none" fill="rgba(191,74,83,.18)" legendType="none" />
+              {bandReliable && <Area dataKey="bandLo" stackId="band" stroke="none" fill="none" legendType="none" />}
+              {bandReliable && <Area dataKey="bandSpan" name="Expected range" stackId="band" stroke="none" fill="rgba(191,74,83,.18)" legendType="none" />}
               <Line type="monotone" dataKey="sma" name={smaName} stroke="#bf4a53" strokeWidth={3}
                 dot={{ r: 5, fill: '#bf4a53', strokeWidth: 0 }}
                 activeDot={{ r: 8, fill: '#bf4a53', stroke: '#fff', strokeWidth: 2 }}
@@ -223,7 +253,7 @@ export default function DemandForecast({
             <span className="inline-flex items-center gap-1.5">
               <span className="w-3 h-[3px] rounded-full bg-[#bf4a53]" aria-hidden="true" /> Average trend
             </span>
-            {forecastErrorPct !== null && forecastErrorPct !== undefined && (
+            {bandReliable && (
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-3 h-2.5 rounded-sm border border-[#bf4a53] bg-[#bf4a53]/25" aria-hidden="true" /> Expected range
               </span>
@@ -324,20 +354,31 @@ export default function DemandForecast({
                     </p>
                   </li>
                 )}
-                {forecastErrorPct !== null && forecastErrorPct !== undefined && (
-                  <li className="flex gap-3">
-                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">3</span>
-                    <p className="text-sm text-gray-700 leading-relaxed">
-                      <strong className="text-gray-900">
-                        Reality usually lands within ±{forecastErrorPct}% of that number{forecastErrorPct >= 50 ? ' — a wide band' : ''}.
-                      </strong>{' '}
-                      That range comes from backtesting past forecasts, not guessing. Plan stock for the top of it, not the middle.
-                    </p>
-                  </li>
-                )}
+                {(() => {
+                  const rangeNum = 2 + (projRows.length > 0 ? 1 : 0);
+                  return bandReliable ? (
+                    <li className="flex gap-3">
+                      <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">{rangeNum}</span>
+                      <p className="text-sm text-gray-700 leading-relaxed">
+                        <strong className="text-gray-900">
+                          Reality usually lands within ±{forecastErrorPct}% of that number{forecastErrorPct >= 50 ? ' — a wide band' : ''}.
+                        </strong>{' '}
+                        That range comes from backtesting past forecasts, not guessing. Plan stock for the top of it, not the middle.
+                      </p>
+                    </li>
+                  ) : (
+                    <li className="flex gap-3">
+                      <span className="shrink-0 w-6 h-6 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center">{rangeNum}</span>
+                      <p className="text-sm text-gray-700 leading-relaxed">
+                        <strong className="text-gray-900">No reliable range right now.</strong>{' '}
+                        The last few periods swing too much (partial months, sparse weeks, or a sudden volume jump) for a ±% band to mean anything. Treat the trend as a direction, not a precise number.
+                      </p>
+                    </li>
+                  );
+                })()}
                 {(() => {
                   const upcoming = getUpcomingSeason();
-                  const seasonNum = 2 + (projRows.length > 0 ? 1 : 0) + (forecastErrorPct !== null && forecastErrorPct !== undefined ? 1 : 0);
+                  const seasonNum = 2 + (projRows.length > 0 ? 1 : 0) + 1;
                   if (!upcoming) return null;
                   return (
                   <li className="flex gap-3">
@@ -368,7 +409,12 @@ export default function DemandForecast({
                 <p>
                   <strong className="text-gray-900">Suggested action: </strong>
                   {projRows.length > 0
-                    ? `keep at least ${Math.max(1, Math.ceil(maxProj * (1 + (forecastErrorPct ?? 0) / 100)))} pieces ready per period (top of the expected range)${smaTrend === 'down' ? ', and push a promo if bookings dip further' : ''}.`
+                    ? (() => {
+                        // A ±600% band must not turn into a 7× stock order.
+                        // Keep the buffer useful: cap the risk uplift at 50%.
+                        const riskPct = bandReliable ? Math.min(forecastErrorPct ?? 0, 50) : 0;
+                        return `keep at least ${Math.max(1, Math.ceil(maxProj * (1 + riskPct / 100)))} pieces ready per period${riskPct > 0 ? ' (top of the expected range)' : ''}${smaTrend === 'down' ? ', and push a promo if bookings dip further' : ''}.`;
+                      })()
                     : 'collect a few more periods of bookings first — the forecast is still learning.'}
                 </p>
               </div>
@@ -376,7 +422,9 @@ export default function DemandForecast({
           )}
           <p className="text-[11px] text-gray-400 italic px-5 md:px-7 pb-5 md:pb-6">
             Counts are actual rentals; the trend line averages them
-            {forecastErrorPct !== null && forecastErrorPct !== undefined ? ` — shaded band shows the expected range (±${forecastErrorPct}%, backtested)` : ''}.
+            {bandReliable
+              ? ` — shaded band shows the expected range (±${forecastErrorPct}%, backtested).`
+              : ' — the expected-range band is hidden because the recent periods vary too much to give a reliable range.'}
           </p>
         </div>
       )}

@@ -14,7 +14,7 @@ function annotationsFor(revChart) {
   const out = {};
   const done = revChart
     .map((e, i) => ({ ...e, i }))
-    .filter((e) => !e.forecast && !e.wip && e.rev > 0);
+    .filter((e) => !e.forecast && !e.wip && e.rev > 0 && !e.tailMerged);
   if (done.length === 0) return out;
   const best = done.reduce((a, b) => (b.rev > a.rev ? b : a));
   for (let k = 1; k < done.length; k++) {
@@ -68,6 +68,7 @@ export default function RevenueChart({
   const chartTop = hasLabels ? 40 : 8;
   const hasWip = revChart.some((e) => e.wip);
   const hasForecast = revChart.some((e) => e.forecast);
+  const hasLogbook = revChart.some((e) => (e.logbook || 0) > 0);
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-5 md:px-7 pt-5 md:pt-7 pb-2">
@@ -95,8 +96,14 @@ export default function RevenueChart({
       </div>
       <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">
         {isMonthlyView
-          ? (viewingCurrentMonth ? 'Week-by-week revenue with next week projection' : 'Week-by-week revenue for the selected month')
-          : 'Revenue trend with next month projection'}
+          ? (viewingCurrentMonth && hasForecast
+            ? 'Week-by-week revenue with the final week projected'
+            : hasLogbook
+              ? 'Week-by-week revenue · collected + imported logbook'
+              : 'Week-by-week revenue for the selected month')
+          : (hasLogbook
+            ? 'Revenue trend · collected + imported logbook · next month projected'
+            : 'Revenue trend with next month projection')}
       </p>
       {revChart.length === 0 ? (
         <p className="text-sm text-gray-400 text-center py-12">{revChartEmptyLabel}</p>
