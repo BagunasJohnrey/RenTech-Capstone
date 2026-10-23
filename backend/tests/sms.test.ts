@@ -55,6 +55,25 @@ describe('SMS routes', () => {
 
       expect(res.status).toBe(401);
     });
+
+    it('should accept exactly 160 characters (one SMS credit)', async () => {
+      const res = await request(app)
+        .post('/api/sms/send')
+        .set('Authorization', 'Bearer admin-token')
+        .send({ profileId: 'customer-id-111', message: 'a'.repeat(160) });
+
+      expect(res.status).toBe(200);
+    });
+
+    it('should reject messages over 160 characters (would cost 2+ credits)', async () => {
+      const res = await request(app)
+        .post('/api/sms/send')
+        .set('Authorization', 'Bearer admin-token')
+        .send({ profileId: 'customer-id-111', message: 'a'.repeat(161) });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Validation error');
+    });
   });
 
   describe('GET /api/sms/history', () => {

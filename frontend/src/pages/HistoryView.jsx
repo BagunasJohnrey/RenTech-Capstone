@@ -9,7 +9,7 @@ import ReleaseItemModal from '../components/ReleaseItemModal';
 import EditRentalModal from '../components/EditRentalModal';
 import { Skeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
-import { customerLabel, customerTelLink, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
+import { customerLabel, customerPhone, SMS_MAX_LENGTH, customerTelLink, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
 import { isReleased } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import BottomSheet from '../components/BottomSheet';
@@ -83,13 +83,19 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
 
   const openSmsModal = (tx) => {
-    setSmsMessage(defaultSmsMessage(tx));
+    setSmsMessage(defaultSmsMessage(tx).slice(0, SMS_MAX_LENGTH));
     setSmsModalTx(tx);
   };
   const closeSmsModal = () => {
     setSmsModalTx(null);
     setSmsMessage('');
   };
+  // Recipient number shown in the confirmation sheet so staff can verify the
+  // SMS is going to the right person before sending.
+  const smsPhone = customerPhone(
+    smsModalTx?.customerProfile || smsModalTx?.customer,
+    smsModalTx?.contact || smsModalTx?.customerPhone
+  );
   const itemsPerPage = 10;
 
   // One-shot search prefill (e.g. jumping from Item Performance): apply it,
@@ -796,6 +802,12 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           <div data-sheet-scroll className="p-6 space-y-4 overflow-y-auto min-h-0">
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
                 <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
+                <p className="mt-1">
+                  <span className="text-gray-500">Number:</span>{' '}
+                  <strong className={smsPhone ? 'text-gray-900' : 'text-amber-600'}>
+                    {smsPhone || 'No number on file'}
+                  </strong>
+                </p>
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
                 <p className="mt-1">
                   <span className="text-gray-500">Due Date:</span>{' '}
@@ -807,7 +819,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
-                  <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx))}
+                  <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx).slice(0, SMS_MAX_LENGTH))}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
                     title="Restore the default message">
                     <RotateCcw size={11} /> Reset
@@ -815,12 +827,13 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 </div>
                 <textarea
                   value={smsMessage}
-                  onChange={(e) => setSmsMessage(e.target.value.slice(0, 1600))}
+                  onChange={(e) => setSmsMessage(e.target.value.slice(0, SMS_MAX_LENGTH))}
                   rows={4}
+                  maxLength={SMS_MAX_LENGTH}
                   className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm leading-relaxed min-h-[100px] focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all"
                 />
-                <p className={`text-[11px] text-right font-medium ${smsMessage.length > 160 ? 'text-amber-600' : 'text-gray-400'}`}>
-                  {smsMessage.length}/1600{ smsMessage.length > 160 ? ` · ~${Math.ceil(smsMessage.length / 160)} segments` : '' }
+                <p className={`text-[11px] text-right font-medium ${smsMessage.length >= SMS_MAX_LENGTH ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {smsMessage.length}/{SMS_MAX_LENGTH} characters · 1 SMS credit
                 </p>
               </div>
               <div className="flex gap-3 pt-2">

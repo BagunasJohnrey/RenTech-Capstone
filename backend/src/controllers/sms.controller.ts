@@ -7,7 +7,9 @@ import { AppError } from '../middleware/errorHandler.js';
 export const sendSmsSchema = z.object({
   body: z.object({
     profileId: z.string(),
-    message: z.string().min(1).max(1600),
+    // Semaphore bills one credit (~PHP 0.56) per 160-char segment. Manual
+    // sends are hard-capped at one segment so the UI can never cost 2+ credits.
+    message: z.string().min(1).max(160, 'SMS messages are limited to 160 characters (1 credit)'),
     templateId: z.string().optional(),
     transactionId: z.string().optional(),
   }),

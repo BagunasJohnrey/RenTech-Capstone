@@ -21,6 +21,11 @@ export function customerPhone(c, fallback) {
   return fallback || '';
 }
 
+// Semaphore bills 1 credit (~PHP 0.56) per 160-character segment. Manual SMS
+// composition is hard-capped at one segment so a long message can never
+// silently cost the boutique 2+ credits.
+export const SMS_MAX_LENGTH = 160;
+
 // Build a `tel:` link for a customer phone number. Normalizes PH numbers
 // (0917xxx -> +63917xxx); returns null when no usable number exists.
 export function customerTelLink(c, fallback) {
@@ -37,19 +42,21 @@ export function itemLabel(i) {
   return i;
 }
 
-// What the staff SMS action should say for THIS booking. A due date in the
-// future must never produce an "overdue (1 day)" message — manual-QR bookings
-// waiting on a proof get a payment reminder, Reserved ones a pickup reminder,
-// and only genuinely past-due rows get the overdue wording.
-export function smsIntent(tx) {
+// What the staff SMS action should say for THIS booking. Payment-proof wording
+// is opt-in: ONLY the explicit "send SMS for payment" action (the awaiting-proof
+// row) passes { payment: true }. A generic reminder on an overdue booking must
+// never claim a payment screenshot is missing just because its manual-QR
+// downpayment is still outstanding. A due date in the future must never produce
+// an "overdue (1 day)" message, Reserved rows get a pickup reminder, and only
+// genuinely past-due rows get the overdue wording.
+export function smsIntent(tx, opts = {}) {
   const paid = Number(tx?.totalPaid ?? 0);
   const dp = Number(tx?.downpayment ?? 0);
   // Same fallback as the customer Home: a booking with no gateway and an
   // uncredited downpayment is a manual-QR checkout, even if the row omitted
   // `paymentPath` (the awaiting-proof payload historically did).
   const manual = tx?.paymentPath === 'manual' || tx?.gateway === 'manual' || (!tx?.gateway && paid < dp);
-  const manualUnpaid = manual && paid < dp;
-  if (manualUnpaid) {
+  if (opts?.payment === true) {
     const proof = (Array.isArray(tx?.paymentProofs) ? tx.paymentProofs[0] : null) || tx?.latestProof || null;
     if (proof?.status === 'pending') {
       return { kind: 'paymentReview', subtitle: 'Send a payment status update to customer?' };
@@ -57,7 +64,9 @@ export function smsIntent(tx) {
     if (proof?.status === 'rejected') {
       return { kind: 'paymentRejected', subtitle: 'Send a re-upload reminder to customer?' };
     }
-    return { kind: 'paymentMissing', subtitle: 'Send a payment-proof reminder to customer?' };
+    if (manual && paid < dp) {
+      return { kind: 'paymentMissing', subtitle: 'Send a payment-proof reminder to customer?' };
+    }
   }
 
   const due = new Date(tx?.dueDate || tx?.date);
@@ -91,10 +100,10 @@ const smsBalance = (tx) => {
     : '';
 };
 
-export function defaultSmsMessage(tx) {
+export function defaultSmsMessage(tx, opts = {}) {
   const name = customerLabel(tx?.customer);
   const item = itemLabel(tx?.item);
-  const intent = smsIntent(tx);
+  const intent = smsIntent(tx, opts);
 
   if (intent.kind.startsWith('payment')) {
     // Keep these one GSM segment where possible: no amount, no "booking for".

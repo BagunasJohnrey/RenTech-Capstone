@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, ChevronRight, ClipboardCheck, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertCircle, ChevronRight, ClipboardCheck, MessageCircle, RefreshCw, ShieldCheck } from 'lucide-react';
 import ItemImage from './ItemImage';
 import PaymentProofReviewModal from './PaymentProofReviewModal';
 import AwaitingProofModal from './AwaitingProofModal';
 import { Skeleton } from './Skeleton';
 import { timeAgo } from './NotificationsDropdown';
-import { customerLabel, itemLabel } from '../utils/format';
+import { customerLabel, customerPhone, itemLabel } from '../utils/format';
 import { peso } from '../utils/receipt';
 import { usePaymentProofs } from '../hooks/usePaymentProofs';
 import { api } from '../utils/api';
@@ -20,7 +20,7 @@ const fmtDateTime = (iso) => {
 // bookings whose customer still owes a proof (staff chase/cancel via the
 // existing flows). Always visible at the top of Tasks — "All clear" is a
 // meaningful, honest state, not a reason to hide the section.
-export default function PaymentProofsQueue({ role, onChanged }) {
+export default function PaymentProofsQueue({ role, onChanged, onSendSms }) {
   const enabled = role === 'Staff' || role === 'Admin';
   const { data, loading, error, refresh } = usePaymentProofs(enabled);
   const [tab, setTab] = useState('attention');
@@ -194,41 +194,58 @@ export default function PaymentProofsQueue({ role, onChanged }) {
                 )}
                 {awaiting.map((t) => {
                   const rejected = t.latestProof?.status === 'rejected';
+                  const phone = customerPhone(t.customer);
                   return (
-                    <button
+                    <div
                       key={t.id}
-                      type="button"
-                      onClick={() => setAwaitingBooking(t)}
-                      title="View payment proof details"
-                      className="w-full text-left flex items-center gap-3 p-3 bg-gray-50/80 rounded-2xl border border-gray-100/60 transition-all cursor-pointer hover:shadow-sm hover:scale-[1.005]"
+                      className="w-full flex items-center gap-1 p-3 bg-gray-50/80 rounded-2xl border border-gray-100/60 transition-all hover:shadow-sm"
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(t.customer) || 'Customer'}</p>
-                          <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                            rejected ? 'bg-red-100 text-red-600' : 'bg-gray-200/80 text-gray-600'
-                          }`}>
-                            {rejected ? 'Resubmit needed' : 'No proof yet'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-600 truncate">
-                          {itemLabel(t.item) || 'Booking'} · #{t.txNumber ?? '—'}
-                        </p>
-                        <p className="text-[11px] text-gray-500 truncate mt-0.5">
-                          <span className="font-bold text-gray-900">{peso(t.downpayment)}</span> downpayment due
-                          {' · '}{peso(t.totalPaid)} paid
-                          {rejected && (t.latestProof?.reviewedAt || t.latestProof?.createdAt) && (
-                            <> · rejected {timeAgo(t.latestProof.reviewedAt || t.latestProof.createdAt)}</>
+                      <button
+                        type="button"
+                        onClick={() => setAwaitingBooking(t)}
+                        title="View payment proof details"
+                        className="min-w-0 flex-1 flex items-center gap-3 text-left cursor-pointer"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(t.customer) || 'Customer'}</p>
+                            <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                              rejected ? 'bg-red-100 text-red-600' : 'bg-gray-200/80 text-gray-600'
+                            }`}>
+                              {rejected ? 'Resubmit needed' : 'No proof yet'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-600 truncate">
+                            {itemLabel(t.item) || 'Booking'} · #{t.txNumber ?? '—'}
+                          </p>
+                          <p className="text-[11px] text-gray-500 truncate mt-0.5">
+                            <span className="font-bold text-gray-900">{peso(t.downpayment)}</span> downpayment due
+                            {' · '}{peso(t.totalPaid)} paid
+                            {rejected && (t.latestProof?.reviewedAt || t.latestProof?.createdAt) && (
+                              <> · rejected {timeAgo(t.latestProof.reviewedAt || t.latestProof.createdAt)}</>
+                            )}
+                          </p>
+                          {rejected && t.latestProof?.rejectionReason && (
+                            <p className="text-[11px] font-medium text-red-500 truncate mt-0.5">Reason: {t.latestProof.rejectionReason}</p>
                           )}
-                        </p>
-                        {rejected && t.latestProof?.rejectionReason && (
-                          <p className="text-[11px] font-medium text-red-500 truncate mt-0.5">Reason: {t.latestProof.rejectionReason}</p>
-                        )}
-                      </div>
-                      <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-bold text-[#bf4a53]">
-                        View <ChevronRight size={13} />
-                      </span>
-                    </button>
+                        </div>
+                        <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-bold text-[#bf4a53]">
+                          View <ChevronRight size={13} />
+                        </span>
+                      </button>
+                      {onSendSms && (
+                        <button
+                          type="button"
+                          onClick={() => onSendSms({ ...t, paymentPath: 'manual' }, 'payment')}
+                          disabled={!phone}
+                          title={phone ? 'Send payment SMS' : 'No phone number on file'}
+                          aria-label={phone ? `Send SMS to ${customerLabel(t.customer) || 'customer'}` : 'No phone number on file'}
+                          className="shrink-0 w-9 h-9 rounded-full bg-white border border-gray-200 text-[#bf4a53] hover:bg-[#bf4a53] hover:text-white transition-colors flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <MessageCircle size={15} />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>

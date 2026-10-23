@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle, RotateCcw, ScanLine } from 'lucide-react';
 import { api } from '../utils/api';
-import { customerLabel, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
+import { customerLabel, customerPhone, SMS_MAX_LENGTH, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
@@ -80,6 +80,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
   // SMS
   const [smsModalTx, setSmsModalTx] = useState(null);
   const [smsMessage, setSmsMessage] = useState('');
+  const [smsContext, setSmsContext] = useState(null); // 'payment' only from the proof-chase rows
   const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
   const [releaseTx, setReleaseTx] = useState(null);
   // Pending QR proofs are money-waiting work, so they join Today's Priority.
@@ -87,13 +88,18 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
   const [reviewProof, setReviewProof] = useState(null);
   const [awaitingProof, setAwaitingProof] = useState(null);
 
-  const openSmsModal = (tx) => {
-    setSmsMessage(defaultSmsMessage(tx));
+  // `smsContext: 'payment'` is passed ONLY by the awaiting-proof chase row:
+  // the payment-proof wording applies to that explicit action, never to a
+  // generic overdue/reminder SMS.
+  const openSmsModal = (tx, smsContext = null) => {
+    setSmsMessage(defaultSmsMessage(tx, smsContext === 'payment' ? { payment: true } : undefined).slice(0, SMS_MAX_LENGTH));
     setSmsModalTx(tx);
+    setSmsContext(smsContext);
   };
   const closeSmsModal = () => {
     setSmsModalTx(null);
     setSmsMessage('');
+    setSmsContext(null);
   };
 
   // Recent Activity
@@ -193,6 +199,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
       label: `Payment proof needed — ${customerLabel(t.customer)}`,
       sub: `${itemLabel(t.item)} · ${peso(t.downpayment)} downpayment${pickupTodayIds.has(t.id) ? ' · pickup today' : ''}`,
       tx: t,
+      smsContext: 'payment',
       cta: 'Follow up',
       action: () => setAwaitingProof(t),
     });
@@ -305,7 +312,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
     setSendingSms(true);
     try {
       const res = await api.post('/sms/send', {
-        profileId: tx.customerId,
+        profileId: tx.customerId || tx.customer?.id,
         transactionId: tx.id,
         message,
       });
@@ -336,6 +343,14 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
       setCurrentMonth(currentMonth + 1);
     }
   };
+
+  // Recipient number shown in the confirmation sheet so staff can verify the
+  // SMS is going to the right person before sending.
+  const smsOpts = smsContext === 'payment' ? { payment: true } : undefined;
+  const smsPhone = customerPhone(
+    smsModalTx?.customerProfile || smsModalTx?.customer,
+    smsModalTx?.contact || smsModalTx?.customerPhone
+  );
 
   return (
       <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -395,7 +410,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                     )}
                     {f.tx && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); openSmsModal(f.tx); }}
+                        onClick={(e) => { e.stopPropagation(); openSmsModal(f.tx, f.smsContext); }}
                         title="Send SMS reminder"
                         className="p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm shrink-0">
                         <MessageCircle size={14} />
@@ -685,6 +700,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
         <PaymentProofsQueue
           role={role}
           onChanged={proofQueue.refresh}
+          onSendSms={openSmsModal}
         />
 
         {/* Pickup + Overdue — paired action queues (latest 5 each).
@@ -821,7 +837,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
             <div>
               <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
-              <p className="text-xs text-gray-500 font-medium mt-1">{smsIntent(smsModalTx)?.subtitle}</p>
+              <p className="text-xs text-gray-500 font-medium mt-1">{smsIntent(smsModalTx, smsOpts)?.subtitle}</p>
             </div>
             <button onClick={closeSmsModal}
               className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
@@ -831,10 +847,16 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           <div data-sheet-scroll className="p-6 space-y-4 overflow-y-auto min-h-0">
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
                 <p><span className="text-gray-500">Customer:</span> <strong className="text-gray-900">{customerLabel(smsModalTx.customer)}</strong></p>
+                <p className="mt-1">
+                  <span className="text-gray-500">Number:</span>{' '}
+                  <strong className={smsPhone ? 'text-gray-900' : 'text-amber-600'}>
+                    {smsPhone || 'No number on file'}
+                  </strong>
+                </p>
                 <p className="mt-1"><span className="text-gray-500">Item:</span> <strong className="text-gray-900">{itemLabel(smsModalTx.item)}</strong></p>
                 <p className="mt-1">
                   <span className="text-gray-500">Due Date:</span>{' '}
-                  <strong className={smsIntent(smsModalTx)?.kind === 'overdue' ? 'text-red-500' : 'text-gray-900'}>
+                  <strong className={smsIntent(smsModalTx, smsOpts)?.kind === 'overdue' ? 'text-red-500' : 'text-gray-900'}>
                     {new Date(smsModalTx.dueDate || smsModalTx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   </strong>
                 </p>
@@ -842,7 +864,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
-                  <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx))}
+                  <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx, smsOpts).slice(0, SMS_MAX_LENGTH))}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
                     title="Restore the default message">
                     <RotateCcw size={11} /> Reset
@@ -850,12 +872,13 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                 </div>
                 <textarea
                   value={smsMessage}
-                  onChange={(e) => setSmsMessage(e.target.value.slice(0, 1600))}
+                  onChange={(e) => setSmsMessage(e.target.value.slice(0, SMS_MAX_LENGTH))}
                   rows={4}
+                  maxLength={SMS_MAX_LENGTH}
                   className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm leading-relaxed min-h-[100px] focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all"
                 />
-                <p className={`text-[11px] text-right font-medium ${smsMessage.length > 160 ? 'text-amber-600' : 'text-gray-400'}`}>
-                  {smsMessage.length}/1600{ smsMessage.length > 160 ? ` · ~${Math.ceil(smsMessage.length / 160)} segments` : '' }
+                <p className={`text-[11px] text-right font-medium ${smsMessage.length >= SMS_MAX_LENGTH ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {smsMessage.length}/{SMS_MAX_LENGTH} characters · 1 SMS credit
                 </p>
               </div>
               <div className="flex gap-3 pt-2">
