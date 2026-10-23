@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Search, Send, Bot, User, Trash2, ChevronLeft, ChevronRight, ArrowDownWideNarrow } from 'lucide-react';
+import { RefreshCw, Search, Send, Bot, User, Trash2, ChevronLeft, ChevronRight, ArrowDownWideNarrow, RotateCw } from 'lucide-react';
 import { smsService } from '../services/sms';
 import { useAuth } from '../hooks/useAuth';
 import { Skeleton } from './Skeleton';
+import SmsResultModal from './SmsResultModal';
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 6;
 
 const fmtTime = (t) => {
   if (!t) return '—';
@@ -29,18 +30,20 @@ export default function SmsLogPanel() {
   const [page, setPage] = useState(1);
   const [pendingDelete, setPendingDelete] = useState(null); // armed row id
   const [deleteError, setDeleteError] = useState('');
+  const [resendingId, setResendingId] = useState(null);
+  const [smsResult, setSmsResult] = useState(null); // resend outcome dialog
   const armTimer = useRef(null);
   useEffect(() => () => clearTimeout(armTimer.current), []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const data = await smsService.history({ limit: 200 });
       setRows(Array.isArray(data) ? data : []);
     } catch {
-      setRows([]);
+      if (!silent) setRows([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -89,6 +92,28 @@ export default function SmsLogPanel() {
     }
   };
 
+  const handleResend = async (r) => {
+    setResendingId(r.id);
+    try {
+      const res = await smsService.resend(r.id);
+      setSmsResult({
+        status: res?.status || 'sent',
+        to: res?.to || r.profile?.phone,
+        message: r.message,
+      });
+      await load({ silent: true });
+    } catch (err) {
+      setSmsResult({
+        status: 'error',
+        to: r.profile?.phone,
+        message: r.message,
+        error: err?.message || 'Failed to resend SMS.',
+      });
+    } finally {
+      setResendingId(null);
+    }
+  };
+
   const chip = (active, onClick, children) => (
     <button key={children} onClick={onClick}
       className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-colors ${
@@ -113,7 +138,7 @@ export default function SmsLogPanel() {
           className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
           <ArrowDownWideNarrow size={11} /> {sort === 'newest' ? 'Newest' : 'Oldest'}
         </button>
-        <button onClick={load} disabled={loading} title="Refresh"
+        <button onClick={() => load()} disabled={loading} title="Refresh"
           className="ml-auto p-2 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors disabled:opacity-50">
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
         </button>
@@ -170,6 +195,13 @@ export default function SmsLogPanel() {
                     </span>
                     <span className="block text-xs text-gray-500 truncate mt-0.5">{r.message}</span>
                   </span>
+                  {!sent && (
+                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleResend(r); }}
+                      disabled={resendingId === r.id} title="Resend this SMS" aria-label="Resend this SMS"
+                      className="shrink-0 p-1.5 rounded-full text-[#bf4a53] hover:bg-[#bf4a53]/10 transition-colors disabled:opacity-50">
+                      <RotateCw size={13} className={resendingId === r.id ? 'animate-spin' : ''} />
+                    </button>
+                  )}
                   <span className="shrink-0 text-[10px] text-gray-400 font-medium tabular-nums">{fmtTime(r.createdAt)}</span>
                 </summary>
                 <div className="mt-2.5 ml-12 text-[13px] text-gray-700 leading-relaxed break-words whitespace-pre-wrap">{r.message}</div>
@@ -179,16 +211,28 @@ export default function SmsLogPanel() {
                     <span className="inline-flex items-center gap-1"><User size={10} /> {r.sentBy.name}</span>
                   )}
                   <span className="tabular-nums">{fmtTime(r.createdAt)}</span>
-                  {canDelete && (
-                    <button onClick={() => handleDeleteTap(r.id)}
-                      title={pendingDelete === r.id ? 'Tap again to confirm delete' : 'Delete this log row (admin)'}
-                      className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-colors ${
-                        pendingDelete === r.id
-                          ? 'bg-red-600 text-white'
-                          : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
-                      }`}>
-                      <Trash2 size={11} /> {pendingDelete === r.id ? 'Confirm?' : 'Delete'}
-                    </button>
+                  {(!sent || canDelete) && (
+                    <span className="ml-auto inline-flex items-center gap-1">
+                      {!sent && (
+                        <button onClick={() => handleResend(r)} disabled={resendingId === r.id}
+                          title="Send this message again"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/10 transition-colors disabled:opacity-50">
+                          <RotateCw size={11} className={resendingId === r.id ? 'animate-spin' : ''} />
+                          {resendingId === r.id ? 'Sending…' : 'Resend'}
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button onClick={() => handleDeleteTap(r.id)}
+                          title={pendingDelete === r.id ? 'Tap again to confirm delete' : 'Delete this log row (admin)'}
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-colors ${
+                            pendingDelete === r.id
+                              ? 'bg-red-600 text-white'
+                              : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
+                          }`}>
+                          <Trash2 size={11} /> {pendingDelete === r.id ? 'Confirm?' : 'Delete'}
+                        </button>
+                      )}
+                    </span>
                   )}
                 </div>
               </details>
@@ -212,6 +256,9 @@ export default function SmsLogPanel() {
           </button>
         </div>
       )}
+
+      {/* Resend outcome — sent vs queued vs failed, stated honestly. */}
+      {smsResult && <SmsResultModal result={smsResult} onClose={() => setSmsResult(null)} />}
     </div>
   );
 }

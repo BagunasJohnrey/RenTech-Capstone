@@ -31,6 +31,16 @@ export async function sendManualSms(req: AuthenticatedRequest, res: Response, ne
   }
 }
 
+export async function resendSmsHistory(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const result = await smsService.resendSms(String(req.params.id), req.user.id);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function deleteSmsHistory(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');

@@ -14,6 +14,9 @@ export const smsService = {
     return api.get(`/sms/history${qs ? `?${qs}` : ''}`);
   },
 
+  // Retry a logged send (same recipient + message) as a manual send.
+  resend: (id) => api.post(`/sms/history/${id}/resend`),
+
   // Admin-only log cleanup (staff get 403 — the log is the audit trail).
   remove: (id) => api.delete(`/sms/history/${id}`),
 };

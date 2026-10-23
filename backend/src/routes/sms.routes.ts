@@ -16,7 +16,10 @@ router.use(authMiddleware, requireRole(Role.Admin, Role.Staff));
 
 router.post('/send', smsLimiter, validate(smsController.sendSmsSchema), smsController.sendManualSms);
 router.get('/history', smsController.getSmsHistory);
-// Admin-only log cleanup (staff keep read access — the log is the delivery
+// Retry a logged send (same recipient + message). Staff-initiated manual
+// action: rate-limited and audited, and it bypasses the automatic-SMS switch.
+router.post('/history/:id/resend', smsLimiter, smsController.resendSmsHistory);
+// Admin-only log cleanup (staff keep read access �?" the log is the delivery
 // audit trail, so only admins may erase rows).
 router.delete('/history/:id', requireRole(Role.Admin), smsController.deleteSmsHistory);
 

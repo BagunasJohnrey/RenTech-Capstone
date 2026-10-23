@@ -372,3 +372,69 @@ describe('DELETE /api/sms/history/:id (admin log cleanup)', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('POST /api/sms/history/:id/resend', () => {
+  const queuedRow = {
+    id: 'sms-q1',
+    profileId: 'customer-id-111',
+    sentById: null,
+    transactionId: null,
+    templateId: null,
+    message: 'Hi Jarey, your payment screenshot is still pending.',
+    status: 'queued',
+    createdAt: new Date(),
+    profile: { id: 'customer-id-111', name: 'Customer User', phone: '09171234567' },
+  };
+
+  it('resends the stored message and logs a fresh row', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.sentSms.findUnique.mockResolvedValueOnce(queuedRow);
+    const res = await request(app)
+      .post('/api/sms/history/sms-q1/resend')
+      .set('Authorization', 'Bearer staff-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'sent', to: '09171234567', resentFromId: 'sms-q1' });
+    expect(prisma.sentSms.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        profileId: 'customer-id-111',
+        sentById: 'staff-id-456',
+        message: queuedRow.message,
+      }),
+    });
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  it('missing row returns 404', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.sentSms.findUnique.mockResolvedValueOnce(null);
+    const res = await request(app)
+      .post('/api/sms/history/does-not-exist/resend')
+      .set('Authorization', 'Bearer admin-token');
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects when the profile has no phone', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.sentSms.findUnique.mockResolvedValueOnce({
+      ...queuedRow,
+      profile: { id: 'no-phone-id', name: 'No Phone', phone: null },
+    });
+    const res = await request(app)
+      .post('/api/sms/history/sms-q1/resend')
+      .set('Authorization', 'Bearer admin-token');
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects customers', async () => {
+    const res = await request(app)
+      .post('/api/sms/history/sms-q1/resend')
+      .set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects unauthenticated requests', async () => {
+    const res = await request(app).post('/api/sms/history/sms-q1/resend');
+    expect(res.status).toBe(401);
+  });
+});

@@ -442,6 +442,49 @@ export async function getSmsHistory(params: { limit?: number; offset?: number })
   });
 }
 
+// Retry a logged send with the exact same recipient + message. The log is an
+// append-only delivery record, so this INSERTS a fresh row instead of mutating
+// the old one (the original `queued` row keeps telling the truth about that
+// attempt). Staff-initiated, so it bypasses the global automatic-SMS switch —
+// exactly like sendManualSms. Audited because it costs money and texts a
+// customer again.
+export async function resendSms(id: string, performedById: string) {
+  const row = await prisma.sentSms.findUnique({
+    where: { id },
+    include: { profile: { select: { id: true, name: true, phone: true } } },
+  });
+  if (!row) throw new AppError(404, 'SMS record not found');
+  if (!row.profile?.phone) throw new AppError(400, 'Profile has no phone number');
+
+  const smsResult = await sendSms(row.profile.phone, row.message);
+
+  const sentSms = await prisma.sentSms.create({
+    data: {
+      profileId: row.profileId,
+      sentById: performedById,
+      transactionId: row.transactionId ?? null,
+      templateId: row.templateId ?? null,
+      message: row.message,
+      status: smsResult.messageId ? 'sent' : 'queued',
+    },
+  });
+
+  try {
+    const digits = String(row.profile.phone).replace(/\D/g, '');
+    const maskedPhone = digits.length > 4 ? `***${digits.slice(-4)}` : '***';
+    await createAuditLog({
+      action: 'sms.resend', entity: 'sms', entityId: sentSms.id,
+      performedById,
+      newValue: {
+        profileId: row.profileId, phone: maskedPhone, resentFromId: row.id,
+        transactionId: row.transactionId ?? null, status: sentSms.status,
+      },
+    });
+  } catch { /* audit is non-critical */ }
+
+  return { ...sentSms, to: row.profile.phone, resentFromId: row.id };
+}
+
 // Admin-only SMS log cleanup. Rows are delivery records (the message already
 // left via Semaphore), so deleting only clears the log — it never unsends.
 // Audited like manual sends; retention still purges old rows automatically.
