@@ -218,6 +218,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   // Created transaction — shown on the post-booking receipt step (with QR).
   const [createdTx, setCreatedTx] = useState(null);
+  const [collectError, setCollectError] = useState('');
 
   // Payment channel for the downpayment: cash (recorded with the booking)
   // or the static QR transfer (verified in person, then recorded).
