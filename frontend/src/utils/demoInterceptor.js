@@ -382,6 +382,11 @@ function route(method, path, body) {
   if (path === '/auth/refresh') return { value: { user: PROFILES[role] } };
   if (path === '/auth/staff' && method === 'GET') return { value: clone(staff) };
   if (path === '/auth/staff' && method === 'POST') {
+    const email = String(body.email ?? '').trim().toLowerCase();
+    if (staff.some((s) => String(s.email ?? '').toLowerCase() === email)
+      || Object.values(PROFILES).some((p) => String(p.email ?? '').toLowerCase() === email)) {
+      return { status: 409, error: 'An account with this email already exists. Use a different email for the staff account.' };
+    }
     const created = { id: 's-' + Date.now(), email: body.email, name: body.name, phone: body.phone ?? null, createdAt: new Date().toISOString() };
     staff.unshift(created);
     return { value: { ...created, oneTimePassword: 'Demo-OTP-123!x' } };

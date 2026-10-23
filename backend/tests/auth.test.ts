@@ -947,6 +947,38 @@ describe('Admin: Staff Management', () => {
       expect(res.body.mustChangePassword).toBe(true);
     });
 
+    it('should return a clear conflict when the email already has a profile', async () => {
+      const res = await request(app)
+        .post('/api/auth/staff')
+        .set(adminAuth)
+        .set('Origin', 'http://localhost:5173')
+        .send({ email: 'staff@example.com', name: 'Duplicate Staff' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('already exists');
+      // Rejected before Supabase is touched, so no orphan auth user is created.
+      expect(supabaseAdmin.auth.admin.createUser).not.toHaveBeenCalled();
+    });
+
+    it('should return a clear conflict when Supabase already has the email', async () => {
+      vi.mocked(supabaseAdmin.auth.admin.createUser).mockResolvedValueOnce({
+        data: { user: null },
+        error: Object.assign(
+          new Error('A user with this email address has already been registered'),
+          { code: 'email_exists' },
+        ),
+      } as never);
+
+      const res = await request(app)
+        .post('/api/auth/staff')
+        .set(adminAuth)
+        .set('Origin', 'http://localhost:5173')
+        .send({ email: 'new-staff@test.com', name: 'New Staff' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('already exists');
+    });
+
     it('should reject without admin role', async () => {
       const res = await request(app)
         .post('/api/auth/staff')

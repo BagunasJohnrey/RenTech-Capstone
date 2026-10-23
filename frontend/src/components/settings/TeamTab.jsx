@@ -260,8 +260,8 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
           }
         >
           {staffError && (
-            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
-              <AlertCircle size={16} /> {staffError}
+            <div className="flex items-start gap-2 p-3 mb-4 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-600 font-medium">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" /> {staffError}
             </div>
           )}
           <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">

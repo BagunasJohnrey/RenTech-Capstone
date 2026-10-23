@@ -500,6 +500,14 @@ export async function createStaffAccount(adminId: string, data: {
   const tempPassword = generateOneTimePassword();
   const email = normalizeEmail(data.email);
 
+  // Admin-only endpoint, so a precise duplicate message is safe here (unlike
+  // public signup, where it would enable account enumeration). Catch it before
+  // touching Supabase so no orphan auth user is created.
+  const existingProfile = await prisma.profile.findUnique({ where: { email } });
+  if (existingProfile) {
+    throw new AppError(409, 'An account with this email already exists. Use a different email for the staff account.');
+  }
+
   // Staff are created by an admin, so they're trusted by default — always
   // auto-confirm (admin.createUser wouldn't send a verification email anyway,
   // so an unconfirmed staff account would be locked out with no way in).
@@ -510,8 +518,16 @@ export async function createStaffAccount(adminId: string, data: {
   });
 
   if (error || !authData.user) {
-    // C2: same as signupCustomer — generic message, real reason logged only.
-    console.error('[auth] create staff failed:', error?.message);
+    // A Supabase user can exist without a Profile row (e.g. a partially
+    // deleted account), so surface the duplicate clearly instead of the
+    // generic retry message. Other failures stay generic (C2).
+    const reason = String(error?.message ?? '');
+    const isDuplicate = (error as { code?: string } | null)?.code === 'email_exists'
+      || /already (?:been )?registered|already exists/i.test(reason);
+    if (isDuplicate) {
+      throw new AppError(409, 'An account with this email already exists. Use a different email for the staff account.');
+    }
+    console.error('[auth] create staff failed:', reason || 'no user returned');
     throw new AppError(400, 'Unable to create account. Please try again.');
   }
 
