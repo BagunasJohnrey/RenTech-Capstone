@@ -20,7 +20,14 @@ export default function BulkSaleManager() {
 
   useEffect(() => {
     inventoryService.list()
-      .then(data => { if (Array.isArray(data)) setItems(data); })
+      .then(data => {
+        if (Array.isArray(data)) {
+          // Archived items (status "Deleted") still come back to Admin from
+          // /inventory so they can be reviewed/restored, but they are not
+          // sellable stock — never offer them in the bulk sale picker.
+          setItems(data.filter(i => i.status !== 'Deleted'));
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
