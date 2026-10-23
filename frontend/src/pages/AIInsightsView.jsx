@@ -444,15 +444,20 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const revByWeek = revenueWeeklyData || insightsData?.revenueByWeek || null;
   const thisMonthRev = kpis?.monthlyRevenue || 0;
   const prevMonthRev = kpis?.prevMonthRevenue || 0;
-  // Overall answers "all time": show lifetime collected with no comparison
-  // badge. Windowed tabs show the window's collected vs the previous window.
-  // The headline is COMBINED (ledger + logbook) on windowed tabs so a past
-  // month with paper history reads its full business total; the card below
-  // always labels the split so collected money stays distinguishable.
+  // Overall answers "all time": lifetime collected + lifetime logbook, with no
+  // comparison badge. Windowed tabs show the window's collected vs the previous
+  // window. Every tab's headline is COMBINED (ledger + logbook) so a period with
+  // paper history reads its full business total; the card below always labels
+  // the split so collected money stays distinguishable. The logbook figure must
+  // match the ledger window: kpis.logbookRevenue defaults to the CURRENT MONTH
+  // when no period filter is sent, so Overall reads the all-time companion from
+  // the (unfiltered) analytics summary instead.
   const isOverallView = timeRange === 'Overall';
-  const logbookRev = isOverallView ? 0 : (kpis?.logbookRevenue || 0);
+  const logbookRev = isOverallView
+    ? (analyticsSummary?.logbookRevenue || 0)
+    : (kpis?.logbookRevenue || 0);
   const prevLogbookRev = isOverallView ? 0 : (kpis?.prevLogbookRevenue || 0);
-  const displayRev = isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev + logbookRev;
+  const displayRev = (isOverallView ? (kpis?.totalRevenue || 0) : thisMonthRev) + logbookRev;
   const displayPrev = isOverallView ? 0 : prevMonthRev + prevLogbookRev;
   // KpiCards adds the logbook companion to this prop itself, so it must get the
   // LEDGER figure only. Passing displayRev (already combined) double-counted
@@ -809,10 +814,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         <KpiCards
           thisMonthRev={ledgerRevForCard} prevMonthRev={displayPrev} revChange={revChange}
           revLabel={revLabel} revSub={revSub} revVsLabel={revVsLabel}
-          // Logbook companions: windowed like their cards — except Overall,
-          // where the ledger figure is all-time but the companion defaults to
-          // the current month, so it stays hidden there instead of lying.
-          logbookRevenue={timeRange === 'Overall' ? 0 : (kpis?.logbookRevenue || 0)}
+          // Logbook companion follows the ledger window: windowed tabs use the
+          // period-scoped KPI figure, Overall uses the all-time analytics total.
+          logbookRevenue={logbookRev}
           logbookRentals={analyticsSummary?.logbookRentals || 0}
           rentedCount={rentedCount} totalItems={totalItems}
           smaVals={smaVals} latestSmaVal={latestSmaVal} forecastRev={forecastRev}
