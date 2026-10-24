@@ -26,6 +26,9 @@ export function customerPhone(c, fallback) {
 // silently cost the boutique 2+ credits.
 export const SMS_MAX_LENGTH = 160;
 export const SMS_NOTICE = 'Automated message - do not reply.';
+// Item names are capped at 60 in the catalog, but legacy rows can be longer.
+// Trimming the SMS label keeps the full template readable in one segment.
+export const SMS_ITEM_MAX = 40;
 
 // "Maria Clara Dela Cruz" -> "Maria C." (first name + surname initial). Keeps
 // greetings short without losing who the message is for. Suffixes like Jr./III
@@ -70,6 +73,14 @@ export function itemLabel(i) {
   if (!i) return '';
   if (typeof i === 'object') return i.name || '';
   return i;
+}
+
+// SMS-safe item label: ASCII ellipsis (never "…", which is non-GSM-7 and would
+// force UCS-2 encoding, halving the per-segment budget) and a hard cap.
+export function smsItemLabel(i) {
+  const text = itemLabel(i).trim();
+  if (text.length <= SMS_ITEM_MAX) return text;
+  return `${text.slice(0, SMS_ITEM_MAX - 3).trimEnd()}...`;
 }
 
 // What the staff SMS action should say for THIS booking. Payment-proof wording
@@ -132,7 +143,7 @@ const smsBalance = (tx) => {
 
 export function defaultSmsMessage(tx, opts = {}) {
   const name = smsShortName(tx?.customer);
-  const item = itemLabel(tx?.item);
+  const item = smsItemLabel(tx?.item);
   const intent = smsIntent(tx, opts);
 
   if (intent.kind.startsWith('payment')) {

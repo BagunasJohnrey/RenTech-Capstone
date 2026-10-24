@@ -8,6 +8,7 @@ import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { OCCASIONS, OCCASIONS_BY_CATEGORY, normalizeOccasions } from '../utils/occasions';
 import { COLORS, normalizeColors } from '../utils/colors';
+import { INPUT_LIMITS } from '../utils/inputLimits';
 import ColorSelect from './ColorSelect';
 
 const FALLBACK_IMAGE =
@@ -328,8 +329,13 @@ export default function ItemForm({
   const handleSubmit = (e) => {
     e.preventDefault();
     guardSubmit(async () => {
-      if (!name || !price) return;
-    const values = { name: name.trim(), price: parseFloat(price), status };
+      const cleanName = name.trim();
+      if (!cleanName || !price) return;
+      if (cleanName.length > INPUT_LIMITS.ITEM_NAME_MAX) {
+        toastError(`Item name must be ${INPUT_LIMITS.ITEM_NAME_MAX} characters or fewer`);
+        return;
+      }
+    const values = { name: cleanName, price: parseFloat(price), status };
     if (showCategory) {
       if (!effectiveCategory) {
         toastError('Please enter a custom category name');
@@ -393,12 +399,18 @@ export default function ItemForm({
           <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 space-y-4">
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Garment Name</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Garment Name</label>
+                <span className={`text-[10px] ${name.trim().length >= INPUT_LIMITS.ITEM_NAME_MAX ? 'text-amber-600 font-bold' : 'text-gray-400'}`}>
+                  {name.trim().length}/{INPUT_LIMITS.ITEM_NAME_MAX}
+                </span>
+              </div>
               <input
                 type="text"
                 required
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => setName(e.target.value.slice(0, INPUT_LIMITS.ITEM_NAME_MAX))}
+                maxLength={INPUT_LIMITS.ITEM_NAME_MAX}
                 className={inputClass}
                 placeholder="e.g. Golden Sequin Gown"
               />

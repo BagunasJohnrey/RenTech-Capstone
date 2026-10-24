@@ -11,6 +11,9 @@ export const INPUT_LIMITS = {
   ADDRESS_MAX: 100,
   ADDRESS_MIN: 5,
   NOTES_MAX: 300,
+  // Catalog item names feed SMS receipts/reminders, which are capped at one
+  // 160-char segment. 60 keeps names scannable and leaves message room.
+  ITEM_NAME_MAX: 60,
 };
 
 // Digits are never allowed in a person name.

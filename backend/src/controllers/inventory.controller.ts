@@ -23,9 +23,19 @@ const isoDateOrNull = z.preprocess(
   z.string().datetime().nullable().optional()
 );
 
+// Keep catalog names scannable in lists AND leave room in one 160-char SMS
+// segment (receipts/reminders embed the item name). 42 is the longest seed
+// name, so this never blocks existing inventory.
+export const ITEM_NAME_MAX = 60;
+const itemName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(ITEM_NAME_MAX, `Item name must be ${ITEM_NAME_MAX} characters or fewer`);
+
 export const createItemSchema = z.object({
   body: z.object({
-    name: z.string().min(1),
+    name: itemName,
     category: z.string().min(1),
     occasions: z.array(z.string().min(1).max(40)).max(12).optional(),
     colors: z.array(z.string().min(1).max(30)).max(10).optional(),
@@ -44,7 +54,7 @@ export const createItemSchema = z.object({
 
 export const updateItemSchema = z.object({
   body: z.object({
-    name: z.string().min(1).optional(),
+    name: itemName.optional(),
     category: z.string().min(1).optional(),
     occasions: z.array(z.string().min(1).max(40)).max(12).optional(),
     colors: z.array(z.string().min(1).max(30)).max(10).optional(),

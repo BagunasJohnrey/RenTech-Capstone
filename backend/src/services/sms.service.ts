@@ -1,7 +1,7 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
-import { sendSms, applyTemplate, smsShortName, finalizeSms } from './semaphore.service.js';
+import { sendSms, applyTemplate, smsShortName, smsItemName, finalizeSms } from './semaphore.service.js';
 import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
 import { getBusinessRules, isSmsEnabled } from './settings.service.js';
@@ -34,7 +34,7 @@ export async function sendManualSms(params: {
     if (tx) {
       message = applyTemplate(message, {
         customer: smsShortName(tx.customer.name),
-        item: tx.item.name,
+        item: smsItemName(tx.item.name),
         date: tx.dueDate.toLocaleDateString('en-PH'),
         days: String(Math.max(1, Math.ceil((new Date().getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)))),
         balance: formatPhpAmount(tx.balance),
@@ -163,7 +163,7 @@ export async function autoNotifyOverdue() {
       let message = template?.content ?? OVERDUE_TEMPLATE_FALLBACK;
       message = finalizeSms(applyTemplate(message, {
         customer: smsShortName(tx.customer.name),
-        item: tx.item.name,
+        item: smsItemName(tx.item.name),
         date: tx.dueDate.toLocaleDateString('en-PH'),
         days: String(daysOverdue),
         balance: formatPhpAmount(tx.balance),
@@ -261,7 +261,7 @@ export async function notifyOverdue3Days() {
 
     let sent = false;
     if (tx.customer.phone && wantsSms) {
-      const message = finalizeSms(`Hi ${smsShortName(tx.customer.name)}, ${tx.item.name} is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Please call us. Thank you!`);
+      const message = finalizeSms(`Hi ${smsShortName(tx.customer.name)}, ${smsItemName(tx.item.name)} is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Please call us. Thank you!`);
       try {
         await sendSms(tx.customer.phone, message);
         await prisma.sentSms.create({
@@ -340,10 +340,10 @@ export async function notifyDueToday() {
       const message = finalizeSms(template?.content
         ? applyTemplate(template.content, {
             customer: smsShortName(tx.customer.name),
-            item: tx.item.name,
+            item: smsItemName(tx.item.name),
             date: tx.dueDate.toLocaleDateString('en-PH'),
           })
-        : `Hi ${smsShortName(tx.customer.name)}, your ${tx.item.name} rental is due today (${tx.dueDate.toLocaleDateString('en-PH')}). Thank you!`);
+        : `Hi ${smsShortName(tx.customer.name)}, your ${smsItemName(tx.item.name)} rental is due today (${tx.dueDate.toLocaleDateString('en-PH')}). Thank you!`);
 
       try {
         const smsResult = await sendSms(tx.customer.phone, message);

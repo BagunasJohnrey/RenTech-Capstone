@@ -144,6 +144,15 @@ describe('POST /api/inventory', () => {
 
     expect(res.status).toBe(400);
   });
+
+  it('should reject an item name longer than 60 characters', async () => {
+    const res = await request(app)
+      .post('/api/inventory')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ name: 'x'.repeat(61), category: 'Gown', price: 1000 });
+
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('PUT /api/inventory/:id', () => {
@@ -180,6 +189,15 @@ describe('PUT /api/inventory/:id', () => {
       .send({ name: 'Test' });
 
     expect(res.status).toBe(403);
+  });
+
+  it('should reject an item name longer than 60 characters', async () => {
+    const res = await request(app)
+      .put('/api/inventory/1')
+      .set('Authorization', 'Bearer admin-token')
+      .send({ name: 'x'.repeat(61) });
+
+    expect(res.status).toBe(400);
   });
 
   it('should 400 on a garbage saleEndsAt', async () => {

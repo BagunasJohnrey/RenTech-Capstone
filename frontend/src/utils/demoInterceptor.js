@@ -5,6 +5,7 @@
 // changes "stick" for the session).
 
 import { getDemoRole } from './demoMode';
+import { INPUT_LIMITS } from './inputLimits';
 
 // ─── Mock data ────────────────────────────────────────────────────────────
 
@@ -425,7 +426,11 @@ function route(method, path, body) {
     const it = items.find((i) => i.id === id);
     if (!it) return { status: 404, error: 'Item not found' };
     if (method === 'PUT') {
-      Object.assign(it, body);
+      const nextName = typeof body.name === 'string' ? body.name.trim() : body.name;
+      if (typeof nextName === 'string' && nextName.length > INPUT_LIMITS.ITEM_NAME_MAX) {
+        return { status: 400, error: `Item name must be ${INPUT_LIMITS.ITEM_NAME_MAX} characters or fewer` };
+      }
+      Object.assign(it, body, nextName === undefined ? {} : { name: nextName });
       it.effectiveStatus = it.status;
       return { value: clone(it) };
     }
@@ -437,7 +442,11 @@ function route(method, path, body) {
     return { value: clone(items).map((i) => ({ ...i })) };
   }
   if (path === '/inventory' && method === 'POST') {
-    const created = { id: Math.max(...items.map((i) => i.id)) + 1, effectiveStatus: body.status ?? 'Available', ...body };
+    const nextName = typeof body.name === 'string' ? body.name.trim() : body.name;
+    if (typeof nextName === 'string' && nextName.length > INPUT_LIMITS.ITEM_NAME_MAX) {
+      return { status: 400, error: `Item name must be ${INPUT_LIMITS.ITEM_NAME_MAX} characters or fewer` };
+    }
+    const created = { id: Math.max(...items.map((i) => i.id)) + 1, effectiveStatus: body.status ?? 'Available', ...body, name: nextName };
     items.unshift(created);
     return { value: clone(created) };
   }

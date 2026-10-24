@@ -8,6 +8,18 @@ const SEMAPHORE_API = process.env.SEMAPHORE_BASE_URL || 'https://api.semaphore.c
 // 2+ credits.
 export const SMS_MAX_LENGTH = 160;
 export const SMS_NOTICE = 'Automated message - do not reply.';
+// Long-catalog guard: item names are validated to 60 chars at the API, but
+// legacy rows can be longer. Capping the SMS label keeps the whole message
+// readable instead of letting finalizeSms cut the thank-you line.
+export const SMS_ITEM_MAX = 40;
+
+// "Emerald Green Beaded Evening Gown with Trail" -> "Emerald Green Beaded
+// Evening Gown with T..." so the template still fits one GSM segment.
+export function smsItemName(name: string | null | undefined): string {
+  const text = String(name ?? '').trim();
+  if (text.length <= SMS_ITEM_MAX) return text;
+  return `${text.slice(0, SMS_ITEM_MAX - 3).trimEnd()}...`;
+}
 
 // "Maria Clara Dela Cruz" -> "Maria C." (first name + surname initial). Keeps
 // greetings short without losing who the message is for. Suffixes like Jr./III

@@ -3,7 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
-import { SMS_MAX_LENGTH, SMS_NOTICE, finalizeSms, smsShortName } from '../src/services/semaphore.service.js';
+import { SMS_MAX_LENGTH, SMS_NOTICE, SMS_ITEM_MAX, finalizeSms, smsShortName, smsItemName } from '../src/services/semaphore.service.js';
 
 const app = express();
 app.use(express.json());
@@ -478,5 +478,14 @@ describe('SMS formatting', () => {
     expect(long.length).toBeLessThanOrEqual(SMS_MAX_LENGTH);
     expect(long.endsWith(SMS_NOTICE)).toBe(true);
     expect(long).toContain('...');
+  });
+
+  it('caps long item names at one SMS-safe width', () => {
+    const capped = smsItemName('Emerald Green Beaded Evening Gown with Trail');
+    expect(capped.length).toBe(SMS_ITEM_MAX);
+    expect(capped.endsWith('...')).toBe(true);
+    expect(capped).not.toContain('…');
+    expect(smsItemName('Barong')).toBe('Barong');
+    expect(smsItemName(null)).toBe('');
   });
 });
