@@ -7,7 +7,7 @@ import { assertItemAvailable } from '../utils/availability.js';
 import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
-import { sendSms, applyTemplate } from './semaphore.service.js';
+import { sendSms, applyTemplate, smsShortName, finalizeSms } from './semaphore.service.js';
 import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { verifyDiscountPin } from './auth.service.js';
@@ -402,16 +402,16 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     const wantsBookingSms = smsGloballyOn && (!prefs || prefs.booking !== false);
     if (customerProfile?.phone && wantsBookingSms) {
       const template = proofPending ? null : await prisma.smsTemplate.findFirst({ where: { name: 'booking_confirmation' } });
-      const message = proofPending
-        ? `Hi ${customerProfile.name}, we received your booking for "${transaction.item.name}". Your payment screenshot is under review. We'll text you once the downpayment is verified.`
+      const message = finalizeSms(proofPending
+        ? `Hi ${smsShortName(customerProfile.name)}, we received your booking for ${transaction.item.name}. Payment is under review. Thank you!`
         : template?.content
           ? applyTemplate(template.content, {
-              customer: customerProfile.name,
+              customer: smsShortName(customerProfile.name),
               item: transaction.item.name,
-              date: end.toLocaleDateString('en-PH'),
+              date: start.toLocaleDateString('en-PH'),
               days: String(Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)))),
             })
-          : `Hi ${customerProfile.name}, your rental of "${transaction.item.name}" is confirmed. Due back ${end.toLocaleDateString('en-PH')}. Thank you!`;
+          : `Hi ${smsShortName(customerProfile.name)}, ${transaction.item.name} is booked. Due back ${end.toLocaleDateString('en-PH')}. Thank you!`);
 
       await sendSms(customerProfile.phone, message).then(() =>
         prisma.sentSms.create({

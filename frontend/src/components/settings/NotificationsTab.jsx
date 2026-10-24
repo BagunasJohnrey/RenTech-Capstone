@@ -21,9 +21,9 @@ const AVAILABLE_PLACEHOLDERS = '{customer}, {item}, {date}, {days}';
 // template can never be deleted into a silent-SMS state; services fall back to
 // the same text when no row exists.
 const DEFAULT_TEMPLATES = {
-  booking_confirmation: 'Hi {customer}, your booking for {item} is confirmed! Pickup date: {date}. Rental period: 3 days. Thank you for choosing Mylene\'s Boutique!',
-  due_reminder: 'Hi {customer}, this is a reminder that your rental of {item} is due on {date}. Please return on time. Thank you!',
-  late_return: 'Hi {customer}, your rental of {item} is now overdue ({days} day(s)). Please return as soon as possible. Thank you!',
+  booking_confirmation: 'Hi {customer}, {item} is booked! Pickup: {date}. Thank you! Automated message - do not reply.',
+  due_reminder: 'Hi {customer}, your {item} rental is due {date}. Thank you! Automated message - do not reply.',
+  late_return: 'Hi {customer}, your {item} is overdue ({days} day(s)). Balance: PHP {balance}. Thank you! Automated message - do not reply.',
 };
 
 // Admin Notifications tab: this admin account's own SMS/email prefs + the
@@ -268,9 +268,10 @@ export default function NotificationsTab({ profile }) {
                     {editing ? (
                       <textarea
                         value={templateEditValue}
-                        onChange={(e) => setTemplateEditValue(e.target.value)}
+                        onChange={(e) => setTemplateEditValue(e.target.value.slice(0, 160))}
                         placeholder="Type the SMS template content here..."
                         rows={4}
+                        maxLength={160}
                         autoFocus
                         className="w-full p-3 bg-white border border-gray-200 rounded-xl text-sm min-h-[100px] focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all"
                       />
@@ -367,9 +368,10 @@ export default function NotificationsTab({ profile }) {
                     {editing ? (
                       <textarea
                         value={templateEditValue}
-                        onChange={(e) => setTemplateEditValue(e.target.value)}
+                        onChange={(e) => setTemplateEditValue(e.target.value.slice(0, 160))}
                         placeholder="Type the SMS template content here..."
                         rows={4}
+                        maxLength={160}
                         autoFocus
                         className="w-full p-4 bg-white border border-gray-200 rounded-xl text-sm min-h-[120px] focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/20 transition-all leading-relaxed"
                       />

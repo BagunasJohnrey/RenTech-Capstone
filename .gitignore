@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules
 
 # Build outputs
@@ -54,3 +54,6 @@ docs/Approval Documents/
 docs/Forecasting and Analytics/
 docs/Payments Storage and Operations/
 docs/Testing Documents/
+
+# Large screenshot sources for documentation (embedded copies live in the Chapter 4 docx)
+docs/System Presentation/screenshots/

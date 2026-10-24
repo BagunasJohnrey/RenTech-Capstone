@@ -3,7 +3,43 @@ import { AppError } from '../middleware/errorHandler.js';
 
 const SEMAPHORE_API = process.env.SEMAPHORE_BASE_URL || 'https://api.semaphore.co/api/v4';
 
+// Semaphore bills one credit per 160-char segment. Every SMS is normalized to a
+// single segment here so no flow (manual, template, scheduler) can silently cost
+// 2+ credits.
+export const SMS_MAX_LENGTH = 160;
+export const SMS_NOTICE = 'Automated message - do not reply.';
+
+// "Maria Clara Dela Cruz" -> "Maria C." (first name + surname initial). Keeps
+// greetings short without losing who the message is for. Suffixes like Jr./III
+// are skipped so "Juan Dela Cruz Jr." still becomes "Juan C.".
+export function smsShortName(fullName: string | null | undefined): string {
+  const parts = String(fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'Customer';
+  if (parts.length === 1) return parts[0];
+  const suffixes = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv']);
+  let last = parts[parts.length - 1];
+  if (suffixes.has(last.toLowerCase()) && parts.length > 2) last = parts[parts.length - 2];
+  return `${parts[0]} ${last.charAt(0).toUpperCase()}.`;
+}
+
+// Append the "do not reply" notice (once) and keep the whole message inside one
+// GSM segment. When trimming is needed the notice is preserved and the body is
+// shortened, so the recipient always knows replies are not read.
+export function finalizeSms(message: string): string {
+  let text = String(message ?? '').trim();
+  if (!/automated message/i.test(text)) text = `${text} ${SMS_NOTICE}`.trim();
+  if (text.length <= SMS_MAX_LENGTH) return text;
+
+  const noticeAt = text.toLowerCase().lastIndexOf(SMS_NOTICE.toLowerCase());
+  const notice = noticeAt >= 0 ? text.slice(noticeAt).trim() : '';
+  const head = (noticeAt >= 0 ? text.slice(0, noticeAt) : text).trimEnd();
+  const room = SMS_MAX_LENGTH - (notice ? notice.length + 1 : 0) - 3;
+  if (room <= 0) return (notice || text).slice(0, SMS_MAX_LENGTH);
+  return `${head.slice(0, room).trimEnd()}...${notice ? ` ${notice}` : ''}`;
+}
+
 export async function sendSms(phone: string, message: string) {
+  message = finalizeSms(message);
   // No key configured -> simulate a successful send so the booking/reminder
   // flows work in dev without real SMS credits. Fail loudly in production:
   // a silently "simulated" send would report success to the boutique while

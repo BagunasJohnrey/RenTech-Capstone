@@ -26,17 +26,17 @@ async function main() {
   const templates = [
     {
       name: 'booking_confirmation',
-      content: 'Hi {customer}, {item} booking confirmed! Pickup: {date} at Mylene\'s Boutique. Thank you!',
+      content: 'Hi {customer}, {item} is booked! Pickup: {date}. Thank you! Automated message - do not reply.',
       isDefault: true,
     },
     {
       name: 'due_reminder',
-      content: 'Hi {customer}, reminder: your {item} rental is due {date}. Please return on time. Thank you!',
+      content: 'Hi {customer}, your {item} rental is due {date}. Thank you! Automated message - do not reply.',
       isDefault: true,
     },
     {
       name: 'late_return',
-      content: 'Hi {customer}, your {item} rental is overdue ({days} day(s)). Balance: PHP {balance}. Please return soon. Thank you!',
+      content: 'Hi {customer}, your {item} is overdue ({days} day(s)). Balance: PHP {balance}. Thank you! Automated message - do not reply.',
       isDefault: true,
     },
   ];

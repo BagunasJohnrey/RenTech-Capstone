@@ -25,6 +25,36 @@ export function customerPhone(c, fallback) {
 // composition is hard-capped at one segment so a long message can never
 // silently cost the boutique 2+ credits.
 export const SMS_MAX_LENGTH = 160;
+export const SMS_NOTICE = 'Automated message - do not reply.';
+
+// "Maria Clara Dela Cruz" -> "Maria C." (first name + surname initial). Keeps
+// greetings short without losing who the message is for. Suffixes like Jr./III
+// are skipped so "Juan Dela Cruz Jr." still becomes "Juan C.".
+export function smsShortName(c) {
+  const name = c && typeof c === 'object' ? (c.name || '') : String(c || '');
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'Customer';
+  if (parts.length === 1) return parts[0];
+  const suffixes = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv']);
+  let last = parts[parts.length - 1];
+  if (suffixes.has(last.toLowerCase()) && parts.length > 2) last = parts[parts.length - 2];
+  return `${parts[0]} ${last.charAt(0).toUpperCase()}.`;
+}
+
+// Append the "do not reply" notice (once) and keep the whole message inside one
+// GSM segment. When trimming is needed the notice is preserved and the body is
+// shortened, so the recipient always knows replies are not read.
+export function fitSms(message) {
+  let text = String(message ?? '').trim();
+  if (!/automated message/i.test(text)) text = `${text} ${SMS_NOTICE}`.trim();
+  if (text.length <= SMS_MAX_LENGTH) return text;
+  const noticeAt = text.toLowerCase().lastIndexOf(SMS_NOTICE.toLowerCase());
+  const notice = noticeAt >= 0 ? text.slice(noticeAt).trim() : '';
+  const head = (noticeAt >= 0 ? text.slice(0, noticeAt) : text).trimEnd();
+  const room = SMS_MAX_LENGTH - (notice ? notice.length + 1 : 0) - 3;
+  if (room <= 0) return (notice || text).slice(0, SMS_MAX_LENGTH);
+  return `${head.slice(0, room).trimEnd()}...${notice ? ` ${notice}` : ''}`;
+}
 
 // Build a `tel:` link for a customer phone number. Normalizes PH numbers
 // (0917xxx -> +63917xxx); returns null when no usable number exists.
@@ -101,19 +131,18 @@ const smsBalance = (tx) => {
 };
 
 export function defaultSmsMessage(tx, opts = {}) {
-  const name = customerLabel(tx?.customer);
+  const name = smsShortName(tx?.customer);
   const item = itemLabel(tx?.item);
   const intent = smsIntent(tx, opts);
 
   if (intent.kind.startsWith('payment')) {
-    // Keep these one GSM segment where possible: no amount, no "booking for".
     if (intent.kind === 'paymentReview') {
-      return `Hi ${name}, we received your payment screenshot for ${item}. It is under review and we will text you once verified. Thank you!`;
+      return fitSms(`Hi ${name}, we received your payment screenshot for ${item}. It is under review. Thank you!`);
     }
     if (intent.kind === 'paymentRejected') {
-      return `Hi ${name}, we could not verify your payment screenshot for ${item}. Please upload a clearer one in My Rentals. Thank you!`;
+      return fitSms(`Hi ${name}, payment for ${item} was not verified. Re-upload in My Rentals. Thank you!`);
     }
-    return `Hi ${name}, ${item} is waiting on your payment screenshot. Upload it in My Rentals so we can verify the downpayment. Thank you!`;
+    return fitSms(`Hi ${name}, ${item} needs your payment screenshot. Upload it in My Rentals. Thank you!`);
   }
 
   if (intent.kind === 'overdue') {
@@ -121,16 +150,16 @@ export function defaultSmsMessage(tx, opts = {}) {
     const days = !isNaN(due.getTime())
       ? Math.max(1, Math.ceil((Date.now() - due.getTime()) / 86400000))
       : 1;
-    return `Hi ${name}, your ${item} rental is overdue (${days} day(s)).${smsBalance(tx)} Please return soon. Thank you!`;
+    return fitSms(`Hi ${name}, ${item} is overdue (${days} day(s)).${smsBalance(tx)} Please return soon. Thank you!`);
   }
 
   if (intent.kind === 'pickup') {
     const when = smsDate(tx?.rentalDate || tx?.date);
-    return `Hi ${name}, reminder: pickup for ${item} is scheduled${when ? ` on ${when}` : ''}.${smsBalance(tx)} See you at the boutique!`;
+    return fitSms(`Hi ${name}, pickup for ${item} is on${when ? ` ${when}` : ''}.${smsBalance(tx)} Thank you!`);
   }
 
   const dueText = smsDate(tx?.dueDate || tx?.date);
-  return `Hi ${name}, reminder: your ${item} rental is due${dueText ? ` on ${dueText}` : ''}.${smsBalance(tx)} Thank you!`;
+  return fitSms(`Hi ${name}, your ${item} is due${dueText ? ` on ${dueText}` : ''}.${smsBalance(tx)} Thank you!`);
 }
 
 // Backwards-compatible alias for callers that still name the overdue action.

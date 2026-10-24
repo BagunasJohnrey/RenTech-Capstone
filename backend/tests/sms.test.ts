@@ -3,6 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
+import { SMS_MAX_LENGTH, SMS_NOTICE, finalizeSms, smsShortName } from '../src/services/semaphore.service.js';
 
 const app = express();
 app.use(express.json());
@@ -418,7 +419,7 @@ describe('POST /api/sms/history/:id/resend', () => {
       data: expect.objectContaining({
         profileId: 'customer-id-111',
         sentById: 'staff-id-456',
-        message: queuedRow.message,
+        message: `${queuedRow.message} Automated message - do not reply.`,
       }),
     });
     expect(global.fetch).toHaveBeenCalled();
@@ -455,5 +456,27 @@ describe('POST /api/sms/history/:id/resend', () => {
   it('rejects unauthenticated requests', async () => {
     const res = await request(app).post('/api/sms/history/sms-q1/resend');
     expect(res.status).toBe(401);
+  });
+});
+
+describe('SMS formatting', () => {
+  it('shortens names to first name + surname initial', () => {
+    expect(smsShortName('Jarey Bagunas')).toBe('Jarey B.');
+    expect(smsShortName('Maria Clara Dela Cruz-Santos')).toBe('Maria C.');
+    expect(smsShortName('Juan Dela Cruz Jr.')).toBe('Juan C.');
+    expect(smsShortName('Cher')).toBe('Cher');
+    expect(smsShortName('')).toBe('Customer');
+  });
+
+  it('appends the do-not-reply notice once and keeps one segment', () => {
+    const plain = finalizeSms('Hi Jarey B., your item is due today. Thank you!');
+    expect(plain.endsWith(SMS_NOTICE)).toBe(true);
+    expect(plain.length).toBeLessThanOrEqual(SMS_MAX_LENGTH);
+    expect(finalizeSms(plain)).toBe(plain);
+
+    const long = finalizeSms(`Hi Jarey B., ${'x'.repeat(200)} Thank you!`);
+    expect(long.length).toBeLessThanOrEqual(SMS_MAX_LENGTH);
+    expect(long.endsWith(SMS_NOTICE)).toBe(true);
+    expect(long).toContain('...');
   });
 });

@@ -16,7 +16,7 @@ export const updateRulesSchema = z.object({
 export const createTemplateSchema = z.object({
   body: z.object({
     name: z.string().min(1).max(100),
-    content: z.string().min(1).max(1600),
+    content: z.string().min(1).max(160, 'SMS templates are limited to 160 characters (1 credit)'),
     isDefault: z.boolean().optional(),
   }),
 });
@@ -24,7 +24,7 @@ export const createTemplateSchema = z.object({
 export const updateTemplateSchema = z.object({
   body: z.object({
     name: z.string().min(1).max(100).optional(),
-    content: z.string().min(1).max(1600).optional(),
+    content: z.string().min(1).max(160, 'SMS templates are limited to 160 characters (1 credit)').optional(),
     isDefault: z.boolean().optional(),
   }),
 });

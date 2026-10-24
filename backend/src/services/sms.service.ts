@@ -1,7 +1,7 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
-import { sendSms, applyTemplate } from './semaphore.service.js';
+import { sendSms, applyTemplate, smsShortName, finalizeSms } from './semaphore.service.js';
 import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
 import { getBusinessRules, isSmsEnabled } from './settings.service.js';
@@ -33,7 +33,7 @@ export async function sendManualSms(params: {
     });
     if (tx) {
       message = applyTemplate(message, {
-        customer: tx.customer.name,
+        customer: smsShortName(tx.customer.name),
         item: tx.item.name,
         date: tx.dueDate.toLocaleDateString('en-PH'),
         days: String(Math.max(1, Math.ceil((new Date().getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)))),
@@ -42,6 +42,7 @@ export async function sendManualSms(params: {
     }
   }
 
+  message = finalizeSms(message);
   const smsResult = await sendSms(profile.phone, message);
 
   const sentSms = await prisma.sentSms.create({
@@ -99,7 +100,7 @@ export function formatPhpAmount(n: number | null | undefined): string {
   return Number(n || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 });
 }
 
-const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your {item} rental is overdue ({days} day(s)). Balance: PHP {balance}. Please return soon. Thank you!';
+const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your {item} is overdue ({days} day(s)). Balance: PHP {balance}. Thank you! Automated message - do not reply.';
 
 export async function autoNotifyOverdue() {
   const now = new Date();
@@ -160,13 +161,13 @@ export async function autoNotifyOverdue() {
       results.push({ transactionId: tx.id, customerName: tx.customer.name, message: '', status: 'skipped' });
     } else {
       let message = template?.content ?? OVERDUE_TEMPLATE_FALLBACK;
-      message = applyTemplate(message, {
-        customer: tx.customer.name,
+      message = finalizeSms(applyTemplate(message, {
+        customer: smsShortName(tx.customer.name),
         item: tx.item.name,
         date: tx.dueDate.toLocaleDateString('en-PH'),
         days: String(daysOverdue),
         balance: formatPhpAmount(tx.balance),
-      });
+      }));
 
       try {
         const smsResult = await sendSms(tx.customer.phone, message);
@@ -260,7 +261,7 @@ export async function notifyOverdue3Days() {
 
     let sent = false;
     if (tx.customer.phone && wantsSms) {
-      const message = `Hi ${tx.customer.name}, your ${tx.item.name} rental is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Contact Mylene's Boutique.`;
+      const message = finalizeSms(`Hi ${smsShortName(tx.customer.name)}, ${tx.item.name} is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Please call us. Thank you!`);
       try {
         await sendSms(tx.customer.phone, message);
         await prisma.sentSms.create({
@@ -336,13 +337,13 @@ export async function notifyDueToday() {
       } catch { /* email is non-critical */ }
     }
     if (tx.customer.phone && wantsSms) {
-      const message = template?.content
+      const message = finalizeSms(template?.content
         ? applyTemplate(template.content, {
-            customer: tx.customer.name,
+            customer: smsShortName(tx.customer.name),
             item: tx.item.name,
             date: tx.dueDate.toLocaleDateString('en-PH'),
           })
-        : `Hi ${tx.customer.name}, a reminder that your rental of ${tx.item.name} is due today (${tx.dueDate.toLocaleDateString('en-PH')}). See you at the boutique!`;
+        : `Hi ${smsShortName(tx.customer.name)}, your ${tx.item.name} rental is due today (${tx.dueDate.toLocaleDateString('en-PH')}). Thank you!`);
 
       try {
         const smsResult = await sendSms(tx.customer.phone, message);
@@ -456,7 +457,8 @@ export async function resendSms(id: string, performedById: string) {
   if (!row) throw new AppError(404, 'SMS record not found');
   if (!row.profile?.phone) throw new AppError(400, 'Profile has no phone number');
 
-  const smsResult = await sendSms(row.profile.phone, row.message);
+  const message = finalizeSms(row.message);
+  const smsResult = await sendSms(row.profile.phone, message);
 
   const sentSms = await prisma.sentSms.create({
     data: {
@@ -464,7 +466,7 @@ export async function resendSms(id: string, performedById: string) {
       sentById: performedById,
       transactionId: row.transactionId ?? null,
       templateId: row.templateId ?? null,
-      message: row.message,
+      message,
       status: smsResult.messageId ? 'sent' : 'queued',
     },
   });
