@@ -43,6 +43,9 @@ import OnboardingTutorial from './components/OnboardingTutorial';
 import GlobalSearchModal from './components/GlobalSearchModal';
 import ItemDetailModal from './components/ItemDetailModal';
 import MfaStepUpModal from './components/MfaStepUpModal';
+// The public landing page is the first paint for guests, so it is bundled
+// into the entry instead of being a lazy chunk that waterfalls before LCP.
+import LandingPage from './pages/LandingPage';
 
 // Route-level screens are code-split so the heavy recharts bundle (dashboard /
 // analytics) is only fetched when those tabs are actually opened.
@@ -55,9 +58,8 @@ const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
 const NotificationsView = lazy(() => import('./pages/NotificationsView'));
 const MessagesView = lazy(() => import('./pages/MessagesView'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));
-// Modal/large components that drag heavy deps (framer-motion, qrcode,
-// html5-qrcode, react-markdown) into the boot bundle — deferred until opened.
-const LandingPage = lazy(() => import('./pages/LandingPage'));
+// Modal/large components that drag heavy deps (qrcode, html5-qrcode,
+// react-markdown) into the boot bundle — deferred until opened.
 const CustomerRentalFlow = lazy(() => import('./components/CustomerRentalFlow'));
 const ChatbotModal = lazy(() => import('./components/ChatbotModal'));
 const QrScannerModal = lazy(() => import('./components/QrScannerModal'));
@@ -930,7 +932,7 @@ export default function RentechApp() {
           <header className="fixed top-0 inset-x-0 z-40 bg-[#FAFAFB]/80 backdrop-blur-lg border-b border-gray-100">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
               <button onClick={() => navigate('/', { replace: true })} className="flex items-center gap-2 font-extrabold tracking-tighter text-gray-950 shrink-0">
-                <img src="/RenTech.png" alt="RENTECH" className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-xl" />
+                <img src="/logo-128.webp" alt="RENTECH" className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-xl" />
                 <span className="hidden sm:block">RENTECH<span className="text-[#bf4a53]">.</span></span>
               </button>
 

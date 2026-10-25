@@ -10,8 +10,6 @@ import { resolveAvatarUrl } from '../utils/images';
 // Layout-level CSS (animations, scrollbars). Kept here so the composition
 // root (App.jsx) stays free of styling concerns.
 const customStyles = `
-  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
   body { font-family: 'Plus Jakarta Sans', sans-serif; }
   .custom-scrollbar::-webkit-scrollbar { width: 4px; }
   .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }

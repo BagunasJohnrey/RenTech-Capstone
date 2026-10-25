@@ -102,7 +102,7 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
         <div className="absolute -top-24 -right-24 w-80 h-80 rounded-full bg-white/10 blur-2xl" />
         <div className="absolute -bottom-32 -left-20 w-96 h-96 rounded-full bg-black/10 blur-3xl" />
         <div className="relative flex items-center gap-3">
-          <img src="/RenTech.png" alt="RENTECH" className="w-12 h-12 rounded-xl bg-white/15 p-1.5" />
+          <img src="/logo-128.webp" alt="RENTECH" className="w-12 h-12 rounded-xl bg-white/15 p-1.5" />
           <span className="text-xl font-extrabold tracking-tight">RenTech</span>
         </div>
         <div className="relative">
@@ -119,7 +119,7 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-10 bg-[#fcfcfd]">
         <div className="w-full max-w-md">
           <div className="lg:hidden flex items-center justify-center gap-2 mb-6">
-            <img src="/RenTech.png" alt="RENTECH" className="w-10 h-10" />
+            <img src="/logo-128.webp" alt="RENTECH" className="w-10 h-10" />
           </div>
           <h2 className="text-3xl font-extrabold text-gray-900">Just a few details</h2>
           <p className="text-gray-500 text-sm mt-1 mb-7">

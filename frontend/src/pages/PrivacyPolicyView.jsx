@@ -58,7 +58,7 @@ export default function PrivacyPolicyView() {
       <header className="sticky top-0 z-40 bg-[#FAFAFB]/80 backdrop-blur-lg border-b border-gray-100">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3 md:py-4 flex items-center justify-between">
           <button onClick={() => navigate('/')} className="flex items-center gap-2 font-extrabold tracking-tighter text-gray-950">
-            <img src="/RenTech.png" alt="RENTECH" className="w-8 h-8 object-contain rounded-xl" />
+            <img src="/logo-128.webp" alt="RENTECH" className="w-8 h-8 object-contain rounded-xl" />
             <span className="hidden sm:block">RENTECH<span className="text-[#bf4a53]">.</span></span>
           </button>
           <button

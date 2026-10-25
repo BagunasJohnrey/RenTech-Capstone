@@ -231,7 +231,7 @@ export default function OnboardingTutorial({ role, displayName, onComplete }) {
             >
             {card.logo ? (
               <div className="flex flex-col items-center text-center px-2">
-                <img src="/RenTech.png" alt="RenTech" className="w-14 h-14 rounded-2xl shadow-lg shadow-red-500/20" />
+                <img src="/logo-128.webp" alt="RenTech" className="w-14 h-14 rounded-2xl shadow-lg shadow-red-500/20" />
                 <h3 className="font-extrabold text-xl text-gray-900 leading-snug mt-3">{card.title}</h3>
                 <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xs">{card.desc}</p>
               </div>

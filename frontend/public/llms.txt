@@ -1,0 +1,16 @@
+# RenTech — Mylene's Boutique
+
+> Rental boutique in Balayan, Batangas, Philippines. We rent gowns, suits, Filipiniana, barongs and costumes for proms, debuts, pageants and other social events. Customers reserve online with a downpayment, then complete fitting, pickup and return in store.
+
+## Main pages
+
+- [Home](https://www.myleneboutique.shop/): featured pieces, rental process, location and frequently asked questions.
+- [Privacy Policy](https://www.myleneboutique.shop/privacy): how customer data is collected, used, shared and retained.
+- [Terms of Service](https://www.myleneboutique.shop/terms): rental terms, downpayment, damage, cancellation and return policy.
+
+## Contact and hours
+
+- Location: Balayan, Batangas, Philippines
+- Hours: Monday to Saturday, 9:00 AM to 6:00 PM
+- Fulfillment: in-store only; there is no door-to-door delivery.
+- Availability: the online catalog shows live availability by date. Wedding gowns and bridal packages are not offered.

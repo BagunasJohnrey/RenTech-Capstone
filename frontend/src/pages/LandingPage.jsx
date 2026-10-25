@@ -35,16 +35,6 @@ const fadeInUp = {
   }
 };
 
-const blurFadeInUp = {
-  hidden: { opacity: 0, y: 30, filter: "blur(12px)" },
-  visible: { 
-    opacity: 1, 
-    y: 0, 
-    filter: "blur(0px)",
-    transition: { duration: 0.8, ease: [0.22, 1, 0.36, 1] } 
-  }
-};
-
 const staggerContainer = {
   hidden: { opacity: 0 },
   visible: {
@@ -171,9 +161,9 @@ const GalleryCard = ({ item, onBrowse }) => {
       className="group relative rounded-2xl md:rounded-[28px] overflow-hidden bg-gray-100 aspect-[3/4] cursor-pointer shadow-sm hover:shadow-xl hover:shadow-gray-950/10 transition-shadow duration-300 text-left"
     >
       {isReal ? (
-        <ItemImage image={item._item.image} alt={item.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+        <ItemImage thumb image={item._item.image} alt={item.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
       ) : (
-        <img src={item.img} alt={item.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+        <img src={item.img} alt={item.title} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-gray-950/85 via-gray-950/20 to-transparent transition-opacity duration-300 md:opacity-70 md:group-hover:opacity-100" />
       {/* Category chip */}
@@ -289,7 +279,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
           <nav className="max-w-7xl mx-auto px-4 sm:px-6 py-3 md:py-4 flex justify-between items-center gap-2">
             <div className="min-w-0 flex-1 text-base sm:text-xl md:text-2xl font-extrabold tracking-tighter flex items-center gap-2 text-gray-950">
               <img 
-                src="/RenTech.png" 
+                src="/logo-128.webp"
                 alt="RENTECH Logo" 
                 className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-xl shrink-0"
               />
@@ -326,17 +316,22 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
             <div className="absolute w-[200px] md:w-[400px] h-[200px] md:h-[400px] bg-pink-300/20 rounded-full blur-[70px] md:blur-[100px] top-[40%] left-[20%] md:left-[35%]" />
           </div>
 
-          <motion.div initial="hidden" animate="visible" variants={staggerContainer} className="max-w-6xl mx-auto relative z-10 text-center flex flex-col items-center w-full">
-            <motion.h1 variants={blurFadeInUp} className="text-5xl sm:text-6xl md:text-8xl font-extrabold tracking-tighter leading-[1.05] md:leading-[0.95] text-gray-950 mb-6 md:mb-8">
+          <div className="max-w-6xl mx-auto relative z-10 text-center flex flex-col items-center w-full">
+            <motion.h1
+              initial={{ y: 20 }}
+              animate={{ y: 0 }}
+              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+              className="text-5xl sm:text-6xl md:text-8xl font-extrabold tracking-tighter leading-[1.05] md:leading-[0.95] text-gray-950 mb-6 md:mb-8"
+            >
               Rent the outfit, <br />
               <span className="text-[#bf4a53]">own the moment.</span>
             </motion.h1>
-            
-            <motion.p variants={fadeInUp} className="text-lg sm:text-xl md:text-2xl text-gray-700 max-w-2xl md:max-w-3xl mx-auto leading-relaxed font-medium mb-10 md:mb-12">
-              Effortless rentals for proms, debuts, and social events. Access our curated collection of gowns, suits, and costumes without the commitment of buying.
-            </motion.p>
 
-            <motion.div variants={fadeInUp} className="flex flex-col sm:flex-row items-center justify-center gap-4 w-full sm:w-auto">
+            <p className="text-lg sm:text-xl md:text-2xl text-gray-700 max-w-2xl md:max-w-3xl mx-auto leading-relaxed font-medium mb-10 md:mb-12">
+              Effortless rentals for proms, debuts, and social events. Access our curated collection of gowns, suits, and costumes without the commitment of buying.
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 w-full sm:w-auto">
               <motion.button
                 whileHover={{ scale: 1.03, y: -2 }}
                 whileTap={buttonPress}
@@ -346,8 +341,8 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
                 Browse Collection
                 <ArrowRight size={20} strokeWidth={2.5} />
               </motion.button>
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>
         </section>
 
         {/* ---------- Collection (Gallery) Section ---------- */}
@@ -461,7 +456,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
             <div>
                <div className="text-xl md:text-2xl font-extrabold tracking-tighter flex items-center gap-2 text-gray-950 mb-4">
                   <img
-                    src="/RenTech.png"
+                    src="/logo-128.webp"
                     alt="Mylene's Boutique Logo"
                     className="w-8 h-8 md:w-9 md:h-9 object-contain rounded-lg"
                   />
@@ -474,7 +469,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
 
             {/* Explore */}
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Explore</h4>
+              <h3 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Explore</h3>
               <ul className="space-y-3 text-sm">
                 <li><a href="#collection" className="hover:text-[#bf4a53] transition-colors">Collection</a></li>
                 <li><a href="#how-it-works" className="hover:text-[#bf4a53] transition-colors">How it Works</a></li>
@@ -487,7 +482,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
 
             {/* Visit Us */}
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Visit Us</h4>
+              <h3 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Visit Us</h3>
               <ul className="space-y-3 text-sm">
                 <li className="flex items-start gap-2">
                   <MapPin size={16} className="text-[#bf4a53] mt-0.5 shrink-0" />
@@ -512,7 +507,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
 
             {/* Contact */}
             <div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Contact</h4>
+              <h3 className="text-xs font-bold uppercase tracking-[0.15em] text-gray-950 mb-4">Contact</h3>
               <ul className="space-y-3 text-sm">
                 <li className="flex items-start gap-2">
                   <Phone size={16} className="text-[#bf4a53] mt-0.5 shrink-0" />

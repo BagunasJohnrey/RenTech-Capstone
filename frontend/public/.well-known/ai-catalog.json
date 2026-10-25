@@ -1,0 +1,9 @@
+{
+  "specVersion": "1.0",
+  "host": {
+    "displayName": "RenTech — Mylene's Boutique",
+    "documentationUrl": "https://www.myleneboutique.shop/llms.txt",
+    "logoUrl": "https://www.myleneboutique.shop/pwa-512x512.png"
+  },
+  "entries": []
+}

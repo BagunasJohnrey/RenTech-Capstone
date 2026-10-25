@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /verify-email
+Disallow: /reset-password
+Disallow: /oauth-details
+
+Sitemap: https://www.myleneboutique.shop/sitemap.xml

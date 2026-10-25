@@ -9,9 +9,9 @@ function cspPlugin() {
   const CSP = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
-    "font-src 'self' data: https://fonts.gstatic.com",
+    "font-src 'self' data:",
     "connect-src 'self' https://*.supabase.co https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com",
     "frame-src https://www.google.com",
     "object-src 'none'",
@@ -57,16 +57,28 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Signed-URL images expire, so don't try to precache them; cache only
-        // the app shell + static assets and let runtime requests go to network.
-        globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
-        globIgnores: ['RenTech.png'], // 6.65MB hero/logo — served on demand, never precached
+        // Precache the app shell only (HTML/CSS/icons). JS chunks are cached
+        // on demand via the runtime rule below — precaching every chunk made
+        // the first visit download the entire admin/analytics/PDF bundle.
+        globPatterns: ['**/*.{css,html,svg,png,ico,webp,woff2,webmanifest}'],
         // Keep API + Supabase signed URLs out of the SW cache.
         navigateFallbackDenylist: [/^\/api\//],
         // Public catalog photos have stable URLs + 30-day cache headers, so
         // CacheFirst across visits is safe. Scoped to /object/public/ only —
         // signed URLs (/object/sign/) rotate and must never be cached.
         runtimeCaching: [
+          {
+            // Hashed JS chunks: serve from cache, refresh in the background.
+            // Cached only as they are actually used, so a public visitor never
+            // pays for admin-only code.
+            urlPattern: /\/assets\/.*\.js$/,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'rentech-js',
+              expiration: { maxEntries: 120, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
           {
             urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/,
             handler: 'CacheFirst',
@@ -93,29 +105,17 @@ export default defineConfig({
         chunkFileNames: 'assets/[hash].js',
         assetFileNames: 'assets/[hash].[ext]',
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('react-dom') || id.includes('/react/') || id.includes('scheduler')) return 'react-vendor';
-            if (id.includes('recharts') || id.includes('d3-') || id.includes('victory')) return 'charts-vendor';
-            if (id.includes('lucide-react')) return 'icons-vendor';
-            // Heavy screen-specific libs — they are only reached via lazy chunks
-            // above, so splitting them out of the shared `vendor` keeps them off
-            // the boot path even if Rollup would otherwise hoist them.
-            if (id.includes('html5-qrcode')) return 'scanner-vendor';
-            if (id.includes('framer-motion')) return 'motion-vendor';
-            if (id.includes('react-markdown') || id.includes('remark') ||
-                id.includes('rehype') || id.includes('mdast') || id.includes('micromark') ||
-                id.includes('unist') || id.includes('vfile') || id.includes('hast') ||
-                id.includes('devlop') || id.includes('zwitch') || id.includes('unified') ||
-                id.includes('bail') || id.includes('comma-separated') || id.includes('decode-named') ||
-                id.includes('character-') || id.includes('ccount') || id.includes('trim-lines') ||
-                id.includes('space-separated') || id.includes('html-url-') || id.includes('property-information')) return 'markdown-vendor';
-            if (id.includes('/qrcode')) return 'qrcode-vendor';
-            if (id.includes('jspdf') || id.includes('fflate') || id.includes('canvg') ||
-                id.includes('dompurify') || id.includes('html2canvas') || id.includes('rgbcolor') ||
-                id.includes('svg-pathdata') || id.includes('text-segmentation') || id.includes('performance-now') ||
-                id.includes('rafc') || id.includes('css-line-break') || id.includes('utor') || id.includes('base64')) return 'pdf-vendor';
-            return 'vendor';
-          }
+          if (!id.includes('node_modules')) return;
+          // Only React is pinned to a shared chunk. Everything else is left
+          // to Rollup's natural splitting so libraries used exclusively by
+          // lazy screens (recharts, jspdf, qrcode, framer-motion, markdown,
+          // scanner) stay in those lazy chunks.
+          //
+          // Do NOT add a catch-all `vendor` chunk here: the entry imports one
+          // module from it and the browser then downloads every node_module
+          // bundled into it — including admin-only charts and PDF code. That
+          // bug added ~340 KB gzipped to the public landing page.
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react-vendor';
         },
       },
     },

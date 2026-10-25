@@ -320,7 +320,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
         <div className="absolute -bottom-32 -left-20 w-96 h-96 rounded-full bg-black/10 blur-3xl" />
 
         <div className="relative flex items-center gap-3">
-          <img src="/RenTech.png" alt="RENTECH" className="w-12 h-12 rounded-xl bg-white/15 p-1.5" />
+          <img src="/logo-128.webp" alt="RENTECH" className="w-12 h-12 rounded-xl bg-white/15 p-1.5" />
           <span className="text-xl font-extrabold tracking-tight">RenTech</span>
         </div>
 
