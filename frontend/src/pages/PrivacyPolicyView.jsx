@@ -1,4 +1,4 @@
-import { ShieldCheck, Lock, Database, Share2, Trash2, Mail, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, Lock, Database, Share2, Trash2, Mail, Cookie, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 // Public /privacy page — Google OAuth branding verification requires the app
@@ -34,6 +34,14 @@ export default function PrivacyPolicyView() {
       title: 'Data Security',
       body: [
         'We implement reasonable physical, organizational, and technical security measures — including encrypted storage and access controls — to protect your information. Data is retained only as long as necessary for the purposes stated or as required by law, after which it is securely disposed of.',
+      ],
+    },
+    {
+      icon: Cookie,
+      title: 'Cookies and Local Storage',
+      body: [
+        'We use only essential cookies and local browser storage. Session cookies keep you signed in and protect your account. Local storage remembers your preferences, caches app data so pages load faster, and stores your cookie choice for up to 12 months. We do not use advertising, analytics, or cross-site tracking cookies.',
+        'You can clear these through your browser settings at any time. Clearing them signs you out, resets saved preferences, and removes your saved cookie choice, so the cookie notice will appear again on your next visit.',
       ],
     },
     {
