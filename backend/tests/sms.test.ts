@@ -153,6 +153,18 @@ describe('SMS scheduler service (Phase 2.4)', () => {
     expect(sentCall).toBeFalsy();
   });
 
+  it('a failed retry on an already-Overdue tx does not rewrite unchanged fields', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const retriedTx = { ...baseTx, status: 'Overdue', overdueSmsRetried: true };
+    prisma.transaction.findMany.mockResolvedValueOnce([retriedTx]);
+    const svc = await reload();
+    global.fetch = vi.fn().mockRejectedValue(new Error('gateway down'));
+    const out = await svc.autoNotifyOverdue();
+    expect(out[0].status).toBe('failed');
+    expect((global.fetch as any).mock.calls.length).toBe(1);
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
+  });
+
   it('no phone = marked sent once-guard without retry', async () => {
     const { prisma } = await import('../src/config/database.js');
     const noPhoneTx = { ...baseTx, customer: { ...baseTx.customer, phone: null } };

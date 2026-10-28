@@ -126,8 +126,12 @@ export async function autoNotifyOverdue() {
   for (const tx of overdueTxs) {
     const daysOverdue = Math.max(1, Math.ceil((now.getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)));
 
-    // Always flip to Overdue status even if SMS fails (status ≠ delivery flag).
-    await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
+    // Always flip to Overdue status even if SMS fails (status ≠ delivery flag),
+    // but skip the no-op write: Prisma bumps updatedAt, which the staff
+    // freshness poll would report as a change on every retry tick.
+    if (tx.status !== 'Overdue') {
+      await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
+    }
 
     // Respect customer opt-out (notifyPrefs.lateReturn === false → skip SMS,
     // still notify staff). A null/undefined pref means "on" (default).
@@ -187,7 +191,11 @@ export async function autoNotifyOverdue() {
         // Send failed: leave overdueSmsSent FALSE so the next tick retries,
         // but record that a retry has been attempted (overdueSmsRetried) for
         // observability. The once-guard only flips on actual success.
-        await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsRetried: true } });
+        // Only write the flag once — rewriting it on every failed tick bumps
+        // updatedAt and makes the freshness poll fire with nothing changed.
+        if (!tx.overdueSmsRetried) {
+          await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsRetried: true } });
+        }
         results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: 'failed' });
       }
     }
