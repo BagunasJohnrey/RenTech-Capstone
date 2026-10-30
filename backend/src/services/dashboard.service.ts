@@ -31,6 +31,15 @@ if (!isTestEnv) {
       getForecast(3),
       getInventoryAnalytics(),
       getDataVersion(),
+      // Reports opens on the current month — warm that exact bundle (same
+      // window as getPeriodFilter('monthly') + the page's fp=3) so the
+      // default view is a cache hit instead of a cold ~1s fan-out.
+      (() => {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        return getDashboardBundle({ start, end, past: false, weekly: true }, 3);
+      })(),
       // Tasks needs the QR proof queue alongside the digest. Warming it here
       // keeps the priority card and the verification queue a single cache hit
       // after any mutation (proofs age fast, so the warmer must include it).
@@ -357,21 +366,26 @@ async function getTodayTasksUncached() {
 // years so a mistyped 1990 event date can't explode the series.
 const MAX_HISTORY_MONTHS = 60;
 async function getDataMonths(includeHistory = false) {
-  const firstTx = await prisma.transaction.findFirst({
-    orderBy: { createdAt: 'asc' },
-    select: { createdAt: true },
+  // Cached (and coalesced) because insights + forecast both call this inside
+  // the same dashboard bundle — one pair of lookups instead of two.
+  const { firstTxAt, firstLogAt } = await cacheOrCompute(`dataMonths:${includeHistory}`, async () => {
+    const [firstTx, firstLog] = await Promise.all([
+      prisma.transaction.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
+      includeHistory
+        ? prisma.historicalRecord.findFirst({
+          orderBy: { eventDate: 'asc' },
+          select: { eventDate: true },
+        }).catch(() => null) // no logbook table/rows — app history only
+        : Promise.resolve(null),
+    ]);
+    return { firstTxAt: firstTx?.createdAt ?? null, firstLogAt: firstLog?.eventDate ?? null };
   });
   const now = new Date();
-  let earliest: Date | null = firstTx?.createdAt ?? null;
-  if (includeHistory) {
-    try {
-      const firstLog = await prisma.historicalRecord.findFirst({
-        orderBy: { eventDate: 'asc' },
-        select: { eventDate: true },
-      });
-      if (firstLog?.eventDate && (!earliest || firstLog.eventDate < earliest)) earliest = firstLog.eventDate;
-    } catch { /* no logbook table/rows — app history only */ }
-  }
+  let earliest: Date | null = firstTxAt;
+  if (firstLogAt && (!earliest || firstLogAt < earliest)) earliest = firstLogAt;
   const floor = new Date(now.getFullYear(), now.getMonth() - (MAX_HISTORY_MONTHS - 1), 1);
   let start = earliest
     ? new Date(earliest.getFullYear(), earliest.getMonth(), 1)
@@ -637,40 +651,42 @@ function startOfWeekMonday(d: Date): Date {
 export async function getForecast(period: number = 3, granularity: 'monthly' | 'weekly' = 'monthly') {
   const key = `forecast:${period}:${granularity}`;
   return cacheOrCompute(key, async () => {
-    const { months, firstMonth } = await getDataMonths(true);
+    // The item→category map doesn't depend on the month window, so it loads
+    // alongside getDataMonths; the window-bound queries then share one round
+    // trip.
+    const [{ months, firstMonth }, items] = await Promise.all([
+      getDataMonths(true),
+      // category split is enrichment — never fail the forecast
+      prisma.inventoryItem.findMany({ select: { id: true, category: true } }).catch(() => []),
+    ]);
+    const catOf = new Map<number, string>();
+    for (const it of items) catOf.set(it.id, it.category || 'Other');
 
     // ONE query instead of one count per month — bucket by period in JS so the
     // remote pooler only sees a single round trip regardless of history length.
     // Cancelled bookings count too: they still represent demand (the customer
     // tried to rent), so the SMA isn't artificially depressed on a
     // cancellation-heavy month.
-    const rows = await prisma.transaction.findMany({
-      where: {
-        status: { in: FORECAST_STATUSES },
-        createdAt: { gte: firstMonth },
-        // Demand from archived items must not drive restock projections.
-        item: { status: { not: 'Deleted' } },
-      },
-      select: { createdAt: true, itemId: true },
-    });
-
     // Imported logbook history (HistoricalRecord) joins the same series:
     // each row is one past rental carrying its own category + event date.
     // These rows are analytical-only everywhere else — the forecast is the
     // one place they count, which is exactly what lengthens the history and
     // sharpens the category split.
-    const catOf = new Map<number, string>();
-    try {
-      const items = await prisma.inventoryItem.findMany({ select: { id: true, category: true } });
-      for (const it of items) catOf.set(it.id, it.category || 'Other');
-    } catch { /* category split is enrichment — never fail the forecast */ }
-    let historyRows: { eventDate: Date; category: string }[] = [];
-    try {
-      historyRows = await prisma.historicalRecord.findMany({
+    const [rows, historyRows] = await Promise.all([
+      prisma.transaction.findMany({
+        where: {
+          status: { in: FORECAST_STATUSES },
+          createdAt: { gte: firstMonth },
+          // Demand from archived items must not drive restock projections.
+          item: { status: { not: 'Deleted' } },
+        },
+        select: { createdAt: true, itemId: true },
+      }),
+      prisma.historicalRecord.findMany({
         where: { eventDate: { gte: firstMonth } },
         select: { eventDate: true, category: true },
-      });
-    } catch { /* no history yet — forecast runs on transactions alone */ }
+      }).catch(() => [] as { eventDate: Date; category: string }[]), // no history yet — transactions alone
+    ]);
     const points: { date: Date; category: string }[] = [
       ...rows.map((t) => ({ date: t.createdAt, category: catOf.get(t.itemId) || 'Other' })),
       ...historyRows.map((h) => ({ date: h.eventDate, category: (h.category || '').trim() || 'Other' })),
@@ -901,25 +917,66 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
   // Category Performance card. OutOfService stays IN (still boutique-owned
   // stock, e.g. damaged pieces awaiting repair — the restock rules need them
   // for accurate free-unit counts); only Deleted is terminal-archived.
-  const items = await prisma.inventoryItem.findMany({
-    where: { status: { not: 'Deleted' } },
-    select: { id: true, name: true, category: true },
-  });
+  // Revenue is collected payments only (both ledger paths — see
+  // COLLECTED_PAYMENT_STATUS), bucketed by payment date in JS. Category
+  // revenue rides the same rows via the payment's transaction item, so every
+  // revenue figure on this endpoint shares one definition.
+  const paymentWhere: any = { status: { in: COLLECTED_PAYMENT_STATUS } };
+  if (filter?.start) paymentWhere.createdAt = { gte: filter.start };
+  if (filter?.end) paymentWhere.createdAt = { ...paymentWhere.createdAt, lt: filter.end };
 
-  // Everything below is derived from this one transaction query:
-  // per-item rental counts, revenue by month, and revenue by category.
-  // Transactions on Deleted items are excluded too — otherwise an archived
-  // item's PAST rentals would still credit its category with "rented" units
-  // and revenue that no longer reflects rentable stock.
-  const txs = await prisma.transaction.findMany({
-    where: { ...txWhere, item: { status: { not: 'Deleted' } } },
-    select: {
-      itemId: true,
-      rentalFee: true,
-      createdAt: true,
-      item: { select: { category: true } },
-    },
-  });
+  // Logbook window (same bounds) shared by the category counts and the
+  // monthly/weekly logbook price series.
+  const histCatWhere: any = {};
+  if (filter?.start) histCatWhere.eventDate = { gte: filter.start };
+  if (filter?.end) histCatWhere.eventDate = { ...histCatWhere.eventDate, lt: filter.end };
+
+  // All of these are independent, so they share ONE round trip to the remote
+  // pooler instead of running back to back (~400ms each — this endpoint used
+  // to take ~3s cold).
+  const [items, txs, dataMonths, payments, historyGroups, logRows] = await Promise.all([
+    prisma.inventoryItem.findMany({
+      where: { status: { not: 'Deleted' } },
+      select: { id: true, name: true, category: true },
+    }),
+    // Per-item rental counts and category "rented" units come from this one
+    // transaction query. Transactions on Deleted items are excluded too —
+    // otherwise an archived item's PAST rentals would still credit its
+    // category with "rented" units that no longer reflect rentable stock.
+    prisma.transaction.findMany({
+      where: { ...txWhere, item: { status: { not: 'Deleted' } } },
+      select: {
+        itemId: true,
+        rentalFee: true,
+        createdAt: true,
+        item: { select: { category: true } },
+      },
+    }),
+    // Months span logbook history too (the chart adds logbook revenue per bar).
+    getDataMonths(true),
+    prisma.payment.findMany({
+      where: paymentWhere,
+      select: {
+        amount: true,
+        createdAt: true,
+        transaction: { select: { item: { select: { category: true } } } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    // Logbook demand per category (counts only — no pesos, no item linkage
+    // needed). The Category Performance card renders these as "+N logbook"
+    // companions next to the live utilisation bars.
+    prisma.historicalRecord.groupBy({
+      by: ['category'],
+      where: histCatWhere,
+      _count: { id: true },
+    }).catch(() => [] as { category: string; _count: { id: number } }[]), // enrichment only
+    // Imported logbook prices for the monthly + weekly chart companions.
+    prisma.historicalRecord.findMany({
+      where: histCatWhere,
+      select: { eventDate: true, price: true },
+    }).catch(() => [] as { eventDate: Date; price: number | null }[]), // enrichment only
+  ]);
 
   const categoryBreakdown: Record<string, { total: number; rented: number }> = {};
   for (const item of items) {
@@ -928,9 +985,10 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     }
     categoryBreakdown[item.category].total++;
   }
+  const itemById = new Map(items.map(i => [i.id, i]));
   const rentedItemIds = new Set(txs.map(t => t.itemId));
   for (const itemId of rentedItemIds) {
-    const item = items.find(i => i.id === itemId);
+    const item = itemById.get(itemId);
     if (item && categoryBreakdown[item.category]) {
       categoryBreakdown[item.category].rented++;
     }
@@ -956,30 +1014,11 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     ? itemRentalCounts.filter(i => i.rentals === 0).slice(0, 10)
     : [];
 
-  // Months span logbook history too (the chart adds logbook revenue per bar),
-  // and the window is cut at BOTH ends: a past year used to run on past its
+  // The month window is cut at BOTH ends: a past year used to run on past its
   // December into the present, drawing a row of empty ₱0 months.
-  const { months } = await getDataMonths(true);
-  const filteredMonths = months.filter((m) => {
+  const filteredMonths = dataMonths.months.filter((m) => {
     const d = new Date(m.year, m.month - 1, 1);
     return (!filter?.start || d >= filter.start) && (!filter?.end || d < filter.end);
-  });
-
-  // Revenue is collected payments only (both ledger paths — see
-  // COLLECTED_PAYMENT_STATUS), bucketed by payment date in JS. Category
-  // revenue rides the same rows via the payment's transaction item, so every
-  // revenue figure on this endpoint shares one definition.
-  const paymentWhere: any = { status: { in: COLLECTED_PAYMENT_STATUS } };
-  if (filter?.start) paymentWhere.createdAt = { gte: filter.start };
-  if (filter?.end) paymentWhere.createdAt = { ...paymentWhere.createdAt, lt: filter.end };
-  const payments = await prisma.payment.findMany({
-    where: paymentWhere,
-    select: {
-      amount: true,
-      createdAt: true,
-      transaction: { select: { item: { select: { category: true } } } },
-    },
-    orderBy: { createdAt: 'asc' },
   });
 
   const inMonth = (d: Date, m: { year: number; month: number }) =>
@@ -1014,16 +1053,11 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     // they ride alongside revenueByWeek (same indices) instead of being merged
     // into the ledger figure; the chart combines them and labels the split.
     const logbookBuckets = [0, 0, 0, 0, 0];
-    try {
-      const monthEnd = filter.end || new Date(y, mo + 1, 1);
-      const logRows = await prisma.historicalRecord.findMany({
-        where: { eventDate: { gte: filter.start, lt: monthEnd } },
-        select: { eventDate: true, price: true },
-      });
-      for (const r of logRows) {
-        logbookBuckets[weekOf(r.eventDate.getDate())] += r.price || 0;
-      }
-    } catch { /* enrichment only - chart falls back to collected payments */ }
+    const monthEnd = filter.end || new Date(y, mo + 1, 1);
+    for (const r of logRows ?? []) {
+      if (r.eventDate < filter.start || r.eventDate >= monthEnd) continue;
+      logbookBuckets[weekOf(r.eventDate.getDate())] += r.price || 0;
+    }
     logbookByWeek = logbookBuckets;
   }
 
@@ -1034,37 +1068,17 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     revenueByCategory[cat] = (revenueByCategory[cat] || 0) + p.amount;
   }
 
-  // Logbook demand per category (counts only — no pesos, no item linkage
-  // needed): same window, separate map. The Category Performance card renders
-  // these as "+N logbook" companions next to the live utilisation bars.
-  const histCatWhere: any = {};
-  if (filter?.start) histCatWhere.eventDate = { gte: filter.start };
-  if (filter?.end) histCatWhere.eventDate = { ...histCatWhere.eventDate, lt: filter.end };
   const historyByCategory: Record<string, number> = {};
-  try {
-    const groups = await prisma.historicalRecord.groupBy({
-      by: ['category'],
-      where: histCatWhere,
-      _count: { id: true },
-    });
-    for (const g of groups) historyByCategory[g.category] = g._count.id;
-  } catch { /* enrichment only */ }
+  for (const g of historyGroups ?? []) historyByCategory[g.category] = g._count.id;
 
   // Imported logbook prices per month, aligned with revenueByMonth. Kept
   // separate so the ledger figure stays pure; the chart adds them per bar and
   // the tooltip labels "Collected" vs "Logbook".
-  let logbookByMonth: number[] = [];
-  try {
-    const logRows = await prisma.historicalRecord.findMany({
-      where: histCatWhere,
-      select: { eventDate: true, price: true },
-    });
-    logbookByMonth = filteredMonths.map(m =>
-      logRows
-        .filter(r => inMonth(r.eventDate, m))
-        .reduce((sum, r) => sum + (r.price || 0), 0)
-    );
-  } catch { /* enrichment only - chart falls back to collected payments */ }
+  const logbookByMonth = filteredMonths.map(m =>
+    (logRows ?? [])
+      .filter(r => inMonth(r.eventDate, m))
+      .reduce((sum, r) => sum + (r.price || 0), 0)
+  );
 
   return {
     categoryBreakdown,

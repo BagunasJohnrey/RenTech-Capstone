@@ -34,12 +34,22 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
     // Deleted items excluded (same rule as dashboard insights): archived pieces
     // are not rentable stock and must not appear as 0%-utilisation rows or
     // dilute the averages.
-    const items = await prisma.inventoryItem.findMany({
-      where: { status: { not: 'Deleted' } },
-      select: { id: true, name: true, category: true, price: true, status: true, image: true },
-    });
+    // Logbook window shared by the category groupBy and the totals aggregate.
+    const histWhere: any = {};
+    if (startDate || endDate) {
+      histWhere.eventDate = {};
+      if (startDate) histWhere.eventDate.gte = startDate;
+      if (endDate) histWhere.eventDate.lt = endDate;
+    }
 
-    const txs = await prisma.transaction.findMany({
+    // Every query below is independent, so they share ONE round trip to the
+    // remote pooler instead of six sequential ones (~400ms each).
+    const [items, txs, payments, allReturns, historyGroups, historyAgg] = await Promise.all([
+      prisma.inventoryItem.findMany({
+        where: { status: { not: 'Deleted' } },
+        select: { id: true, name: true, category: true, price: true, status: true, image: true },
+      }),
+      prisma.transaction.findMany({
       where: txWhere,
       select: {
         id: true,
@@ -52,7 +62,37 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
         releasePhoto: true,
         conditionPhoto: true,
       },
-    });
+    }),
+      // Revenue is money actually collected (gateway 'succeeded' + counter
+      // 'completed' rows) attributed to the rented item — never the booked
+      // fee. Filtered by the same transaction window via the relation so it
+      // doesn't have to wait for the tx ids.
+      prisma.payment.findMany({
+        where: {
+          status: { in: ['succeeded', 'completed'] },
+          transaction: txWhere,
+        },
+        select: { amount: true, transactionId: true },
+      }),
+      // Days Idle stays a current-state column even in a period view (an item
+      // with no returns *in July* isn't "— idle" — it may have been idle since
+      // June), so when a window is active fetch the global latest return per
+      // item once and reuse it for every row.
+      startDate || endDate
+        ? prisma.transaction.findMany({
+          where: { status: { in: ['Active', 'Returned', 'Overdue'] }, returnDate: { not: null } },
+          select: { itemId: true, returnDate: true },
+        })
+        : Promise.resolve(null),
+      prisma.historicalRecord.groupBy({
+        by: ['category'], where: histWhere, _count: { id: true },
+      }).catch(() => [] as { category: string; _count: { id: number } }[]), // enrichment only
+      prisma.historicalRecord.aggregate({
+        where: histWhere,
+        _sum: { price: true },
+        _count: { id: true },
+      }).catch(() => null), // enrichment only
+    ]);
 
     const txsByItem = new Map<number, TxShape[]>();
     for (const t of txs) {
@@ -61,35 +101,16 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
       else txsByItem.set(t.itemId, [t]);
     }
 
-    // Revenue is money actually collected (gateway 'succeeded' + counter
-    // 'completed' rows) attributed to the rented item — never the booked fee.
     const paidByItem = new Map<number, number>();
-    if (txs.length > 0) {
-      const payments = await prisma.payment.findMany({
-        where: {
-          status: { in: ['succeeded', 'completed'] },
-          transactionId: { in: txs.map(t => t.id) },
-        },
-        select: { amount: true, transactionId: true },
-      });
-      const txItemById = new Map(txs.map(t => [t.id, t.itemId]));
-      for (const p of payments) {
-        const itemId = txItemById.get(p.transactionId);
-        if (itemId == null) continue;
-        paidByItem.set(itemId, (paidByItem.get(itemId) || 0) + p.amount);
-      }
+    const txItemById = new Map(txs.map(t => [t.id, t.itemId]));
+    for (const p of payments ?? []) {
+      const itemId = txItemById.get(p.transactionId);
+      if (itemId == null) continue;
+      paidByItem.set(itemId, (paidByItem.get(itemId) || 0) + p.amount);
     }
 
-    // Days Idle stays a current-state column even in a period view (an item
-    // with no returns *in July* isn't "— idle" — it may have been idle since
-    // June), so when a window is active fetch the global latest return per
-    // item once and reuse it for every row.
     let globalLastReturnByItem: Map<number, Date> | null = null;
-    if (startDate || endDate) {
-      const allReturns = await prisma.transaction.findMany({
-        where: { status: { in: ['Active', 'Returned', 'Overdue'] }, returnDate: { not: null } },
-        select: { itemId: true, returnDate: true },
-      });
+    if (allReturns) {
       globalLastReturnByItem = new Map();
       for (const r of allReturns) {
         if (!r.returnDate) continue;
@@ -185,19 +206,8 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
       e.units += 1;
       catAgg.set(a.category, e);
     }
-    let historyByCat: Record<string, number> = {};
-    try {
-      const histWhere: any = {};
-      if (startDate || endDate) {
-        histWhere.eventDate = {};
-        if (startDate) histWhere.eventDate.gte = startDate;
-        if (endDate) histWhere.eventDate.lt = endDate;
-      }
-      const groups = await prisma.historicalRecord.groupBy({
-        by: ['category'], where: histWhere, _count: { id: true },
-      });
-      for (const g of groups) historyByCat[g.category] = g._count.id;
-    } catch { /* enrichment only */ }
+    const historyByCat: Record<string, number> = {};
+    for (const g of historyGroups ?? []) historyByCat[g.category] = g._count.id;
     const topCategories = [...catAgg.entries()].map(([category, e]) => ({
       category,
       revenue: e.revenue,
@@ -210,23 +220,8 @@ export async function getInventoryAnalytics(startDate?: Date, endDate?: Date) {
     // Logbook companions for the Total Rentals card (same window, separate
     // figures — per-item attribution is impossible without an item link, so
     // only the window totals ride along; revenue stays ledger-pure).
-    let logbookRevenue = 0;
-    let logbookRentals = 0;
-    try {
-      const histWhere: any = {};
-      if (startDate || endDate) {
-        histWhere.eventDate = {};
-        if (startDate) histWhere.eventDate.gte = startDate;
-        if (endDate) histWhere.eventDate.lt = endDate;
-      }
-      const agg = await prisma.historicalRecord.aggregate({
-        where: histWhere,
-        _sum: { price: true },
-        _count: { id: true },
-      });
-      logbookRevenue = agg._sum.price ?? 0;
-      logbookRentals = agg._count.id;
-    } catch { /* enrichment only */ }
+    const logbookRevenue = historyAgg?._sum?.price ?? 0;
+    const logbookRentals = historyAgg?._count?.id ?? 0;
 
     return {
       items: analytics,
