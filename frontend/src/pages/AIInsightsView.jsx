@@ -667,17 +667,17 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
       revChart = revChart.map((e, i) => (i === weekIdx && i < 4 ? { ...e, wip: true } : e));
     }
   } else {
-    // Overall stays ledger-pure to match its Revenue card (the all-time card
-    // deliberately hides the windowed logbook companion). Monthly/Yearly show
-    // the combined bar, same as their cards.
-    const showLogbook = !isOverallView;
+    // Every view shows the combined bar (collected + imported logbook), the
+    // same total its Revenue card headlines; the tooltip keeps the split.
+    // Overall used to drop the logbook, so the all-time chart disagreed with
+    // the all-time card and paper-only months showed as ₱0.
     // Yearly is a single year, so bare month names are unique ("Jan".."Dec")
     // and fit without angled labels. The month we're in is still ongoing.
     const yearly = timeRange === 'Yearly';
     const nowKey = `${SHORT_MONTHS[now0.getMonth()]} ${now0.getFullYear()}`;
     revChart = (revByMonth || [])
       .map((d, i) => {
-        const logbook = showLogbook ? (lgByMonthAll[i] || 0) : 0;
+        const logbook = lgByMonthAll[i] || 0;
         return {
           label: yearly ? shortMonth(d.label) : d.label,
           full: d.label,
@@ -828,7 +828,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         {/* Row 1: Revenue Chart + Status Distribution */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <RevenueChart
-            isMonthlyView={isMonthlyView} monthName={monthName}
+            isMonthlyView={isMonthlyView} isOverall={isOverallView} monthName={monthName}
             appliedYear={appliedYear} appliedMonth={appliedMonth}
             viewingCurrentMonth={viewingCurrentMonth}
             revChart={revChart} revChartEmptyLabel={revChartEmptyLabel}
