@@ -7,6 +7,9 @@ import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
 import { getBusinessRules, isSmsEnabled } from './settings.service.js';
 import { clearDataCache } from '../utils/ttlCache.js';
+import {
+  manilaDayStart, manilaNextDayStart, manilaDaysPastDue, isReminderQuietHours, formatManilaDate,
+} from '../utils/manilaDay.js';
 
 export async function sendManualSms(params: {
   profileId: string;
@@ -36,8 +39,8 @@ export async function sendManualSms(params: {
       message = applyTemplate(message, {
         customer: smsShortName(tx.customer.name),
         item: smsItemName(tx.item.name),
-        date: tx.dueDate.toLocaleDateString('en-PH'),
-        days: String(Math.max(1, Math.ceil((new Date().getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)))),
+        date: formatManilaDate(tx.dueDate),
+        days: String(Math.max(1, manilaDaysPastDue(tx.dueDate))),
         balance: formatPhpAmount(tx.balance),
       });
     }
@@ -113,13 +116,14 @@ async function markScheduled(tx: { id: string; updatedAt: Date }, data: Prisma.T
 
 const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your {item} is overdue ({days} day(s)). Balance: PHP {balance}. Thank you! Automated message - do not reply.';
 
-export async function autoNotifyOverdue() {
-  const now = new Date();
-
+export async function autoNotifyOverdue(now: Date = new Date()) {
+  // Overdue = the due DATE has passed on the store calendar. Comparing against
+  // `now` flagged rentals "overdue (1 day)" at 08:00 on their own due date
+  // (dates are stored as UTC midnight) — alongside the due-today reminder.
   const overdueTxs = await prisma.transaction.findMany({
     where: {
       status: { in: ['Active', 'Overdue'] },
-      dueDate: { lt: now },
+      dueDate: { lt: manilaDayStart(now) },
       overdueSmsSent: false,
     },
     include: {
@@ -131,11 +135,14 @@ export async function autoNotifyOverdue() {
   if (overdueTxs.length === 0) return [];
 
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'late_return' } });
+  const smsGloballyOn = await isSmsEnabled().catch(() => true);
+  const quiet = isReminderQuietHours(now);
 
   const results: { transactionId: string; customerName: string; message: string; status: string }[] = [];
+  let statusFlipped = false;
 
   for (const tx of overdueTxs) {
-    const daysOverdue = Math.max(1, Math.ceil((now.getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const daysOverdue = Math.max(1, manilaDaysPastDue(tx.dueDate, now));
 
     // Always flip to Overdue status even if SMS fails (status ≠ delivery flag),
     // but skip the no-op write: Prisma bumps updatedAt, which the staff
@@ -144,6 +151,21 @@ export async function autoNotifyOverdue() {
       const flipped = await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
       // Carry the bumped timestamp so the flag writes below don't rewind it.
       if (flipped?.updatedAt) tx.updatedAt = flipped.updatedAt;
+      statusFlipped = true;
+    }
+
+    // Overnight the status flip + staff alert still happen, but the customer
+    // SMS/email wait for the morning (their once-guards stay false).
+    if (quiet) {
+      try {
+        await notifyStaffMembers({
+          transactionId: tx.id,
+          type: 'overdue',
+          title: 'Overdue Return',
+          message: `"${tx.item.name}" rented by ${tx.customer.name} is now ${daysOverdue} day(s) overdue.`,
+        });
+      } catch { /* notification is non-critical */ }
+      continue;
     }
 
     // Respect customer opt-out (notifyPrefs.lateReturn === false → skip SMS,
@@ -151,7 +173,6 @@ export async function autoNotifyOverdue() {
     // The global kill-switch ANDs on top: SMS OFF skips the text but the
     // status flip, email path, and staff alert below still run.
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
-    const smsGloballyOn = await isSmsEnabled().catch(() => true);
     const wantsSms = smsGloballyOn && (!prefs || prefs.lateReturn !== false);
     // Email follows the same late-alert opt-out plus the master email switch.
     const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
@@ -181,7 +202,7 @@ export async function autoNotifyOverdue() {
       message = finalizeSms(applyTemplate(message, {
         customer: smsShortName(tx.customer.name),
         item: smsItemName(tx.item.name),
-        date: tx.dueDate.toLocaleDateString('en-PH'),
+        date: formatManilaDate(tx.dueDate),
         days: String(daysOverdue),
         balance: formatPhpAmount(tx.balance),
       }));
@@ -225,15 +246,15 @@ export async function autoNotifyOverdue() {
   }
 
   // Overdue flags change dashboard KPIs — refresh cached dashboard data.
-  if (results.length > 0) clearDataCache();
+  if (results.length > 0 || statusFlipped) clearDataCache();
 
   return results;
 }
 
 // Day-N escalation: rentals still overdue after `overdue_escalation_days` get a
 // single follow-up text. Guarded by overdueEscalationSent so it fires once.
-export async function notifyOverdue3Days() {
-  const now = new Date();
+export async function notifyOverdue3Days(now: Date = new Date()) {
+  if (isReminderQuietHours(now)) return [];
 
   let escalationDays = 3;
   try {
@@ -247,7 +268,8 @@ export async function notifyOverdue3Days() {
     where: {
       status: { in: ['Active', 'Overdue'] },
       overdueEscalationSent: false,
-      dueDate: { lt: new Date(now.getTime() - (escalationDays - 1) * 24 * 60 * 60 * 1000) },
+      // At least `escalationDays` store-calendar days past the due date.
+      dueDate: { lt: new Date(manilaDayStart(now).getTime() - (escalationDays - 1) * 24 * 60 * 60 * 1000) },
     },
     include: {
       customer: { select: { id: true, name: true, email: true, phone: true, notifyPrefs: true } },
@@ -257,14 +279,14 @@ export async function notifyOverdue3Days() {
 
   if (txs.length === 0) return [];
 
+  // Global kill-switch ANDs on top of the per-account opt-out (same shape
+  // as autoNotifyOverdue: status/email/staff-alert paths still run).
+  const smsGloballyOn = await isSmsEnabled().catch(() => true);
   const results: { transactionId: string; customerName: string; sent: boolean }[] = [];
 
   for (const tx of txs) {
-    const daysOverdue = Math.max(escalationDays, Math.ceil((now.getTime() - tx.dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const daysOverdue = Math.max(escalationDays, manilaDaysPastDue(tx.dueDate, now));
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
-    // Global kill-switch ANDs on top of the per-account opt-out (same shape
-    // as autoNotifyOverdue: status/email/staff-alert paths still run).
-    const smsGloballyOn = await isSmsEnabled().catch(() => true);
     const wantsSms = smsGloballyOn && (!prefs || prefs.lateReturn !== false);
     const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
 
@@ -284,9 +306,9 @@ export async function notifyOverdue3Days() {
     if (tx.customer.phone && wantsSms) {
       const message = finalizeSms(`Hi ${smsShortName(tx.customer.name)}, ${smsItemName(tx.item.name)} is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Please call us. Thank you!`);
       try {
-        await sendSms(tx.customer.phone, message);
+        const smsResult = await sendSms(tx.customer.phone, message);
         await prisma.sentSms.create({
-          data: { profileId: tx.customer.id, transactionId: tx.id, message, status: 'sent' },
+          data: { profileId: tx.customer.id, transactionId: tx.id, message, status: smsResult.messageId ? 'sent' : 'queued' },
         });
         sent = true;
       } catch {
@@ -307,11 +329,10 @@ export async function notifyOverdue3Days() {
   return results;
 }
 
-export async function notifyDueToday() {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday);
-  endOfToday.setDate(endOfToday.getDate() + 1);
+export async function notifyDueToday(now: Date = new Date()) {
+  if (isReminderQuietHours(now)) return [];
+  const startOfToday = manilaDayStart(now);
+  const endOfToday = manilaNextDayStart(now);
 
   const dueToday = await prisma.transaction.findMany({
     where: {
@@ -330,14 +351,14 @@ export async function notifyDueToday() {
   // Due-today reminder. Deliberately carries NO late-fee amount — reminder text
   // must stay fee-free per the notification policy.
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'due_reminder' } });
+  // Global kill-switch ANDs on top of the per-account opt-out.
+  const smsGloballyOn = await isSmsEnabled().catch(() => true);
 
   const results: { transactionId: string; customerName: string; itemName: string; sent: boolean }[] = [];
   for (const tx of dueToday) {
     // Text the customer their due-today reminder (if they have a phone + opted in).
     let sent = false;
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
-    // Global kill-switch ANDs on top of the per-account opt-out.
-    const smsGloballyOn = await isSmsEnabled().catch(() => true);
     const wantsSms = smsGloballyOn && (!prefs || prefs.reminder !== false);
     const wantsEmail = !prefs || (prefs.email !== false && prefs.reminder !== false);
 
@@ -350,7 +371,7 @@ export async function notifyDueToday() {
           tx.customer.email,
           tx.customer.name,
           tx.item.name,
-          tx.dueDate.toLocaleDateString('en-PH'),
+          formatManilaDate(tx.dueDate),
         );
         if (emailResult) {
           await markScheduled(tx, { dueReminderEmailSent: true });
@@ -362,9 +383,9 @@ export async function notifyDueToday() {
         ? applyTemplate(template.content, {
             customer: smsShortName(tx.customer.name),
             item: smsItemName(tx.item.name),
-            date: tx.dueDate.toLocaleDateString('en-PH'),
+            date: formatManilaDate(tx.dueDate),
           })
-        : `Hi ${smsShortName(tx.customer.name)}, your ${smsItemName(tx.item.name)} rental is due today (${tx.dueDate.toLocaleDateString('en-PH')}). Thank you!`);
+        : `Hi ${smsShortName(tx.customer.name)}, your ${smsItemName(tx.item.name)} rental is due today (${formatManilaDate(tx.dueDate)}). Thank you!`);
 
       try {
         const smsResult = await sendSms(tx.customer.phone, message);
@@ -438,7 +459,7 @@ export async function checkNoShowAndNotify() {
         transactionId: tx.id,
         type: 'no_show',
         title: 'No-Show Pickup',
-        message: `${tx.customer.name} didn't pick up "${tx.item.name}" (reserved for ${tx.rentalDate.toLocaleDateString('en-PH')}). Cancel the booking?`,
+        message: `${tx.customer.name} didn't pick up "${tx.item.name}" (reserved for ${formatManilaDate(tx.rentalDate)}). Cancel the booking?`,
       });
       await markScheduled(tx, { noShowNotified: true });
       results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name });

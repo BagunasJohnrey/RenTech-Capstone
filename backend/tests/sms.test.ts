@@ -1,9 +1,25 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 import { SMS_MAX_LENGTH, SMS_NOTICE, SMS_ITEM_MAX, finalizeSms, smsShortName, smsItemName } from '../src/services/semaphore.service.js';
+
+import {
+  manilaDayStart, manilaNextDayStart, manilaDaysPastDue, isReminderQuietHours, formatManilaDate,
+} from '../src/utils/manilaDay.js';
+
+// Automatic customer reminders are held during Manila quiet hours (21:00-08:00).
+// Pin Date to Manila noon of the current day so results don't depend on when
+// the suite runs.
+const MANILA_NOON = manilaDayStart(new Date()).getTime() + 12 * 60 * 60 * 1000;
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(MANILA_NOON);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const app = express();
 app.use(express.json());
@@ -510,5 +526,81 @@ describe('SMS formatting', () => {
     expect(capped).not.toContain('…');
     expect(smsItemName('Barong')).toBe('Barong');
     expect(smsItemName(null)).toBe('');
+  });
+});
+
+describe('Store-calendar (Manila) due-date boundaries', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // "YYYY-MM-DD" dates are stored as UTC midnight = 08:00 Manila that day.
+  const due = new Date('2026-10-30T00:00:00Z');
+
+  it('a rental is not past due on its own due date', () => {
+    expect(manilaDaysPastDue(due, new Date('2026-10-30T07:00:00Z'))).toBe(0); // 15:00 Manila
+    expect(manilaDaysPastDue(due, new Date('2026-10-30T15:59:00Z'))).toBe(0); // 23:59 Manila
+    expect(manilaDaysPastDue(due, new Date('2026-10-30T16:00:00Z'))).toBe(1); // 00:00 next day
+  });
+
+  it('due-today window covers the whole Manila day for UTC- and Manila-midnight dates', () => {
+    const at = new Date('2026-10-30T02:00:00Z'); // 10:00 Manila
+    const start = manilaDayStart(at).getTime();
+    const end = manilaNextDayStart(at).getTime();
+    for (const d of [due, new Date('2026-10-29T16:00:00Z')]) {
+      expect(d.getTime() >= start && d.getTime() < end).toBe(true);
+    }
+  });
+
+  it('formats dates on the Manila calendar regardless of server zone', () => {
+    expect(formatManilaDate(new Date('2026-10-29T16:00:00Z'))).toBe(
+      new Date('2026-10-30T12:00:00Z').toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' })
+    );
+  });
+
+  it('quiet hours are 21:00-08:00 Manila', () => {
+    expect(isReminderQuietHours(new Date('2026-10-29T23:59:00Z'))).toBe(true); // 07:59
+    expect(isReminderQuietHours(new Date('2026-10-30T00:00:00Z'))).toBe(false); // 08:00
+    expect(isReminderQuietHours(new Date('2026-10-30T12:59:00Z'))).toBe(false); // 20:59
+    expect(isReminderQuietHours(new Date('2026-10-30T13:00:00Z'))).toBe(true); // 21:00
+  });
+
+  it('autoNotifyOverdue only selects rentals due before today (Manila)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([]);
+    const svc = await import('../src/services/sms.service.js');
+    const at = new Date('2026-10-30T04:00:00Z'); // 12:00 Manila
+    await svc.autoNotifyOverdue(at);
+    const where = prisma.transaction.findMany.mock.calls[0][0].where;
+    expect(where.dueDate.lt).toEqual(manilaDayStart(at));
+    expect(due.getTime() < where.dueDate.lt.getTime()).toBe(false); // due today ≠ overdue
+  });
+
+  it('overnight: overdue status still flips but no customer SMS/email goes out', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-night', status: 'Active', updatedAt: new Date(),
+      dueDate: new Date('2026-10-28T00:00:00Z'), rentalDate: new Date('2026-10-25T00:00:00Z'),
+      balance: 0, overdueSmsSent: false, overdueEmailSent: false,
+      customer: { id: 'c1', name: 'Night Owl', email: 'n@example.com', phone: '09171234567', notifyPrefs: null },
+      item: { id: 1, name: 'Gown' },
+    }]);
+    const svc = await import('../src/services/sms.service.js');
+    global.fetch = vi.fn();
+    await svc.autoNotifyOverdue(new Date('2026-10-29T17:00:00Z')); // 01:00 Manila
+    expect((global.fetch as any).mock.calls.length).toBe(0);
+    const calls = prisma.transaction.update.mock.calls.map((c: any) => c[0].data);
+    expect(calls.some((d: any) => d.status === 'Overdue')).toBe(true);
+    expect(calls.some((d: any) => d.overdueSmsSent || d.overdueEmailSent)).toBe(false);
+    expect(prisma.notification.createMany).toHaveBeenCalled(); // staff still alerted
+  });
+
+  it('overnight: due-today and escalation passes are held entirely', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const svc = await import('../src/services/sms.service.js');
+    const night = new Date('2026-10-29T17:00:00Z');
+    expect(await svc.notifyDueToday(night)).toEqual([]);
+    expect(await svc.notifyOverdue3Days(night)).toEqual([]);
+    expect(prisma.transaction.findMany).not.toHaveBeenCalled();
   });
 });

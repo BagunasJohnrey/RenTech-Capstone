@@ -20,14 +20,24 @@ export async function notifyStaffMembers(data: {
     message: string;
   }[] = [];
 
+  // Dedupe per staff member + transaction + type so we don't spam repeats.
+  // One query for every staff member instead of a findFirst each — this runs
+  // per transaction on every 60s scheduler tick.
+  const alreadyNotified = new Set<string>();
+  if (data.transactionId && staff.length) {
+    const existing = await prisma.notification.findMany({
+      where: {
+        profileId: { in: staff.map((s) => s.id) },
+        transactionId: data.transactionId,
+        type: data.type,
+      },
+      select: { profileId: true },
+    });
+    for (const n of existing ?? []) alreadyNotified.add(n.profileId);
+  }
+
   for (const s of staff) {
-    // Dedupe per staff member + transaction + type so we don't spam repeats.
-    if (data.transactionId) {
-      const existing = await prisma.notification.findFirst({
-        where: { profileId: s.id, transactionId: data.transactionId, type: data.type },
-      });
-      if (existing) continue;
-    }
+    if (alreadyNotified.has(s.id)) continue;
     entries.push({
       profileId: s.id,
       transactionId: data.transactionId ?? null,

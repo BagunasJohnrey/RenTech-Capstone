@@ -12,6 +12,15 @@
 const TTL_MS = 5 * 60_000;
 const store = new Map<string, { data: unknown; at: number }>();
 
+// Concurrent misses for the same key share one computation (the dashboard
+// pre-warm, the warmer and a page load used to each run the full query fan-out).
+const inflight = new Map<string, Promise<unknown>>();
+
+// Bumped on every clear. A computation that STARTED before a mutation may read
+// pre-mutation rows; without this it would land in the store after the clear
+// and serve stale numbers for the full 5-minute TTL.
+let generation = 0;
+
 // Background cache-warmer. `clearDataCache()` drops the whole store on every
 // mutation, so the very next dashboard hit would pay the full query cost (~200
 // ms per round trip against the remote pooler) if we only warmed lazily. A
@@ -24,7 +33,9 @@ let warmFn: Warmer | null = null;
 let warming = false;
 
 export function clearDataCache() {
+  generation++;
   store.clear();
+  inflight.clear();
   if (warmFn && !warming) {
     warming = true;
     Promise.resolve()
@@ -44,7 +55,17 @@ export function setDataCacheWarmer(fn: Warmer) {
 export async function cacheOrCompute<T>(key: string, compute: () => Promise<T>): Promise<T> {
   const hit = store.get(key);
   if (hit && Date.now() - hit.at <= TTL_MS) return hit.data as T;
-  const data = await compute();
-  store.set(key, { data, at: Date.now() });
-  return data;
+  const pending = inflight.get(key);
+  if (pending) return pending as Promise<T>;
+  const gen = generation;
+  const p = compute()
+    .then((data) => {
+      if (gen === generation) store.set(key, { data, at: Date.now() });
+      return data;
+    })
+    .finally(() => {
+      if (inflight.get(key) === p) inflight.delete(key);
+    });
+  inflight.set(key, p);
+  return p;
 }

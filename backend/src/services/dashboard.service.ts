@@ -3,6 +3,7 @@ import { TransactionStatus } from '@prisma/client';
 import { sma, smaCapped, mape } from '../utils/sma.js';
 import { cacheOrCompute, setDataCacheWarmer } from '../utils/ttlCache.js';
 import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
+import { manilaDayStart, manilaNextDayStart } from '../utils/manilaDay.js';
 
 // Refill the hot dashboard keys right after a mutation clears the cache, in the
 // background. Without this, the first dashboard visit after any booking /
@@ -80,8 +81,7 @@ export async function getKpis(filter?: { start?: Date; end?: Date }) {
 }
 
 async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const todayStart = manilaDayStart();
   const [
     activeRentals,
     overdueReturns,
@@ -109,55 +109,12 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     prisma.inventoryItem.count({ where: { status: 'Available' } }),
   ]);
 
-  // All-time collected across every period (drives the AI Insights Overall
-  // tab). Kept separate from monthlyRevenue so the dashboards that consume
-  // getKpis() unfiltered keep their current-month figure.
-  const totalRevenue = await aggregateRevenueFrom(new Date(0));
-
-  let prevRevenue = 0;
-  if (filter?.start) {
-    const end = filter.end || new Date();
-    const rangeMs = end.getTime() - filter.start.getTime();
-    const prevStart = new Date(filter.start.getTime() - rangeMs);
-    prevRevenue = await aggregateRevenueFrom(prevStart, filter.start);
-  } else {
-    const prevStart = new Date();
-    prevStart.setMonth(prevStart.getMonth() - 1);
-    prevStart.setDate(1);
-    prevRevenue = await aggregateRevenueBetween(prevStart, new Date(prevStart.getFullYear(), prevStart.getMonth() + 1, 1));
-  }
-
-  const allTransactions = activeRentals + overdueReturns + returnedCount + cancelledCount;
-  const inUseItems = totalItems - availableItems;
-  const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
-
-  // Revenue trend: one collected-payments series over the same month
-  // buckets the admin Revenue Trend chart renders (last 6 months including
-  // the current one). Previously the chart summed booked rental fees from the
-  // transaction list client-side, which disagreed with this payments-based
-  // monthlyRevenue (e.g. card showed a Sept-heavy total while the chart
-  // spiked Oct on unpaid bookings). Same definition everywhere now.
+  // Everything below is independent of the counts above and of each other.
+  // They used to run one after another (5 extra pooler round trips on every
+  // cache miss); now they all fly in one batch.
   const now = new Date();
   const trendStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
   const trendEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const trendPayments = await prisma.payment.findMany({
-    where: {
-      status: { in: COLLECTED_PAYMENT_STATUS },
-      createdAt: { gte: trendStart, lt: trendEnd },
-    },
-    select: { amount: true, createdAt: true },
-  });
-  const revenueTrend = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const label = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
-    const revenue = trendPayments
-      .filter(
-        (p) => p.createdAt.getFullYear() === d.getFullYear() && p.createdAt.getMonth() === d.getMonth()
-      )
-      .reduce((sum, p) => sum + p.amount, 0);
-    revenueTrend.push({ label, revenue });
-  }
 
   // Logbook companions (unverified paper history): same window as the ledger
   // revenue above, but reported SEPARATELY — never merged in. The UI renders
@@ -175,35 +132,89 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
       lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
     };
   }
-  let logbookRevenue = 0;
-  let logbookRentals = 0;
-  try {
-    const agg = await prisma.historicalRecord.aggregate({
-      where: histWhere,
-      _sum: { price: true },
-      _count: { id: true },
-    });
-    logbookRevenue = agg._sum.price ?? 0;
-    logbookRentals = agg._count.id;
-  } catch { /* enrichment only — KPIs stay ledger-pure */ }
 
-  // Previous-window logbook (mirrors prevRevenue above) so the Revenue card's
+  // Enrichment only — KPIs stay ledger-pure if the logbook query fails.
+  const logbookPromise = (async () => {
+    try {
+      return await prisma.historicalRecord.aggregate({
+        where: histWhere,
+        _sum: { price: true },
+        _count: { id: true },
+      });
+    } catch { return null; }
+  })();
+
+  const prevRevenuePromise = (() => {
+    if (filter?.start) {
+      const end = filter.end || new Date();
+      const rangeMs = end.getTime() - filter.start.getTime();
+      const prevStart = new Date(filter.start.getTime() - rangeMs);
+      return aggregateRevenueFrom(prevStart, filter.start);
+    }
+    const prevStart = new Date();
+    prevStart.setMonth(prevStart.getMonth() - 1);
+    prevStart.setDate(1);
+    return aggregateRevenueBetween(prevStart, new Date(prevStart.getFullYear(), prevStart.getMonth() + 1, 1));
+  })();
+
+  // Previous-window logbook (mirrors prevRevenue) so the Revenue card's
   // % change compares combined-vs-combined instead of combined-vs-ledger.
-  let prevLogbookRevenue = 0;
-  let prevLogbookRentals = 0;
-  if (filter?.start) {
+  const prevLogbookPromise = (async () => {
+    if (!filter?.start) return null;
     const end = filter.end || new Date();
     const rangeMs = end.getTime() - filter.start.getTime();
     try {
-      const agg = await prisma.historicalRecord.aggregate({
+      return await prisma.historicalRecord.aggregate({
         where: { eventDate: { gte: new Date(filter.start.getTime() - rangeMs), lt: filter.start } },
         _sum: { price: true },
         _count: { id: true },
       });
-      prevLogbookRevenue = agg._sum.price ?? 0;
-      prevLogbookRentals = agg._count.id;
-    } catch { /* enrichment only */ }
+    } catch { return null; /* enrichment only */ }
+  })();
+
+  const [totalRevenue, prevRevenue, trendPayments, logbookAgg, prevLogbookAgg] = await Promise.all([
+    // All-time collected across every period (drives the AI Insights Overall
+    // tab). Kept separate from monthlyRevenue so the dashboards that consume
+    // getKpis() unfiltered keep their current-month figure.
+    aggregateRevenueFrom(new Date(0)),
+    prevRevenuePromise,
+    prisma.payment.findMany({
+      where: {
+        status: { in: COLLECTED_PAYMENT_STATUS },
+        createdAt: { gte: trendStart, lt: trendEnd },
+      },
+      select: { amount: true, createdAt: true },
+    }),
+    logbookPromise,
+    prevLogbookPromise,
+  ]);
+
+  const allTransactions = activeRentals + overdueReturns + returnedCount + cancelledCount;
+  const inUseItems = totalItems - availableItems;
+  const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+
+  // Revenue trend: one collected-payments series over the same month
+  // buckets the admin Revenue Trend chart renders (last 6 months including
+  // the current one). Previously the chart summed booked rental fees from the
+  // transaction list client-side, which disagreed with this payments-based
+  // monthlyRevenue (e.g. card showed a Sept-heavy total while the chart
+  // spiked Oct on unpaid bookings). Same definition everywhere now.
+  const revenueTrend = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const label = d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+    const revenue = trendPayments
+      .filter(
+        (p) => p.createdAt.getFullYear() === d.getFullYear() && p.createdAt.getMonth() === d.getMonth()
+      )
+      .reduce((sum, p) => sum + p.amount, 0);
+    revenueTrend.push({ label, revenue });
   }
+
+  const logbookRevenue = logbookAgg?._sum?.price ?? 0;
+  const logbookRentals = logbookAgg?._count?.id ?? 0;
+  const prevLogbookRevenue = prevLogbookAgg?._sum?.price ?? 0;
+  const prevLogbookRentals = prevLogbookAgg?._count?.id ?? 0;
 
   return {
     activeRentals,
@@ -277,10 +288,10 @@ export async function getTodayTasks() {
 }
 
 async function getTodayTasksUncached() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  // Store-calendar (Manila) day so the digest flips at local midnight, not
+  // at 08:00 when the server runs in UTC.
+  const today = manilaDayStart();
+  const tomorrow = manilaNextDayStart();
 
   // One batch: the old code awaited these serially (4+ back-to-back pooler
   // round trips). All five are independent, so they fly together.

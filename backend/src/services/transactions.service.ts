@@ -13,6 +13,7 @@ import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { verifyDiscountPin } from './auth.service.js';
 import { getBusinessRules, getFeatureFlags, isSmsEnabled } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
+import { manilaDayStart, manilaNextDayStart, manilaDaysPastDue, formatManilaDate } from '../utils/manilaDay.js';
 
 // After an item is returned it enters a cleaning window of this many days
 // before it can be rented again. Staff manually flip the item back to
@@ -166,8 +167,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   if (start.getTime() > end.getTime()) {
     throw new AppError(400, 'Pickup date must be on or before the due date');
   }
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  // Store-calendar (Manila) day, not the server zone: dates arrive as
+  // "YYYY-MM-DD" → UTC midnight, so a server-local midnight made same-day
+  // pickups "future" (Reserved) whenever the server and store days differ.
+  const todayStart = manilaDayStart();
   if (start.getTime() < todayStart.getTime()) {
     throw new AppError(400, 'Pickup date cannot be in the past');
   }
@@ -175,7 +178,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   // A booking whose rental starts in the future is an "upcoming hold": the
   // transaction is created as Reserved (and the item held as Reserved) until
   // staff release/pick it up, at which point it becomes Active/Rented.
-  const isFuture = start.getTime() > todayStart.getTime();
+  const isFuture = start.getTime() >= manilaNextDayStart().getTime();
 
   // Only currently-active rentals/reservations block a new booking. Returned
   // transactions are no longer shown — the item is in Cleaning status instead.
@@ -358,7 +361,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           transactionId: transaction.id,
           type: 'booking_confirmation',
           title: 'Booking Confirmed',
-          message: `Your rental of "${transaction.item.name}" is confirmed. Due back ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
+          message: `Your rental of "${transaction.item.name}" is confirmed. Due back ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' })}.`,
         });
   } catch { /* notification is non-critical */ }
 
@@ -368,7 +371,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
       transactionId: transaction.id,
       type: 'new_booking',
       title: 'New Booking',
-      message: `${transaction.customer.name} booked "${transaction.item.name}" — due ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
+      message: `${transaction.customer.name} booked "${transaction.item.name}" — due ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' })}.`,
     });
   } catch { /* notification is non-critical */ }
 
@@ -408,10 +411,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           ? applyTemplate(template.content, {
               customer: smsShortName(customerProfile.name),
               item: smsItemName(transaction.item.name),
-              date: start.toLocaleDateString('en-PH'),
+              date: formatManilaDate(start),
               days: String(Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)))),
             })
-          : `Hi ${smsShortName(customerProfile.name)}, ${smsItemName(transaction.item.name)} is booked. Due back ${end.toLocaleDateString('en-PH')}. Thank you!`);
+          : `Hi ${smsShortName(customerProfile.name)}, ${smsItemName(transaction.item.name)} is booked. Due back ${formatManilaDate(end)}. Thank you!`);
 
       await sendSms(customerProfile.phone, message).then(() =>
         prisma.sentSms.create({
@@ -435,8 +438,8 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
         await sendBookingConfirmationEmail(customerProfile.email, {
           customerName: customerProfile.name,
           itemName: transaction.item.name,
-          pickupDate: start.toLocaleDateString('en-PH'),
-          dueDate: end.toLocaleDateString('en-PH'),
+          pickupDate: formatManilaDate(start),
+          dueDate: formatManilaDate(end),
           rentalFee: fee,
           downpayment,
           balance: fee - downpayment,
@@ -643,7 +646,10 @@ export async function processReturn(
 
   // Staff alert: late return (only when returned after the due date).
   // No penalty is charged (late fees removed) — this is an FYI for the queue.
-  if (retDate.getTime() > tx.dueDate.getTime()) {
+  // Late = returned on a later store-calendar day than the due date (the due
+  // date is stored as 08:00 Manila, so an on-time afternoon return used to
+  // raise a "Late Return" alert).
+  if (manilaDaysPastDue(tx.dueDate, retDate) > 0) {
     try {
       await notifyStaffMembers({
         transactionId,
@@ -758,7 +764,7 @@ export async function updateTransaction(
   // in-app + by email (best-effort, never blocks the edit). Alteration-only
   // flips stay silent to avoid spamming for tailor progress.
   if (datesChanged) {
-    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' });
     try {
       await createNotification({
         profileId: existing.customerId,
@@ -921,9 +927,7 @@ export async function swapBookingItem(
           data: { status: ItemStatus.Available, outOfServiceReason: null },
         });
       }
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const isFuture = existing.rentalDate.getTime() > todayStart.getTime();
+      const isFuture = existing.rentalDate.getTime() >= manilaNextDayStart().getTime();
       await tx.inventoryItem.update({
         where: { id: newItemId },
         data: { status: isFuture ? ItemStatus.Reserved : ItemStatus.Rented },
@@ -1204,7 +1208,7 @@ export async function releaseRental(
         customerProfile.email,
         customerProfile.name,
         tx.item.name,
-        updated.dueDate.toLocaleDateString('en-PH'),
+        formatManilaDate(updated.dueDate),
       );
     }
   } catch { /* email is non-critical */ }
@@ -1339,10 +1343,8 @@ export async function getTransactionAudits(transactionId: string) {
 }
 
 export async function getUpcomingReturns() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const threeDaysFromNow = new Date(today);
-  threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+  const today = manilaDayStart();
+  const threeDaysFromNow = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
 
   const transactions = await prisma.transaction.findMany({
     where: {
