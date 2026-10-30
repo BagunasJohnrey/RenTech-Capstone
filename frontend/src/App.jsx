@@ -819,8 +819,13 @@ export default function RentechApp() {
   // shape and get swapped for the real page's own skeleton a moment later.
   // Guests skip the check (one frame), so they get a plain background
   // rather than a flash of the signed-in shell.
+  // The Google round-trip pad (/oauth/callback) is about to land in the app,
+  // so it wears the same shell skeleton as the session check that follows —
+  // one continuous loading state instead of a landing-shaped skeleton, a
+  // full reload, then a different shell skeleton.
+  const oauthCallbackPad = location.pathname === '/oauth/callback';
   if (loading) {
-    return isAuthed() || hasSessionCookie() || isDemoMode()
+    return isAuthed() || hasSessionCookie() || isDemoMode() || oauthCallbackPad
       ? <AppShellSkeleton />
       : <div className="min-h-screen bg-[#fcfcfd]" />;
   }
@@ -882,13 +887,8 @@ export default function RentechApp() {
     // landing spots while the code is exchanged or the details form is shown —
     // never "not found". With a still-valid session, isLoggedIn is already
     // true for a frame here; show a skeleton instead of flashing the 404.
-    if (location.pathname === '/oauth/callback' || location.pathname === '/oauth-details') {
-      return (
-        <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center">
-          <SkeletonScreen />
-        </div>
-      );
-    }
+    if (oauthCallbackPad) return <AppShellSkeleton />;
+    if (location.pathname === '/oauth-details') return <div className="min-h-screen bg-[#fcfcfd]" />;
     if (roleOwnsPath && roleOwnsPath !== viewRole) {
       return (
         <UnauthorizedPage onHome={() => navigate(HOME_PATH[viewRole], { replace: true })} />
@@ -939,13 +939,11 @@ export default function RentechApp() {
     // OAuth round-trip pads while signed out: the SPA lands on /oauth/callback
     // (code exchange in flight) or /oauth-details (details form) before the
     // backend round-trips it home — never flash the guest 404 for these.
-    if (location.pathname === '/oauth/callback' || location.pathname === '/oauth-details') {
-      return (
-        <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center">
-          <SkeletonScreen />
-        </div>
-      );
-    }
+    // The callback is on its way into the app (same shell skeleton as the
+    // boot check after the redirect); the details pad is a one-frame wait
+    // for the details form, so it stays a plain background.
+    if (oauthCallbackPad) return <AppShellSkeleton />;
+    if (location.pathname === '/oauth-details') return <div className="min-h-screen bg-[#fcfcfd]" />;
     // Unknown URL while signed out -> 404 with a way back to the landing page.
     // /sign-in and /collection are the only public routes besides '/'.
     if (!guestCollection && location.pathname !== '/' && location.pathname !== SIGN_IN_PATH) {
