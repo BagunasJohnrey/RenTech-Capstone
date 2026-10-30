@@ -542,7 +542,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // Never-rented items (0x) are NOT "most rented" — filter them out so the
   // static insights and Top Rented card fall back gracefully when there are no
   // rentals yet instead of claiming a 0x item is the store's leader.
-  const popularItems = topRented.filter(i => i.rentals > 0).slice(0, 5);
+  const popularItems = topRented.filter(i => i.rentals > 0).slice(0, 10);
 
   // -- Status distribution --
   const statusDist = [
@@ -841,9 +841,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           />
         </div>
 
-        {/* Row 2: Demand Forecast + Top Items (items-start: the forecast is
-            much taller, so the side card keeps its own height) */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Row 2: Demand Forecast + Top Items (the forecast sets the row
+            height; TopRented stretches to it and scrolls its list) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <DemandForecast
             granularity={granularity} setGranularity={changeGranularity}
             loadWeeklyForecast={loadWeeklyForecast} weeklyLoading={weeklyLoading}
@@ -852,7 +852,10 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           />
           <TopRented
             popularItems={popularItems} underperforming={underperforming}
-            imgById={imgById} openSmartModal={openSmartModal}
+            imgById={imgById}
+            // Promotions is Admin-only; staff keep the never-rented list.
+            onNeverRented={role === 'Admin' && onNavigateTab ? () => onNavigateTab('Promotions') : () => openSmartModal('never')}
+            neverRentedLabel={role === 'Admin' ? 'Put them on sale in Promotions' : 'Consider a sale or feature them'}
           />
         </div>
 
