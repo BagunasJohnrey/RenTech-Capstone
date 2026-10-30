@@ -79,6 +79,92 @@ describe('savePromoSuggestion identical-save guard', () => {
   });
 });
 
+describe('runAutoPromoSuggestions (weekly scheduler)', () => {
+  beforeEach(async () => {
+    // No AI keys in tests → rule-based ideas (source 'fallback'), which are
+    // saveable. Seed one never-rented item so the rule engine has something.
+    const { prisma } = await import('../src/config/database.js');
+    const { resetAutoPromoAttempts } = await import('../src/services/autoPromo.service.js');
+    resetAutoPromoAttempts();
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+    prisma.inventoryItem.findMany.mockResolvedValue([
+      { id: 1, name: 'Emerald Gown', category: 'Gown', price: 3000, status: 'Available', onSale: false, _count: { transactions: 0 }, transactions: [] },
+    ]);
+    prisma.profile.findMany.mockResolvedValue([{ id: 'admin-id-789' }]);
+    prisma.businessRule.findUnique.mockResolvedValue(null);
+  });
+
+  it('saves the ideas, stamps the week, and notifies admins', async () => {
+    const { runAutoPromoSuggestions, AUTO_PROMO_WEEK_RULE, AUTO_PROMO_TYPE } = await import('../src/services/autoPromo.service.js');
+    const { prisma } = await import('../src/config/database.js');
+    const res = await runAutoPromoSuggestions();
+    expect(res.skipped).toBe(false);
+    expect(res.id).toBeTruthy();
+    expect(prisma.businessRule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { key: AUTO_PROMO_WEEK_RULE } })
+    );
+    expect(prisma.notification.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ profileId: 'admin-id-789', type: AUTO_PROMO_TYPE })],
+    });
+    // Scheduler rows carry no author — the UI labels them "Weekly".
+    const { getPromoSuggestion } = await import('../src/services/aiPromoSuggestion.service.js');
+    expect((await getPromoSuggestion(res.id!)).createdBy).toBeNull();
+  });
+
+  it('skips when the current Manila week is already stamped', async () => {
+    const { runAutoPromoSuggestions } = await import('../src/services/autoPromo.service.js');
+    const { manilaWeekKey } = await import('../src/services/autoReport.service.js');
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findUnique.mockResolvedValueOnce({ value: manilaWeekKey() });
+    const res = await runAutoPromoSuggestions();
+    expect(res.skipped).toBe(true);
+    expect(prisma.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  it('does not re-notify when the ideas are unchanged from the last saved run', async () => {
+    const { runAutoPromoSuggestions } = await import('../src/services/autoPromo.service.js');
+    const { prisma } = await import('../src/config/database.js');
+    const first = await runAutoPromoSuggestions();
+    vi.mocked(prisma.notification.createMany).mockClear();
+    // Same inputs (the week rule mock never reports a stamp) → identical ideas.
+    const second = await runAutoPromoSuggestions();
+    expect(second.deduped).toBe(true);
+    expect(second.id).toBe(first.id);
+    expect(prisma.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  it('gives up for the week after repeated failures instead of retrying every hour', async () => {
+    const autoPromo = await import('../src/services/autoPromo.service.js');
+    const { env } = await import('../src/config/env.js');
+    const { prisma } = await import('../src/config/database.js');
+    // Only Gemini configured, and it answers 429 → source 'error' every time.
+    env.GEMINI_API_KEY = 'test-key';
+    const realFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 429, statusText: 'Too Many Requests',
+      text: () => Promise.resolve('quota'), json: () => Promise.resolve({ error: { code: 429 } }),
+    });
+    try {
+      for (let i = 1; i < autoPromo.AUTO_PROMO_MAX_ATTEMPTS; i++) {
+        const r = await autoPromo.runAutoPromoSuggestions();
+        expect(r.skipped).toBe(true);
+        expect(r.gaveUp).toBeUndefined();
+      }
+      expect(prisma.businessRule.upsert).not.toHaveBeenCalled();
+      const last = await autoPromo.runAutoPromoSuggestions();
+      expect(last.gaveUp).toBe(true);
+      expect(prisma.businessRule.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { key: autoPromo.AUTO_PROMO_WEEK_RULE } })
+      );
+      expect(prisma.notification.createMany).not.toHaveBeenCalled();
+    } finally {
+      env.GEMINI_API_KEY = '';
+      global.fetch = realFetch;
+    }
+  });
+});
+
 describe('runAutoReport (weekly scheduler)', () => {
   const FULL_REPORT = [
     'Executive Summary',

@@ -1,14 +1,26 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Tag, Check, X, Loader2, Search, ChevronLeft, ChevronRight, Package } from 'lucide-react';
+import { Tag, X, Loader2, Search, CalendarClock } from 'lucide-react';
 import { inventoryService } from '../services';
 import ItemImage from './ItemImage';
-import { SkeletonList } from './Skeleton';
+import { getSaleInfo } from './ItemCard';
+import FilterChip from './ui/FilterChip';
+import Pagination from './ui/Pagination';
+import { useToast } from './Toast';
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 10;
+const FILTERS = [
+  { id: null, label: 'All' },
+  { id: 'never', label: 'Never rented' },
+  { id: 'onSale', label: 'On sale' },
+];
 
-export default function BulkSaleManager() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+const peso = (n) => `₱${Math.round(n).toLocaleString()}`;
+
+// Pick items (stagnant stock first) and put them on sale in one batch. The
+// item list comes from the app's inventory so sales applied elsewhere on the
+// page show up here immediately; `onSalePatch` writes our changes back.
+export default function BulkSaleManager({ items = [], onSalePatch, filter = null, onFilterChange }) {
+  const { success: toastSuccess, error: toastError } = useToast();
   const [selected, setSelected] = useState(new Set());
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -16,298 +28,198 @@ export default function BulkSaleManager() {
   const [salePrice, setSalePrice] = useState('');
   const [saleEndsAt, setSaleEndsAt] = useState('');
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState('');
 
-  useEffect(() => {
-    inventoryService.list()
-      .then(data => {
-        if (Array.isArray(data)) {
-          // Archived items (status "Deleted") still come back to Admin from
-          // /inventory so they can be reviewed/restored, but they are not
-          // sellable stock — never offer them in the bulk sale picker.
-          setItems(data.filter(i => i.status !== 'Deleted'));
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const counts = useMemo(() => ({
+    null: items.length,
+    never: items.filter(i => (i.rentalCount ?? 0) === 0).length,
+    onSale: items.filter(i => getSaleInfo(i).active).length,
+  }), [items]);
 
   // Sort: stagnant items first (fewest rentals), then by name.
-  // Items with 0 rentals (never rented) appear first.
   const sorted = useMemo(() => {
-    const filtered = search
-      ? items.filter(i => i.name.toLowerCase().includes(search.toLowerCase()) || i.category?.toLowerCase().includes(search.toLowerCase()))
-      : items;
-    return [...filtered].sort((a, b) => {
-      const ra = a.rentalCount ?? 0;
-      const rb = b.rentalCount ?? 0;
-      if (ra !== rb) return ra - rb;
-      return a.name.localeCompare(b.name);
-    });
-  }, [items, search]);
+    const q = search.trim().toLowerCase();
+    return items
+      .filter(i => filter !== 'never' || (i.rentalCount ?? 0) === 0)
+      .filter(i => filter !== 'onSale' || getSaleInfo(i).active)
+      .filter(i => !q || i.name.toLowerCase().includes(q) || i.category?.toLowerCase().includes(q))
+      .sort((a, b) => ((a.rentalCount ?? 0) - (b.rentalCount ?? 0)) || a.name.localeCompare(b.name));
+  }, [items, search, filter]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const paged = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Reset page when search changes
-  useEffect(() => { setPage(1); }, [search]);
+  useEffect(() => { setPage(1); }, [search, filter]);
 
-  const toggleSelect = (id) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
+  const toggleSelect = (id) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
-  const toggleAll = () => {
-    const pagedIds = paged.map(i => i.id);
-    const allSelected = pagedIds.every(id => selected.has(id));
-    if (allSelected) {
-      setSelected(prev => { const n = new Set(prev); pagedIds.forEach(id => n.delete(id)); return n; });
-    } else {
-      setSelected(prev => { const n = new Set(prev); pagedIds.forEach(id => n.add(id)); return n; });
+  const allShownSelected = sorted.length > 0 && sorted.every(i => selected.has(i.id));
+  const toggleAllShown = () => setSelected(prev => {
+    const n = new Set(prev);
+    sorted.forEach(i => (allShownSelected ? n.delete(i.id) : n.add(i.id)));
+    return n;
+  });
+
+  const runBulk = async (sale, doneMsg) => {
+    const ids = Array.from(selected);
+    setSaving(true);
+    try {
+      await inventoryService.bulkSale(ids, sale);
+      onSalePatch?.(ids, sale.onSale ? sale : { onSale: false, discountPct: null, salePrice: null, saleEndsAt: null });
+      toastSuccess(doneMsg(ids.length));
+      setSelected(new Set());
+      return true;
+    } catch (err) {
+      toastError(err.message || 'Failed to update sale');
+      return false;
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleApply = async () => {
-    if (selected.size === 0) { setMsg('Select at least one item.'); setTimeout(() => setMsg(''), 2500); return; }
-    const pct = discountPct ? parseFloat(discountPct) : null;
-    const price = salePrice ? parseFloat(salePrice) : null;
-    if (pct === null && price === null) { setMsg('Enter a discount % or sale price.'); setTimeout(() => setMsg(''), 2500); return; }
-
-    setSaving(true);
-    try {
-      await inventoryService.bulkSale(Array.from(selected), {
-        onSale: true,
-        discountPct: pct,
-        salePrice: price,
-        saleEndsAt: saleEndsAt || null,
-      });
-      // Update local state
-      setItems(prev => prev.map(i => selected.has(i.id)
-        ? { ...i, onSale: true, discountPct: pct, salePrice: price, saleEndsAt: saleEndsAt || null }
-        : i
-      ));
-      setMsg(`${selected.size} item(s) put on sale!`);
-      setSelected(new Set());
-      setDiscountPct('');
-      setSalePrice('');
-      setSaleEndsAt('');
-    } catch (err) {
-      setMsg(err.message || 'Failed to apply sale');
-    } finally {
-      setSaving(false);
-    }
-    setTimeout(() => setMsg(''), 3000);
+    const pct = discountPct !== '' ? parseFloat(discountPct) : null;
+    const price = salePrice !== '' ? parseFloat(salePrice) : null;
+    if (!(pct > 0) && !(price > 0)) { toastError('Enter a discount % or a sale price.'); return; }
+    const ok = await runBulk(
+      { onSale: true, discountPct: pct, salePrice: price, saleEndsAt: saleEndsAt || null },
+      n => `${n} item${n !== 1 ? 's' : ''} put on sale`,
+    );
+    if (ok) { setDiscountPct(''); setSalePrice(''); setSaleEndsAt(''); }
   };
 
-  const handleClearSale = async () => {
-    if (selected.size === 0) return;
-    setSaving(true);
-    try {
-      await inventoryService.bulkSale(Array.from(selected), { onSale: false });
-      setItems(prev => prev.map(i => selected.has(i.id) ? { ...i, onSale: false, discountPct: null, salePrice: null, saleEndsAt: null } : i));
-      setMsg(`Sale cleared from ${selected.size} item(s).`);
-      setSelected(new Set());
-    } catch (err) {
-      setMsg(err.message || 'Failed to clear sale');
-    } finally {
-      setSaving(false);
-    }
-    setTimeout(() => setMsg(''), 3000);
-  };
+  const handleClearSale = () => runBulk({ onSale: false }, n => `Sale cleared from ${n} item${n !== 1 ? 's' : ''}`);
 
-  const allPagedSelected = paged.length > 0 && paged.every(i => selected.has(i.id));
-  const allItemsSelected = sorted.length > 0 && sorted.every(i => selected.has(i.id));
+  const inputCls = 'w-full h-10 px-3 bg-white rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/10';
 
   return (
-    <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="w-11 h-11 rounded-2xl bg-rose-50 text-[#bf4a53] flex items-center justify-center shrink-0">
-            <Tag size={20} />
-          </span>
-          <div className="min-w-0">
-            <h3 className="font-bold text-gray-900 text-base">On Sale</h3>
-            <p className="text-xs text-gray-500 mt-0.5">Bulk discount items — stagnant stock prioritized</p>
-          </div>
+    <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm">
+      {/* Toolbar */}
+      <div className="p-4 md:p-5 space-y-3 border-b border-gray-100">
+        <div className="relative">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name or category…"
+            className="w-full h-10 pl-9 pr-4 bg-gray-50 rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-[#bf4a53] focus:bg-white transition-all" />
         </div>
-        {selected.size > 0 && (
-          <span className="shrink-0 text-[11px] font-bold text-[#bf4a53] bg-rose-50 px-3 py-1.5 rounded-full">
-            {selected.size} selected
-          </span>
-        )}
-      </div>
-
-      {/* Bulk sale form */}
-      <div className="bg-gray-50/70 border border-gray-100 rounded-2xl p-4 space-y-3">
-        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Apply to selected</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount %</label>
-            <input type="number" min={0} max={100} value={discountPct}
-              onChange={e => setDiscountPct(e.target.value === '' ? '' : Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
-              placeholder="0"
-              className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-[#bf4a53]" />
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Sale Price ₱</label>
-            <input type="number" min={0} step="0.01" value={salePrice}
-              onChange={e => setSalePrice(e.target.value)}
-              placeholder="optional"
-              className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-[#bf4a53]" />
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Sale Ends</label>
-            <input type="date" value={saleEndsAt} onChange={e => setSaleEndsAt(e.target.value)}
-              className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-[#bf4a53]" />
-          </div>
-        </div>
-        <p className="text-[11px] text-gray-400">Leave sale price empty to apply % off the regular price.</p>
-        <div className="flex items-center gap-2 pt-1">
-          <button onClick={handleApply} disabled={saving || selected.size === 0}
-            className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-[#bf4a53] hover:bg-red-700 active:scale-[0.99] transition-all disabled:opacity-50">
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-            {saving ? 'Applying…' : 'Put on Sale'}
-          </button>
-          <button onClick={handleClearSale} disabled={saving || selected.size === 0}
-            className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 active:scale-[0.99] transition-all disabled:opacity-50">
-            <X size={13} /> Clear Sale
-          </button>
+        <div className="flex gap-2 overflow-x-auto -mx-1 px-1">
+          {FILTERS.map(f => (
+            <FilterChip key={String(f.id)} active={filter === f.id} count={counts[f.id]} onClick={() => onFilterChange?.(f.id)}>
+              {f.label}
+            </FilterChip>
+          ))}
         </div>
       </div>
 
-      {msg && <p className={`text-xs font-bold ${msg.includes('Failed') || msg.includes('Select') || msg.includes('Enter') ? 'text-amber-600' : 'text-emerald-600'}`}>{msg}</p>}
-
-      {/* Search */}
-      <div className="relative">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search items…"
-          className="w-full pl-9 pr-4 py-2.5 bg-gray-50 rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-[#bf4a53] focus:bg-white transition-all" />
-      </div>
-
-      {/* Item list */}
-      {loading ? (
-        <SkeletonList count={4} />
-      ) : sorted.length === 0 ? (
-        <p className="text-sm text-gray-400 text-center py-6">No items found.</p>
+      {/* List */}
+      {sorted.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-10">No items match.</p>
       ) : (
         <>
-          {/* Select all / page row */}
-          <div className="flex items-center gap-3 px-1">
-            <button onClick={() => {
-              if (allItemsSelected) {
-                setSelected(new Set());
-              } else {
-                setSelected(new Set(sorted.map(i => i.id)));
-              }
-            }}
-              className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all ${allItemsSelected ? 'bg-[#bf4a53] border-[#bf4a53]' : 'border-gray-300 hover:border-gray-400'}`}>
-              {allItemsSelected && <Check size={12} className="text-white" />}
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 font-medium cursor-pointer" onClick={() => {
-                if (allItemsSelected) { setSelected(new Set()); } else { setSelected(new Set(sorted.map(i => i.id))); }
-              }}>
-                Select all ({sorted.length})
-              </span>
-              <span className="text-gray-300">|</span>
-              <span className="text-xs text-gray-400 font-medium cursor-pointer hover:text-gray-600" onClick={() => {
-                if (allPagedSelected) {
-                  setSelected(prev => { const n = new Set(prev); paged.forEach(i => n.delete(i.id)); return n; });
-                } else {
-                  setSelected(prev => { const n = new Set(prev); paged.forEach(i => n.add(i.id)); return n; });
-                }
-              }}>
-                {allPagedSelected ? 'Deselect page' : 'Select page'} ({paged.length})
-              </span>
-            </div>
+          <div className="flex items-center justify-between gap-3 px-4 md:px-5 py-2.5 bg-gray-50/60 border-b border-gray-100">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input type="checkbox" checked={allShownSelected} onChange={toggleAllShown}
+                className="h-4 w-4 rounded accent-[#bf4a53]" />
+              <span className="text-xs font-semibold text-gray-600">Select all {sorted.length}</span>
+            </label>
+            <span className="text-[11px] text-gray-400">Least rented first</span>
           </div>
 
-          <div className="space-y-2">
+          <ul className="divide-y divide-gray-100">
             {paged.map(item => {
               const isSelected = selected.has(item.id);
-              const hasSale = !!item.onSale;
+              const sale = getSaleInfo(item);
+              const rentals = item.rentalCount ?? 0;
               return (
-                <div key={item.id}
-                  onClick={() => toggleSelect(item.id)}
-                  className={`flex items-center gap-3 p-3 rounded-2xl border cursor-pointer transition-all ${
-                    isSelected ? 'border-[#bf4a53] bg-rose-50/50 shadow-sm' : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm'
-                  }`}>
-                  <button onClick={(e) => { e.stopPropagation(); toggleSelect(item.id); }}
-                    className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all ${
-                      isSelected ? 'bg-[#bf4a53] border-[#bf4a53]' : 'border-gray-300'
-                    }`}>
-                    {isSelected && <Check size={12} className="text-white" />}
-                  </button>
-                  <div className="w-12 h-14 rounded-xl overflow-hidden bg-gray-100 shrink-0">
-                    <ItemImage image={item.image} alt={item.name} thumb className="w-full h-full object-cover" placeholderSize={20} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">{item.name}</p>
-                    <p className="text-[11px] text-gray-500">{item.category} &middot; ₱{item.price}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {(item.rentalCount ?? 0) === 0 && (
-                      <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Never rented</span>
-                    )}
-                    {hasSale && (
-                      <span className="text-[10px] font-bold text-[#bf4a53] bg-rose-50 px-2 py-0.5 rounded-full">On Sale</span>
-                    )}
-                    <span className="text-[10px] text-gray-400">{item.rentalCount ?? 0} rental{(item.rentalCount ?? 0) !== 1 ? 's' : ''}</span>
-                  </div>
-                </div>
+                <li key={item.id}>
+                  <label className={`flex items-center gap-3 px-4 md:px-5 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-rose-50/60' : 'hover:bg-gray-50/70'}`}>
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(item.id)}
+                      className="h-4 w-4 rounded accent-[#bf4a53] shrink-0" />
+                    <div className="w-11 h-14 rounded-xl overflow-hidden bg-gray-100 shrink-0">
+                      <ItemImage image={item.image} alt={item.name} thumb className="w-full h-full object-cover" placeholderSize={18} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{item.name}</p>
+                      <p className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span>{item.category}</span>
+                        <span className="text-gray-300">·</span>
+                        <span className={rentals === 0 ? 'text-amber-600 font-semibold' : ''}>
+                          {rentals === 0 ? 'Never rented' : `${rentals} rental${rentals !== 1 ? 's' : ''}`}
+                        </span>
+                        {sale.active && item.saleEndsAt && (
+                          <>
+                            <span className="text-gray-300">·</span>
+                            <span className="inline-flex items-center gap-0.5"><CalendarClock size={10} />
+                              ends {new Date(item.saleEndsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      {sale.active ? (
+                        <>
+                          <p className="text-sm font-bold text-[#bf4a53] tabular-nums">{peso(sale.price)}</p>
+                          <p className="text-[11px] text-gray-400 line-through tabular-nums">{peso(item.price)}</p>
+                        </>
+                      ) : (
+                        <p className="text-sm font-semibold text-gray-700 tabular-nums">{peso(item.price)}</p>
+                      )}
+                    </div>
+                  </label>
+                </li>
               );
             })}
-          </div>
+          </ul>
 
-          {/* Pagination */}
-          {totalPages > 1 && (() => {
-            const pages = [];
-            const addPage = (p) => pages.push(p);
-            // Always show first page
-            addPage(1);
-            // Pages around current
-            for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) {
-              addPage(i);
-            }
-            // Always show last page
-            if (totalPages > 1) addPage(totalPages);
-            // Dedupe + build display list with ellipsis markers
-            const display = [];
-            let prev = 0;
-            for (const p of pages) {
-              if (p === prev) continue;
-              if (p - prev > 1) display.push('...');
-              display.push(p);
-              prev = p;
-            }
-            return (
-              <div className="flex items-center justify-center gap-1 pt-2">
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                  className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40 transition-all">
-                  <ChevronLeft size={16} />
-                </button>
-                {display.map((p, i) => p === '...' ? (
-                  <span key={`e${i}`} className="px-1 text-gray-300 text-xs select-none">...</span>
-                ) : (
-                  <button key={p} onClick={() => setPage(p)}
-                    className={`min-w-[32px] h-8 rounded-xl text-xs font-bold transition-all ${
-                      page === p
-                        ? 'bg-[#bf4a53] text-white shadow-sm'
-                        : 'border border-gray-200 text-gray-600 hover:bg-gray-50'
-                    }`}>{p}</button>
-                ))}
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                  className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-40 transition-all">
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            );
-          })()}
+          <div className="p-4 md:p-5 border-t border-gray-100">
+            {totalPages > 1
+              ? <Pagination page={page} totalPages={totalPages} summary={`${sorted.length} items`} onPageChange={(p) => setPage(Math.min(totalPages, Math.max(1, p)))} />
+              : <p className="text-[11px] text-gray-400 text-center">{sorted.length} item{sorted.length !== 1 ? 's' : ''}</p>}
+          </div>
         </>
+      )}
+
+      {/* Action bar — appears once something is selected */}
+      {selected.size > 0 && (
+        <div className="sticky bottom-24 md:bottom-6 z-30 px-3 md:px-4 pb-3 md:pb-4">
+          <div className="bg-gray-900 text-white rounded-2xl shadow-2xl shadow-gray-900/30 p-3 md:p-4 animate-in slide-in-from-bottom-2 fade-in duration-200">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <p className="text-sm font-bold">{selected.size} selected</p>
+              <button onClick={() => setSelected(new Set())} className="text-[11px] font-semibold text-white/60 hover:text-white">Deselect</button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-[1fr_1fr_1.2fr_auto_auto] gap-2 items-end text-gray-900">
+              <label className="block">
+                <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">% off</span>
+                <input type="number" min={0} max={100} value={discountPct} placeholder="20"
+                  onChange={e => setDiscountPct(e.target.value === '' ? '' : Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                  className={`${inputCls} mt-1`} />
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">or fixed ₱</span>
+                <input type="number" min={0} step="0.01" value={salePrice} placeholder="Optional"
+                  onChange={e => setSalePrice(e.target.value)} className={`${inputCls} mt-1`} />
+              </label>
+              <label className="block col-span-2 md:col-span-1">
+                <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">Ends</span>
+                <input type="date" value={saleEndsAt} onChange={e => setSaleEndsAt(e.target.value)} className={`${inputCls} mt-1`} />
+              </label>
+              <button onClick={handleClearSale} disabled={saving}
+                className="h-10 inline-flex items-center justify-center gap-1.5 px-4 rounded-xl text-xs font-bold text-white bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-50">
+                <X size={13} /> Clear sale
+              </button>
+              <button onClick={handleApply} disabled={saving}
+                className="h-10 inline-flex items-center justify-center gap-1.5 px-5 rounded-xl text-xs font-bold text-white bg-[#bf4a53] hover:bg-red-700 transition-colors disabled:opacity-50">
+                {saving ? <Loader2 size={13} className="animate-spin" /> : <Tag size={13} />}
+                {saving ? 'Saving…' : 'Put on sale'}
+              </button>
+            </div>
+            <p className="text-[11px] text-white/40 mt-2">A fixed price overrides the %. Leave “Ends” empty to run until cleared.</p>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -15,6 +15,7 @@ import { purgeOldData } from './services/retention.service.js';
 import { ensureBucket } from './services/storage.service.js';
 import { ensureBackupBucket, runAutoBackup } from './services/backup.service.js';
 import { runAutoReport } from './services/autoReport.service.js';
+import { runAutoPromoSuggestions } from './services/autoPromo.service.js';
 import { ensureAiReportsBucket } from './services/aiReport.service.js';
 import { getKpis, getForecast, getInsights, getTodayTasks } from './services/dashboard.service.js';
 import { getInventoryAnalytics } from './services/inventoryAnalytics.service.js';
@@ -323,6 +324,30 @@ app.listen(env.PORT, () => {
     hourly.unref?.();
   }, 15 * 60 * 1000);
   autoReportStart.unref?.();
+
+  // Automatic weekly promotion ideas (same path as the Promotions page
+  // button). Week-anchored like the report; most hourly ticks exit at the
+  // rule read, and a failing AI provider is given up on after a few tries
+  // until next week (see autoPromo.service).
+  let autoPromoRunning = false;
+  const runAutoPromoTick = async () => {
+    if (autoPromoRunning) return;
+    autoPromoRunning = true;
+    try {
+      await runAutoPromoSuggestions();
+    } catch (err) {
+      console.error('[AutoPromo] tick failed:', err);
+    } finally {
+      autoPromoRunning = false;
+    }
+  };
+  // 20 min after boot so it doesn't share a tick with the weekly report.
+  const autoPromoStart = setTimeout(() => {
+    runAutoPromoTick();
+    const hourly = setInterval(runAutoPromoTick, 60 * 60 * 1000);
+    hourly.unref?.();
+  }, 20 * 60 * 1000);
+  autoPromoStart.unref?.();
 
   // Keep Render free tier alive: free web services spin down after ~15 min
   // without INBOUND traffic, so ping the PUBLIC url (Render injects

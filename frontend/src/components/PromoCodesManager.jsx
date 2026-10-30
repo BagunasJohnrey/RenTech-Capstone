@@ -11,7 +11,7 @@ const EMPTY_FORM = {
   appliesToCategories: '', maxUses: '', expiresAt: '',
 };
 
-export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
+export default function PromoCodesManager({ initialForm, onClearInitialForm, onCodesChange }) {
   const [confirm, confirmDialog] = useConfirm();
   const [codes, setCodes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +37,9 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
   };
 
   useEffect(() => { fetchCodes(); }, []);
+
+  // Let the page summary count live codes without a second fetch.
+  useEffect(() => { onCodesChange?.(codes); }, [codes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async (e) => {
     e.preventDefault();

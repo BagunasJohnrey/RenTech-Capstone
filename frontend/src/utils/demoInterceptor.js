@@ -471,6 +471,18 @@ function route(method, path, body) {
     });
     return { value: { updated: body.ids?.length ?? 0 } };
   }
+  if (path === '/inventory/bulk-sale' && method === 'PATCH') {
+    const on = !!body.onSale;
+    (body.ids ?? []).forEach((id) => {
+      const it = items.find((i) => i.id === id);
+      if (!it) return;
+      it.onSale = on;
+      it.discountPct = on ? (body.discountPct ?? null) : null;
+      it.salePrice = on ? (body.salePrice ?? null) : null;
+      it.saleEndsAt = on ? (body.saleEndsAt ?? null) : null;
+    });
+    return { value: { updated: body.ids?.length ?? 0 } };
+  }
   if (P(/^\/inventory\/(\d+)$/) && method !== 'POST') {
     const id = Number(P(/^\/inventory\/(\d+)$/)[1]);
     const it = items.find((i) => i.id === id);

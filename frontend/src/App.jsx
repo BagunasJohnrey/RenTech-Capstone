@@ -1058,7 +1058,14 @@ export default function RentechApp() {
               <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} dataVersion={dataVersion} />
             )}
             {activeTab === 'Promotions' && viewRole === 'Admin' && (
-              <PromotionsView inventory={inventory} onEditItem={setEditingItem} />
+              <PromotionsView
+                inventory={inventory}
+                onEditItem={setEditingItem}
+                onSalePatch={(ids, sale) => {
+                  const byId = new Set(ids);
+                  setInventory((prev) => prev.map((i) => (byId.has(i.id) ? { ...i, ...sale } : i)));
+                }}
+              />
             )}
             {(activeTab === 'Profile' || activeTab === 'Settings') && (
               <ProfileSettingsView

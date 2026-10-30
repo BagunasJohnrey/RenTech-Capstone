@@ -7,6 +7,7 @@ import { getInventoryAnalytics } from '../services/inventoryAnalytics.service.js
 import * as optimization from '../services/optimization.service.js';
 import * as aiReportService from '../services/aiReport.service.js';
 import * as aiPromoSuggestionService from '../services/aiPromoSuggestion.service.js';
+import * as autoPromoService from '../services/autoPromo.service.js';
 import type { CategoryProjection, AnalyticsItemShape } from '../services/optimization.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
@@ -151,43 +152,11 @@ export const suggestPromosSchema = z.object({
 
 export async function suggestPromos(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const { retrievePromoContext } = await import('../services/rag.service.js');
-    // Structured RAG: top-20 by rental-count signal (dead stock first) instead
-    // of an arbitrary slice(0, 80) of newest rows. Numbers stay exact — no vectors.
-    const [inventory, activePromos, kpis, insights] = await Promise.all([
-      retrievePromoContext(20),
-      import('../services/promoCodes.service.js').then(m => m.listPromoCodes()),
-      dashboardService.getKpis().catch(() => ({})),
-      dashboardService.getInsights().catch(() => ({})),
-    ]);
-
-    const promos = (Array.isArray(activePromos) ? activePromos : [])
-      .filter((p: { isActive?: boolean }) => p.isActive !== false)
-      .map((p: { code: string; discountPct: number | null; discountAmount: number | null }) => ({
-        code: p.code, discountPct: p.discountPct, discountAmount: p.discountAmount,
-      }));
-
-    const now = new Date();
-    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    const currentMonth = monthNames[now.getMonth()] + ' ' + now.getFullYear();
-
-    // Enhanced context: KPIs + insights for smarter suggestions
-    const revenueByCategory = (insights as Record<string, unknown>)?.revenueByCategory as Record<string, number> | undefined;
-    const underperforming = (insights as Record<string, unknown>)?.underperforming as { name: string; category: string; rentals: number }[] | undefined;
-    const topRented = (insights as Record<string, unknown>)?.topRented as { name: string; category: string; rentals: number }[] | undefined;
-
-    const result = await geminiService.suggestPromos({
-      inventory,
-      activePromos: promos,
-      currentMonth,
-      kpis: kpis as Record<string, number | { label: string; revenue: number }[]> || {},
-      revenueByCategory,
-      underperforming,
-      topRented,
-    });
+    // Same generation path as the weekly scheduler (autoPromo.service).
+    const { result, currentMonth } = await autoPromoService.buildPromoSuggestions();
 
     // Auto-save successful suggestions for history (AI or rule-based fallback)
-    if (result.source !== 'error' && (result.suggestions.itemSuggestions?.length || result.suggestions.voucherSuggestions?.length)) {
+    if (autoPromoService.isSaveable(result)) {
       try {
         const saved = await aiPromoSuggestionService.savePromoSuggestion({
           suggestions: result.suggestions,
