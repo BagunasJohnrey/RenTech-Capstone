@@ -27,7 +27,21 @@ export default function CleaningQueue({ items, onMarkClean, onBulkClean, onViewA
   const safePage = Math.min(page, totalPages);
   const visible = items.slice((safePage - 1) * CLEANING_PAGE_SIZE, safePage * CLEANING_PAGE_SIZE);
 
-  if (!items.length) return null;
+  // Compact empty card (not null) so the dashboard's #cleaning-queue deep
+  // link always has something to land on.
+  if (!items.length) {
+    return (
+      <div className="flex items-center gap-3 bg-white rounded-2xl border border-gray-100/80 shadow-sm px-5 py-4">
+        <span className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+          <Droplets size={16} />
+        </span>
+        <div>
+          <p className="text-sm font-bold text-gray-900">Cleaning queue is empty</p>
+          <p className="text-xs text-gray-500">Returned items waiting to be cleaned will show up here.</p>
+        </div>
+      </div>
+    );
+  }
 
   const allSelected = selected.length === items.length;
 

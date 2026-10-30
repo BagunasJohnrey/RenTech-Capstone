@@ -8,6 +8,9 @@ import Toggle from './Toggle';
 import NumberField from './NumberField';
 import { LS_BUSINESS, LS_POLICIES, LS_AUTOMATION, DEFAULT_BUSINESS, DEFAULT_POLICIES, DEFAULT_AUTOMATION, loadJSON } from './constants';
 
+// Failure messages all start with "Could not" — render them red, not green.
+const msgTone = (msg) => (msg.startsWith('Could not') ? 'text-red-600' : 'text-emerald-600');
+
 // Admin General tab: business profile, rental policies/fees, automation &
 // data retention, and the QR-code receipts toggle.
 export default function GeneralTab() {
@@ -72,50 +75,50 @@ export default function GeneralTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const syncRulesToBackend = async (updates) => {
+  // The backend rules are what the scheduler/bookings actually use, so success
+  // is only reported once the PUT resolves; a failure says so instead.
+  const syncRulesToBackend = async (updates, setMsg, okText) => {
     try {
       await api.put('/settings/rules', updates);
-    } catch { /* backend sync is best-effort */ }
+      setMsg(okText);
+    } catch (err) {
+      setMsg(`Could not save to the server: ${err?.message || 'server error'}. Try again.`);
+    }
+    setTimeout(() => setMsg(''), 3000);
   };
 
   const saveBusiness = () => {
     localStorage.setItem(LS_BUSINESS, JSON.stringify(localBusiness));
     setBusiness(localBusiness);
     setEditBusiness(false);
-    setBizMsg('Business profile saved!');
     syncRulesToBackend({
       business_name: localBusiness.name,
       business_address: localBusiness.address,
       business_contact: localBusiness.contact,
       business_tax_id: localBusiness.taxId,
-    });
-    setTimeout(() => setBizMsg(''), 2000);
+    }, setBizMsg, 'Business profile saved!');
   };
 
   const savePolicies = () => {
     localStorage.setItem(LS_POLICIES, JSON.stringify(localPolicies));
     setPolicies(localPolicies);
     setEditPolicies(false);
-    setPolMsg('Rental policies saved!');
     syncRulesToBackend({
       rental_period_days: String(localPolicies.defaultDays),
       return_days_after_event: String(localPolicies.returnAfterEvent),
       min_downpayment: String(localPolicies.minDown),
       damage_fee: String(localPolicies.damageFee),
-    });
-    setTimeout(() => setPolMsg(''), 2000);
+    }, setPolMsg, 'Rental policies saved!');
   };
 
   const saveAutomation = () => {
     localStorage.setItem(LS_AUTOMATION, JSON.stringify(localAutomation));
     setAutomation(localAutomation);
     setEditAutomation(false);
-    setAutoMsg('Automation settings saved!');
     syncRulesToBackend({
       overdue_escalation_days: String(localAutomation.escalationDays),
       data_retention_months: String(localAutomation.retentionMonths),
-    });
-    setTimeout(() => setAutoMsg(''), 2000);
+    }, setAutoMsg, 'Automation settings saved!');
   };
 
   const toggleQr = async () => {
@@ -182,7 +185,7 @@ export default function GeneralTab() {
                 className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Tax ID (optional)" />
             </div>
             {saveCancel(saveBusiness, () => { setEditBusiness(false); setLocalBusiness(business); })}
-            {bizMsg && <p className="text-xs text-emerald-600 font-bold">{bizMsg}</p>}
+            {bizMsg && <p role="status" className={`text-xs font-bold ${msgTone(bizMsg)}`}>{bizMsg}</p>}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -222,7 +225,7 @@ export default function GeneralTab() {
               <button onClick={savePolicies} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
               <button onClick={() => { setEditPolicies(false); setLocalPolicies(policies); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
             </div>
-            {polMsg && <p className="text-xs text-emerald-600 font-bold sm:col-span-2">{polMsg}</p>}
+            {polMsg && <p role="status" className={`text-xs font-bold ${msgTone(polMsg)} sm:col-span-2`}>{polMsg}</p>}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -258,7 +261,7 @@ export default function GeneralTab() {
               <button onClick={saveAutomation} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
               <button onClick={() => { setEditAutomation(false); setLocalAutomation(automation); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
             </div>
-            {autoMsg && <p className="text-xs text-emerald-600 font-bold sm:col-span-2">{autoMsg}</p>}
+            {autoMsg && <p role="status" className={`text-xs font-bold ${msgTone(autoMsg)} sm:col-span-2`}>{autoMsg}</p>}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -284,7 +287,7 @@ export default function GeneralTab() {
         headerAction={<Toggle on={qrCodesOn} onClick={toggleQr} label="QR codes" />}
       >
         <p className="text-sm text-gray-500 leading-relaxed">When on, booking receipts show a QR code the customer can present at pickup — staff scan it from the Records or Dashboard to release or return the item.</p>
-        {qrMsg && <p className="text-xs text-emerald-600 font-bold">{qrMsg}</p>}
+        {qrMsg && <p role="status" className={`text-xs font-bold ${msgTone(qrMsg)}`}>{qrMsg}</p>}
       </CollapsibleCard>
     </>
   );

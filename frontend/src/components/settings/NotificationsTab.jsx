@@ -35,7 +35,7 @@ export default function NotificationsTab({ profile }) {
     (profile?.notifyPrefs && typeof profile.notifyPrefs === 'object')
       ? { ...DEFAULT_NOTIF, ...profile.notifyPrefs }
       : loadJSON(LS_NOTIF, DEFAULT_NOTIF));
-  const [notifMsg, setNotifMsg] = useState('');
+  const [notifMsg, setNotifMsg] = useState(null); // { text, error }
 
   // SMS Templates state – array of { id, name, content } from backend
   const [backendTemplates, setBackendTemplates] = useState([]);
@@ -69,14 +69,22 @@ export default function NotificationsTab({ profile }) {
   // Look up backend template record by name
   const findBackend = (name) => backendTemplates.find(t => t.name === name);
 
-  const toggleNotif = (key) => {
-    const next = { ...notifPrefs, [key]: !notifPrefs[key] };
-    localStorage.setItem(LS_NOTIF, JSON.stringify(next));
+  // Optimistic flip; only report success after the profile PUT resolves (the
+  // SMS scheduler reads the profile copy) and revert on failure.
+  const toggleNotif = async (key) => {
+    const prev = notifPrefs;
+    const next = { ...prev, [key]: !prev[key] };
     setNotifPrefs(next);
-    setNotifMsg('Preferences updated!');
-    // Persist to the profile so the SMS scheduler honors the opt-out.
-    api.put('/auth/me', { notifyPrefs: next }).catch(() => {});
-    setTimeout(() => setNotifMsg(''), 2000);
+    setNotifMsg(null);
+    try {
+      await api.put('/auth/me', { notifyPrefs: next });
+      localStorage.setItem(LS_NOTIF, JSON.stringify(next));
+      setNotifMsg({ text: 'Preferences updated!', error: false });
+    } catch (err) {
+      setNotifPrefs(prev);
+      setNotifMsg({ text: `Couldn't save preferences: ${err?.message || 'server error'}`, error: true });
+    }
+    setTimeout(() => setNotifMsg(null), 2500);
   };
 
   const startEditTemplate = (key) => {
@@ -188,10 +196,12 @@ export default function NotificationsTab({ profile }) {
             { key: 'lateReturn', label: 'Late Return Alert', desc: 'Overdue alerts you receive for your rentals.', icon: AlertTriangle, colors: 'bg-orange-50 text-orange-600' },
             { key: 'email', label: 'Brevo Emails', desc: 'Emails sent to you alongside SMS.', icon: Mail, colors: 'bg-blue-50 text-blue-600' },
           ].map(({ key, label, desc, icon: Icon, colors }) => (
-            <button
+            <div
               key={key}
+              role="group"
+              aria-label={label}
               onClick={() => toggleNotif(key)}
-              className={`flex items-center gap-3.5 p-4 rounded-2xl border transition-all text-left ${
+              className={`flex items-center gap-3.5 p-4 rounded-2xl border transition-all text-left cursor-pointer ${
                 notifPrefs[key]
                   ? 'border-gray-200 bg-white hover:shadow-sm'
                   : 'border-gray-100 bg-gray-50/60'
@@ -204,11 +214,11 @@ export default function NotificationsTab({ profile }) {
                 <p className="text-sm font-semibold text-gray-900">{label}</p>
                 <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{desc}</p>
               </div>
-              <Toggle on={notifPrefs[key]} onClick={() => toggleNotif(key)} />
-            </button>
+              <Toggle on={notifPrefs[key]} label={label} onClick={() => toggleNotif(key)} />
+            </div>
           ))}
         </div>
-        {notifMsg && <p className="text-xs text-emerald-600 font-bold">{notifMsg}</p>}
+        {notifMsg && <p role="status" className={`text-xs font-bold ${notifMsg.error ? 'text-red-600' : 'text-emerald-600'}`}>{notifMsg.text}</p>}
       </CollapsibleCard>
 
       {/* SMS Templates */}
@@ -425,7 +435,7 @@ export default function NotificationsTab({ profile }) {
             </div>
           </>
         )}
-        {templateSaveMsg && <p className="text-xs text-emerald-600 font-bold">{templateSaveMsg}</p>}
+        {templateSaveMsg && <p role="status" className={`text-xs font-bold ${/^(Failed|Template cannot)/.test(templateSaveMsg) ? 'text-red-600' : 'text-emerald-600'}`}>{templateSaveMsg}</p>}
       </CollapsibleCard>
     </>
   );

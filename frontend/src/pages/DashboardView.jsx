@@ -433,14 +433,14 @@ export default function DashboardView({ role, transactions, inventory, transacti
         {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop.
             Labels ALWAYS render; only the numbers skeleton while loading. */}
         <div className="xl:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 xl:gap-5">
-          <button onClick={() => onNavigate('History')}
+          <button onClick={() => goFiltered('History', 'Reserved')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pickups Today</p>
             {staffLoading
               ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
               : <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{pickupsToday.length}</p>}
           </button>
-          <button onClick={() => onNavigate('Tasks')}
+          <button onClick={() => goFiltered('History', 'Overdue')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
               {overdueCount > 0 ? <span className="text-red-500">Overdue</span> : 'Overdue'}
@@ -456,7 +456,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
               ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
               : <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{availableCount}</p>}
           </button>
-          <button onClick={() => onNavigate('Tasks')}
+          <button onClick={() => goAnchor('Tasks', 'cleaning-queue')}
             className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
             <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
               {cleaningCount > 0 ? <span className="text-orange-500">In Cleaning</span> : 'In Cleaning'}

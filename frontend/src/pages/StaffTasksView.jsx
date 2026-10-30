@@ -427,6 +427,142 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
 
 
+        {/* Payments to verify — manual-QR proofs + unpaid manual checkouts.
+            Always visible at the top of the queues; "All clear" is a real state. */}
+        <PaymentProofsQueue
+          role={role}
+          onChanged={proofQueue.refresh}
+          onSendSms={openSmsModal}
+        />
+
+        {/* Pickup + Overdue — paired action queues (latest 5 each).
+            Unknown (digest still pending, list empty) → skeleton cards, never
+            a missing section that reads as "nothing to do". Known-empty
+            (quiet day) → compact "all clear" card. */}
+        {!queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Loading pickup and overdue queues">
+            {['Ready for Pickup', 'Overdue Rentals'].map((title) => (
+              <div key={title} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 animate-pulse">
+                <div className="flex items-center mb-4">
+                  <h3 className="font-bold text-lg text-gray-900">{title}</h3>
+                </div>
+                <div className="space-y-2">
+                  {[0, 1, 2].map((j) => (
+                    <div key={j} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">
+                      <div className="w-9 h-9 rounded-full bg-gray-200 shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
+                        <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : pendingPickup.length === 0 && overdueItems.length === 0 ? (
+          <div className="flex items-center gap-3 bg-white rounded-2xl border border-gray-100/80 shadow-sm px-5 py-4">
+            <span className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+              <Package size={16} />
+            </span>
+            <div>
+              <p className="text-sm font-bold text-gray-900">No pickups or overdue rentals</p>
+              <p className="text-xs text-gray-500">Bookings ready for release and late returns will show up here.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Ready for Pickup */}
+            {pendingPickup.length > 0 ? (
+              <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col">
+                <div className="flex items-center mb-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-lg text-gray-900">Ready for Pickup</h3>
+                    <span className="inline-flex items-center justify-center bg-blue-100 text-blue-600 text-[10px] font-bold min-w-[22px] h-5 rounded-full px-1.5">
+                      {pendingPickup.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-2 flex-1">
+                  {pendingPickup.slice(0, 5).map(tx => (
+                    <div key={tx.id} className="flex items-center justify-between p-3 bg-blue-50/60 rounded-2xl border border-blue-100/50 gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0 text-xs font-bold">
+                          {(tx.customer || '?').charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
+                          <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
+                          <p className="text-[10px] text-blue-500 font-medium">
+                            {new Date(tx.rentalDate || tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+                      <button onClick={() => setReleaseTx(tx)}
+                        className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-full transition-colors shadow-sm">
+                        Release
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => goHistoryFiltered('Reserved')}
+                  className="mt-3 w-full py-2.5 text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors">
+                  View All ({pendingPickup.length})
+                </button>
+              </div>
+            ) : <div className="hidden lg:block" />}
+
+            {/* Overdue Rentals */}
+            {overdueItems.length > 0 ? (
+              <div className="bg-white rounded-3xl border border-red-100/50 shadow-sm p-6 flex flex-col">
+                <div className="flex items-center mb-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-lg text-gray-900">Overdue Rentals</h3>
+                    <span className="inline-flex items-center justify-center bg-red-100 text-red-600 text-[10px] font-bold min-w-[22px] h-5 rounded-full px-1.5">
+                      {overdueItems.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-2 flex-1">
+                  {overdueItems.slice(0, 5).map(tx => {
+                    const dueDate = new Date(tx.dueDate || tx.date);
+                    const now = new Date(); now.setHours(0,0,0,0);
+                    const daysOverdue = Math.max(0, Math.floor((now - dueDate) / 86400000));
+                    return (
+                      <div key={tx.id}
+                        onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
+                        title={onNavigateDetail ? 'View transaction details' : undefined}
+                        className={`flex items-center justify-between p-3 bg-red-50/60 rounded-2xl border border-red-100/50 gap-3 ${onNavigateDetail ? 'cursor-pointer hover:bg-red-50 transition-colors' : ''}`}>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 text-xs font-bold">
+                            {(tx.customer || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
+                            <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
+                            <p className="text-[10px] font-bold text-red-500">
+                              {daysOverdue === 0 ? 'Due today' : `${daysOverdue}d overdue`}
+                            </p>
+                          </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}
+                          className="shrink-0 p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm">
+                          <MessageCircle size={14} />
+                          <span className="sr-only">Send SMS</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button onClick={() => goHistoryFiltered('Overdue')}
+                  className="mt-3 w-full py-2.5 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors">
+                  View All ({overdueItems.length})
+                </button>
+              </div>
+            ) : <div className="hidden lg:block" />}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
           {/* Recent Activity Card — fixed height so it doesn't collapse when empty/filtered */}
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col min-h-[480px]">
@@ -695,133 +831,6 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           </div>
         </div>
 
-        {/* Payments to verify — manual-QR proofs + unpaid manual checkouts.
-            Always visible at the top of the queues; "All clear" is a real state. */}
-        <PaymentProofsQueue
-          role={role}
-          onChanged={proofQueue.refresh}
-          onSendSms={openSmsModal}
-        />
-
-        {/* Pickup + Overdue — paired action queues (latest 5 each).
-            Unknown (digest still pending, list empty) → skeleton cards, never
-            a missing section that reads as "nothing to do". Known-empty
-            (quiet day) → section hidden, same as before. */}
-        {!queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Loading pickup and overdue queues">
-            {['Ready for Pickup', 'Overdue Rentals'].map((title) => (
-              <div key={title} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 animate-pulse">
-                <div className="flex items-center mb-4">
-                  <h3 className="font-bold text-lg text-gray-900">{title}</h3>
-                </div>
-                <div className="space-y-2">
-                  {[0, 1, 2].map((j) => (
-                    <div key={j} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">
-                      <div className="w-9 h-9 rounded-full bg-gray-200 shrink-0" />
-                      <div className="flex-1 space-y-1.5">
-                        <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
-                        <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-        (pendingPickup.length > 0 || overdueItems.length > 0) && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Ready for Pickup */}
-            {pendingPickup.length > 0 ? (
-              <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col">
-                <div className="flex items-center mb-4">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-lg text-gray-900">Ready for Pickup</h3>
-                    <span className="inline-flex items-center justify-center bg-blue-100 text-blue-600 text-[10px] font-bold min-w-[22px] h-5 rounded-full px-1.5">
-                      {pendingPickup.length}
-                    </span>
-                  </div>
-                </div>
-                <div className="space-y-2 flex-1">
-                  {pendingPickup.slice(0, 5).map(tx => (
-                    <div key={tx.id} className="flex items-center justify-between p-3 bg-blue-50/60 rounded-2xl border border-blue-100/50 gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0 text-xs font-bold">
-                          {(tx.customer || '?').charAt(0).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
-                          <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
-                          <p className="text-[10px] text-blue-500 font-medium">
-                            {new Date(tx.rentalDate || tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </p>
-                        </div>
-                      </div>
-                      <button onClick={() => setReleaseTx(tx)}
-                        className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-full transition-colors shadow-sm">
-                        Release
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <button onClick={() => goHistoryFiltered('Reserved')}
-                  className="mt-3 w-full py-2.5 text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors">
-                  View All ({pendingPickup.length})
-                </button>
-              </div>
-            ) : <div className="hidden lg:block" />}
-
-            {/* Overdue Rentals */}
-            {overdueItems.length > 0 ? (
-              <div className="bg-white rounded-3xl border border-red-100/50 shadow-sm p-6 flex flex-col">
-                <div className="flex items-center mb-4">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-lg text-gray-900">Overdue Rentals</h3>
-                    <span className="inline-flex items-center justify-center bg-red-100 text-red-600 text-[10px] font-bold min-w-[22px] h-5 rounded-full px-1.5">
-                      {overdueItems.length}
-                    </span>
-                  </div>
-                </div>
-                <div className="space-y-2 flex-1">
-                  {overdueItems.slice(0, 5).map(tx => {
-                    const dueDate = new Date(tx.dueDate || tx.date);
-                    const now = new Date(); now.setHours(0,0,0,0);
-                    const daysOverdue = Math.max(0, Math.floor((now - dueDate) / 86400000));
-                    return (
-                      <div key={tx.id}
-                        onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
-                        title={onNavigateDetail ? 'View transaction details' : undefined}
-                        className={`flex items-center justify-between p-3 bg-red-50/60 rounded-2xl border border-red-100/50 gap-3 ${onNavigateDetail ? 'cursor-pointer hover:bg-red-50 transition-colors' : ''}`}>
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-9 h-9 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 text-xs font-bold">
-                            {(tx.customer || '?').charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
-                            <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
-                            <p className="text-[10px] font-bold text-red-500">
-                              {daysOverdue === 0 ? 'Due today' : `${daysOverdue}d overdue`}
-                            </p>
-                          </div>
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}
-                          className="shrink-0 p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm">
-                          <MessageCircle size={14} />
-                          <span className="sr-only">Send SMS</span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-                <button onClick={() => goHistoryFiltered('Overdue')}
-                  className="mt-3 w-full py-2.5 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors">
-                  View All ({overdueItems.length})
-                </button>
-              </div>
-            ) : <div className="hidden lg:block" />}
-          </div>
-        )
-        )}
 
       {/* SMS Log — read-only here (delete is admin-only in the panel).
           Lets staff verify what actually went out without leaving Tasks.
