@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Search, Send, Bot, User, Trash2, ChevronLeft, ChevronRight, ArrowDownWideNarrow, RotateCw } from 'lucide-react';
+import { RefreshCw, Search, Send, Bot, User, Trash2, ArrowDownWideNarrow, RotateCw } from 'lucide-react';
 import { smsService } from '../services/sms';
 import { useAuth } from '../hooks/useAuth';
 import { Skeleton } from './Skeleton';
 import SmsResultModal from './SmsResultModal';
+import FilterChip from './ui/FilterChip';
+import Pagination from './ui/Pagination';
+import { IconButton } from './ui/Button';
 
 const PAGE_SIZE = 6;
 
@@ -114,34 +117,25 @@ export default function SmsLogPanel() {
     }
   };
 
-  const chip = (active, onClick, children) => (
-    <button key={children} onClick={onClick}
-      className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-colors ${
-        active ? 'bg-gray-900 text-white shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-      }`}>
-      {children}
-    </button>
-  );
 
   return (
     <div>
       <div className="flex flex-wrap items-center gap-1.5">
-        {chip(source === 'all', () => setSource('all'), `All (${rows.length})`)}
-        {chip(source === 'manual', () => setSource('manual'), `Manual (${rows.length - autoCount})`)}
-        {chip(source === 'auto', () => setSource('auto'), `Automatic (${autoCount})`)}
-        <span className="w-px h-5 bg-gray-200 mx-1" />
-        {chip(status === 'all', () => setStatus('all'), 'Any status')}
-        {chip(status === 'sent', () => setStatus('sent'), 'Sent')}
-        {chip(status === 'queued', () => setStatus('queued'), 'Queued')}
-        <button onClick={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
+        <FilterChip active={source === 'all'} count={rows.length} onClick={() => setSource('all')}>All</FilterChip>
+        <FilterChip active={source === 'manual'} count={rows.length - autoCount} onClick={() => setSource('manual')}>Manual</FilterChip>
+        <FilterChip active={source === 'auto'} count={autoCount} onClick={() => setSource('auto')}>Automatic</FilterChip>
+        <span aria-hidden="true" className="w-px h-5 bg-gray-200 mx-1" />
+        <FilterChip active={status === 'all'} onClick={() => setStatus('all')}>Any status</FilterChip>
+        <FilterChip active={status === 'sent'} onClick={() => setStatus('sent')}>Sent</FilterChip>
+        <FilterChip active={status === 'queued'} onClick={() => setStatus('queued')}>Queued</FilterChip>
+        <button type="button" onClick={() => setSort((s) => (s === 'newest' ? 'oldest' : 'newest'))}
           title={sort === 'newest' ? 'Newest first — tap for oldest' : 'Oldest first — tap for newest'}
-          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors">
-          <ArrowDownWideNarrow size={11} /> {sort === 'newest' ? 'Newest' : 'Oldest'}
+          className="inline-flex items-center gap-1.5 min-h-[36px] px-3.5 rounded-full text-xs font-bold border border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-900 transition-colors">
+          <ArrowDownWideNarrow size={13} /> {sort === 'newest' ? 'Newest' : 'Oldest'}
         </button>
-        <button onClick={() => load()} disabled={loading} title="Refresh"
-          className="ml-auto p-2 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors disabled:opacity-50">
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-        </button>
+        <IconButton label="Refresh" className="ml-auto" onClick={() => load()} disabled={loading}>
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+        </IconButton>
       </div>
 
       <div className="relative mt-3">
@@ -241,20 +235,9 @@ export default function SmsLogPanel() {
         )}
       </div>
 
-      {!loading && totalPages > 1 && (
-        <div className="flex items-center justify-between mt-3 px-1">
-          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1}
-            className="inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            <ChevronLeft size={14} /> Prev
-          </button>
-          <span className="text-xs font-bold text-gray-400 tabular-nums">
-            Page {safePage} of {totalPages} · {visible.length} found
-          </span>
-          <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}
-            className="inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            Next <ChevronRight size={14} />
-          </button>
-        </div>
+      {!loading && (
+        <Pagination className="mt-3 px-1" page={safePage} totalPages={totalPages} summary={`${visible.length} found`}
+          onPageChange={(p) => setPage(Math.min(totalPages, Math.max(1, p)))} />
       )}
 
       {/* Resend outcome — sent vs queued vs failed, stated honestly. */}

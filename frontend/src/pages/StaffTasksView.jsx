@@ -5,6 +5,7 @@ import { api } from '../utils/api';
 import { customerLabel, customerPhone, SMS_MAX_LENGTH, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
 import ReleaseItemModal from '../components/ReleaseItemModal';
 import BottomSheet from '../components/BottomSheet';
+import Button, { IconButton } from '../components/ui/Button';
 import SmsResultModal from '../components/SmsResultModal';
 import SmsLogPanel from '../components/SmsLogPanel';
 import PaymentProofsQueue from '../components/PaymentProofsQueue';
@@ -15,6 +16,7 @@ import { isReleased } from '../hooks/useTransactions';
 import { peso } from '../utils/receipt';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
+import PageHeader from '../components/ui/PageHeader';
 
 // Collapsible SMS log that mounts its data-fetching panel only after the
 // first expand — keeps GET /sms/history off the Tasks critical path.
@@ -354,10 +356,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
   return (
       <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Staff Tasks</h2>
-          <p className="text-gray-500 font-medium mt-1">Overdue reminders & upcoming schedule.</p>
-        </div>
+        <PageHeader title="Staff Tasks" subtitle="Overdue reminders & upcoming schedule." />
 
         {/* Today's Focus — actionable daily queue (replaces KPI count row) */}
         <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 lg:p-5">
@@ -409,13 +408,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                       </span>
                     )}
                     {f.tx && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openSmsModal(f.tx, f.smsContext); }}
-                        title="Send SMS reminder"
-                        className="p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm shrink-0">
-                        <MessageCircle size={14} />
-                        <span className="sr-only">Send SMS</span>
-                      </button>
+                      <IconButton label="Send SMS" tone="brand" onClick={(e) => { e.stopPropagation(); openSmsModal(f.tx, f.smsContext); }}>
+                          <MessageCircle size={16} />
+                        </IconButton>
                     )}
                     <ChevronRight size={16} className="text-gray-300 shrink-0" />
                   </div>
@@ -545,11 +540,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                             </p>
                           </div>
                         </div>
-                        <button onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}
-                          className="shrink-0 p-2 text-[#bf4a53] bg-white hover:bg-[#bf4a53] hover:text-white rounded-full transition-colors shadow-sm">
-                          <MessageCircle size={14} />
-                          <span className="sr-only">Send SMS</span>
-                        </button>
+                        <IconButton label="Send SMS" tone="brand" onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}>
+                          <MessageCircle size={16} />
+                        </IconButton>
                       </div>
                     );
                   })}
@@ -595,42 +588,26 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
             {/* Filter capsule — single row on all screens */}
             <div className="flex justify-center mb-5 px-1">
-              <div className="inline-flex flex-nowrap items-center justify-center gap-1 bg-gray-100/80 rounded-2xl px-1.5 py-1.5 max-w-full overflow-x-auto hide-scrollbar">
-                <button
-                  onClick={() => setActivityFilter('All')}
-                  className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
-                    activityFilter === 'All' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  All
-                </button>
-                <button
-                  onClick={() => setActivityFilter('Reserved')}
-                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
-                    activityFilter === 'Reserved' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
-                  Reserved
-                </button>
-                <button
-                  onClick={() => setActivityFilter('Active')}
-                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
-                    activityFilter === 'Active' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                  Active
-                </button>
-                <button
-                  onClick={() => setActivityFilter('Returned')}
-                  className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors ${
-                    activityFilter === 'Returned' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                  Returned
-                </button>
+              <div role="group" aria-label="Filter activity" className="inline-flex flex-nowrap items-center justify-center gap-1 bg-gray-100/80 rounded-2xl px-1.5 py-1.5 max-w-full overflow-x-auto hide-scrollbar">
+                {[
+                  { key: 'All', dot: null },
+                  { key: 'Reserved', dot: 'bg-indigo-400' },
+                  { key: 'Active', dot: 'bg-blue-500' },
+                  { key: 'Returned', dot: 'bg-emerald-500' },
+                ].map(({ key, dot }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setActivityFilter(key)}
+                    aria-pressed={activityFilter === key}
+                    className={`shrink-0 inline-flex items-center gap-1.5 min-h-[36px] px-3 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+                      activityFilter === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {dot && <span aria-hidden="true" className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />}
+                    {key}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -685,21 +662,18 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                         <div className="flex items-center gap-2 shrink-0">
                           {showActions && (
                             <>
-                              <button onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}
-                                className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="Send SMS">
-                                <MessageCircle size={14} />
-                              </button>
+                              <IconButton label="Send SMS" onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}>
+                                <MessageCircle size={16} />
+                              </IconButton>
                               {!isReleased(tx) && (tx.status === 'Active' || tx.status === 'Reserved') && !qrPaymentUnresolved(tx) && (
-                                <button onClick={(e) => { e.stopPropagation(); setReleaseTx(tx); }}
-                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors" title="Release Item">
-                                  <Package size={14} />
-                                </button>
+                                <IconButton label="Release item" className="!text-blue-600 hover:!bg-blue-50" onClick={(e) => { e.stopPropagation(); setReleaseTx(tx); }}>
+                                  <Package size={16} />
+                                </IconButton>
                               )}
                               {onReturn && isItemRented && isReleased(tx) && (
-                                <button onClick={(e) => { e.stopPropagation(); onReturn(tx); }}
-                                  className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors" title="Process Return">
-                                  <Undo2 size={14} />
-                                </button>
+                                <IconButton label="Process return" className="!text-emerald-600 hover:!bg-emerald-50" onClick={(e) => { e.stopPropagation(); onReturn(tx); }}>
+                                  <Undo2 size={16} />
+                                </IconButton>
                               )}
                             </>
                           )}
@@ -721,16 +695,12 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                     Page {bookingsPage} of {bookingsTotalPages} · {selectedDateBookings.length} bookings
                   </span>
                   <div className="flex items-center gap-1">
-                    <button onClick={() => setBookingsPage(p => Math.max(1, p - 1))} disabled={bookingsPage === 1}
-                      aria-label="Previous bookings page"
-                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
-                      <ChevronLeft size={15} />
-                    </button>
-                    <button onClick={() => setBookingsPage(p => Math.min(bookingsTotalPages, p + 1))} disabled={bookingsPage === bookingsTotalPages}
-                      aria-label="Next bookings page"
-                      className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30">
-                      <ChevronRight size={15} />
-                    </button>
+                    <IconButton label="Previous bookings page" onClick={() => setBookingsPage(p => Math.max(1, p - 1))} disabled={bookingsPage === 1}>
+                      <ChevronLeft size={16} />
+                    </IconButton>
+                    <IconButton label="Next bookings page" onClick={() => setBookingsPage(p => Math.min(bookingsTotalPages, p + 1))} disabled={bookingsPage === bookingsTotalPages}>
+                      <ChevronRight size={16} />
+                    </IconButton>
                   </div>
                 </div>
               ) : (
@@ -752,14 +722,12 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                 {monthNames[currentMonth]} {currentYear}
               </h3>
               <div className="flex items-center gap-1">
-                <button onClick={goToPreviousMonth}
-                  className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 transition-colors">
-                  <ChevronLeft size={16} />
-                </button>
-                <button onClick={goToNextMonth}
-                  className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 transition-colors">
-                  <ChevronRight size={16} />
-                </button>
+                <IconButton label="Previous month" onClick={goToPreviousMonth}>
+                  <ChevronLeft size={18} />
+                </IconButton>
+                <IconButton label="Next month" onClick={goToNextMonth}>
+                  <ChevronRight size={18} />
+                </IconButton>
               </div>
             </div>
 
@@ -848,10 +816,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
               <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
               <p className="text-xs text-gray-500 font-medium mt-1">{smsIntent(smsModalTx, smsOpts)?.subtitle}</p>
             </div>
-            <button onClick={closeSmsModal}
-              className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors">
+            <IconButton label="Close" onClick={closeSmsModal}>
               <X size={20} />
-            </button>
+            </IconButton>
           </div>
           <div data-sheet-scroll className="p-6 space-y-4 overflow-y-auto min-h-0">
               <div className="bg-gray-50 rounded-2xl p-4 text-sm">
@@ -891,12 +858,11 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                 </p>
               </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={closeSmsModal}
-                  className="flex-1 py-2.5 text-sm font-bold text-gray-600 hover:bg-gray-100 rounded-full transition-colors">Cancel</button>
-                <button onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms || !smsMessage.trim()}
-                  className="flex-1 py-2.5 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-full transition-colors shadow-sm shadow-red-500/20">
+                <Button variant="secondary" size="lg" className="flex-1" onClick={closeSmsModal}>Cancel</Button>
+                <Button variant="primary" size="lg" className="flex-1"
+                  onClick={() => handleSendSMS(smsModalTx)} disabled={sendingSms || !smsMessage.trim()}>
                   {sendingSms ? 'Sending...' : 'Send SMS'}
-                </button>
+                </Button>
               </div>
             </div>
         </BottomSheet>

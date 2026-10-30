@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef } from 'react';
-import { Undo2, Search, X, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone, Repeat } from 'lucide-react';
+import { Undo2, Search, X, SlidersHorizontal, RotateCcw, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone, Repeat } from 'lucide-react';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import CancelBookingModal from '../components/CancelBookingModal';
 import SwapItemModal from '../components/SwapItemModal';
@@ -15,6 +15,10 @@ import RowActionsMenu from '../components/RowActionsMenu';
 import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
+import Pagination from '../components/ui/Pagination';
+import PageHeader from '../components/ui/PageHeader';
+import FilterChip from '../components/ui/FilterChip';
+import { useConfirm } from '../hooks/useConfirm';
 
 const formatDate = (d) => {
   if (!d) return '—';
@@ -49,6 +53,7 @@ const SORT_LABELS = Object.fromEntries(SORT_OPTIONS.map((o) => [o.value, o.label
 // strings and a single popover-open flag.
 
 export default function HistoryView({ role, transactions, inventory, onReturn, onDelete, onCancel, onRelease, onEditRental, onSwapItem, fetchFull, prefetchTx, loading, onNavigateDetail, initialSearch, onConsumeSearch }) {
+  const [confirm, confirmDialog] = useConfirm();
   const isStaff = role !== 'Customer';
   // Manual-QR bookings whose proof is still awaiting verification (or was
   // never uploaded) cannot be prepared for pickup — the downpayment recorded
@@ -185,8 +190,14 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     if (role === 'Admin') {
       items.push({
         key: 'delete', icon: Trash2, label: 'Delete transaction', danger: true,
-        onSelect: () => {
-          if (window.confirm(`Delete transaction ${tx.id}? This cannot be undone.`)) onDelete(tx.id);
+        onSelect: async () => {
+          const ok = await confirm({
+            title: 'Delete transaction?',
+            message: `Transaction ${tx.id} will be permanently deleted. This cannot be undone.`,
+            variant: 'danger',
+            confirmLabel: 'Delete',
+          });
+          if (ok) onDelete(tx.id);
         },
       });
     }
@@ -412,16 +423,13 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   return (
     <>
       <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">
-            {role === 'Customer' ? 'Transactions' : 'Records'}
-          </h2>
-          <p className="text-gray-500 font-medium mt-1">
-            {role === 'Customer'
-              ? 'Track your active and past reservations.'
-              : 'Digital logbook of all rental transactions.'}
-          </p>
-        </div>
+        {confirmDialog}
+        <PageHeader
+          title={role === 'Customer' ? 'Transactions' : 'Records'}
+          subtitle={role === 'Customer'
+            ? 'Track your active and past reservations.'
+            : 'Digital logbook of all rental transactions.'}
+        />
 
         {/* Search + Filter toggle row */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
@@ -435,8 +443,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               className="w-full pl-9 pr-9 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors"
             />
             {searchQuery && (
-              <button onClick={clearSearch}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5">
+              <button onClick={clearSearch} aria-label="Clear search"
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1.5">
                 <X size={15} />
               </button>
             )}
@@ -444,7 +452,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
 
           <div className="flex items-center gap-2.5 self-end sm:self-auto">
             <button onClick={() => setShowFilters(!showFilters)}
-              className={`relative flex items-center justify-center w-9 h-9 rounded-lg border transition-colors shrink-0 ${
+              aria-label="Filters" aria-expanded={showFilters}
+              className={`relative flex items-center justify-center w-10 h-10 rounded-lg border transition-colors shrink-0 ${
                 showFilters || activeFilterCount > 0
                   ? 'bg-gray-900 text-white border-gray-900'
                   : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'
@@ -480,19 +489,10 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                   const active = activeStatusFilter === s;
                   const count = s === 'All' ? searchDateFiltered.length : (statusCounts[s] || 0);
                   return (
-                    <button key={s} onClick={() => { setActiveStatusFilter(s); setCurrentPage(1); }}
-                      className={`shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
-                        active
-                          ? 'bg-gray-900 text-white shadow-sm'
-                          : 'bg-gray-50 text-gray-500 hover:bg-gray-100 hover:text-gray-700 border border-gray-200/50'
-                      }`}>
-                      <span>{s}</span>
-                      <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold inline-flex items-center justify-center tabular-nums ${
-                        active ? 'bg-white/20 text-white' : 'bg-gray-200/70 text-gray-600'
-                      }`}>
-                        {count}
-                      </span>
-                    </button>
+                    <FilterChip key={s} active={active} count={count} className="shrink-0"
+                      onClick={() => { setActiveStatusFilter(s); setCurrentPage(1); }}>
+                      {s}
+                    </FilterChip>
                   );
                 })}
               </div>
@@ -651,23 +651,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               <span className="text-xs text-gray-500">
                 Showing {startIdx + 1}-{Math.min(startIdx + itemsPerPage, filteredTransactions.length)} of {filteredTransactions.length}
               </span>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handlePrevPage}
-                  disabled={safePage === 1}
-                  className={`p-1.5 rounded-full ${safePage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
-                >
-                  <ChevronLeft size={18} />
-                </button>
-                <span className="text-xs font-semibold text-gray-700">{safePage} / {totalPages}</span>
-                <button
-                  onClick={handleNextPage}
-                  disabled={safePage === totalPages}
-                  className={`p-1.5 rounded-full ${safePage === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
-                >
-                  <ChevronRight size={18} />
-                </button>
-              </div>
+              <Pagination page={safePage} totalPages={totalPages}
+                onPageChange={(p) => (p < safePage ? handlePrevPage() : handleNextPage())} />
             </div>
           )}
         </div>
@@ -748,27 +733,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           )}
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-gray-500">
-                Page {safePage} of {totalPages}
-              </span>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handlePrevPage}
-                  disabled={safePage === 1}
-                  className={`p-1.5 rounded-full ${safePage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
-                >
-                  <ChevronLeft size={18} />
-                </button>
-                <button
-                  onClick={handleNextPage}
-                  disabled={safePage === totalPages}
-                  className={`p-1.5 rounded-full ${safePage === totalPages ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
-                >
-                  <ChevronRight size={18} />
-                </button>
-              </div>
-            </div>
+            <Pagination className="pt-2" page={safePage} totalPages={totalPages}
+              onPageChange={(p) => (p < safePage ? handlePrevPage() : handleNextPage())} />
           )}
         </div>
       </div>

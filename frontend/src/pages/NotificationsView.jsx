@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Bell, CheckCheck, CheckCircle2, Trash2, Inbox, MessageCircle, BookOpen, ChevronLeft, ChevronRight, Send } from 'lucide-react';
+import { Bell, CheckCheck, CheckCircle2, Trash2, Inbox, MessageCircle, BookOpen, Send } from 'lucide-react';
 import { notificationsService } from '../services/notifications';
 import { transactionsService } from '../services/transactions';
 import { Skeleton } from '../components/Skeleton';
 import SmsLogPanel from '../components/SmsLogPanel';
 import { mapNotification, timeAgo, targetTabForNotification } from '../components/NotificationsDropdown';
 import ConfirmModal from '../components/ConfirmModal';
+import Pagination from '../components/ui/Pagination';
 import MessageReaderModal from '../components/MessageReaderModal';
 import { useHandledMessages } from '../hooks/useHandledMessages';
 import { useBookingStatus } from '../hooks/useBookingStatus';
@@ -499,25 +500,8 @@ export default function NotificationsView({ role, onNavigateTab, onOpenBooking }
         )}
         {/* Pagination */}
         {!loading && totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-t border-gray-100/80">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={safePage === 1}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronLeft size={15} /> Prev
-            </button>
-            <span className="text-xs font-bold text-gray-400 tabular-nums">
-              Page {safePage} of {totalPages}
-            </span>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={safePage === totalPages}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              Next <ChevronRight size={15} />
-            </button>
-          </div>
+          <Pagination className="px-4 sm:px-5 py-3 border-t border-gray-100/80" page={safePage} totalPages={totalPages}
+            onPageChange={(p) => setPage(Math.min(totalPages, Math.max(1, p)))} />
         )}
       </div>
 

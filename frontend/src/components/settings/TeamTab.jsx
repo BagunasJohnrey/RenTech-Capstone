@@ -4,6 +4,7 @@ import { Users, Plus, Trash2, AlertCircle, Key, ShieldCheck, Lock, CheckCircle2,
 import { api } from '../../utils/api';
 import CollapsibleCard from './CollapsibleCard';
 import PinInput from './PinInput';
+import { IconButton } from '../ui/Button';
 import {
   INPUT_LIMITS,
   sanitizeName,
@@ -334,24 +335,16 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
                       <p className="text-xs text-gray-500 truncate">{staff.email}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0">
                     {staff.createdAt && (
                       <span className="text-[10px] text-gray-400 hidden sm:block">Added {new Date(staff.createdAt).toLocaleDateString()}</span>
                     )}
-                    <button
-                      onClick={() => startEditStaff(staff)}
-                      className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-2 rounded-full transition-colors"
-                      title={`Edit ${staff.name || staff.email}`}
-                    >
+                    <IconButton label={`Edit ${staff.name || staff.email}`} onClick={() => startEditStaff(staff)}>
                       <Pencil size={16} />
-                    </button>
-                    <button
-                      onClick={() => onRemoveStaff(staff)}
-                      className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-full transition-colors"
-                      title={`Remove ${staff.name || staff.email}`}
-                    >
+                    </IconButton>
+                    <IconButton label={`Remove ${staff.name || staff.email}`} tone="danger" onClick={() => onRemoveStaff(staff)}>
                       <Trash2 size={16} />
-                    </button>
+                    </IconButton>
                   </div>
                 </div>
               ))}

@@ -6,6 +6,7 @@ import { readCache, writeCache, formatCheckedAgo, CACHE_KEYS } from '../../utils
 import CollapsibleCard from './CollapsibleCard';
 import HistoryImportPanel from './HistoryImportPanel';
 import AIReportModal from '../AIReportModal';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const fmtBytes = (n) => {
   if (n == null) return '—';
@@ -28,6 +29,7 @@ const fmtDate = (iso) => {
 // Admin Data & Backups tab: one-click JSON backup download + visible history
 // of last backups, plus the last saved AI business reports (reopenable).
 export default function DataBackupsTab() {
+  const [confirm, confirmDialog] = useConfirm();
   // Stale-while-revalidate: seed both lists from the last-known server data so
   // remounts paint instantly with an "Updated X ago" label, then refresh
   // silently in the background.
@@ -221,7 +223,7 @@ export default function DataBackupsTab() {
 
   const handleDeleteReport = async (r) => {
     if (deletingReportId) return;
-    if (!window.confirm(`Delete this saved report (${fmtDate(r.createdAt)})? This cannot be undone.`)) return;
+    if (!(await confirm({ title: 'Delete saved report?', message: `The report from ${fmtDate(r.createdAt)} will be permanently deleted. This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }))) return;
     setDeletingReportId(r.id);
     try {
       await aiService.deleteReport(r.id);
@@ -287,6 +289,7 @@ export default function DataBackupsTab() {
 
   return (
     <>
+      {confirmDialog}
       {/* Past-records import lives here for Admin (Staff get the same panel
           directly in their Settings) — same component, same API. */}
       <HistoryImportPanel />

@@ -3,6 +3,7 @@ import { Plus, Trash2, Percent, CheckCircle2, XCircle } from 'lucide-react';
 import { api } from '../utils/api';
 import { SkeletonList } from '../components/Skeleton';
 import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
+import { useConfirm } from '../hooks/useConfirm';
 
 const EMPTY_FORM = {
   code: '', discountType: 'pct', discountPct: 10, discountAmount: '',
@@ -11,6 +12,7 @@ const EMPTY_FORM = {
 };
 
 export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
+  const [confirm, confirmDialog] = useConfirm();
   const [codes, setCodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -65,7 +67,7 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this promo code?')) return;
+    if (!(await confirm({ title: 'Delete promo code?', message: 'Customers will no longer be able to use this code.', variant: 'danger', confirmLabel: 'Delete' }))) return;
     try {
       await api.delete(`/promo-codes/${id}`);
       setCodes(codes.filter(c => c.id !== id));
@@ -89,6 +91,7 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm }) {
 
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-5 md:p-8 space-y-5">
+      {confirmDialog}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <span className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">

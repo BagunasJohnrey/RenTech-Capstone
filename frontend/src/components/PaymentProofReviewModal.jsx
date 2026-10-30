@@ -13,6 +13,7 @@ import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../uti
 import { peso } from '../utils/receipt';
 import { timeAgo } from './NotificationsDropdown';
 import { api } from '../utils/api';
+import Button from './ui/Button';
 
 const fmtDate = (d) => {
   if (!d) return '—';
@@ -309,42 +310,31 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setRejecting(false); setError(''); }}
-                    className="px-4 py-3 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-colors shrink-0"
-                  >
+                  <Button variant="secondary" size="lg" className="shrink-0"
+                    onClick={() => { setRejecting(false); setError(''); }}>
                     Cancel
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button variant="danger" size="lg" className="flex-1"
                     onClick={handleReject}
-                    disabled={guarding || reason.trim().length < 5}
-                    className="flex-1 py-3 text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 rounded-2xl transition-all flex items-center justify-center gap-2"
-                  >
+                    disabled={guarding || reason.trim().length < 5}>
                     <XCircle size={15} />
                     {guarding ? 'Working…' : 'Reject proof'}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : (
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setRejecting(true); setError(''); }}
-                  className="px-4 py-3 text-sm font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-2xl transition-colors shrink-0"
-                >
+                <Button variant="secondary" size="lg"
+                  className="shrink-0 !text-red-600 !border-red-200 hover:!bg-red-50"
+                  onClick={() => { setRejecting(true); setError(''); }}>
                   Reject
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button variant="primary" size="lg" className="flex-1"
                   onClick={handleApprove}
-                  disabled={guarding || !amountValid}
-                  className="flex-1 py-3 text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 rounded-2xl transition-all flex items-center justify-center gap-2 shadow-sm shadow-red-500/20"
-                >
+                  disabled={guarding || !amountValid}>
                   <CheckCircle2 size={15} />
                   {guarding ? 'Working…' : amountValid ? `Approve & credit ${peso(amount)}` : 'Approve & credit'}
-                </button>
+                </Button>
               </div>
             )}
           </div>

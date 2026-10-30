@@ -17,6 +17,7 @@ import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
 import { sortByCategory } from '../utils/categorySort';
 import { tabPath } from '../utils/routing';
 import { todayYmd } from '../utils/format';
+import PageHeader from '../components/ui/PageHeader';
 
 export default function DashboardView({ role, transactions, inventory, transactionsLoading, inventoryLoading, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook, onNavigateDetail }) {
   const navigate = useNavigate();
@@ -410,21 +411,8 @@ export default function DashboardView({ role, transactions, inventory, transacti
     const daysLate = (tx) => tx.dueDate ? Math.max(1, Math.ceil((today - new Date(tx.dueDate)) / 86400000)) : '?';
     return (
       <div className="max-w-lg mx-auto md:max-w-3xl xl:max-w-[1200px]">
-        {/* Header (mobile/tablet) — unchanged */}
-        <div className="flex items-center justify-between mb-5 md:mb-6 xl:hidden">
-          <div>
-            <h2 className="text-xl font-bold text-gray-900 tracking-tight">Staff Dashboard</h2>
-            <p className="text-sm text-gray-500 mt-0.5">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-          </div>
-        </div>
-
-        {/* Desktop header band */}
-        <header className="hidden xl:flex items-center justify-between mb-7 pb-5 border-b border-gray-200/80">
-          <div>
-            <h2 className="text-[28px] leading-tight font-bold text-gray-900 tracking-tight">Staff Dashboard</h2>
-            <p className="text-sm text-gray-500 mt-1">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
-          </div>
-        </header>
+        <PageHeader title="Staff Dashboard" subtitle={today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+          className="mb-5 md:mb-6 xl:mb-7 xl:pb-5 xl:border-b xl:border-gray-200/80" />
 
         {/* Desktop bento grid — mobile/tablet/iPad get the stacked layout with
             more vertical breathing room (iPad trips lg, so bento waits for xl) */}
@@ -771,21 +759,8 @@ export default function DashboardView({ role, transactions, inventory, transacti
 
   return (
     <div className="max-w-lg mx-auto md:max-w-3xl xl:max-w-[1200px]">
-      {/* Header (mobile/tablet) */}
-      <div className="flex items-center justify-between mb-5 md:mb-6 xl:hidden">
-        <div>
-          <h2 className="text-xl font-bold text-gray-900 tracking-tight">Admin Dashboard</h2>
-          <p className="text-sm text-gray-500 mt-0.5">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-        </div>
-      </div>
-
-      {/* Desktop header band */}
-      <header className="hidden xl:flex items-center justify-between mb-7 pb-5 border-b border-gray-200/80">
-        <div>
-          <h2 className="text-[28px] leading-tight font-bold text-gray-900 tracking-tight">Admin Dashboard</h2>
-          <p className="text-sm text-gray-500 mt-1">{today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
-        </div>
-      </header>
+      <PageHeader title="Admin Dashboard" subtitle={today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+        className="mb-5 md:mb-6 xl:mb-7 xl:pb-5 xl:border-b xl:border-gray-200/80" />
 
       <div className="space-y-5 md:space-y-7 pt-2 xl:pt-0 xl:space-y-0 xl:grid xl:grid-cols-12 xl:gap-6 xl:items-start">
 

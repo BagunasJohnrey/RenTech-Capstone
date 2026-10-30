@@ -1,10 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Sparkles, Tag, Percent, RefreshCw, Lightbulb, ArrowRight, Loader2, AlertCircle, Clock, Trash2, Eye, ChevronLeft, ChevronRight, Calendar, X, Check, Undo2 } from 'lucide-react';
+import { Sparkles, Tag, Percent, RefreshCw, Lightbulb, ArrowRight, Loader2, AlertCircle, Clock, Trash2, Eye, Calendar, X, Check, Undo2 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
 import ItemImage from '../components/ItemImage';
 import PromoCodesManager from '../components/PromoCodesManager';
 import BulkSaleManager from '../components/BulkSaleManager';
+import { IconButton } from '../components/ui/Button';
+import Pagination from '../components/ui/Pagination';
+import PageHeader from '../components/ui/PageHeader';
+import { useConfirm } from '../hooks/useConfirm';
 
 // ─── Caching ───────────────────────────────────────────────────────────
 const CACHE_KEY = 'rentech_promo_suggestions';
@@ -64,6 +68,7 @@ const PAGE_SIZE = 5;
 
 export default function PromotionsView({ inventory, onEditItem }) {
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
+  const [confirm, confirmDialog] = useConfirm();
   const [suggestions, setSuggestions] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -206,7 +211,8 @@ export default function PromotionsView({ inventory, onEditItem }) {
 
   // ─── Delete saved suggestion ─────────────────────────────────────
   const deleteSavedSuggestion = async (id) => {
-    if (!window.confirm('Delete this saved suggestion?')) return;
+    const ok = await confirm({ title: 'Delete saved suggestion?', message: 'This removes it from your saved list. This cannot be undone.', variant: 'danger', confirmLabel: 'Delete' });
+    if (!ok) return;
     setDeletingId(id);
     try {
       await api.delete(`/ai/promo-suggestions/${id}`);
@@ -269,10 +275,8 @@ export default function PromotionsView({ inventory, onEditItem }) {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl">
-      <div>
-        <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Promotions</h2>
-        <p className="text-sm text-gray-500 font-medium mt-1">Manage promo codes, item sales, and get AI-powered suggestions.</p>
-      </div>
+      {confirmDialog}
+      <PageHeader title="Promotions" subtitle="Manage promo codes, item sales, and get AI-powered suggestions." />
 
       {/* AI Promo Advisor */}
       <div className="bg-gradient-to-br from-[#bf4a53] to-red-600 rounded-3xl p-4 md:p-8 text-white shadow-lg shadow-[#bf4a53]/20">
@@ -570,27 +574,18 @@ export default function PromotionsView({ inventory, onEditItem }) {
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => viewSavedSuggestion(meta)} disabled={viewingLoading}
-                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors disabled:opacity-40" title="View">
-                      <Eye size={15} />
-                    </button>
-                    <button onClick={() => deleteSavedSuggestion(meta.id)} disabled={deletingId === meta.id}
-                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors disabled:opacity-40" title="Delete">
-                      {deletingId === meta.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
-                    </button>
+                    <IconButton label="View suggestion" onClick={() => viewSavedSuggestion(meta)} disabled={viewingLoading}>
+                      <Eye size={16} />
+                    </IconButton>
+                    <IconButton label="Delete suggestion" tone="danger" onClick={() => deleteSavedSuggestion(meta.id)} disabled={deletingId === meta.id}>
+                      {deletingId === meta.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                    </IconButton>
                   </div>
                 </div>
               ))}
             </div>
-            {savedTotalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 pt-1">
-                <button onClick={() => setSavedPage(p => Math.max(1, p - 1))} disabled={savedPage === 1}
-                  className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40"><ChevronLeft size={14} /></button>
-                <span className="text-[11px] text-gray-500">{savedPage}/{savedTotalPages}</span>
-                <button onClick={() => setSavedPage(p => Math.min(savedTotalPages, p + 1))} disabled={savedPage === savedTotalPages}
-                  className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40"><ChevronRight size={14} /></button>
-              </div>
-            )}
+            <Pagination className="pt-1" page={savedPage} totalPages={savedTotalPages}
+              onPageChange={(p) => setSavedPage(Math.min(savedTotalPages, Math.max(1, p)))} />
           </>
         )}
       </div>
@@ -613,8 +608,9 @@ export default function PromotionsView({ inventory, onEditItem }) {
                     className="text-xs font-bold text-[#bf4a53] bg-rose-50 px-3 py-1.5 rounded-full hover:bg-rose-100 transition-colors disabled:opacity-40">
                     Load as Current
                   </button>
-                  <button onClick={() => { setViewingSaved(null); setViewingSavedData(null); setViewingError(''); }}
-                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full"><X size={16} /></button>
+                  <IconButton label="Close" onClick={() => { setViewingSaved(null); setViewingSavedData(null); setViewingError(''); }}>
+                    <X size={18} />
+                  </IconButton>
                 </div>
               </div>
               <div className="overflow-y-auto px-5 sm:px-6 pb-6 pt-4 space-y-5 min-h-0">

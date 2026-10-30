@@ -95,24 +95,24 @@ function StaffCard({ item, meta, StatusIcon, onBook, onEdit, onDelete, onRestore
           <StatusIcon size={10} />
           {meta.label}
         </div>
-        <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 flex items-center gap-1" onClick={stop}>
+        <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 flex items-center gap-2" onClick={stop}>
           <button onClick={onEdit} aria-label={`Edit ${item.name}`}
-            className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-gray-800 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50" title="Edit item">
+            className="relative p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm after:absolute after:-inset-[5px] after:content-[''] text-gray-500 hover:text-gray-800 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50" title="Edit item">
             <Edit3 size={13} />
           </button>
           <button onClick={onCheckAvailability} aria-label={`View availability for ${item.name}`}
-            className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-gray-800 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50" title="View availability">
+            className="relative p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm after:absolute after:-inset-[5px] after:content-[''] text-gray-500 hover:text-gray-800 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50" title="View availability">
             <Calendar size={13} />
           </button>
           {onRestore && item.status === 'Deleted' && (
             <button onClick={onRestore} aria-label={`Restore ${item.name}`}
-              className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-emerald-600 hover:text-emerald-700 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50" title="Restore item">
+              className="relative p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm after:absolute after:-inset-[5px] after:content-[''] text-emerald-600 hover:text-emerald-700 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50" title="Restore item">
               <RotateCcw size={13} />
             </button>
           )}
           {onDelete && item.status !== 'Deleted' && (
             <button onClick={onDelete} aria-label={`Delete ${item.name}`}
-              className="p-1 sm:p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm text-gray-500 hover:text-red-600 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50" title="Delete item">
+              className="relative p-1.5 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm after:absolute after:-inset-[5px] after:content-[''] text-gray-500 hover:text-red-600 hover:bg-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50" title="Delete item">
               <Trash2 size={13} />
             </button>
           )}

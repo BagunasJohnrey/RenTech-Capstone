@@ -11,6 +11,7 @@ import AccountActions from '../components/settings/AccountActions';
 import HistoryImportPanel from '../components/settings/HistoryImportPanel';
 import HelpGuide from './HelpGuide';
 import StaffHelpGuide from './StaffHelpGuide';
+import PageHeader from '../components/ui/PageHeader';
 
 // Settings shell: shared page header + the active section for the signed-in
 // role. Admin-only operational settings are organized into tabs, with each
@@ -33,10 +34,7 @@ export default function ProfileSettingsView({
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl">
-      <div>
-        <h2 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Settings</h2>
-        <p className="text-sm text-gray-500 font-medium mt-1">Manage your preferences and account.</p>
-      </div>
+      <PageHeader title="Settings" subtitle="Manage your preferences and account." />
 
       {/* Profile card */}
       <ProfileHeader

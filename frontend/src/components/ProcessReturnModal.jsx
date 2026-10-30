@@ -7,6 +7,7 @@ import { api } from '../utils/api';
 import { fileToBase64, downscaleToJpeg } from '../utils/file';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useLockScroll } from '../hooks/useLockScroll';
+import Button from './ui/Button';
 
 // Fallback default damage fee when the Settings value can't be loaded —
 // mirrors the backend default (utils/fees.ts).
@@ -422,19 +423,13 @@ const handleRadioKeys = (e) => {
             stay fixed on mobile, with safe-area padding. */}
         <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-3.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={requestClose}
-              className="py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
+            <Button variant="secondary" size="lg" onClick={requestClose}>
               Cancel
-            </button>
-            <button onClick={handleComplete} disabled={!canConfirm || submitting}
-              className={`py-3.5 text-sm font-bold text-white rounded-2xl transition-all flex items-center justify-center gap-2 ${
-                canConfirm && !submitting
-                  ? 'bg-emerald-600 hover:bg-emerald-700 shadow-sm shadow-emerald-500/20 active:scale-[0.98]'
-                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-              }`}>
+            </Button>
+            <Button variant="success" size="lg" onClick={handleComplete} disabled={!canConfirm || submitting}>
               <Undo2 size={16} />
               {submitting ? 'Processing…' : 'Confirm Return'}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

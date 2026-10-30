@@ -6,6 +6,7 @@ import { HistorySkeleton } from '../components/PageSkeletons';
 import { useTodayTasks } from '../hooks/useDashboard';
 import { normalizeTx } from '../hooks/useTransactions';
 import { tabPath } from '../utils/routing';
+import PageHeader from '../components/ui/PageHeader';
 
 // Route-level container for the staff tasks screen.
 export default function TasksPage({ inventory, transactions, loading, onMarkClean, onBulkClean, onNavigate, role, ...rest }) {
@@ -65,10 +66,7 @@ export default function TasksPage({ inventory, transactions, loading, onMarkClea
   if (initialLoad) {
     return (
       <div className="space-y-6">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Staff Tasks</h2>
-          <p className="text-gray-500 font-medium mt-1">Overdue reminders & upcoming schedule.</p>
-        </div>
+        <PageHeader title="Staff Tasks" subtitle="Overdue reminders & upcoming schedule." />
         <HistorySkeleton />
       </div>
     );

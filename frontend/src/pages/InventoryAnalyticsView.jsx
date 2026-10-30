@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
 import { Skeleton } from '../components/Skeleton';
 import { itemPill } from '../utils/statusColors';
+import PageHeader from '../components/ui/PageHeader';
 
 const PAGE_SIZE = 10;
 
@@ -144,10 +145,7 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
   return (
     <div className={`${noHeader ? 'p-5 md:p-8 space-y-6' : 'space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-6xl'}`}>
       {!noHeader && (
-        <div>
-          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Inventory Analytics</h2>
-          <p className="text-gray-500 font-medium mt-1">Per-item performance, utilization, and profitability.</p>
-        </div>
+        <PageHeader title="Inventory Analytics" subtitle="Per-item performance, utilization, and profitability." />
       )}
 
       {/* Top Performers (by CATEGORY line) — 1-up on phones, 2-up on tablet (3rd spans full),

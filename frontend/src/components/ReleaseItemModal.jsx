@@ -11,6 +11,7 @@ import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useToast } from './Toast';
 import SwapItemModal from './SwapItemModal';
 import ManualQrPanel from './ManualQrPanel';
+import Button from './ui/Button';
 
 export default function ReleaseItemModal({ transaction: initialTx, onClose, onReleased, onSwapItem }) {
   // Local copy: an in-sheet item swap replaces the garment (and fee) without
@@ -442,18 +443,13 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
               Cancel / Confirm Release never scroll out of reach. */}
           <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-3.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
             <div className="grid grid-cols-2 gap-3">
-              <button onClick={requestClose}
-                className="py-3.5 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-2xl transition-colors border border-gray-200">
+              <Button variant="secondary" size="lg" onClick={requestClose}>
                 Cancel
-              </button>
-              <button onClick={handleRelease} disabled={releasing || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance))}
-                className={`py-3.5 text-sm font-bold text-white rounded-2xl transition-all flex items-center justify-center gap-2 ${
-                  photoFile && !releasing && (!requiresPayment || (payChannel === 'cash' && Number(payAmount) === outstandingBalance))
-                    ? 'bg-blue-600 hover:bg-blue-700 shadow-sm active:scale-[0.98]'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                }`}>
+              </Button>
+              <Button variant="info" size="lg" onClick={handleRelease}
+                disabled={releasing || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance))}>
                 {releasing ? 'Releasing...' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Record payment first' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
