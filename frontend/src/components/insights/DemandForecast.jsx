@@ -129,8 +129,16 @@ function ForecastPanel({
           <div className={full ? 'pt-4' : ''}>
             <ForecastTiles fc={fc} weekly={weekly} full={full} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice} />
           </div>
-          <ForecastChart rows={fc.rows} weekly={weekly} rangeReliable={fc.rangeReliable} seasonDots={fc.seasonDots}
-            height={full ? (isPhone ? 300 : 420) : 260} minBarWidth={full ? 40 : 46} showCurrent={!!fc.current} />
+          {/* While weekly buckets load, activeForecast is still the monthly
+              series — hold a placeholder so the chart draws once, with weeks. */}
+          {weekly && weeklyLoading ? (
+            <div className="px-5 md:px-7 pb-[52px]" aria-busy="true">
+              <div className="rounded-2xl bg-gray-100 animate-pulse" style={{ height: full ? (isPhone ? 300 : 420) : 260 }} />
+            </div>
+          ) : (
+            <ForecastChart rows={fc.rows} weekly={weekly} rangeReliable={fc.rangeReliable} seasonDots={fc.seasonDots}
+              height={full ? (isPhone ? 300 : 420) : 260} minBarWidth={full ? 40 : 46} showCurrent={!!fc.current} />
+          )}
 
           {!full ? (
             <div className="px-5 md:px-7 pb-5 space-y-3">

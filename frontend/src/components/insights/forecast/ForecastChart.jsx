@@ -1,7 +1,7 @@
 // Forecast chart: actual bars (in-progress period hatched), average line,
 // dashed projection with its expected range, season dots. A fixed Y axis sits
 // beside a horizontal scroller that parks at the latest period.
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import {
   ComposedChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceDot, Cell,
@@ -65,19 +65,14 @@ function yScale(rows, rangeReliable) {
 }
 const yTick = (v) => (v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : v);
 
+// Longest series animation (projection line: 500ms delay + 600ms draw).
+const DRAW_MS = 1100;
+
 export default function ForecastChart({ rows, weekly, rangeReliable, seasonDots, height, minBarWidth, showCurrent }) {
-  // Draw-in animation once per series (first paint, monthly↔weekly), never on
-  // background refreshes — the page refetches on every data change.
+  // Each series (first paint, monthly↔weekly) gets its own plot instance, so
+  // it draws in from zero instead of morphing the previous series' bars and
+  // lines into the new ones.
   const seriesKey = `${weekly}-${rows.length}-${rows[0]?.full ?? ''}`;
-  const seen = useRef(null);
-  const animate = seen.current !== seriesKey;
-  useEffect(() => { seen.current = seriesKey; }, [seriesKey]);
-
-  const scrollRef = useRef(null);
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
-  }, [seriesKey]);
-
   const { domain, ticks } = yScale(rows, rangeReliable);
   const margin = { top: 12, right: 16, bottom: 8, left: 4 };
 
@@ -95,45 +90,8 @@ export default function ForecastChart({ rows, weekly, rangeReliable, seasonDots,
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-        <div ref={scrollRef} className="flex-1 min-w-0 overflow-x-auto overscroll-x-contain">
-          <div style={{ minWidth: rows.length * minBarWidth }}>
-            <ResponsiveContainer width="100%" height={height}>
-              <ComposedChart data={rows} margin={margin}>
-                <defs>
-                  <pattern id="df-partial" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                    <rect width="6" height="6" fill="#f59e0b" fillOpacity="0.18" />
-                    <line x1="0" y1="0" x2="0" y2="6" stroke="#f59e0b" strokeWidth="2" strokeOpacity="0.55" />
-                  </pattern>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                <XAxis dataKey="label" height={X_AXIS_H} tick={<MonthTick weekly={weekly} />} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} />
-                <YAxis hide domain={domain} ticks={ticks} width={0} />
-                <Tooltip content={<ChartTooltip rangeReliable={rangeReliable} />} cursor={{ fill: 'rgba(17,24,39,0.04)' }} />
-                <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={44} isAnimationActive={animate} animationDuration={600}>
-                  {rows.map((d) => (
-                    <Cell key={d.full} fill={d.partial ? 'url(#df-partial)' : '#1f2937'} fillOpacity={d.partial ? 1 : 0.3} />
-                  ))}
-                </Bar>
-                {rangeReliable && <Area dataKey="projLo" stackId="band" stroke="none" fill="none" isAnimationActive={false} />}
-                {rangeReliable && <Area dataKey="projSpan" stackId="band" stroke="none" fill={BRAND} fillOpacity={0.12} isAnimationActive={animate} animationDuration={700} />}
-                <Line type="monotone" dataKey="sma" stroke={BRAND} strokeWidth={3}
-                  dot={{ r: 3.5, fill: BRAND, strokeWidth: 0 }} activeDot={{ r: 6, fill: BRAND, stroke: '#fff', strokeWidth: 2 }}
-                  connectNulls={false} isAnimationActive={animate} animationDuration={800} />
-                <Line type="monotone" dataKey="proj" stroke={BRAND} strokeWidth={2.5} strokeDasharray="6 5"
-                  // Hollow dots on projected points only; the joining point is
-                  // the last real average and keeps its own dot.
-                  dot={(p) => ((p.payload?.forecast || p.payload?.partial) && p.cy != null
-                    ? <circle key={p.key} cx={p.cx} cy={p.cy} r={4} fill="#fff" stroke={BRAND} strokeWidth={2} />
-                    : <g key={p.key} />)}
-                  activeDot={{ r: 6, fill: '#fff', stroke: BRAND, strokeWidth: 2 }}
-                  connectNulls isAnimationActive={animate} animationBegin={500} animationDuration={600} />
-                {seasonDots.map((d) => (
-                  <ReferenceDot key={d.full} x={d.label} y={d.sma ?? d.count} r={5} fill="#f59e0b" stroke="#fff" strokeWidth={2} />
-                ))}
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <PlotArea key={seriesKey} rows={rows} weekly={weekly} rangeReliable={rangeReliable} seasonDots={seasonDots}
+          height={height} minBarWidth={minBarWidth} domain={domain} ticks={ticks} margin={margin} />
       </div>
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 px-5 pt-1 pb-4 text-[11px] text-gray-600 font-semibold">
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-gray-800/40" />Rentals</span>
@@ -144,5 +102,64 @@ export default function ForecastChart({ rows, weekly, rangeReliable, seasonDots,
         {seasonDots.length > 0 && <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500" />Season</span>}
       </div>
     </>
+  );
+}
+
+// Scrollable plot for one series. Animates on mount only, then switches
+// animation off so background refetches (same series) update in place
+// instead of replaying — or cutting off — the draw-in.
+function PlotArea({ rows, weekly, rangeReliable, seasonDots, height, minBarWidth, domain, ticks, margin }) {
+  const [animate, setAnimate] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setAnimate(false), DRAW_MS + 100);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Park the scroller at the latest period.
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+  }, []);
+
+  return (
+    <div ref={scrollRef} className="flex-1 min-w-0 overflow-x-auto overscroll-x-contain">
+      <div style={{ minWidth: rows.length * minBarWidth }}>
+        <ResponsiveContainer width="100%" height={height}>
+          <ComposedChart data={rows} margin={margin}>
+            <defs>
+              <pattern id="df-partial" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width="6" height="6" fill="#f59e0b" fillOpacity="0.18" />
+                <line x1="0" y1="0" x2="0" y2="6" stroke="#f59e0b" strokeWidth="2" strokeOpacity="0.55" />
+              </pattern>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
+            <XAxis dataKey="label" height={X_AXIS_H} tick={<MonthTick weekly={weekly} />} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} />
+            <YAxis hide domain={domain} ticks={ticks} width={0} />
+            <Tooltip content={<ChartTooltip rangeReliable={rangeReliable} />} cursor={{ fill: 'rgba(17,24,39,0.04)' }} />
+            <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={44} isAnimationActive={animate} animationDuration={600}>
+              {rows.map((d) => (
+                <Cell key={d.full} fill={d.partial ? 'url(#df-partial)' : '#1f2937'} fillOpacity={d.partial ? 1 : 0.3} />
+              ))}
+            </Bar>
+            {rangeReliable && <Area dataKey="projLo" stackId="band" stroke="none" fill="none" isAnimationActive={false} />}
+            {rangeReliable && <Area dataKey="projSpan" stackId="band" stroke="none" fill={BRAND} fillOpacity={0.12} isAnimationActive={animate} animationDuration={700} />}
+            <Line type="monotone" dataKey="sma" stroke={BRAND} strokeWidth={3}
+              dot={{ r: 3.5, fill: BRAND, strokeWidth: 0 }} activeDot={{ r: 6, fill: BRAND, stroke: '#fff', strokeWidth: 2 }}
+              connectNulls={false} isAnimationActive={animate} animationDuration={800} />
+            <Line type="monotone" dataKey="proj" stroke={BRAND} strokeWidth={2.5} strokeDasharray="6 5"
+              // Hollow dots on projected points only; the joining point is
+              // the last real average and keeps its own dot.
+              dot={(p) => ((p.payload?.forecast || p.payload?.partial) && p.cy != null
+                ? <circle key={p.key} cx={p.cx} cy={p.cy} r={4} fill="#fff" stroke={BRAND} strokeWidth={2} />
+                : <g key={p.key} />)}
+              activeDot={{ r: 6, fill: '#fff', stroke: BRAND, strokeWidth: 2 }}
+              connectNulls isAnimationActive={animate} animationBegin={500} animationDuration={600} />
+            {seasonDots.map((d) => (
+              <ReferenceDot key={d.full} x={d.label} y={d.sma ?? d.count} r={5} fill="#f59e0b" stroke="#fff" strokeWidth={2} />
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
