@@ -293,6 +293,9 @@ export default function RentechApp() {
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
+  // "Release it first" notice when a return is attempted on an unreleased item
+  const [notReleasedItem, setNotReleasedItem] = useState(null);
+
   // Staff removal confirmation
   const [staffToRemove, setStaffToRemove] = useState(null);
 
@@ -753,7 +756,7 @@ export default function RentechApp() {
   const handleReturnClick = (tx) => {
     const item = inventory.find(i => i.id === tx.itemId);
     if (item && item.status !== 'Rented') {
-      alert(`"${item.name}" has not been released yet. Release the item first before processing a return.`);
+      setNotReleasedItem(item);
       return;
     }
     setReturnTransaction(tx);
@@ -1184,6 +1187,20 @@ export default function RentechApp() {
             zIndex="z-[9999]"
             onConfirm={() => { handleDeleteInventoryItem(deleteConfirm.id); setDeleteConfirm(null); }}
             onCancel={() => setDeleteConfirm(null)}
+          />
+        )}
+
+        {notReleasedItem && (
+          <ConfirmModal
+            title="Not released yet"
+            subtitle={notReleasedItem.name}
+            message="This item hasn't been released to the customer, so there's nothing to return. Release it from Ready for Pickup on the Tasks page first."
+            confirmLabel={activeTab === 'Tasks' ? 'OK' : 'Go to Tasks'}
+            cancelLabel="Close"
+            icon={<AlertTriangle size={20} />}
+            zIndex="z-[9999]"
+            onConfirm={() => { setNotReleasedItem(null); if (activeTab !== 'Tasks') goTab('Tasks'); }}
+            onCancel={() => setNotReleasedItem(null)}
           />
         )}
 
