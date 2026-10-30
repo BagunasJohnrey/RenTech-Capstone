@@ -3,6 +3,7 @@
 // a generic grid). All are content-only (the real AppLayout header/sidebar are
 // already rendered around them).
 import { Skeleton, SkeletonGrid, SkeletonList, Shimmer, FeaturedSkeleton } from './Skeleton';
+import ForecastCardSkeleton from './insights/forecast/ForecastSkeleton';
 
 export function CatalogSkeleton() {
   return (
@@ -71,9 +72,10 @@ export function AIInsightsSkeleton() {
         <Skeleton className="h-72 rounded-3xl lg:col-span-2" />
         <Skeleton className="h-72 rounded-3xl" />
       </div>
+      {/* Demand forecast (shaped like the real card) + top items */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Skeleton className="h-72 rounded-3xl lg:col-span-2" />
-        <Skeleton className="h-72 rounded-3xl" />
+        <ForecastCardSkeleton />
+        <Skeleton className="min-h-72 rounded-3xl" />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Skeleton className="h-72 rounded-3xl lg:col-span-2" />

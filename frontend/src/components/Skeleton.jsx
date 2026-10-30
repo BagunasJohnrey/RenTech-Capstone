@@ -1,8 +1,8 @@
 // Reusable skeleton loaders. Replace data-loading spinners with these so the
 // UI shows a structural placeholder (shimmer) while content fetches.
 
-export function Skeleton({ className = '' }) {
-  return <div className={`animate-pulse bg-gray-200/80 rounded ${className}`} />;
+export function Skeleton({ className = '', style }) {
+  return <div className={`animate-pulse bg-gray-200/80 rounded ${className}`} style={style} />;
 }
 
 export function SkeletonText({ lines = 3, className = '' }) {

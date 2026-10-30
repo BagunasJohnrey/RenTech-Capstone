@@ -16,6 +16,7 @@ import ForecastChart from './forecast/ForecastChart';
 import ForecastTiles from './forecast/ForecastTiles';
 import { OutlookTable, OutlookCards, SeasonalPattern, DemandDrivers } from './forecast/ForecastDetails';
 import ForecastExplainer from './forecast/ForecastExplainer';
+import { ForecastBodySkeleton } from './forecast/ForecastSkeleton';
 
 const ICON_BTN = 'w-8 h-8 rounded-full flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60';
 
@@ -60,6 +61,13 @@ function ForecastPanel({
   const profile = weekly ? [] : (monthlyForecast?.seasonalProfile || []);
   const drivers = weekly ? [] : (monthlyForecast?.byCategory || []).filter((c) => c.projection !== null);
   const isPhone = typeof window !== 'undefined' && window.innerWidth < 768;
+  const chartHeight = full ? (isPhone ? 300 : 420) : 260;
+  // Until weekly buckets arrive, activeForecast is still the monthly series:
+  // skeleton the whole body (tiles + chart + table) instead of showing monthly
+  // numbers under "Next week" labels and then jumping.
+  const pendingWeekly = weekly && weeklyLoading;
+  // One key per series, so the body fades in as a unit while the chart draws.
+  const seriesKey = `${weekly}-${fc.rows.length}-${fc.rows[0]?.full ?? ''}`;
 
   return (
     <div className={full ? 'bg-white' : 'bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden'}>
@@ -114,7 +122,9 @@ function ForecastPanel({
         )}
       </div>
 
-      {!fc.hasTrend ? (
+      {pendingWeekly ? (
+        <ForecastBodySkeleton chartHeight={chartHeight} table={!full} />
+      ) : !fc.hasTrend ? (
         <div className="px-5 md:px-7 pb-6">
           <div className="rounded-2xl bg-gray-50 py-10 text-center">
             <CalendarClock size={22} className="mx-auto text-gray-300" />
@@ -125,20 +135,12 @@ function ForecastPanel({
           </div>
         </div>
       ) : (
-        <>
+        <div key={seriesKey} className="animate-in fade-in duration-500 ease-out">
           <div className={full ? 'pt-4' : ''}>
             <ForecastTiles fc={fc} weekly={weekly} full={full} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice} />
           </div>
-          {/* While weekly buckets load, activeForecast is still the monthly
-              series — hold a placeholder so the chart draws once, with weeks. */}
-          {weekly && weeklyLoading ? (
-            <div className="px-5 md:px-7 pb-[52px]" aria-busy="true">
-              <div className="rounded-2xl bg-gray-100 animate-pulse" style={{ height: full ? (isPhone ? 300 : 420) : 260 }} />
-            </div>
-          ) : (
-            <ForecastChart rows={fc.rows} weekly={weekly} rangeReliable={fc.rangeReliable} seasonDots={fc.seasonDots}
-              height={full ? (isPhone ? 300 : 420) : 260} minBarWidth={full ? 40 : 46} showCurrent={!!fc.current} />
-          )}
+          <ForecastChart rows={fc.rows} weekly={weekly} rangeReliable={fc.rangeReliable} seasonDots={fc.seasonDots}
+            height={chartHeight} minBarWidth={full ? 40 : 46} showCurrent={!!fc.current} />
 
           {!full ? (
             <div className="px-5 md:px-7 pb-5 space-y-3">
@@ -172,7 +174,7 @@ function ForecastPanel({
               </p>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

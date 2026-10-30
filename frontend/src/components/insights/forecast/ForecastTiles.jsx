@@ -1,5 +1,6 @@
 // Headline tiles. The card shows the two that answer "what's coming":
 // next period and this period so far. The full view adds trend + accuracy.
+import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Minus, CalendarClock, Target, Gauge, ArrowRight } from 'lucide-react';
 import { fmt } from '../shared';
 
@@ -37,6 +38,12 @@ export default function ForecastTiles({ fc, weekly, full, avgPriceKnown, avgPric
   const progress = cur?.projected > 0 ? Math.min(100, Math.round((cur.count / cur.projected) * 100)) : 0;
   const timePct = cur ? Math.round((cur.daysElapsed / cur.daysInMonth) * 100) : 0;
   const TrendIcon = fc.trend === 'up' ? TrendingUp : fc.trend === 'down' ? TrendingDown : Minus;
+  // Start the progress bar empty and let it grow in after the first frame.
+  const [grown, setGrown] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setGrown(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   return (
     <div className={`grid grid-cols-2 ${full ? 'lg:grid-cols-4' : ''} gap-2.5 px-5 md:px-7 pb-4`}>
@@ -57,7 +64,7 @@ export default function ForecastTiles({ fc, weekly, full, avgPriceKnown, avgPric
         {cur?.projected > 0 && (
           <div className="mt-2 space-y-1">
             <div className="relative h-1.5 bg-gray-200/80 rounded-full overflow-hidden" title={`${progress}% of the forecast with ${timePct}% of the ${unit} gone`}>
-              <div className="h-full rounded-full bg-amber-500 transition-[width] duration-700" style={{ width: `${progress}%` }} />
+              <div className="h-full rounded-full bg-amber-500 transition-[width] duration-700 ease-out" style={{ width: grown ? `${progress}%` : 0 }} />
               <div className="absolute top-0 h-full w-0.5 bg-gray-500/60" style={{ left: `${timePct}%` }} />
             </div>
             {status?.label && <span className={`inline-block text-[10px] font-bold rounded-full px-2 py-0.5 ${status.cls}`}>{status.label}</span>}
