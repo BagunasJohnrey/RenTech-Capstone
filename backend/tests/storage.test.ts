@@ -145,6 +145,10 @@ describe('bucket routing (public catalog vs private condition shots)', () => {
     expect(isConditionPath('rental/abc/release-1.jpg')).toBe(true);
     expect(isConditionPath('seed/gown-01-x.jpg')).toBe(false);
     expect(isConditionPath('1757-photo.jpg')).toBe(false);
+    // Condition-photo previews stay private (signed), unlike catalog thumbs.
+    expect(isConditionPath('thumbs/rental/abc/release-1.webp')).toBe(true);
+    expect(isConditionPath('thumbs/seed/gown-01-x.webp')).toBe(false);
+    expect(bucketFor('thumbs/rental/abc/release-1.webp')).toBe(process.env.STORAGE_BUCKET || 'rentech-images');
     expect(bucketFor('rental/abc/return-1.jpg')).toBe(process.env.STORAGE_BUCKET || 'rentech-images');
     expect(bucketFor('seed/gown-01-x.jpg')).toBe(process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog');
   });

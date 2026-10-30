@@ -1248,14 +1248,21 @@ export async function getTransactionAudits(transactionId: string) {
     newValue: Record<string, unknown>;
     createdAt: Date;
   };
-  const [txLogs, payLogs, proofs] = await Promise.all([
+  // Everything runs in ONE parallel round: the existence check rides along
+  // instead of a separate full-record fetch before the timeline queries.
+  const [exists, txLogs, payLogs, proofs] = await Promise.all([
+    prisma.transaction.findUnique({ where: { id: transactionId }, select: { id: true } }),
     prisma.auditLog.findMany({
       where: { entity: 'transaction', entityId: transactionId },
       orderBy: { createdAt: 'asc' },
       take: 200,
     }),
+    // Payment audit rows key the booking inside the JSON payload. Filter in
+    // the database: the old "first 200 payment rows shop-wide, then filter"
+    // read far more than needed and silently dropped this booking's newer
+    // payments once the shop passed 200 payment logs.
     prisma.auditLog.findMany({
-      where: { entity: 'payment' },
+      where: { entity: 'payment', newValue: { path: ['transactionId'], equals: transactionId } },
       orderBy: { createdAt: 'asc' },
       take: 200,
     }),
@@ -1279,6 +1286,7 @@ export async function getTransactionAudits(transactionId: string) {
       },
     }),
   ]);
+  if (!exists) throw new AppError(404, 'Transaction not found');
   const proofEvents: ProofEvent[] = proofs.flatMap((p) => {
     const newValue = { transactionId, amount: p.amount, reference: p.reference, channel: p.channel };
     const events: ProofEvent[] = [{

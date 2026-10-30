@@ -141,11 +141,13 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   // enrichment then usually resolves synchronously from the shared cache
   // instead of costing a ~500ms round-trip after opening.
   const hoverTimer = useRef(null);
-  const warmTx = (id) => { if (prefetchTx && id != null) prefetchTx(id); };
+  // Staff also warm the Activity timeline (customers can't read it).
+  const warmOpts = { withAudits: role === 'Admin' || role === 'Staff' };
+  const warmTx = (id) => { if (prefetchTx && id != null) prefetchTx(id, warmOpts); };
   const warmTxSoon = (id) => {
     if (!prefetchTx || id == null) return;
     clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => prefetchTx(id), 180);
+    hoverTimer.current = setTimeout(() => prefetchTx(id, warmOpts), 180);
   };
   const cancelWarm = () => clearTimeout(hoverTimer.current);
 

@@ -386,6 +386,36 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     expect(res.body[1].performedBy).toMatchObject({ name: 'Admin User' });
   });
 
+  it('GET /transactions/:id/audits filters payment logs by booking in the database', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ id: 'tx-pay' });
+    prisma.auditLog.findMany.mockResolvedValue([]);
+    prisma.auditLog.findMany.mockClear();
+
+    const res = await request(app)
+      .get('/api/transactions/tx-pay/audits')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    const paymentQuery = prisma.auditLog.findMany.mock.calls
+      .map((c: any[]) => c[0])
+      .find((q: any) => q?.where?.entity === 'payment');
+    // Not "the first 200 payment rows shop-wide": only this booking's rows.
+    expect(paymentQuery.where.newValue).toEqual({ path: ['transactionId'], equals: 'tx-pay' });
+  });
+
+  it('GET /transactions/:id/audits 404s an unknown transaction', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce(null);
+    prisma.auditLog.findMany.mockResolvedValue([]);
+
+    const res = await request(app)
+      .get('/api/transactions/nope/audits')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(404);
+  });
+
   it('re-release logs no second release audit (first release wins)', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({
@@ -489,8 +519,7 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
 
     // NOTE: no DB stub here — the route-level requireRole(Admin, Staff) 403s
     // before the controller runs, so a queued mockResolvedValueOnce would leak
-    // into the NEXT test's mock queue (off-by-one poisoning). The controller
-    // keeps its own ownership check as defense-in-depth.
+    // into the NEXT test's mock queue (off-by-one poisoning).
     const forbidden = await request(app)
       .get('/api/transactions/tx-1/audits')
       .set('Authorization', 'Bearer customer-token');

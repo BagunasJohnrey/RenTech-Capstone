@@ -4,6 +4,7 @@ import {
   isAbsoluteUrl,
   isPrivatePath,
   thumbUrlFor,
+  thumbKeyFor,
   resolveDisplayUrl,
 } from '../utils/images';
 
@@ -27,7 +28,9 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
   };
   useEffect(() => { settledRef.current = false; }, [image]);
 
-  const wantThumb = thumb && !isPrivatePath(image) && !thumbFailed && !deadThumbs.has(image);
+  // blob: previews never have a stored thumb.
+  const canThumb = typeof image === 'string' && !image.startsWith('blob:') && !isAbsoluteUrl(image);
+  const wantThumb = thumb && canThumb && !thumbFailed && !deadThumbs.has(image);
 
   // Don't resolve anything (not even the signing request) until the image
   // is near the viewport. `eager` bypasses for above-the-fold content.
@@ -63,11 +66,23 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
       if (!image) settle();
       return;
     }
-    // Grid thumbs: the small public webp first; onError below falls back to
-    // the full image for legacy objects without a generated thumb.
-    if (thumb && !isPrivatePath(image) && !deadThumbs.has(image)) {
-      setSrc(thumbUrlFor(image));
-      return;
+    // Grid thumbs: the small webp first; onError below falls back to the
+    // full image for legacy objects without a generated thumb. Catalog
+    // thumbs are a public URL; condition-photo thumbs are signed like the
+    // photo itself (a failed signing = no thumb, so fall back the same way).
+    if (wantThumb) {
+      if (!isPrivatePath(image)) {
+        setSrc(thumbUrlFor(image));
+        return;
+      }
+      resolveDisplayUrl(thumbKeyFor(image))
+        .then((url) => {
+          if (!active) return;
+          if (url) setSrc(url);
+          else { deadThumbs.add(image); setThumbFailed(true); }
+        })
+        .catch(() => { if (active) { deadThumbs.add(image); setThumbFailed(true); } });
+      return () => { active = false; };
     }
     resolveDisplayUrl(image)
       .then((url) => { if (active) setSrc(url || null); })

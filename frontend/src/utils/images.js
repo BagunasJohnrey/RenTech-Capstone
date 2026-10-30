@@ -9,7 +9,7 @@ export const isAbsoluteUrl = (p) =>
 // a catalog photo in the PUBLIC bucket (stable URL, no signing round-trip).
 // Mirrors backend isConditionPath() in storage.service.ts.
 export const isPrivatePath = (p) =>
-  typeof p === 'string' && (p.startsWith('rental/') || p.startsWith('blob:'));
+  typeof p === 'string' && (p.startsWith('rental/') || p.startsWith('thumbs/rental/') || p.startsWith('blob:'));
 
 const publicBase = () => {
   const host = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
@@ -47,4 +47,20 @@ export async function resolveDisplayUrl(path) {
     });
   }
   return publicUrlFor(path);
+}
+
+// Start loading a photo before it's on screen: resolves the URL (signing a
+// private `rental/` photo through the shared cache) and pulls the bytes into
+// the browser cache, so the <img> that renders it later shows instantly.
+// Best-effort; never throws.
+export function preloadDisplayImage(path) {
+  if (!path || typeof Image === 'undefined') return;
+  resolveDisplayUrl(path)
+    .then((url) => {
+      if (!url) return;
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = url;
+    })
+    .catch(() => {});
 }

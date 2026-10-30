@@ -156,10 +156,8 @@ export async function getTransaction(req: AuthenticatedRequest, res: Response, n
 // staff names so the frontend can render "Assisted by X · Released by Y".
 export async function getTransactionAudits(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
-    const tx = await transactionService.getTransaction(String(req.params.id));
-    if (req.user?.role === Role.Customer && tx.customerId !== req.user.id) {
-      throw new AppError(403, 'You can only view your own transactions');
-    }
+    // Route is Staff/Admin-only (requireRole), so no ownership check is
+    // needed; the service 404s a missing transaction in the same round trip.
     const audits = await transactionService.getTransactionAudits(String(req.params.id));
     res.json(audits);
   } catch (err) {

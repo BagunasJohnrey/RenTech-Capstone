@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, MapPin, UserCheck, PackageCheck, History, QrCode } from 'lucide-react';
+import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, Maximize2, MapPin, UserCheck, PackageCheck, History, QrCode } from 'lucide-react';
 import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
-import { normalizeTx, invalidateTxCache } from '../hooks/useTransactions';
+import { normalizeTx, invalidateTxCache, getTxAudits, preloadTxPhotos } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import ItemImage from './ItemImage';
@@ -12,6 +12,7 @@ import BottomSheet from './BottomSheet';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 import { api } from '../utils/api';
 import ManualQrPanel from './ManualQrPanel';
+import PhotoViewer from './PhotoViewer';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -52,23 +53,92 @@ const staffName = (staff) => {
   return null;
 };
 
-// Human-readable one-liner for an audit-log row in the staff timeline.
-const auditLabel = (log) => {
+// Plain-language entry for an audit-log row in the staff timeline:
+// { title, detail?, tone } — tone picks the dot color.
+const peso = (n) => `₱${Number(n).toLocaleString()}`;
+const shortDay = (d) => {
+  const dt = new Date(d);
+  return isNaN(dt.getTime()) ? null : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+const capFirst = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+// Raw action ids ("item_swap", "sms.send") → "Item swap", "Sms send".
+const humanize = (s) => capFirst(String(s || 'Activity').replace(/[._]+/g, ' ').trim());
+
+const auditEntry = (log) => {
   const nv = log?.newValue ?? {};
-  if (log?.action === 'create' && log?.entity === 'transaction') return 'Booking created';
+  const ov = log?.oldValue ?? {};
+  const action = log?.action;
+
   if (log?.entity === 'payment_proof') {
-    const amt = nv.amount != null ? ` · ₱${Number(nv.amount).toLocaleString()}` : '';
-    if (log.action === 'payment_proof.submit') return `Payment proof submitted${amt}`;
-    if (log.action === 'payment_proof.approve') return `Payment proof approved${amt}`;
-    if (log.action === 'payment_proof.reject') return `Payment proof rejected${nv.reason ? ` · ${nv.reason}` : ''}`;
+    const amt = nv.amount != null ? peso(nv.amount) : null;
+    if (action === 'payment_proof.submit') {
+      return { title: 'Payment proof sent', detail: [amt, nv.reference && `Ref ${nv.reference}`].filter(Boolean).join(' · ') || null, tone: 'amber' };
+    }
+    if (action === 'payment_proof.approve') return { title: 'Payment proof approved', detail: amt, tone: 'green' };
+    if (action === 'payment_proof.reject') return { title: 'Payment proof rejected', detail: nv.reason || null, tone: 'red' };
   }
-  if (nv.paymentReceived != null) return `Payment recorded · ₱${Number(nv.paymentReceived).toLocaleString()}`;
-  if (log?.entity === 'payment') return `Payment recorded${nv.amount != null ? ` · ₱${Number(nv.amount).toLocaleString()}` : ''}`;
-  if (nv.released) return 'Item released (pickup)';
-  if (nv.status === 'Returned') return 'Item returned';
-  if (nv.status === 'Cancelled') return 'Booking cancelled';
-  if (log?.action === 'update' && log?.entity === 'transaction') return 'Booking updated';
-  return `${log?.action || 'Activity'} · ${log?.entity || 'record'}`;
+  if (action === 'create' && log?.entity === 'transaction') return { title: 'Booking created', tone: 'violet' };
+  if (action === 'item_swap') {
+    const from = ov.itemName, to = nv.itemName;
+    const swap = from && to ? `${from} → ${to}` : to ? `Now: ${to}` : null;
+    const bal = nv.balance != null ? `balance ${peso(nv.balance)}` : null;
+    return { title: 'Item swapped', detail: [swap, bal].filter(Boolean).join(' · ') || null, tone: 'blue' };
+  }
+  if (nv.paymentReceived != null) {
+    return { title: 'Payment received', detail: [peso(nv.paymentReceived), nv.balance != null && `balance ${peso(nv.balance)}`].filter(Boolean).join(' · '), tone: 'green' };
+  }
+  if (log?.entity === 'payment') {
+    return { title: 'Payment received', detail: [nv.amount != null && peso(nv.amount), nv.method].filter(Boolean).join(' · ') || null, tone: 'green' };
+  }
+  if (nv.released) return { title: 'Picked up by customer', tone: 'blue' };
+  if (nv.status === 'Returned') {
+    const fees = [
+      Number(nv.latePenalty) > 0 && `late fee ${peso(nv.latePenalty)}`,
+      Number(nv.damageFee) > 0 && `damage fee ${peso(nv.damageFee)}`,
+      nv.damageReason,
+    ].filter(Boolean);
+    return {
+      title: nv.damageReason || Number(nv.damageFee) > 0 ? 'Returned with damage' : 'Returned to store',
+      detail: fees.length ? capFirst(fees.join(' · ')) : 'No late or damage fees',
+      tone: nv.damageReason || Number(nv.damageFee) > 0 ? 'red' : 'green',
+    };
+  }
+  if (nv.status === 'Cancelled') return { title: 'Booking cancelled', tone: 'red' };
+  // One-time clean-up script (scripts/backfill-payments.ts) that added
+  // missing payment entries to old bookings and recalculated the balance.
+  if (action === 'backfill') return { title: 'Payment records repaired', detail: 'Missing payment entries added by a system clean-up', tone: 'gray' };
+  if (action === 'contact_admin') return { title: 'Customer sent a message', detail: nv.message || null, tone: 'gray' };
+  if (action === 'update' && log?.entity === 'transaction') {
+    const changes = [];
+    if ('rentalDate' in nv && shortDay(nv.rentalDate) !== shortDay(ov.rentalDate)) changes.push(`pickup ${shortDay(ov.rentalDate) ?? '—'} → ${shortDay(nv.rentalDate) ?? '—'}`);
+    if ('dueDate' in nv && shortDay(nv.dueDate) !== shortDay(ov.dueDate)) changes.push(`return ${shortDay(ov.dueDate) ?? '—'} → ${shortDay(nv.dueDate) ?? '—'}`);
+    if ('notes' in nv && (nv.notes || '') !== (ov.notes || '')) changes.push('notes updated');
+    if ('alterationStatus' in nv && nv.alterationStatus !== ov.alterationStatus) changes.push(`alteration ${nv.alterationStatus ? humanize(nv.alterationStatus).toLowerCase() : 'cleared'}`);
+    const datesOnly = changes.length > 0 && changes.every((c) => c.startsWith('pickup') || c.startsWith('return'));
+    return {
+      title: datesOnly ? 'Dates changed' : 'Booking edited',
+      detail: changes.length ? capFirst(changes.join(' · ')) : null,
+      tone: 'gray',
+    };
+  }
+  return { title: humanize(action), tone: 'gray' };
+};
+
+const AUDIT_DOT = {
+  violet: 'bg-violet-500 ring-violet-100',
+  blue: 'bg-blue-500 ring-blue-100',
+  green: 'bg-emerald-500 ring-emerald-100',
+  amber: 'bg-amber-500 ring-amber-100',
+  red: 'bg-red-500 ring-red-100',
+  gray: 'bg-gray-300 ring-gray-100',
+};
+
+const fmtWhen = (d) => {
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  const day = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  const time = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${day}, ${time}`;
 };
 
 export default function TransactionDetailModal({ transaction, onClose, fetchFull, role, onReturn }) {
@@ -126,11 +196,14 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       .catch(() => {});
     setShowPayModal(true);
   };
-  // Esc dismisses the topmost layer first (pay form before the detail sheet).
+  // Full-screen condition photo (index into conditionPhotos), or null.
+  const [photoView, setPhotoView] = useState(null);
+  // Esc dismisses the topmost layer first (photo, then pay form, then sheet).
   const handleEscape = useCallback(() => {
-    if (showPayModal) closePayModal();
+    if (photoView != null) setPhotoView(null);
+    else if (showPayModal) closePayModal();
     else requestClose();
-  }, [showPayModal, closePayModal, requestClose]);
+  }, [photoView, showPayModal, closePayModal, requestClose]);
   useEscapeClose(handleEscape);
 
   // Fetch enrichment only when the transaction id changes — `transaction` is a
@@ -151,13 +224,20 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     setAudits([]);
     let cancelled = false;
     const jobs = [];
+    // Condition photos are the slowest part of the sheet (signing request +
+    // full-size download), so start them NOW, alongside the record and the
+    // timeline, instead of after the body renders and they scroll into view.
+    preloadTxPhotos(transaction);
     if (transaction?.id && fetchFull) {
       setEnriching(true);
       jobs.push(
         // normalize the full record so customerProfile is always present —
         // otherwise the address flickers in from the list item then vanishes.
         fetchFull(transaction.id)
-          .then((full) => { if (!cancelled && !closingRef.current) setTx(normalizeTx(full)); })
+          .then((full) => {
+            preloadTxPhotos(full);
+            if (!cancelled && !closingRef.current) setTx(normalizeTx(full));
+          })
           .catch(() => {})
           .finally(() => { if (!cancelled) setEnriching(false); })
       );
@@ -167,7 +247,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     if (isStaffView && transaction?.id) {
       setAuditsLoading(true);
       jobs.push(
-        api.get(`/transactions/${transaction.id}/audits`)
+        getTxAudits(transaction.id)
           .then((logs) => { if (!cancelled) setAudits(Array.isArray(logs) ? logs : []); })
           .catch(() => { if (!cancelled) setAudits([]); })
           .finally(() => { if (!cancelled) setAuditsLoading(false); })
@@ -211,6 +291,10 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // The body gate above holds the skeleton until the timeline lands, so by
   // the time we render here the data is final — no loading branch needed.
   const showStaffAudit = isStaffView && (assistedName || releasedName || audits.length > 0);
+  const conditionPhotos = [
+    (tx.releasePhoto || tx.conditionPhoto) && { image: tx.releasePhoto || tx.conditionPhoto, label: 'Release (Before)', alt: 'Item condition at release' },
+    tx.returnPhoto && { image: tx.returnPhoto, label: 'Return (After)', alt: 'Item condition on return' },
+  ].filter(Boolean);
   const rentalTotal = Number(tx.rentalFee ?? tx.amount ?? 0) || 0;
   const paidSoFar = Number(tx.totalPaid ?? 0) || 0;
   const paidPct = rentalTotal > 0 ? Math.min(100, Math.round((paidSoFar / rentalTotal) * 100)) : 0;
@@ -470,30 +554,21 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                       <History size={11} /> Activity
                     </p>
                     <ol className="relative space-y-3 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200">
-                      {audits.map((log) => (
-                        <li key={log.id} className="relative pl-7">
-                          <span className={`absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-4 ${
-                            log?.entity === 'payment_proof'
-                              ? log?.action === 'payment_proof.reject'
-                                ? 'bg-red-500 ring-red-100'
-                                : log?.action === 'payment_proof.approve'
-                                  ? 'bg-emerald-500 ring-emerald-100'
-                                  : 'bg-amber-500 ring-amber-100'
-                              : log?.newValue?.released
-                                ? 'bg-blue-500 ring-blue-100'
-                                : log?.action === 'create'
-                                  ? 'bg-violet-500 ring-violet-100'
-                                  : log?.entity === 'payment' || log?.newValue?.paymentReceived != null
-                                    ? 'bg-emerald-500 ring-emerald-100'
-                                    : 'bg-gray-300 ring-gray-100'
-                          }`} />
-                          <p className="text-xs font-bold text-gray-900">{auditLabel(log)}</p>
-                          <p className="text-[11px] text-gray-500">
-                            {log?.performedBy?.name || 'System'}
-                            {log?.createdAt ? ` · ${fmtDate(log.createdAt)}` : ''}
-                          </p>
-                        </li>
-                      ))}
+                      {audits.map((log) => {
+                        const entry = auditEntry(log);
+                        const when = log?.createdAt ? fmtWhen(log.createdAt) : null;
+                        return (
+                          <li key={log.id} className="relative pl-7">
+                            <span className={`absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-4 ${AUDIT_DOT[entry.tone] || AUDIT_DOT.gray}`} />
+                            <p className="text-sm font-bold text-gray-900">{entry.title}</p>
+                            {entry.detail && <p className="text-xs text-gray-700 break-words">{entry.detail}</p>}
+                            <p className="text-xs text-gray-500">
+                              {log?.performedBy?.name ? `by ${log.performedBy.name}` : 'Automatic'}
+                              {when ? ` · ${when}` : ''}
+                            </p>
+                          </li>
+                        );
+                      })}
                     </ol>
                   </div>
                 )}
@@ -671,18 +746,19 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 <span className="text-xs font-bold uppercase tracking-wide">Condition Photos</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                {(tx.releasePhoto || tx.conditionPhoto) && (
-                  <div className="bg-white border border-gray-100/80 rounded-2xl overflow-hidden">
-                    <ItemImage image={tx.releasePhoto || tx.conditionPhoto} alt="Item condition at release" className="w-full h-40 object-cover" placeholderSize={20} />
-                    <p className="text-xs text-gray-500 font-medium text-center py-2">Release (Before)</p>
-                  </div>
-                )}
-                {tx.returnPhoto && (
-                  <div className="bg-white border border-gray-100/80 rounded-2xl overflow-hidden">
-                    <ItemImage image={tx.returnPhoto} alt="Item condition on return" className="w-full h-40 object-cover" placeholderSize={20} />
-                    <p className="text-xs text-gray-500 font-medium text-center py-2">Return (After)</p>
-                  </div>
-                )}
+                {conditionPhotos.map((p, i) => (
+                  <button key={p.label} type="button" onClick={() => setPhotoView(i)}
+                    aria-label={`View ${p.label} photo full size`}
+                    className="group text-left bg-white border border-gray-100/80 rounded-2xl overflow-hidden hover:border-gray-200 hover:shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50">
+                    <div className="relative">
+                      <ItemImage eager thumb image={p.image} alt={p.alt} className="w-full h-40 object-cover" placeholderSize={20} />
+                      <span aria-hidden="true" className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/45 text-white flex items-center justify-center opacity-80 group-hover:opacity-100 transition-opacity">
+                        <Maximize2 size={14} />
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 font-medium text-center py-2">{p.label}</p>
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -830,6 +906,10 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             )}
             </div>
         </BottomSheet>
+      )}
+
+      {photoView != null && conditionPhotos[photoView] && (
+        <PhotoViewer photos={conditionPhotos} index={photoView} onIndexChange={setPhotoView} onClose={() => setPhotoView(null)} />
       )}
     </>
   );

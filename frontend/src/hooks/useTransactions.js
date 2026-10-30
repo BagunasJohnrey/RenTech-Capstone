@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { transactionsService } from '../services';
+import { preloadDisplayImage, thumbKeyFor } from '../utils/images';
 
 // Shared normalizer (also imported by App for optimistic updates).
 // `customer` stays a display string for compatibility; `customerProfile`
@@ -38,23 +39,43 @@ const mergeUpdated = (t, updated) => normalizeTx({ ...t, ...updated });
 // TTL is deliberately tiny (30s) and every mutation below invalidates, so
 // no screen can serve materially stale data.
 const fullCache = new Map(); // id -> { promise, at }
+// Staff Activity timeline, cached + warmed the same way so the detail sheet
+// doesn't hold its skeleton for a second, uncached round trip.
+const auditCache = new Map(); // id -> { promise, at }
 const FULL_TTL = 30_000;
 
 export function invalidateTxCache(id) {
-  if (id == null) fullCache.clear();
-  else fullCache.delete(String(id));
+  if (id == null) { fullCache.clear(); auditCache.clear(); }
+  else { fullCache.delete(String(id)); auditCache.delete(String(id)); }
+}
+
+function cachedFetch(cache, id, fetcher) {
+  const key = String(id);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < FULL_TTL) return hit.promise;
+  const job = fetcher(id).then(
+    (v) => v,
+    (err) => { cache.delete(key); throw err; }
+  );
+  cache.set(key, { promise: job, at: Date.now() });
+  return job;
+}
+
+// Staff/Admin only (the endpoint 403s customers).
+// The detail sheet shows the small previews (`thumbs/…`), so warm those.
+export function preloadTxPhotos(tx) {
+  if (!tx) return;
+  const warm = (p) => { if (typeof p === 'string' && p.startsWith('rental/')) preloadDisplayImage(thumbKeyFor(p)); };
+  warm(tx.releasePhoto || tx.conditionPhoto);
+  warm(tx.returnPhoto);
+}
+
+export function getTxAudits(id) {
+  return cachedFetch(auditCache, id, transactionsService.audits);
 }
 
 function cachedGet(id) {
-  const key = String(id);
-  const hit = fullCache.get(key);
-  if (hit && Date.now() - hit.at < FULL_TTL) return hit.promise;
-  const job = transactionsService.get(id).then(
-    (full) => full,
-    (err) => { fullCache.delete(key); throw err; }
-  );
-  fullCache.set(key, { promise: job, at: Date.now() });
-  return job;
+  return cachedFetch(fullCache, id, transactionsService.get);
 }
 
 export function useTransactions() {
@@ -145,10 +166,13 @@ export function useTransactions() {
   // Full-record fetch through the short-lived cache (see above). Components
   // warming a record they are about to open should use prefetchTx instead.
   const getById = useCallback((id) => cachedGet(id), []);
-  const prefetchTx = useCallback((id) => {
+  const prefetchTx = useCallback((id, { withAudits = false } = {}) => {
     if (id == null) return;
     // Warming is best-effort; swallow rejections so hover never logs noise.
-    cachedGet(id).catch(() => {});
+    // Condition photos are warmed too: their signing + download is the
+    // slowest part of the detail sheet.
+    cachedGet(id).then(preloadTxPhotos).catch(() => {});
+    if (withAudits) getTxAudits(id).catch(() => {});
   }, []);
   const getUpcoming = useCallback(() => transactionsService.upcoming(), []);
 

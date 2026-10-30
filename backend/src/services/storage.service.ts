@@ -18,8 +18,10 @@ const BUCKET_NAME = process.env.STORAGE_BUCKET || 'rentech-images';
 const CATALOG_BUCKET = process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog';
 
 // Condition evidence lives here; everything else is catalog content.
+// Their small previews (`thumbs/rental/…`, written next to the full photo at
+// upload) are condition evidence too: same private bucket, signed-URL-only.
 export function isConditionPath(path: string): boolean {
-  return path.startsWith('rental/');
+  return path.startsWith('rental/') || path.startsWith('thumbs/rental/');
 }
 
 export function bucketFor(path: string): string {
@@ -399,9 +401,8 @@ export async function removeObject(path: string) {
       console.warn('[storage] removeObject failed:', error.message);
       return;
     }
-    // Best-effort thumb cleanup alongside the full image (catalog only —
-    // condition shots have no thumbs served, but removing a stale one is
-    // harmless, so attempt uniformly).
+    // Best-effort thumb cleanup alongside the full image (catalog and
+    // condition shots both get one at upload).
     const { error: thumbError } = await supabaseAdmin.storage.from(bucket).remove([thumbKeyFor(path)]);
     if (thumbError) console.warn('[storage] removeObject thumb failed:', thumbError.message);
   } catch (err) {
