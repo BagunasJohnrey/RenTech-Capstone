@@ -3,6 +3,38 @@ import { z } from 'zod';
 import * as storageService from '../services/storage.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { prisma } from '../config/database.js';
+import { Role } from '../types/index.js';
+
+const pathFromParams = (req: AuthenticatedRequest): string => {
+  const raw = req.params.path as unknown;
+  return Array.isArray(raw) ? raw.join('/') : (typeof raw === 'string' ? raw : '');
+};
+
+// Private photos need a signed-in user; catalog photos skip auth entirely.
+export function requireAuthForPrivate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (!storageService.isConditionPath(pathFromParams(req))) return next();
+  return authMiddleware(req, res, next);
+}
+
+// Private keys look like `rental/<owner>/<file>` (or the same under
+// `thumbs/`), where <owner> is the booking id (release/return photos, proof
+// resubmissions) or the customer's own id (proofs sent with a booking).
+// Staff/Admin may see any; a customer only their own bookings' photos.
+// Unknown or someone else's → 404, so the endpoint never confirms that a
+// path exists.
+async function canViewPrivatePath(req: AuthenticatedRequest, path: string): Promise<boolean> {
+  const user = req.user;
+  if (!user) return false;
+  if (user.role === Role.Admin || user.role === Role.Staff) return true;
+  const parts = path.replace(/^thumbs\//, '').split('/');
+  if (parts.length < 3 || parts[0] !== 'rental' || parts.some((p) => !p || p === '.' || p === '..')) return false;
+  const owner = parts[1];
+  if (owner === user.id) return true;
+  const tx = await prisma.transaction.findUnique({ where: { id: owner }, select: { customerId: true } }).catch(() => null);
+  return tx?.customerId === user.id;
+}
 
 export const uploadSchema = z.object({
   body: z.object({
@@ -27,8 +59,7 @@ export async function getDownloadUrl(req: AuthenticatedRequest, res: Response, n
   try {
     // Express 5 named wildcard: params.path is an array of segments.
     // e.g. GET /storage/rental/abc/file.jpg → params.path = ['rental','abc','file.jpg']
-    const raw = req.params.path as unknown;
-    const path = Array.isArray(raw) ? raw.join('/') : (typeof raw === 'string' ? raw : '');
+    const path = pathFromParams(req);
 
     // Browser blob URLs are client-only — never storeable; reject them early.
     if (path.startsWith('blob:')) {
@@ -36,6 +67,10 @@ export async function getDownloadUrl(req: AuthenticatedRequest, res: Response, n
     }
     if (!path) {
       return next(new AppError(404, 'Missing file path'));
+    }
+
+    if (storageService.isConditionPath(path) && !(await canViewPrivatePath(req, path))) {
+      return next(new AppError(404, 'File not found'));
     }
 
     const result = await storageService.getDownloadUrl(path);
