@@ -19,6 +19,47 @@ const SORT_OPTIONS = [
   { key: 'category', label: 'Category' },
 ];
 
+// Tied values share the same rank (competition ranking:
+// rank = 1 + number of items strictly ahead). Lists arrive sorted desc
+// by their metric, so the first index holding the value is the rank.
+const rankOf = (list, item, key) => list.findIndex((t) => t[key] === item[key]) + 1;
+
+// One "Top by …" card. Each line is a category; tapping it filters the
+// Item Performance table. `showLogbook` swaps the piece count for the
+// "+N" chip counting imported paper-logbook rentals.
+function RankList({ title, icon, list, metric, valueClass, formatValue, onPick, showLogbook = false, className = '' }) {
+  return (
+    <div className={`bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm ${className}`}>
+      <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+        {icon} {title}
+      </h3>
+      <div className="space-y-2">
+        {list.map((cat) => (
+          <button key={cat.category} type="button" onClick={() => onPick(cat.category)}
+            title={`Show ${cat.category} items below`}
+            className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(list, cat, metric)}.</span>
+              <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
+              {showLogbook
+                ? cat.historyRentals > 0 && (
+                  <span title={`Includes ${cat.historyRentals} past rental${cat.historyRentals === 1 ? '' : 's'} imported from the paper logbook`}
+                    className="text-[10px] font-bold text-violet-600 bg-violet-50 rounded-full px-1.5 py-0.5 shrink-0">
+                    +{cat.historyRentals}
+                    <span className="sr-only"> from the logbook</span>
+                  </span>
+                )
+                : <span className="text-[11px] text-gray-400 shrink-0">{cat.units} pc{cat.units === 1 ? '' : 's'}</span>}
+            </div>
+            <span className={`text-xs font-bold shrink-0 ${valueClass}`}>{formatValue(cat)}</span>
+          </button>
+        ))}
+        {list.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
+      </div>
+    </div>
+  );
+}
+
 export default function InventoryAnalyticsView({ noHeader, period, initialData, onViewItemTransactions }) {
   const [data, setData] = useState(initialData ?? null);
   const [sortKey, setSortKey] = useState('revenueGenerated');
@@ -127,10 +168,7 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
     setPage(0);
   };
 
-  // Tied values share the same rank (competition ranking:
-  // rank = 1 + number of items strictly ahead). Lists arrive sorted desc
-  // by their metric, so the first index holding the value is the rank.
-  const rankOf = (list, item, key) => list.findIndex((t) => t[key] === item[key]) + 1;
+  const pickCategory = (category) => { setCategoryFilter(category); setPage(0); };
 
   const SortHeader = ({ label, sort, className }) => (
     <th className={`px-4 py-3 text-[11px] font-bold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700 ${className || ''}`}
@@ -151,68 +189,16 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
       {/* Top Performers (by CATEGORY line) — 1-up on phones, 2-up on tablet (3rd spans full),
           3-up on desktop. Tapping a line filters the Item Performance table below. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <DollarSign size={20} className="text-emerald-500" /> Top by Revenue
-          </h3>
-          <div className="space-y-2">
-            {cats.byRevenue.map((cat) => (
-              <button key={cat.category} type="button" onClick={() => { setCategoryFilter(cat.category); setPage(0); }}
-                title={`Show ${cat.category} items below`}
-                className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(cats.byRevenue, cat, 'revenue')}. </span>
-                  <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
-                  <span className="text-[10px] text-gray-400 shrink-0">{cat.units} pc{cat.units === 1 ? '' : 's'}</span>
-                </div>
-                <span className="text-xs font-bold text-emerald-600 shrink-0">₱{cat.revenue.toLocaleString()}</span>
-              </button>
-            ))}
-            {cats.byRevenue.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
-          </div>
-        </div>
-        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm">
-          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <TrendingUp size={20} className="text-blue-500" /> Top by Utilization
-          </h3>
-          <div className="space-y-2">
-            {cats.byUtilization.map((cat) => (
-              <button key={cat.category} type="button" onClick={() => { setCategoryFilter(cat.category); setPage(0); }}
-                title={`Show ${cat.category} items below`}
-                className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(cats.byUtilization, cat, 'utilization')}.</span>
-                  <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
-                  <span className="text-[10px] text-gray-400 shrink-0">{cat.units} pc{cat.units === 1 ? '' : 's'}</span>
-                </div>
-                <span className="text-xs font-bold text-blue-600 shrink-0">{cat.utilization}%</span>
-              </button>
-            ))}
-            {cats.byUtilization.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
-          </div>
-        </div>
-        <div className="bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm md:col-span-2 xl:col-span-1">
-          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <RotateCcw size={20} className="text-orange-500" /> Top by Frequency
-          </h3>
-          <div className="space-y-2">
-            {cats.byFrequency.map((cat) => (
-              <button key={cat.category} type="button" onClick={() => { setCategoryFilter(cat.category); setPage(0); }}
-                title={`Show ${cat.category} items below`}
-                className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(cats.byFrequency, cat, 'rentals')}.</span>
-                  <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
-                  {cat.historyRentals > 0 && (
-                    <span className="text-[10px] font-bold text-violet-600 bg-violet-50 rounded-full px-1.5 py-0.5 shrink-0">+{cat.historyRentals}</span>
-                  )}
-                </div>
-                <span className="text-xs font-bold text-orange-600 shrink-0">{cat.rentals}x</span>
-              </button>
-            ))}
-            {cats.byFrequency.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
-          </div>
-        </div>
+        <RankList title="Top by Revenue" icon={<DollarSign size={20} className="text-emerald-500" />}
+          list={cats.byRevenue} metric="revenue" valueClass="text-emerald-600"
+          formatValue={(c) => `₱${c.revenue.toLocaleString()}`} onPick={pickCategory} />
+        <RankList title="Top by Utilization" icon={<TrendingUp size={20} className="text-blue-500" />}
+          list={cats.byUtilization} metric="utilization" valueClass="text-blue-600"
+          formatValue={(c) => `${c.utilization}%`} onPick={pickCategory} />
+        <RankList title="Top by Frequency" icon={<RotateCcw size={20} className="text-orange-500" />}
+          list={cats.byFrequency} metric="rentals" valueClass="text-orange-600"
+          formatValue={(c) => `${c.rentals}x`} onPick={pickCategory} showLogbook
+          className="md:col-span-2 xl:col-span-1" />
       </div>
 
       {/* Item list: sortable cards on mobile/tablet, full table on desktop (lg+) */}

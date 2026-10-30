@@ -196,7 +196,7 @@ export default function SmsLogPanel() {
                       <RotateCw size={13} className={resendingId === r.id ? 'animate-spin' : ''} />
                     </button>
                   )}
-                  <span className="shrink-0 text-[10px] text-gray-400 font-medium tabular-nums">{fmtTime(r.createdAt)}</span>
+                  <span className="shrink-0 text-xs text-gray-400 font-medium tabular-nums">{fmtTime(r.createdAt)}</span>
                 </summary>
                 <div className="mt-2.5 ml-12 text-[13px] text-gray-700 leading-relaxed break-words whitespace-pre-wrap">{r.message}</div>
                 <div className="mt-2 ml-12 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400 font-medium">
@@ -210,7 +210,7 @@ export default function SmsLogPanel() {
                       {!sent && (
                         <button onClick={() => handleResend(r)} disabled={resendingId === r.id}
                           title="Send this message again"
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/10 transition-colors disabled:opacity-50">
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold text-[#bf4a53] hover:bg-[#bf4a53]/10 transition-colors disabled:opacity-50">
                           <RotateCw size={11} className={resendingId === r.id ? 'animate-spin' : ''} />
                           {resendingId === r.id ? 'Sending…' : 'Resend'}
                         </button>
@@ -218,7 +218,7 @@ export default function SmsLogPanel() {
                       {canDelete && (
                         <button onClick={() => handleDeleteTap(r.id)}
                           title={pendingDelete === r.id ? 'Tap again to confirm delete' : 'Delete this log row (admin)'}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-colors ${
+                          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold transition-colors ${
                             pendingDelete === r.id
                               ? 'bg-red-600 text-white'
                               : 'text-gray-400 hover:text-red-600 hover:bg-red-50'

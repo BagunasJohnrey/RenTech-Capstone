@@ -19,6 +19,7 @@ import { tabPath } from '../utils/routing';
 import { todayYmd } from '../utils/format';
 import PageHeader from '../components/ui/PageHeader';
 import StatCard from '../components/StatCard';
+import { rowActivation, ROW_FOCUS } from '../utils/a11y';
 
 export default function DashboardView({ role, transactions, inventory, transactionsLoading, inventoryLoading, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook, onNavigateDetail }) {
   const navigate = useNavigate();
@@ -44,6 +45,8 @@ export default function DashboardView({ role, transactions, inventory, transacti
   const [txOverlay, setTxOverlay] = useState(null);
   // Bumped after a proof submission so the payment-history card refetches.
   const [proofHistoryKey, setProofHistoryKey] = useState(0);
+  // Admin revenue chart: tapped month (null = latest). Phones can't hover.
+  const [chartPick, setChartPick] = useState(null);
   useEffect(() => { setTxOverlay(null); }, [transactions]);
   const refreshBookings = useCallback(async () => {
     try {
@@ -501,9 +504,9 @@ export default function DashboardView({ role, transactions, inventory, transacti
               <div className="space-y-2.5">
                 {overdueTxs.map(tx => (
                   <div key={tx.id}
-                    onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
+                    {...rowActivation(onNavigateDetail ? () => onNavigateDetail(tx) : null)}
                     title={onNavigateDetail ? 'View transaction details' : undefined}
-                    className={onNavigateDetail ? 'flex items-center justify-between gap-2 cursor-pointer hover:bg-red-50/60 -mx-1 px-1 rounded-lg transition-colors' : 'flex items-center justify-between gap-2'}>
+                    className={onNavigateDetail ? `flex items-center justify-between gap-2 cursor-pointer hover:bg-red-50/60 -mx-1 px-1 rounded-lg transition-colors ${ROW_FOCUS}` : 'flex items-center justify-between gap-2'}>
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
                       <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
@@ -543,7 +546,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 return (
                   <button key={`${kind}-${tx.id}`} type="button"
                     onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
-                    className="w-full text-left flex items-center gap-3 py-3 px-2 -mx-2 rounded-xl border-b border-gray-100 last:border-0 hover:bg-gray-50/70 transition-colors">
+                    className={`w-full text-left flex items-center gap-3 py-3 px-2 -mx-2 rounded-xl border-b border-gray-100 last:border-0 hover:bg-gray-50/70 transition-colors ${ROW_FOCUS}`}>
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isPickup ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
                       {isPickup ? <ShoppingBag size={16} aria-hidden="true" /> : <Undo2 size={16} aria-hidden="true" />}
                     </div>
@@ -583,9 +586,9 @@ export default function DashboardView({ role, transactions, inventory, transacti
             <div className="space-y-3">
               {recentRentals.map(tx => (
                 <div key={tx.id}
-                  onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
+                  {...rowActivation(onNavigateDetail ? () => onNavigateDetail(tx) : null)}
                   title={onNavigateDetail ? 'View transaction details' : undefined}
-                  className={`flex items-center gap-3 py-3 border-b border-gray-100 last:border-0 ${onNavigateDetail ? 'cursor-pointer hover:bg-gray-50/70 -mx-2 px-2 rounded-xl transition-colors' : ''}`}>
+                  className={`flex items-center gap-3 py-3 border-b border-gray-100 last:border-0 ${onNavigateDetail ? `cursor-pointer hover:bg-gray-50/70 -mx-2 px-2 rounded-xl transition-colors ${ROW_FOCUS}` : ''}`}>
                   <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
                     <ShoppingBag size={16} className="text-[#bf4a53]" />
                   </div>
@@ -735,6 +738,9 @@ export default function DashboardView({ role, transactions, inventory, transacti
   const rawVisualCap = medianRevenue * 5;
   const isOutlier = (rev) => rev > 0 && rawVisualCap > 0 && rev > rawVisualCap;
   const visualCap = isOutlier(maxRevenue) ? rawVisualCap : maxRevenue;
+  // Values always shown: the tapped (or latest) month and the best month.
+  const chartActive = chartPick ?? revByMonth.length - 1;
+  const chartMaxIdx = revByMonth.findIndex(m => m.revenue > 0 && m.revenue === maxRevenue);
 
   const itemCounts = {};
   transactions.forEach(tx => {
@@ -796,11 +802,18 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 const isEmpty = m.revenue <= 0;
                 const capped = isOutlier(m.revenue);
                 const pct = (m.revenue / visualCap) * 100;
+                const pinned = idx === chartActive || idx === chartMaxIdx;
                 return (
-                  <div key={`${m.label}-${idx}`} title={capped ? `₱${m.revenue.toLocaleString()} (bar truncated — outlier month)` : `₱${m.revenue.toLocaleString()}`}
-                    className="flex-1 flex flex-col items-center justify-end h-full group">
-                    <span className={`text-[10px] font-semibold mb-1 transition-opacity ${
-                      isEmpty ? 'text-gray-300' : 'text-gray-500 opacity-0 group-hover:opacity-100'}`}>
+                  <button type="button" key={`${m.label}-${idx}`} title={capped ? `₱${m.revenue.toLocaleString()} (bar truncated — outlier month)` : `₱${m.revenue.toLocaleString()}`}
+                    onClick={() => setChartPick(idx)}
+                    aria-pressed={idx === chartActive}
+                    aria-label={`${m.label}: ₱${m.revenue.toLocaleString()}${idx === chartMaxIdx ? ', highest month' : ''}`}
+                    className={`flex-1 min-w-0 flex flex-col items-center justify-end h-full group rounded-lg ${ROW_FOCUS}`}>
+                    <span className={`text-[10px] font-semibold mb-1 whitespace-nowrap transition-opacity ${
+                      isEmpty ? 'text-gray-300'
+                        : idx === chartActive ? 'text-gray-900'
+                        : pinned ? 'text-gray-500'
+                        : 'text-gray-500 opacity-0 group-hover:opacity-100'}`}>
                       {isEmpty ? '₱0' : `₱${m.revenue.toLocaleString()}${capped ? ' ↑' : ''}`}
                     </span>
                     {/* Empty months: dashed placeholder bar. Outlier months: capped at 60% with
@@ -810,13 +823,13 @@ export default function DashboardView({ role, transactions, inventory, transacti
                         isEmpty
                           ? 'bg-gray-50 border border-dashed border-gray-300 group-hover:border-gray-400'
                           : capped
-                            ? 'bg-[#bf4a53]/20 border-2 border-dashed border-[#bf4a53]/40 group-hover:bg-[#bf4a53]/30 cursor-pointer'
-                            : 'bg-[#bf4a53]/15 group-hover:bg-[#bf4a53]/30 cursor-pointer'
+                            ? `${idx === chartActive ? 'bg-[#bf4a53]/30' : 'bg-[#bf4a53]/20'} border-2 border-dashed border-[#bf4a53]/40 group-hover:bg-[#bf4a53]/30 cursor-pointer`
+                            : `${idx === chartActive ? 'bg-[#bf4a53]/30' : 'bg-[#bf4a53]/15'} group-hover:bg-[#bf4a53]/30 cursor-pointer`
                       }`}
                       style={{ height: capped ? '60%' : isEmpty ? '12%' : `${pct}%`, minHeight: '4px' }}
                     />
-                    <span className={`text-[9px] font-semibold mt-1.5 ${isEmpty ? 'text-gray-300' : capped ? 'text-[#bf4a53]/60' : 'text-gray-400'}`}>{m.label}</span>
-                  </div>
+                    <span className={`text-[11px] font-semibold mt-1.5 ${isEmpty ? 'text-gray-300' : capped ? 'text-[#bf4a53]/60' : idx === chartActive ? 'text-gray-700' : 'text-gray-400'}`}>{m.label}</span>
+                  </button>
                 );
               })}
             </div>
@@ -976,15 +989,15 @@ export default function DashboardView({ role, transactions, inventory, transacti
             <div className="grid grid-cols-3 gap-2 mt-2">
               <div className="rounded-2xl bg-gray-50/70 border border-gray-100 p-2.5 text-center min-w-0">
                 <p className={`text-lg font-extrabold tabular-nums ${cleaningCount > 0 ? 'text-orange-500' : 'text-gray-300'}`}>{cleaningCount}</p>
-                <p className="text-[10px] font-semibold text-gray-500 leading-tight mt-0.5">In cleaning</p>
+                <p className="text-xs font-semibold text-gray-500 leading-tight mt-0.5">In cleaning</p>
               </div>
               <div className="rounded-2xl bg-gray-50/70 border border-gray-100 p-2.5 text-center min-w-0">
                 <p className={`text-lg font-extrabold tabular-nums ${damagedItems > 0 ? 'text-red-500' : 'text-gray-300'}`}>{damagedItems}</p>
-                <p className="text-[10px] font-semibold text-gray-500 leading-tight mt-0.5">Out of service</p>
+                <p className="text-xs font-semibold text-gray-500 leading-tight mt-0.5">Out of service</p>
               </div>
               <div className="rounded-2xl bg-gray-50/70 border border-gray-100 p-2.5 text-center min-w-0">
                 <p className={`text-lg font-extrabold tabular-nums ${onSaleCount > 0 ? 'text-[#bf4a53]' : 'text-gray-300'}`}>{onSaleCount}</p>
-                <p className="text-[10px] font-semibold text-gray-500 leading-tight mt-0.5">On sale</p>
+                <p className="text-xs font-semibold text-gray-500 leading-tight mt-0.5">On sale</p>
               </div>
             </div>
             </>

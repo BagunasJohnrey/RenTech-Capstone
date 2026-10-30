@@ -90,8 +90,9 @@ export default function CleaningQueue({ items, onMarkClean, onBulkClean, onViewA
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6">
       {/* Header — matches Ready for Pickup / Overdue Rentals cards, with the
-          multi-select toggle top-right (desktop + mobile) */}
-      <div className="flex items-start justify-between gap-2 mb-1">
+          multi-select toggle top-right (desktop + mobile). Wraps the buttons
+          onto their own right-aligned line on very narrow phones. */}
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
         <div className="flex items-center gap-2 min-w-0">
           <span className="w-9 h-9 rounded-2xl bg-orange-50 text-orange-500 flex items-center justify-center shrink-0">
             <Droplets size={17} />
@@ -101,7 +102,7 @@ export default function CleaningQueue({ items, onMarkClean, onBulkClean, onViewA
             {items.length}
           </span>
         </div>
-        <div className="shrink-0 flex flex-col items-end gap-1.5">
+        <div className="shrink-0 ml-auto flex flex-col items-end gap-1.5">
           {multiSelect ? (
             <>
               <div className="flex items-center gap-1.5">

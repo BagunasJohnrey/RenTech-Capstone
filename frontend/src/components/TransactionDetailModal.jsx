@@ -364,7 +364,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   {custInitial}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Customer</p>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Customer</p>
                   <p className="font-bold text-gray-900 truncate">{customerLabel(tx.customer) || '—'}</p>
                 </div>
               </div>
@@ -410,7 +410,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   <Shirt size={16} className="text-gray-500" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Item</p>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Item</p>
                   <p className="font-bold text-gray-900 truncate">{itemLabel(tx.item) || '—'}</p>
                 </div>
               </div>
@@ -436,7 +436,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             <div>
               <div className="flex items-center gap-1.5 text-gray-400 mb-3">
                 <UserCheck size={13} />
-                <span className="text-[10px] font-bold uppercase tracking-wide">Staff Audit</span>
+                <span className="text-xs font-bold uppercase tracking-wide">Staff Audit</span>
               </div>
               <div className="bg-white border border-gray-100/80 rounded-2xl p-4 space-y-3">
                 {assistedName && (
@@ -445,7 +445,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                       <UserCheck size={15} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Assisted by</p>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Assisted by</p>
                       <p className="text-sm font-bold text-gray-900 truncate">{assistedName}</p>
                     </div>
                   </div>
@@ -456,7 +456,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                       <PackageCheck size={15} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Released by</p>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Released by</p>
                       <p className="text-sm font-bold text-gray-900 truncate">{releasedName}</p>
                     </div>
                   </div>
@@ -466,7 +466,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 )}
                 {audits.length > 0 && (
                   <div className={(assistedName || releasedName) ? 'pt-3 border-t border-gray-100' : ''}>
-                    <p className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">
+                    <p className="flex items-center gap-1.5 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
                       <History size={11} /> Activity
                     </p>
                     <ol className="relative space-y-3 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200">
@@ -505,24 +505,24 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           <div>
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
               <Calendar size={13} />
-              <span className="text-[10px] font-bold uppercase tracking-wide">Schedule</span>
+              <span className="text-xs font-bold uppercase tracking-wide">Schedule</span>
             </div>
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
               <ol className="relative space-y-4 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200">
                 <li className="relative pl-7">
                   <span className="absolute left-0 top-1 w-[11px] h-[11px] rounded-full bg-blue-500 ring-4 ring-blue-100" />
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Pickup Date</p>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Pickup Date</p>
                   <p className="text-sm font-bold text-gray-900">{fmtDate(tx.rentalDate || tx.date) || '—'}</p>
                 </li>
                 <li className="relative pl-7">
                   <span className={`absolute left-0 top-1 w-[11px] h-[11px] rounded-full ring-4 ${status === 'Overdue' ? 'bg-red-500 ring-red-100' : status === 'Returned' ? 'bg-emerald-500 ring-emerald-100' : 'bg-amber-400 ring-amber-100'}`} />
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Due / Return By</p>
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Due / Return By</p>
                   <p className={`text-sm font-bold ${status === 'Overdue' ? 'text-red-600' : 'text-gray-900'}`}>{fmtDate(tx.dueDate || tx.returnDate) || '—'}</p>
                 </li>
                 {tx.returnDate && ['Returned'].includes(status) && (
                   <li className="relative pl-7">
                     <span className="absolute left-0 top-1 w-[11px] h-[11px] rounded-full bg-emerald-500 ring-4 ring-emerald-100" />
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Actual Return</p>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Actual Return</p>
                     <p className="text-sm font-bold text-gray-900">{fmtDate(tx.returnDate)}</p>
                   </li>
                 )}
@@ -534,7 +534,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           <div>
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
               <CreditCard size={13} />
-              <span className="text-[10px] font-bold uppercase tracking-wide">Payment</span>
+              <span className="text-xs font-bold uppercase tracking-wide">Payment</span>
             </div>
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
               {rentalTotal > 0 && (
@@ -569,7 +569,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             </div>
             {Array.isArray(tx.payments) && tx.payments.length > 0 && (
               <div className="mt-3 space-y-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Payment History</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Payment History</p>
                 {tx.payments.map((p) => (
                   <div key={p.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
                     <div className="flex items-center gap-2.5">
@@ -578,10 +578,10 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                       </div>
                       <div>
                         <p className="text-sm font-bold text-gray-900">{fmtCurrency(p.amount)}</p>
-                        <p className="text-[10px] text-gray-500 capitalize">{p.method} · {p.type}</p>
+                        <p className="text-xs text-gray-500 capitalize">{p.method} · {p.type}</p>
                       </div>
                     </div>
-                    <p className="text-[10px] text-gray-400">{new Date(p.createdAt).toLocaleDateString()}</p>
+                    <p className="text-xs text-gray-400">{new Date(p.createdAt).toLocaleDateString()}</p>
                   </div>
                 ))}
               </div>
@@ -593,12 +593,12 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           {flags.flagsLoaded && flags.qr_codes && tx.id && (
             <div>
               <div className="flex items-center justify-between mb-3">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Booking QR</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Booking QR</p>
                 {qrSaveUrl && (
                   <a
                     href={qrSaveUrl}
                     download={`${getBookingCode(tx)}.png`}
-                    className="inline-flex items-center gap-1 text-[10px] font-bold text-[#bf4a53] hover:underline"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-[#bf4a53] hover:underline"
                     title="Download a copy of this QR code">
                     <Download size={11} /> Save QR
                   </a>
@@ -613,7 +613,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   </div>
                   <div aria-hidden="true" className="border-t sm:border-t-0 sm:border-l border-dashed border-white/20 mx-3.5 sm:mx-0 sm:my-3.5" />
                   <div className="flex-1 min-w-0 p-3.5 sm:p-4 flex flex-col justify-center text-center sm:text-left">
-                    <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/50">Booking QR code</p>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/50">Booking QR code</p>
                     <p className="font-mono text-base font-bold tracking-wider mt-0.5">{getBookingCode(tx)}</p>
                     <p className="text-[11px] text-white/60 leading-snug mt-1">Customer shows this at pickup — scan it to pull up the order.</p>
                   </div>
@@ -627,7 +627,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             <div>
               <div className="flex items-center gap-1.5 text-gray-400 mb-3">
                 <Ruler size={13} />
-                <span className="text-[10px] font-bold uppercase tracking-wide">Measurements</span>
+                <span className="text-xs font-bold uppercase tracking-wide">Measurements</span>
               </div>
               <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
@@ -646,7 +646,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           <div>
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
               <FileText size={13} />
-              <span className="text-[10px] font-bold uppercase tracking-wide">Notes</span>
+              <span className="text-xs font-bold uppercase tracking-wide">Notes</span>
             </div>
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4 text-sm">
               {tx.notes ? (
@@ -668,19 +668,19 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             <div>
               <div className="flex items-center gap-1.5 text-gray-400 mb-3">
                 <Camera size={13} />
-                <span className="text-[10px] font-bold uppercase tracking-wide">Condition Photos</span>
+                <span className="text-xs font-bold uppercase tracking-wide">Condition Photos</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {(tx.releasePhoto || tx.conditionPhoto) && (
                   <div className="bg-white border border-gray-100/80 rounded-2xl overflow-hidden">
                     <ItemImage image={tx.releasePhoto || tx.conditionPhoto} alt="Item condition at release" className="w-full h-40 object-cover" placeholderSize={20} />
-                    <p className="text-[10px] text-gray-500 font-medium text-center py-2">Release (Before)</p>
+                    <p className="text-xs text-gray-500 font-medium text-center py-2">Release (Before)</p>
                   </div>
                 )}
                 {tx.returnPhoto && (
                   <div className="bg-white border border-gray-100/80 rounded-2xl overflow-hidden">
                     <ItemImage image={tx.returnPhoto} alt="Item condition on return" className="w-full h-40 object-cover" placeholderSize={20} />
-                    <p className="text-[10px] text-gray-500 font-medium text-center py-2">Return (After)</p>
+                    <p className="text-xs text-gray-500 font-medium text-center py-2">Return (After)</p>
                   </div>
                 )}
               </div>

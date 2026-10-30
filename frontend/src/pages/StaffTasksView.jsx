@@ -18,6 +18,10 @@ import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
 import PageHeader from '../components/ui/PageHeader';
 import { Skeleton } from '../components/Skeleton';
+import { rowActivation, ROW_FOCUS } from '../utils/a11y';
+
+// Spoken status for calendar days (screen readers can't see the dot colors).
+const DAY_STATUS_LABEL = { active: 'active rentals', reserved: 'reservations', returned: 'returns', mixed: 'active rentals and returns' };
 
 // Collapsible SMS log that mounts its data-fetching panel only after the
 // first expand — keeps GET /sms/history off the Tasks critical path.
@@ -405,9 +409,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                 const clickable = (f.tx && onNavigateDetail) || f.action;
                 return (
                   <div key={f.key}
-                    onClick={() => { if (f.action) f.action(); else if (f.tx && onNavigateDetail) onNavigateDetail(f.tx); }}
-                    title={f.action || f.tx ? 'View details' : undefined}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all hover:shadow-sm hover:scale-[1.01] ${f.bg} ${clickable ? 'cursor-pointer' : ''}`}>
+                    {...rowActivation(clickable ? () => { if (f.action) f.action(); else onNavigateDetail(f.tx); } : null)}
+                    title={clickable ? 'View details' : undefined}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all hover:shadow-sm hover:scale-[1.01] ${f.bg} ${clickable ? `cursor-pointer ${ROW_FOCUS}` : ''}`}>
                     <f.icon size={16} className={`${f.tone} shrink-0`} />
                     <div className="flex-1 min-w-0 text-left">
                       <p className="text-sm font-bold text-gray-900 truncate">{f.label}</p>
@@ -507,7 +511,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
                           <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
-                          <p className="text-[10px] text-blue-500 font-medium">
+                          <p className="text-xs text-blue-500 font-medium">
                             {new Date(tx.rentalDate || tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                           </p>
                         </div>
@@ -544,9 +548,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                     const daysOverdue = Math.max(0, Math.floor((now - dueDate) / 86400000));
                     return (
                       <div key={tx.id}
-                        onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
+                        {...rowActivation(onNavigateDetail ? () => onNavigateDetail(tx) : null)}
                         title={onNavigateDetail ? 'View transaction details' : undefined}
-                        className={`flex items-center justify-between p-3 bg-red-50/60 rounded-2xl border border-red-100/50 gap-3 ${onNavigateDetail ? 'cursor-pointer hover:bg-red-50 transition-colors' : ''}`}>
+                        className={`flex items-center justify-between p-3 bg-red-50/60 rounded-2xl border border-red-100/50 gap-3 ${onNavigateDetail ? `cursor-pointer hover:bg-red-50 transition-colors ${ROW_FOCUS}` : ''}`}>
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-9 h-9 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 text-xs font-bold">
                             {(tx.customer || '?').charAt(0).toUpperCase()}
@@ -554,7 +558,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                           <div className="min-w-0">
                             <p className="text-sm font-bold text-gray-900 truncate">{customerLabel(tx.customer)}</p>
                             <p className="text-xs text-gray-600 truncate">{itemLabel(tx.item)}</p>
-                            <p className="text-[10px] font-bold text-red-500">
+                            <p className="text-xs font-bold text-red-500">
                               {daysOverdue === 0 ? 'Due today' : `${daysOverdue}d overdue`}
                             </p>
                           </div>
@@ -659,13 +663,12 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                   const daysOverdue = Math.floor((now - dueDate) / (1000 * 60 * 60 * 24));
                   const showActions = tx.status === 'Active' || tx.status === 'Overdue';
                   const isItemRented = showActions && inventory.some(i => i.id === tx.itemId && i.status === 'Rented');
-                  const openDetail = () => { if (onNavigateDetail) onNavigateDetail(tx); };
                   return (
                     <div key={tx.id}>
                       <div
-                        onClick={openDetail}
+                        {...rowActivation(onNavigateDetail ? () => onNavigateDetail(tx) : null)}
                         title={onNavigateDetail ? 'View transaction details' : undefined}
-                        className={`flex items-center gap-3.5 px-1 py-3 ${onNavigateDetail ? 'cursor-pointer hover:bg-gray-50/70 rounded-xl transition-colors' : ''}`}>
+                        className={`flex items-center gap-3.5 px-1 py-3 ${onNavigateDetail ? `cursor-pointer hover:bg-gray-50/70 rounded-xl transition-colors ${ROW_FOCUS}` : ''}`}>
                         <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
                           <span className="text-sm font-bold text-gray-500">{initial}</span>
                         </div>
@@ -775,9 +778,12 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
                   return (
                     <div key={`${wi}-${ci}`} className="flex flex-col items-center justify-center py-1 h-full">
-                      <div
+                      <button
+                        type="button"
                         onClick={() => setSelectedDate(new Date(currentYear, currentMonth, day))}
-                        className={`w-9 h-9 flex items-center justify-center text-sm font-medium rounded-full cursor-pointer transition-colors ${
+                        aria-label={`${monthNames[currentMonth]} ${day}${DAY_STATUS_LABEL[status] ? `, ${DAY_STATUS_LABEL[status]}` : ''}`}
+                        aria-pressed={isSelected}
+                        className={`w-9 h-9 flex items-center justify-center text-sm font-medium rounded-full cursor-pointer transition-colors ${ROW_FOCUS} ${
                           isSelected
                             ? 'bg-gray-900 text-white'
                             : status === 'active'
@@ -792,15 +798,15 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                         }`}
                       >
                         {day}
-                      </div>
+                      </button>
                     </div>
                   );
                 })
               )}
             </div>
 
-            {/* Legend — single centered row on all screens (desktop too) */}
-            <div className="flex items-center justify-center gap-x-3 mt-4 pt-4 border-t border-gray-100">
+            {/* Legend — centered; wraps to a second line on very narrow phones */}
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 mt-4 pt-4 border-t border-gray-100">
               <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 font-medium whitespace-nowrap">
                 <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" /> Active
               </span>
