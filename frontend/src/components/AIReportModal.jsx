@@ -2,6 +2,8 @@ import { useState, useCallback } from 'react';
 import { X, Sparkles, Download, Loader2, AlertCircle } from 'lucide-react';
 import { parseReportSections } from '../utils/formatReport';
 import { generateReportPdf } from '../utils/reportPdf';
+import { extractReportVisuals, layoutSection } from '../utils/reportVisuals';
+import ReportVisuals, { ReportTable } from './ReportVisuals';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 
 const COMPANY = "Mylene's Boutique";
@@ -11,6 +13,10 @@ const ACCENT = '#bf4a53';
 
 export default function AIReportModal({ geminiReport, onClose }) {
   const sections = geminiReport ? parseReportSections(geminiReport) : [];
+  // Charts are read back out of the report's own (server-validated) figures.
+  const visuals = extractReportVisuals(sections);
+  // Per section: charts, then a table of the figures, then the explanation.
+  const layout = sections.map((s) => layoutSection(s, visuals));
   const generatedDate = new Date().toLocaleDateString('en-PH', {
     year: 'numeric',
     month: 'long',
@@ -32,7 +38,7 @@ export default function AIReportModal({ geminiReport, onClose }) {
   const handleDownloadPdf = () => {
     try {
       setDownloading(true);
-      generateReportPdf(sections, { generatedDate, docRef });
+      generateReportPdf(layout, { generatedDate, docRef });
     } catch (err) {
       console.error('PDF generation failed', err);
     } finally {
@@ -98,15 +104,17 @@ export default function AIReportModal({ geminiReport, onClose }) {
 
               {/* Sections */}
               <div className="report-body">
-                {sections.map((section, idx) => (
+                {layout.map((section, idx) => (
                   <section key={idx} className="report-section">
                     {section.title && (
                       <h2 className="report-section-title" style={{ color: ACCENT }}>
                         {section.title}
                       </h2>
                     )}
+                    <ReportVisuals visuals={section.visuals} />
+                    {section.tables.map((t) => <ReportTable key={t.title} table={t} />)}
                     <div className="report-section-content">
-                      {section.bodyLines.map((line, i) => (
+                      {section.paragraphs.map((line, i) => (
                         <p key={i} className="report-line">
                           {line}
                         </p>
