@@ -113,7 +113,10 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
       e.units += 1;
       m.set(it.category, e);
     }
-    return [...m.values()].map(e => ({ ...e, utilization: e.units ? Math.round(e._u / e.units) : 0 }));
+    // Averaging a category can reorder it, so re-rank by the card's metric.
+    return [...m.values()]
+      .map(e => ({ ...e, utilization: e.units ? Math.round(e._u / e.units) : 0 }))
+      .sort((a, b) => b[metric] - a[metric]);
   };
   const cats = topCategories ?? {
     byRevenue: deriveCats(topByRevenue, 'revenue'),
