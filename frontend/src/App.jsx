@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { isAuthed, hasSessionCookie } from './utils/authSession';
+import { isDemoMode } from './utils/demoMode';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, SIGN_IN_PATH, GUEST_COLLECTION_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
@@ -33,8 +35,7 @@ import ItemForm from './components/ItemForm';
 import AppLayout from './layout/AppLayout';
 import NotFoundPage from './pages/NotFoundPage';
 import UnauthorizedPage from './pages/UnauthorizedPage';
-import { SkeletonScreen } from './components/Skeleton';
-import { PageSkeleton } from './components/PageSkeletons';
+import { SkeletonScreen, AppShellSkeleton, PageTitleSkeleton } from './components/Skeleton';
 import ProcessReturnModal from './components/ProcessReturnModal';
 import ReleaseItemModal from './components/ReleaseItemModal';
 import OutOfServiceModal from './components/OutOfServiceModal';
@@ -49,15 +50,37 @@ import LandingPage from './pages/LandingPage';
 
 // Route-level screens are code-split so the heavy recharts bundle (dashboard /
 // analytics) is only fetched when those tabs are actually opened.
-const DashboardView = lazy(() => import('./pages/DashboardView'));
-const AIInsightsView = lazy(() => import('./pages/AIInsightsView'));
+// Each page draws its own loading skeleton, so the chunk loaders are shared
+// with a boot-time preload (below): the current route's chunk downloads while
+// /auth/me is in flight, and the page's skeleton is the only one shown.
+const PAGE_LOADERS = {
+  Dashboard: () => import('./pages/DashboardView'),
+  'AI Insights': () => import('./pages/AIInsightsView'),
+  Profile: () => import('./pages/ProfileSettingsView'),
+  Promotions: () => import('./pages/PromotionsView'),
+  Notifications: () => import('./pages/NotificationsView'),
+  Messages: () => import('./pages/MessagesView'),
+  History: () => import('./pages/HistoryPage'),
+};
+PAGE_LOADERS.Home = PAGE_LOADERS.Dashboard;
+PAGE_LOADERS.Settings = PAGE_LOADERS.Profile;
+const DashboardView = lazy(PAGE_LOADERS.Dashboard);
+const AIInsightsView = lazy(PAGE_LOADERS['AI Insights']);
 const InventoryAnalyticsView = lazy(() => import('./pages/InventoryAnalyticsView'));
-const ProfileSettingsView = lazy(() => import('./pages/ProfileSettingsView'));
-const PromotionsView = lazy(() => import('./pages/PromotionsView'));
+const ProfileSettingsView = lazy(PAGE_LOADERS.Profile);
+const PromotionsView = lazy(PAGE_LOADERS.Promotions);
 const StaffNewRental = lazy(() => import('./pages/StaffNewRental'));
-const NotificationsView = lazy(() => import('./pages/NotificationsView'));
-const MessagesView = lazy(() => import('./pages/MessagesView'));
-const HistoryPage = lazy(() => import('./pages/HistoryPage'));
+const NotificationsView = lazy(PAGE_LOADERS.Notifications);
+const MessagesView = lazy(PAGE_LOADERS.Messages);
+const HistoryPage = lazy(PAGE_LOADERS.History);
+
+// Signed-in reload: start fetching the page chunk for this URL right away
+// (the role isn't known yet, so try each role's route table).
+if (typeof window !== 'undefined' && isAuthed()) {
+  const path = window.location.pathname;
+  const tab = ['Admin', 'Staff', 'Customer'].map((r) => tabFromPath(r, path)).find(Boolean);
+  PAGE_LOADERS[tab]?.().catch(() => {});
+}
 // Modal/large components that drag heavy deps (qrcode, html5-qrcode,
 // react-markdown) into the boot bundle — deferred until opened.
 const CustomerRentalFlow = lazy(() => import('./components/CustomerRentalFlow'));
@@ -791,14 +814,15 @@ export default function RentechApp() {
   // own action; tapping Refresh just re-pulls already-current data.
   const noteLocalMutation = () => { markFresh(); };
 
+  // Session check in flight: the role (and so the page) isn't known yet, so
+  // show the app shell only — a page-shaped skeleton here would be the wrong
+  // shape and get swapped for the real page's own skeleton a moment later.
+  // Guests skip the check (one frame), so they get a plain background
+  // rather than a flash of the signed-in shell.
   if (loading) {
-    return (
-      <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center px-5 md:px-10">
-        <div className="w-full max-w-7xl">
-          <PageSkeleton tab={activeTab} />
-        </div>
-      </div>
-    );
+    return isAuthed() || hasSessionCookie() || isDemoMode()
+      ? <AppShellSkeleton />
+      : <div className="min-h-screen bg-[#fcfcfd]" />;
   }
 
   // First-login staff gate: a freshly created staff account (one-time
@@ -1402,7 +1426,10 @@ export default function RentechApp() {
         else setCustomerRental({ item: null });
       }}
     >
-      <Suspense fallback={<PageSkeleton tab={activeTab} />}>
+      {/* Title-only fallback (same as the boot shell's): every page renders
+          its own loading skeleton on mount, so a page-shaped one here only
+          flashed a second, differently shaped skeleton. */}
+      <Suspense fallback={<PageTitleSkeleton />}>
         {page}
       </Suspense>
     </AppLayout>
