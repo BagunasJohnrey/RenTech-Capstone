@@ -102,7 +102,7 @@ export async function runAutoReport(now = Date.now()): Promise<{
     const breakdown = (insights as unknown as { categoryBreakdown?: Record<string, { total: number; rented: number }> })?.categoryBreakdown;
     const analyticsItems = (analytics as unknown as { items?: AnalyticsItemShape[] })?.items;
     const rules = {
-      restock: optimization.reorderSuggestions(forecastCats, breakdown),
+      restock: optimization.reorderSuggestions(forecastCats, breakdown, analyticsItems),
       clearance: optimization.clearanceSuggestions(analyticsItems),
       cleaning: optimization.cleaningPriority(analyticsItems, forecastCats).slice(0, 5),
     };

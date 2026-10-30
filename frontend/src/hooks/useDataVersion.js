@@ -16,6 +16,10 @@ import { api } from '../utils/api';
 //     under them; History refetches on mount anyway).
 const POLL_MS = 15_000;
 
+// Comparison key: max updatedAt alone misses deletes and logbook imports
+// (no row's updatedAt moves), so the row counts are folded in.
+const versionKey = (v) => [v?.version ?? 0, v?.txCount ?? '', v?.itemCount ?? '', v?.recordCount ?? ''].join(':');
+
 export function useDataVersion({ role, isLoggedIn, onStale }) {
   const [stale, setStale] = useState(false);
   const [serverVersion, setServerVersion] = useState(null);
@@ -27,7 +31,7 @@ export function useDataVersion({ role, isLoggedIn, onStale }) {
     if (document.hidden) return;
     try {
       const v = await api.get('/dashboard/version');
-      const ver = v?.version ?? 0;
+      const ver = versionKey(v);
       setServerVersion(ver);
       if (knownRef.current == null) {
         // First successful poll seeds the baseline — nothing is "new" yet.
@@ -74,7 +78,7 @@ export function useDataVersion({ role, isLoggedIn, onStale }) {
     setStale(false);
     try {
       const v = await api.get('/dashboard/version');
-      knownRef.current = v?.version ?? knownRef.current;
+      knownRef.current = v ? versionKey(v) : knownRef.current;
       setServerVersion(knownRef.current);
     } catch { /* next poll covers it */ }
   }, []);

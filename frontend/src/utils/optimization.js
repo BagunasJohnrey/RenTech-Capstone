@@ -11,13 +11,38 @@ export const LEAD_TIME_MONTHS = 1;
 export const CLEARANCE_IDLE_DAYS = 60;
 export const REORDER_UTIL_THRESHOLD = 80;
 
+// Statuses that make a piece unavailable for the next rental right now.
+// Cleaning counts as free: it is back on the rack within the lead time.
+const NOT_FREE_STATUSES = new Set(['Rented', 'Reserved', 'OutOfService']);
+
+// Live per-category stock from the analytics rows ({ total, out }). This is
+// the honest "free units" source: `catBreakdown.rented` counts pieces rented
+// at least once in the selected window, which is history, not availability.
+export function liveStockByCategory(analyticsItems = []) {
+  const out = {};
+  for (const it of analyticsItems || []) {
+    if (it.status === 'Deleted') continue;
+    const s = (out[it.category] ||= { total: 0, out: 0 });
+    s.total++;
+    if (NOT_FREE_STATUSES.has(it.status)) s.out++;
+  }
+  return out;
+}
+
+function stockFor(category, live, catBreakdown) {
+  const l = live?.[category];
+  return l ? { total: l.total, rented: l.out } : (catBreakdown[category] || { total: 0, rented: 0 });
+}
+
 // byCategory: [{ category, projection, trend }], catBreakdown:
-// { [category]: { total, rented } } from the insights payload.
-export function reorderSuggestions(byCategory = [], catBreakdown = {}) {
+// { [category]: { total, rented } } from the insights payload. analyticsItems
+// (optional) supplies live stock; without it the window breakdown is used.
+export function reorderSuggestions(byCategory = [], catBreakdown = {}, analyticsItems) {
+  const live = analyticsItems && analyticsItems.length ? liveStockByCategory(analyticsItems) : null;
   const out = [];
   for (const c of byCategory) {
     if (c.projection === null || c.projection === undefined) continue;
-    const b = catBreakdown[c.category] || { total: 0, rented: 0 };
+    const b = stockFor(c.category, live, catBreakdown);
     const freeUnits = Math.max(0, (b.total || 0) - (b.rented || 0));
     const shortfall = Math.ceil(c.projection * LEAD_TIME_MONTHS - freeUnits);
     const util = b.total > 0 ? Math.round(((b.rented || 0) / b.total) * 100) : 0;
@@ -35,6 +60,22 @@ export function reorderSuggestions(byCategory = [], catBreakdown = {}) {
     }
   }
   return out.sort((a, b) => b.shortfall - a.shortfall);
+}
+
+// Empty-state companion for the Restock card: the categories under the most
+// pressure (projected demand minus free units) even when none is flagged, so
+// "nothing to restock" says WHY instead of a blanket all-clear.
+export function restockWatch(byCategory = [], catBreakdown = {}, analyticsItems, max = 2) {
+  const live = analyticsItems && analyticsItems.length ? liveStockByCategory(analyticsItems) : null;
+  return (byCategory || [])
+    .filter((c) => c.projection !== null && c.projection !== undefined)
+    .map((c) => {
+      const b = stockFor(c.category, live, catBreakdown);
+      const freeUnits = Math.max(0, (b.total || 0) - (b.rented || 0));
+      return { category: c.category, projection: c.projection, freeUnits, trend: c.trend, gap: c.projection - freeUnits };
+    })
+    .sort((a, b) => b.gap - a.gap)
+    .slice(0, max);
 }
 
 // analyticsItems: inventory-analytics rows

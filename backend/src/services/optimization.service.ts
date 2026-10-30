@@ -24,12 +24,33 @@ export interface AnalyticsItemShape {
   daysIdle: number | null;
 }
 
+// Statuses that make a piece unavailable for the next rental right now.
+// Cleaning counts as free: it is back on the rack within the lead time.
+const NOT_FREE_STATUSES = new Set(['Rented', 'Reserved', 'OutOfService']);
+
+// Live per-category stock from the analytics rows ({ total, out }). This is
+// the honest "free units" source: `catBreakdown.rented` counts pieces rented
+// at least once in the selected window, which is history, not availability.
+export function liveStockByCategory(analyticsItems: AnalyticsItemShape[] = []) {
+  const out: Record<string, { total: number; out: number }> = {};
+  for (const it of analyticsItems || []) {
+    if (it.status === 'Deleted') continue;
+    const s = (out[it.category] ||= { total: 0, out: 0 });
+    s.total++;
+    if (NOT_FREE_STATUSES.has(it.status)) s.out++;
+  }
+  return out;
+}
+
 // A category whose projected demand outruns the units currently free needs
-// more pieces before peak hits.
+// more pieces before peak hits. `analyticsItems` (optional) supplies live
+// stock; without it the window breakdown is used as before.
 export function reorderSuggestions(
   byCategory: CategoryProjection[] = [],
-  catBreakdown: Record<string, { total: number; rented: number }> = {}
+  catBreakdown: Record<string, { total: number; rented: number }> = {},
+  analyticsItems?: AnalyticsItemShape[]
 ) {
+  const live = analyticsItems && analyticsItems.length ? liveStockByCategory(analyticsItems) : null;
   const out: {
     category: string;
     projection: number;
@@ -40,7 +61,8 @@ export function reorderSuggestions(
   }[] = [];
   for (const c of byCategory) {
     if (c.projection === null || c.projection === undefined) continue;
-    const b = catBreakdown[c.category] || { total: 0, rented: 0 };
+    const l = live?.[c.category];
+    const b = l ? { total: l.total, rented: l.out } : (catBreakdown[c.category] || { total: 0, rented: 0 });
     const freeUnits = Math.max(0, (b.total || 0) - (b.rented || 0));
     const shortfall = Math.ceil(c.projection * LEAD_TIME_MONTHS - freeUnits);
     const util = b.total > 0 ? Math.round(((b.rented || 0) / b.total) * 100) : 0;

@@ -106,8 +106,35 @@ describe('GET /api/dashboard/forecast', () => {
     expect(cats).toContain('Suit');
     const gown = (res.body.byCategory as any[]).find((c) => c.category === 'Gown');
     const suit = (res.body.byCategory as any[]).find((c) => c.category === 'Suit');
-    expect(gown.trend).toBe('flat'); // Gown [10,15,0,0]: latest 0 vs prev 0
-    expect(suit.trend).toBe('up'); // Suit [0,0,12,18]: latest 18 vs prev 12
+    // Gown [10,15,0,0]: 0 vs 0 once a week of this month has passed; in the
+    // first 6 days the two latest complete months (0 vs 15) are compared.
+    expect(gown.trend).toBe(new Date().getDate() >= 7 ? 'flat' : 'down');
+    expect(suit.trend).toBe('up'); // Suit [0,0,12,18]: 18 (pro-rated) vs 12, or 12 vs 0
+  });
+
+  it('pro-rates the current partial month so mid-month demand is not read as a drop', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 20, 12)); // Oct 20 — 20 of 31 days elapsed
+    try {
+      const { prisma } = await import('../src/config/database.js');
+      const rows: { createdAt: Date; itemId: number }[] = [];
+      for (let i = 0; i < 20; i++) rows.push({ createdAt: new Date(2026, 8, 10), itemId: 1 }); // Sep: 20
+      for (let i = 0; i < 15; i++) rows.push({ createdAt: new Date(2026, 9, 10), itemId: 1 }); // Oct so far: 15
+      prisma.transaction.findMany.mockResolvedValueOnce(rows);
+      prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, category: 'Gown' }]);
+
+      // period=5 → its own cache key.
+      const res = await request(app)
+        .get('/api/dashboard/forecast?period=5')
+        .set('Authorization', 'Bearer admin-token');
+
+      expect(res.status).toBe(200);
+      const gown = (res.body.byCategory as any[]).find((c) => c.category === 'Gown');
+      // Raw 15 < 20 would say "down"; the pace is 15 × 31/20 ≈ 23 → "up".
+      expect(gown.trend).toBe('up');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('should return weekly buckets with granularity=weekly', async () => {

@@ -16,7 +16,7 @@ import SmartListModal from '../components/insights/SmartListModal';
 import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS } from '../components/insights/shared';
 import { api } from '../utils/api';
 import { formatCheckedAgo } from '../utils/cache';
-import { reorderSuggestions, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
+import { reorderSuggestions, restockWatch, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
 import { useToast } from '../components/Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { AIInsightsSkeleton } from '../components/PageSkeletons';
@@ -85,7 +85,7 @@ function writeAiSuggestCache(data) {
   return at;
 }
 
-export default function AIInsightsView({ analyticsData, role, onViewItemTransactions, onNavigateTab, cleaningItems = [], onBulkClean }) {
+export default function AIInsightsView({ analyticsData, role, onViewItemTransactions, onNavigateTab, cleaningItems = [], onBulkClean, dataVersion = null }) {
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
@@ -97,13 +97,14 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const [reportsPage, setReportsPage] = useState(0);
   const REPORTS_PAGE_SIZE = 3;
   const [openingReportId, setOpeningReportId] = useState(null);
-  const loadRecentReports = () => {
+  // `quiet` = background reload (auto-refresh): no spinner, keep the page.
+  const loadRecentReports = (quiet = false) => {
     if (role !== 'Admin') return;
-    setReportsLoading(true);
+    if (!quiet) setReportsLoading(true);
     api.get('/ai/reports')
-      .then((r) => { setRecentReports(Array.isArray(r) ? r.slice(0, 5) : []); setReportsPage(0); })
+      .then((r) => { setRecentReports(Array.isArray(r) ? r.slice(0, 5) : []); if (!quiet) setReportsPage(0); })
       .catch(() => {})
-      .finally(() => setReportsLoading(false));
+      .finally(() => { if (!quiet) setReportsLoading(false); });
   };
   useEffect(() => { loadRecentReports(); }, [role]);
   const openSavedReport = (id) => {
@@ -148,6 +149,10 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
   const handleRefresh = () => { setFetchError(null); setRefreshTick((t) => t + 1); };
+  // Background refreshes (data changed elsewhere / tab came back) re-run the
+  // same bundle effect but never toast on failure.
+  const silentRef = useRef(false);
+  const silentRefresh = () => { silentRef.current = true; setRefreshTick((t) => t + 1); };
   const isCurrentMonth = (y, m) => now0.getFullYear() === y && now0.getMonth() + 1 === m;
   const isCurrentYear = (y) => now0.getFullYear() === y;
   // Clamp the *applied* month/year so picking a future value can't leak into
@@ -236,6 +241,8 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   useEffect(() => {
     const range = timeRange;
     let active = true;
+    const silent = silentRef.current;
+    silentRef.current = false;
     setFetching(true);
     setFetchError(null);
     const periodParam = range === 'Overall' ? '' : `period=${range.toLowerCase()}`;
@@ -269,7 +276,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     const fail = (err) => {
       if (!active) return;
       setFetchError(err?.message || 'Failed to load dashboard data');
-      toastError(err?.message || 'Failed to load dashboard data');
+      if (!silent) toastError(err?.message || 'Failed to load dashboard data');
       settle();
     };
 
@@ -322,6 +329,39 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange, appliedYear, appliedMonth, refreshTick]);
+
+  // Auto-refresh. (1) The app-wide 15s version poll moved → another device
+  // (or the scheduler) changed data: refetch in place. (2) Tab came back
+  // after 60s+ → refetch so time-based figures (pace, overdue) catch up.
+  // Saved reports reload too, so the weekly auto-report appears unprompted.
+  const seenVersionRef = useRef(dataVersion);
+  useEffect(() => {
+    if (dataVersion == null) return;
+    if (seenVersionRef.current == null) { seenVersionRef.current = dataVersion; return; }
+    if (dataVersion === seenVersionRef.current) return;
+    seenVersionRef.current = dataVersion;
+    silentRefresh();
+    loadRecentReports(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion]);
+  const dataAtRef = useRef(dataAt);
+  dataAtRef.current = dataAt;
+  useEffect(() => {
+    const STALE_MS = 60_000;
+    const onVisible = () => {
+      if (document.hidden) return;
+      if (!dataAtRef.current || Date.now() - dataAtRef.current > STALE_MS) {
+        silentRefresh();
+        loadRecentReports(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    // Weekly AI reports don't move the data version — check the list every
+    // 5 min while the page is visible.
+    const t = setInterval(() => { if (!document.hidden) loadRecentReports(true); }, 5 * 60_000);
+    return () => { document.removeEventListener('visibilitychange', onVisible); clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
 
   // FIX D: surface export failures instead of throwing unhandled.
   const handleExport = async (url, filename) => {
@@ -541,7 +581,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const avgPrice = (lastCount > 0 && lastRev > 0)
     ? lastRev / lastCount
     : (summaryRentals > 0 && summaryRev > 0 ? summaryRev / summaryRentals : 1500);
-  const forecastRev = mLatestSma * avgPrice;
+  // Same (1dp-rounded) projection the outlook table multiplies, so the KPI
+  // and the table's first row show the same peso figure.
+  const forecastRev = (forecast?.projections?.[0]?.value ?? mLatestSma) * avgPrice;
   // With < 2 real months of revenue, a peso projection is a guess (avg price falls
   // back to a hard-coded 1500), so show the SMA direction rather than an inflated bar.
   const forecastRevValue = avgPriceKnown ? forecastRev : mLatestSma;
@@ -628,7 +670,10 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const analyticsItems = inventoryAnalytics?.items || [];
   // Insights rows (top/underperforming) carry no image — resolve via analytics.
   const imgById = new Map(analyticsItems.map(i => [i.id, i.image]));
-  const restockRules = reorderSuggestions(forecastCats, catBreakdown);
+  // Free units come from LIVE stock (analytics rows carry current status),
+  // not "rented at least once this window" — same as the backend twin.
+  const restockRules = reorderSuggestions(forecastCats, catBreakdown, analyticsItems);
+  const restockWatchList = restockRules.length === 0 ? restockWatch(forecastCats, catBreakdown, analyticsItems) : [];
   const clearanceRules = clearanceSuggestions(analyticsItems);
   const cleaningRules = cleaningPriority(analyticsItems, forecastCats);
 
@@ -866,9 +911,10 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
 
         {/* Row 2b: Smart actions — deterministic rules (no AI): restock what
             demand outruns, clear what's idle, clean what's wanted next */}
-        {(restockRules.length > 0 || clearanceRules.length > 0 || cleaningRules.length > 0) && (
+        {(inventoryAnalytics || restockRules.length > 0 || clearanceRules.length > 0 || cleaningRules.length > 0) && (
           <SmartActions
-            restockRules={restockRules} clearanceRules={clearanceRules} cleaningRules={cleaningRules}
+            restockRules={restockRules} restockWatch={restockWatchList}
+            clearanceRules={clearanceRules} cleaningRules={cleaningRules}
             openSmartModal={openSmartModal} openCleanQueue={openCleanQueue}
           />
         )}

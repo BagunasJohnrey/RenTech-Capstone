@@ -2,6 +2,16 @@
 // lives in the parent (it touches report state); everything else is props.
 import { Sparkles, FileText, Loader2, History, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 
+// The server excerpt is a fixed-length cut ("…out o"): drop the leading
+// "Executive Summary" heading and end on a whole word with an ellipsis.
+function cleanExcerpt(text) {
+  const s = String(text || '').replace(/^\s*#*\s*executive summary[:\s]*/i, '').trim();
+  if (!s) return 'Business performance report';
+  if (/[.!?]$/.test(s)) return s;
+  const cut = s.lastIndexOf(' ');
+  return `${(cut > 40 ? s.slice(0, cut) : s).replace(/[,;:\s]+$/, '')}…`;
+}
+
 export default function ReportSection({
   role, reportLoading, onGenerate,
   recentReports, reportsLoading, reportsPage, REPORTS_PAGE_SIZE, setReportsPage,
@@ -33,7 +43,7 @@ export default function ReportSection({
       </div>
       {role === 'Admin' && (recentReports.length > 0 || reportsLoading) && (
         <div className="p-5 md:p-6 border-t border-gray-100">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-1">
             <History size={16} className="text-gray-400" />
             <h3 className="font-bold text-gray-900 text-sm flex-1">Last saved reports</h3>
             {recentReports.length > 0 && (
@@ -41,6 +51,9 @@ export default function ReportSection({
             )}
             {reportsLoading && <Loader2 size={13} className="animate-spin text-gray-400" />}
           </div>
+          {/* Saved figures are frozen at write time, so they can differ from
+              the live cards above. A new one is also written every week. */}
+          <p className="text-[11px] text-gray-400 mb-4">Snapshots of the data on the date shown · a new report is written automatically each week</p>
           <div className="space-y-3">
             {recentReports.slice(reportsPage * REPORTS_PAGE_SIZE, reportsPage * REPORTS_PAGE_SIZE + REPORTS_PAGE_SIZE).map((r) => (
               <div key={r.id} className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-2xl bg-gray-50/70 border border-gray-100">
@@ -58,7 +71,7 @@ export default function ReportSection({
                         ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">cloud ✓</span>
                         : null}
                   </div>
-                  <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">{r.excerpt || 'Business performance report'}</p>
+                  <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">{cleanExcerpt(r.excerpt)}</p>
                 </div>
                 <button
                   onClick={() => openSavedReport(r.id)}

@@ -128,7 +128,7 @@ export default function DemandForecast({
           )}
           {activeForecast?.historyPoints > 0 && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-violet-50 text-violet-700">
-              incl. {activeForecast.historyPoints} logbook record{activeForecast.historyPoints === 1 ? '' : 's'}
+              incl. {activeForecast.historyPoints.toLocaleString()} logbook record{activeForecast.historyPoints === 1 ? '' : 's'}
             </span>
           )}
           {forecastProvisional && (
@@ -285,8 +285,9 @@ export default function DemandForecast({
             <div className="bg-gray-50 rounded-xl p-3 text-center">
               <p className="text-[11px] text-gray-500 font-medium">Trend</p>
               <p className={`text-lg font-bold flex items-center justify-center gap-1 ${smaTrend === 'up' ? 'text-emerald-600' : smaTrend === 'down' ? 'text-red-500' : 'text-gray-500'}`}>
-                {smaTrend === 'stable' ? 'Flat' : `${Math.abs(latestSmaVal - prevSmaVal).toFixed(1)}`}
+                {smaTrend === 'stable' ? 'Flat' : `${smaTrend === 'up' ? '▲ +' : '▼ −'}${Math.abs(latestSmaVal - prevSmaVal).toFixed(1)}`}
               </p>
+              {smaTrend !== 'stable' && <p className="text-[10px] text-gray-400">vs previous</p>}
             </div>
           </div>
 

@@ -7,7 +7,10 @@ import { fmt } from './shared';
 export default function CategoryPerformance({ utilData }) {
   return (
     <div className="bg-white rounded-3xl p-6 border border-gray-100/80 shadow-sm lg:col-span-2">
-      <h3 className="font-bold text-gray-900 text-lg mb-5">Category Performance</h3>
+      <h3 className="font-bold text-gray-900 text-lg">Category Performance</h3>
+      {/* Not the day-based utilisation of the Top cards: this is the share of
+          pieces rented at least once, and money actually collected. */}
+      <p className="text-xs text-gray-400 mt-0.5 mb-5">Share of pieces rented this period · payments collected this period</p>
       {utilData.length === 0 ? (
         <p className="text-sm text-gray-400 text-center py-8">No category data.</p>
       ) : (
@@ -27,8 +30,8 @@ export default function CategoryPerformance({ utilData }) {
                     )}
                   </span>
                   <div className="flex items-center gap-3 text-xs">
-                    <span className="text-gray-500">{u.rate}% utilised</span>
-                    <span className="font-bold text-gray-900">{u.revenue > 0 ? fmt(u.revenue) : '—'}</span>
+                    <span className="text-gray-500">{u.rate}% of pieces rented</span>
+                    <span className="font-bold text-gray-900">{u.revenue > 0 ? `${fmt(u.revenue)} collected` : '—'}</span>
                   </div>
                 </div>
                 <div className="flex gap-1.5 h-2">
@@ -40,8 +43,8 @@ export default function CategoryPerformance({ utilData }) {
                   </div>
                 </div>
                 <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
-                  <span>Utilisation</span>
-                  <span>Revenue share</span>
+                  <span>Pieces rented</span>
+                  <span>Collected share</span>
                 </div>
               </div>
             );

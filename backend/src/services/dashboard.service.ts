@@ -575,6 +575,28 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       totals.set(t.category, (totals.get(t.category) || 0) + 1);
     }
     const topCats = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, FORECAST_TOP_CATEGORIES).map(e => e[0]);
+    // Trend must not compare a half-finished month against a full one (that
+    // reads "down" all month and silenced the restock rule). Once a week of
+    // the current month has passed, its count is pro-rated to a full-month
+    // pace; before that the two latest COMPLETE months are compared.
+    const nowD = new Date();
+    const lastM = months[months.length - 1];
+    const inCurrentMonth = !!lastM && lastM.year === nowD.getFullYear() && lastM.month === nowD.getMonth() + 1;
+    const daysElapsed = nowD.getDate();
+    const daysInCur = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate();
+    const trendOf = (counts: number[]): 'up' | 'down' | 'flat' => {
+      let latest = counts.length ? counts[counts.length - 1] : 0;
+      let prev = counts.length > 1 ? counts[counts.length - 2] : 0;
+      if (inCurrentMonth) {
+        if (daysElapsed >= 7) {
+          latest = (latest * daysInCur) / daysElapsed;
+        } else {
+          latest = prev;
+          prev = counts.length > 2 ? counts[counts.length - 3] : 0;
+        }
+      }
+      return latest > prev ? 'up' : latest < prev ? 'down' : 'flat';
+    };
     const byCategory = topCats.map(category => {
       const counts = months.map(m =>
         points.filter(t =>
@@ -586,14 +608,13 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       let catLast: number | null = null;
       for (const v of catSma) if (v !== null && v !== undefined) catLast = v;
       const latest = counts.length ? counts[counts.length - 1] : 0;
-      const prev = counts.length > 1 ? counts[counts.length - 2] : 0;
       const average = counts.length ? round1(counts.reduce((a, b) => a + b, 0) / counts.length) : 0;
       return {
         category,
         latest,
         average,
         projection: catLast === null ? null : round1(catLast),
-        trend: latest > prev ? 'up' : latest < prev ? 'down' : 'flat',
+        trend: trendOf(counts),
       };
     });
 

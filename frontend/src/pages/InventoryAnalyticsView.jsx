@@ -24,22 +24,37 @@ const SORT_OPTIONS = [
 // by their metric, so the first index holding the value is the rank.
 const rankOf = (list, item, key) => list.findIndex((t) => t[key] === item[key]) + 1;
 
+// Days Idle is "since the last return" — meaningless while the piece is out,
+// where a stale "226d" next to a Rented pill reads as a contradiction.
+const idleLabel = (item) =>
+  item.status === 'Rented' ? 'Out now'
+    : item.status === 'Reserved' ? 'Booked'
+      : item.daysIdle !== null ? `${item.daysIdle}d` : '—';
+// Rentals in the window with nothing collected yet (balance still open).
+const isUnpaid = (item) => item.totalRentals > 0 && !(item.revenueGenerated > 0);
+const IDLE_TITLE = 'Days since the piece was last returned';
+
 // One "Top by …" card. Each line is a category; tapping it filters the
 // Item Performance table. `showLogbook` swaps the piece count for the
 // "+N" chip counting imported paper-logbook rentals.
 function RankList({ title, icon, list, metric, valueClass, formatValue, onPick, showLogbook = false, className = '' }) {
+  // Zero rows don't get a rank (two "4." lines of ₱0 read as a result);
+  // they collapse into one "No activity" line instead.
+  const zeroOf = (c) => !(c[metric] > 0) && !(showLogbook && c.historyRentals > 0);
+  const active = list.filter((c) => !zeroOf(c));
+  const idle = list.filter(zeroOf);
   return (
     <div className={`bg-white rounded-2xl p-5 border border-gray-100/80 shadow-sm ${className}`}>
       <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
         {icon} {title}
       </h3>
       <div className="space-y-2">
-        {list.map((cat) => (
+        {active.map((cat) => (
           <button key={cat.category} type="button" onClick={() => onPick(cat.category)}
             title={`Show ${cat.category} items below`}
             className="w-full flex items-center justify-between gap-2 p-2 bg-gray-50 rounded-xl text-left hover:bg-gray-100 hover:ring-1 hover:ring-gray-200 transition-all">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(list, cat, metric)}.</span>
+              <span className="text-[11px] font-bold text-gray-400 w-4">{rankOf(active, cat, metric)}.</span>
               <span className="text-xs font-semibold text-gray-900 truncate capitalize">{cat.category}</span>
               {showLogbook
                 ? cat.historyRentals > 0 && (
@@ -54,7 +69,17 @@ function RankList({ title, icon, list, metric, valueClass, formatValue, onPick, 
             <span className={`text-xs font-bold shrink-0 ${valueClass}`}>{formatValue(cat)}</span>
           </button>
         ))}
-        {list.length === 0 && <p className="text-xs text-gray-400 text-center py-4">No data yet</p>}
+        {idle.length > 0 && active.length > 0 && (
+          <p className="text-[11px] text-gray-400 px-2 pt-1">
+            No activity: {idle.map((c, i) => (
+              <span key={c.category}>
+                {i > 0 && ', '}
+                <button type="button" onClick={() => onPick(c.category)} className="capitalize hover:text-gray-700 hover:underline">{c.category}</button>
+              </span>
+            ))}
+          </p>
+        )}
+        {active.length === 0 && <p className="text-xs text-gray-400 text-center py-4">{list.length === 0 ? 'No data yet' : 'No activity this period'}</p>}
       </div>
     </div>
   );
@@ -173,8 +198,8 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
 
   const pickCategory = (category) => { setCategoryFilter(category); setPage(0); };
 
-  const SortHeader = ({ label, sort, className }) => (
-    <th className={`px-4 py-3 text-[11px] font-bold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700 ${className || ''}`}
+  const SortHeader = ({ label, sort, className, title }) => (
+    <th title={title} className={`px-4 py-3 text-[11px] font-bold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700 ${className || ''}`}
       onClick={() => toggleSort(sort)}>
       <div className="flex items-center gap-1">
         {label}
@@ -312,7 +337,10 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                 <div className="flex justify-between gap-2">
                   <span className="text-xs text-gray-500">Revenue</span>
-                  <span className="font-bold text-emerald-600">₱{item.revenueGenerated.toLocaleString()}</span>
+                  <span className="font-bold text-emerald-600">
+                    ₱{item.revenueGenerated.toLocaleString()}
+                    {isUnpaid(item) && <span className="ml-1 text-[10px] font-bold text-amber-600">unpaid</span>}
+                  </span>
                 </div>
                 <div className="flex justify-between gap-2">
                   <span className="text-xs text-gray-500">Rentals</span>
@@ -323,8 +351,8 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
                   <span className="font-semibold text-gray-700">₱{item.avgRevenuePerRental.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <span className="text-xs text-gray-500">Days Idle</span>
-                  <span className="font-semibold text-gray-700">{item.daysIdle !== null ? `${item.daysIdle}d` : '—'}</span>
+                  <span className="text-xs text-gray-500" title={IDLE_TITLE}>Days Idle</span>
+                  <span className="font-semibold text-gray-700">{idleLabel(item)}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -358,7 +386,7 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
                 <SortHeader label="Revenue" sort="revenueGenerated" />
                 <SortHeader label="Avg/Rental" sort="avgRevenuePerRental" />
                 <SortHeader label="Utilization" sort="utilizationPct" />
-                <SortHeader label="Days Idle" sort="daysIdle" />
+                <SortHeader label="Days Idle" sort="daysIdle" title={IDLE_TITLE} />
                 <th className="px-4 py-3 text-[11px] font-bold text-gray-500 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
@@ -375,7 +403,10 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
                   <td className="px-4 py-3 text-gray-500">{item.category}</td>
                   <td className="px-4 py-3 text-gray-700">₱{item.price.toLocaleString()}</td>
                   <td className="px-4 py-3 font-semibold">{item.totalRentals}</td>
-                  <td className="px-4 py-3 font-semibold text-emerald-600">₱{item.revenueGenerated.toLocaleString()}</td>
+                  <td className="px-4 py-3 font-semibold text-emerald-600">
+                    ₱{item.revenueGenerated.toLocaleString()}
+                    {isUnpaid(item) && <span className="ml-1 text-[10px] font-bold text-amber-600" title="Rented this period, nothing collected yet">unpaid</span>}
+                  </td>
                   <td className="px-4 py-3 text-gray-600">₱{item.avgRevenuePerRental.toLocaleString()}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -386,7 +417,7 @@ export default function InventoryAnalyticsView({ noHeader, period, initialData, 
                       <span className="text-[11px] font-semibold text-gray-600">{item.utilizationPct}%</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{item.daysIdle !== null ? `${item.daysIdle}d` : '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{idleLabel(item)}</td>
                   <td className="px-4 py-3">
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${itemPill(item.status).bg} ${itemPill(item.status).text}`}>{item.status}</span>
                   </td>

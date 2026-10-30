@@ -778,7 +778,7 @@ export default function RentechApp() {
       setRefreshing(false);
     }
   };
-  const { stale: dataStale, markFresh, clearStale } = useDataVersion({
+  const { stale: dataStale, serverVersion: dataVersion, markFresh, clearStale } = useDataVersion({
     role: viewRole,
     isLoggedIn,
     onStale: () => {},
@@ -1055,7 +1055,7 @@ export default function RentechApp() {
               <HistoryPage role={viewRole} transactions={transactions} inventory={inventory} loading={transactionsLoading} onReturn={handleReturnClick} onDelete={handleDeleteTransaction} onCancel={handleCancelTransaction} onRelease={handleReleaseRental} onEditRental={handleEditRental} onSwapItem={handleSwapItem} fetchFull={getById} prefetchTx={prefetchTx} onNavigateDetail={(tx) => navigate(txDetailPath(viewRole, tx.id))} initialSearch={historySearch} onConsumeSearch={() => setHistorySearch('')} />
             )}
             {activeTab === 'AI Insights' && (
-              <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} />
+              <AIInsightsView analyticsData={viewRole === 'Admin' ? <InventoryAnalyticsView noHeader /> : null} role={viewRole} onViewItemTransactions={viewItemTransactions} onNavigateTab={goTab} cleaningItems={inventory.filter((i) => i.status === 'Cleaning')} onBulkClean={handleBulkClean} dataVersion={dataVersion} />
             )}
             {activeTab === 'Promotions' && viewRole === 'Admin' && (
               <PromotionsView inventory={inventory} onEditItem={setEditingItem} />

@@ -51,7 +51,9 @@ export default function KpiCards({
         <p className="text-[10px] md:text-xs text-gray-500 font-medium">Pieces Rented</p>
         <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">{rentedCount}<span className="text-xs md:text-sm font-medium text-gray-400">/{totalItems}</span></h4>
         <div className={foot}>
-          <span className="text-[10px] md:text-xs font-semibold text-gray-500">{totalItems > 0 ? Math.round((rentedCount / totalItems) * 100) : 0}% of catalog</span>
+          {/* Insights count Reserved (upcoming) bookings in the window; Total
+              Rentals below counts picked-up rentals only — say so. */}
+          <span className="text-[10px] md:text-xs font-semibold text-gray-500">{totalItems > 0 ? Math.round((rentedCount / totalItems) * 100) : 0}% of catalog · incl. reserved</span>
         </div>
       </div>
       <div className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100/80 shadow-sm flex flex-col">
@@ -92,7 +94,7 @@ export default function KpiCards({
                   {analyticsSummary.totalRentals} app · <span className="text-violet-600">+{logbookRentals} logbook</span>
                 </span>
               ) : (
-                <span className="text-[10px] md:text-xs font-medium text-gray-400">App rentals</span>
+                <span className="text-[10px] md:text-xs font-medium text-gray-400">Picked-up app rentals</span>
               )}
             </div>
           </div>
