@@ -6,7 +6,7 @@ import { storageService } from '../services';
 import { api } from '../utils/api';
 import { fileToBase64, downscaleToJpeg } from '../utils/file';
 import { useEscapeClose } from '../hooks/useEscapeClose';
-import { useLockScroll } from '../hooks/useLockScroll';
+import BottomSheet from './BottomSheet';
 import Button from './ui/Button';
 
 // Fallback default damage fee when the Settings value can't be loaded —
@@ -15,7 +15,6 @@ const FALLBACK_DAMAGE_FEE = 1000;
 
 export default function ProcessReturnModal({ transaction, onClose, onComplete }) {
   // Freeze the page behind the sheet; the backdrop is tap-to-close only.
-  useLockScroll(true);
   // Damage is optional: defaults to good condition so a clean return confirms
   // in one tap; ticking Damaged reveals reason + customizable fee.
   const [isDamaged, setIsDamaged] = useState(false);
@@ -41,70 +40,12 @@ export default function ProcessReturnModal({ transaction, onClose, onComplete })
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  // Timed exit + swipe-down-to-dismiss, mirroring the transaction sheets.
-  const [closing, setClosing] = useState(false);
-  const closingRef = useRef(false);
+  // The shared BottomSheet owns drag-to-dismiss + animations. Closing is
+  // ignored while the return is submitting.
   const requestClose = useCallback(() => {
-    if (closing || closingRef.current) return;
-    closingRef.current = true;
-    setDragY(null);
-    setClosing(true);
-    setTimeout(onClose, 150);
-  }, [closing, onClose]);
+    if (!submitting) onClose();
+  }, [submitting, onClose]);
   useEscapeClose(requestClose);
-
-  // Enter animation plays once on mount — never re-applied after a snap-back.
-  const [entered, setEntered] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setEntered(true), 250);
-    return () => clearTimeout(t);
-  }, []);
-
-  const bodyRef = useRef(null);
-  const sheetRef = useRef(null);
-  const [dragY, setDragY] = useState(null);
-  const [dismissing, setDismissing] = useState(false);
-  const dragState = useRef({ startY: 0, lastY: 0, lastT: 0, active: false, atTop: true });
-  const onSheetTouchStart = (e) => {
-    if (dismissing || closingRef.current || submitting || e.touches.length !== 1) return;
-    const t = e.touches[0];
-    // Latch whether the gesture STARTED at the top: a scroll that merely
-    // arrives at the top mid-gesture must never turn into a dismiss.
-    dragState.current = { startY: t.clientY, lastY: t.clientY, lastT: Date.now(), active: false, atTop: bodyRef.current ? bodyRef.current.scrollTop <= 0 : true };
-  };
-  const onSheetTouchMove = (e) => {
-    const s = dragState.current;
-    if (s.dismissing || closingRef.current || e.touches.length !== 1) return;
-    const dy = e.touches[0].clientY - s.startY;
-    if (!s.active) {
-      if (!s.atTop) return;
-      if (dy < 10) return;
-      s.active = true;
-    }
-    if (dy <= 0) { setDragY(null); return; } // finger back up: ease home, don't jump
-    s.lastY = e.touches[0].clientY;
-    s.lastT = Date.now();
-    setDragY(dy);
-  };
-  const onSheetTouchEnd = (e) => {
-    const s = dragState.current;
-    s.active = false;
-    if (s.dismissing || closingRef.current) return;
-    const endY = e.changedTouches[0].clientY;
-    const dy = Math.max(0, endY - s.startY);
-    // Deliberate long drag only: ~45% of the sheet height (min 180px). Fast
-    // flicks no longer dismiss on velocity — the swipe must truly reach.
-    const threshold = Math.max(180, (sheetRef.current?.offsetHeight ?? 600) * 0.45);
-    if (dy >= threshold) {
-      s.dismissing = true;
-      closingRef.current = true;
-      setDismissing(true);
-      setDragY(null);
-      setTimeout(onClose, 190);
-      return;
-    }
-    setDragY(null);
-  };
 
 // iOS-style radio row: icon tile + title/subtitle + trailing check indicator.
 // Compact single-column list; the group carries role="radiogroup".
@@ -208,26 +149,8 @@ const handleRadioKeys = (e) => {
   };
 
   return (
-    <div className={`fixed inset-0 z-[310] transition-opacity duration-150 ${closing || dismissing ? 'opacity-0' : 'opacity-100'}`}
-      style={dragY != null && !dismissing ? { opacity: Math.max(0.25, 1 - dragY / 500) } : undefined}
-    >
-      <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-process-return"
-        ref={sheetRef}
-        className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg sheet-cap sm:max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing && dragY == null && !dismissing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : !entered && !closing && !dismissing && dragY == null ? 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200' : ''}`}
-        style={
-          dismissing
-            ? { transform: 'translateY(105%)', transition: 'transform 190ms ease-in' }
-            : dragY != null
-              ? { transform: `translateY(${dragY}px)`, transition: 'none' }
-              : { transform: 'translateY(0)', transition: 'transform 220ms cubic-bezier(0.2, 0.9, 0.25, 1.2)' }
-        }
-        onTouchStart={onSheetTouchStart}
-        onTouchMove={onSheetTouchMove}
-        onTouchEnd={onSheetTouchEnd}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="shrink-0 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl">
+    <BottomSheet onClose={requestClose} labelledby="dialog-title-process-return" z="z-[310]" maxWidth="sm:max-w-lg" interceptClose={submitting}>
+        <div className="shrink-0 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-50 rounded-xl">
               <Undo2 size={18} className="text-emerald-600" />
@@ -242,7 +165,7 @@ const handleRadioKeys = (e) => {
           </button>
         </div>
 
-        <div ref={bodyRef} className="p-5 sm:p-6 space-y-5 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+        <div data-sheet-scroll className="p-5 sm:p-6 space-y-5 flex-1 overflow-y-auto min-h-0 overscroll-contain">
           {isUnpaid && (
             <div className="flex items-start gap-2 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-2xl p-3.5">
               <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
@@ -432,8 +355,6 @@ const handleRadioKeys = (e) => {
             </Button>
           </div>
         </div>
-      </div>
-    </div>
-    </div>
+    </BottomSheet>
   );
 }

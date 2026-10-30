@@ -19,7 +19,7 @@ export default function TasksPage({ inventory, transactions, loading, onMarkClea
   // before the 500-row list. It loads here in parallel (module-cached, so
   // the DashboardView call shares it) and feeds the action queues first —
   // history/calendar sections wait for the full list (own skeletons).
-  const digest = useTodayTasks(role);
+  const { data: digest, error: digestError, retry: retryDigest } = useTodayTasks(role, { withStatus: true });
   const digestLoading = !digest;
   const digestTransactions = useMemo(() => {
     if (!digest) return [];
@@ -61,7 +61,9 @@ export default function TasksPage({ inventory, transactions, loading, onMarkClea
   // arrays from a completed fetch render normally (possibly "All clear").
   const digestResolved = !digestLoading;
   const listHasRows = transactions && transactions.length > 0;
-  const initialLoad = !digestResolved && loading && !listHasRows;
+  // A failed digest is not "still loading": fall through so StaffTasksView
+  // can show its retry card instead of holding the page skeleton forever.
+  const initialLoad = !digestResolved && !digestError && loading && !listHasRows;
 
   if (initialLoad) {
     return (
@@ -74,7 +76,7 @@ export default function TasksPage({ inventory, transactions, loading, onMarkClea
 
   return (
     <div className="space-y-6">
-      <StaffTasksView inventory={inventory} transactions={transactions} digestTransactions={digestTransactions} digestLoading={digestLoading} onMarkClean={onMarkClean} onNavigate={onNavigate} role={role} {...rest} />
+      <StaffTasksView inventory={inventory} transactions={transactions} digestTransactions={digestTransactions} digestLoading={digestLoading} digestError={!digest && !!digestError} onRetryDigest={retryDigest} onMarkClean={onMarkClean} onNavigate={onNavigate} role={role} {...rest} />
       <div ref={cleaningRef} id="cleaning-queue" className="scroll-mt-4">
         <CleaningQueue
           items={cleaningItems}

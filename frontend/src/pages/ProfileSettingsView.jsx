@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import ProfileHeader from '../components/settings/ProfileHeader';
 import CustomerSettings from '../components/settings/CustomerSettings';
-import AdminSectionTabs from '../components/settings/AdminSectionTabs';
+import AdminSectionTabs, { ADMIN_SECTIONS } from '../components/settings/AdminSectionTabs';
 import GeneralTab from '../components/settings/GeneralTab';
 import DataBackupsTab from '../components/settings/DataBackupsTab';
 import NotificationsTab from '../components/settings/NotificationsTab';
@@ -30,7 +30,18 @@ export default function ProfileSettingsView({
   onRequestLogout,
 }) {
   // Active admin settings tab (General / Notifications / Integrations / …).
-  const [adminSection, setAdminSection] = useState('general');
+  // Kept in ?tab= so a reload or a shared link reopens the same tab. Other
+  // query params (e.g. ?demo=) are preserved; unknown values fall back.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('tab');
+  const adminSection = ADMIN_SECTIONS.some((s) => s.id === requested) ? requested : 'general';
+  const setAdminSection = (id) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id === 'general') next.delete('tab'); else next.set('tab', id);
+      return next;
+    }, { replace: true });
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl">

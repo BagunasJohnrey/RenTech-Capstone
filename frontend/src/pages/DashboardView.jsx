@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, User, Droplets, Tag, Copy, Check, CalendarClock, Sparkle, ScanLine } from 'lucide-react';
+import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, Droplets, Tag, Copy, Check, CalendarClock, Sparkle, ScanLine } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import PaymentProofModal from '../components/PaymentProofModal';
@@ -18,6 +18,7 @@ import { sortByCategory } from '../utils/categorySort';
 import { tabPath } from '../utils/routing';
 import { todayYmd } from '../utils/format';
 import PageHeader from '../components/ui/PageHeader';
+import StatCard from '../components/StatCard';
 
 export default function DashboardView({ role, transactions, inventory, transactionsLoading, inventoryLoading, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook, onNavigateDetail }) {
   const navigate = useNavigate();
@@ -408,6 +409,11 @@ export default function DashboardView({ role, transactions, inventory, transacti
     const overdueTxs = transactions.filter(tx =>
       tx.status === 'Overdue' || (tx.status === 'Active' && new Date(tx.dueDate || tx.date) < dayStart)
     ).slice(0, 3);
+    // Upcoming Today = today's pickups + today's returns in one tagged list.
+    const todayList = [
+      ...pickupsToday.map((tx) => ({ tx, kind: 'pickup' })),
+      ...upcomingToday.map((tx) => ({ tx, kind: 'return' })),
+    ].slice(0, 6);
     const daysLate = (tx) => tx.dueDate ? Math.max(1, Math.ceil((today - new Date(tx.dueDate)) / 86400000)) : '?';
     return (
       <div className="max-w-lg mx-auto md:max-w-3xl xl:max-w-[1200px]">
@@ -421,38 +427,16 @@ export default function DashboardView({ role, transactions, inventory, transacti
         {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop.
             Labels ALWAYS render; only the numbers skeleton while loading. */}
         <div className="xl:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 xl:gap-5">
-          <button onClick={() => goFiltered('History', 'Reserved')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pickups Today</p>
-            {staffLoading
-              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
-              : <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{pickupsToday.length}</p>}
-          </button>
-          <button onClick={() => goFiltered('History', 'Overdue')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-              {overdueCount > 0 ? <span className="text-red-500">Overdue</span> : 'Overdue'}
-            </p>
-            {staffLoading
-              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
-              : <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueCount > 0 ? 'text-red-500' : 'text-gray-900'}`}>{overdueCount}</p>}
-          </button>
-          <button onClick={() => onNavigate('Catalog')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Available</p>
-            {staffLoading
-              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
-              : <p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{availableCount}</p>}
-          </button>
-          <button onClick={() => goAnchor('Tasks', 'cleaning-queue')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-              {cleaningCount > 0 ? <span className="text-orange-500">In Cleaning</span> : 'In Cleaning'}
-            </p>
-            {staffLoading
-              ? <Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" />
-              : <p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${cleaningCount > 0 ? 'text-orange-500' : 'text-gray-900'}`}>{cleaningCount}</p>}
-          </button>
+          <StatCard label="Pickups Today" value={pickupsToday.length} loading={staffLoading}
+            onClick={() => goFiltered('History', 'Reserved')} />
+          <StatCard label="Overdue" value={overdueCount} loading={staffLoading}
+            tone={overdueCount > 0 ? 'alert' : undefined}
+            onClick={() => goFiltered('History', 'Overdue')} />
+          <StatCard label="Available" value={availableCount} loading={staffLoading}
+            onClick={() => onNavigate('Catalog')} />
+          <StatCard label="In Cleaning" value={cleaningCount} loading={staffLoading}
+            tone={cleaningCount > 0 ? 'warning' : undefined}
+            onClick={() => goAnchor('Tasks', 'cleaning-queue')} />
         </div>
 
         {/* Right rail: Quick Actions + (desktop) Today at a Glance + Overdue Follow-ups */}
@@ -502,7 +486,6 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-xs text-gray-500 font-medium">
                   <p><span className="font-bold text-gray-800">{upcomingToday.length}</span> return{upcomingToday.length === 1 ? '' : 's'} due today</p>
                   <p><span className="font-bold text-gray-800">{pickupsToday.length}</span> pickup{pickupsToday.length === 1 ? '' : 's'} scheduled</p>
-                  <p><span className="font-bold text-gray-800">{cleaningCount}</span> item{cleaningCount === 1 ? '' : 's'} in cleaning</p>
                 </div>
               </>
             )}
@@ -534,45 +517,49 @@ export default function DashboardView({ role, transactions, inventory, transacti
 
         </aside>
 
-        {/* Upcoming Today — main column. Header ALWAYS renders; only the
-            body skeletons while loading (never false "No returns"). */}
+        {/* Upcoming Today — main column: today's pickups AND returns, tagged.
+            Header ALWAYS renders; only the body skeletons while loading
+            (never a false "nothing today"). */}
         <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Upcoming Today</h3>
-            {upcomingToday.length > 0 && (
+            {todayList.length > 0 && (
               <button onClick={() => onNavigate('Tasks')}
-                className="text-xs font-semibold text-[#bf4a53] hover:underline">
+                className="text-xs font-semibold text-[#bf4a53] hover:underline min-h-[36px] px-1">
                 View All
               </button>
             )}
           </div>
           {staffLoading ? (
             <SkeletonList count={3} />
-          ) : upcomingToday.length === 0 ? (
+          ) : todayList.length === 0 ? (
             <div className="py-8 text-center">
-              <p className="text-sm text-gray-400 font-medium">No returns due today.</p>
+              <p className="text-sm text-gray-400 font-medium">No pickups or returns today.</p>
             </div>
           ) : (
-            <div className="space-y-3 stagger">
-              {upcomingToday.map(tx => (
-                <div key={tx.id} className="flex items-center gap-3 py-3 border-b border-gray-100 last:border-0">
-                  <div className="w-10 h-10 rounded-full bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-400 shrink-0">
-                    <User size={16} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
-                    <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-[11px] font-semibold text-gray-500">Due: {tx.dueDate ? new Date(tx.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Today'}</p>
-                  </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="space-y-1 stagger">
+              {todayList.map(({ tx, kind }) => {
+                const isPickup = kind === 'pickup';
+                return (
+                  <button key={`${kind}-${tx.id}`} type="button"
+                    onClick={() => { if (onNavigateDetail) onNavigateDetail(tx); }}
+                    className="w-full text-left flex items-center gap-3 py-3 px-2 -mx-2 rounded-xl border-b border-gray-100 last:border-0 hover:bg-gray-50/70 transition-colors">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isPickup ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                      {isPickup ? <ShoppingBag size={16} aria-hidden="true" /> : <Undo2 size={16} aria-hidden="true" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
+                      <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
+                    </div>
+                    <span className={`shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${isPickup ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                      {isPickup ? 'Pickup' : 'Return'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
-
-
 
         {/* Active Rentals — main column. Header stays; skeleton rows while
             loading; hidden on a genuinely quiet day (same as before). */}
@@ -767,42 +754,22 @@ export default function DashboardView({ role, transactions, inventory, transacti
         {/* KPI row — 2x2 on mobile, 4 across on tablet/desktop.
             Labels ALWAYS render; only numbers skeleton while loading. */}
         <div className="xl:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 xl:gap-5">
-          <button onClick={() => onNavigate('AI Insights')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Monthly Revenue</p>
-            {adminLoading
-              ? <><Skeleton className="h-8 w-24 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-20 mt-1 mx-auto lg:mx-0" /></>
-              : <><p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">₱{monthlyRevenue.toLocaleString()}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${revDiff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                {revDiff >= 0 ? '+' : '-'}₱{Math.abs(revDiff).toLocaleString()} vs last month
-              </p></>}
-          </button>
-          <button onClick={() => goFiltered('History', overdueReturns > 0 ? 'Overdue' : 'Active')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Active Rentals</p>
-            {adminLoading
-              ? <><Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-16 mt-1 mx-auto lg:mx-0" /></>
-              : <><p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${overdueReturns > 0 ? 'text-red-500' : 'text-gray-900'}`}>{activeRentals}</p>
-              <p className={`text-[10px] font-bold mt-0.5 ${overdueReturns > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                {overdueReturns > 0 ? `${overdueReturns} overdue` : 'all on time'}
-              </p></>}
-          </button>
-          <button onClick={() => onNavigate('Tasks')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Due Today</p>
-            {adminLoading
-              ? <><Skeleton className="h-8 w-12 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-16 mt-1 mx-auto lg:mx-0" /></>
-              : <><p className="text-2xl lg:text-3xl font-extrabold text-gray-900 mt-1">{todayStats ? todayStats.dueToday.length : upcomingToday.length}</p>
-              <p className="text-[10px] font-bold mt-0.5 text-gray-400">returns due</p></>}
-          </button>
-          <button onClick={() => onNavigate('Catalog')}
-            className="bg-white rounded-2xl p-4 sm:p-5 border border-gray-100/80 shadow-sm text-center lg:text-left hover:shadow-md hover:border-gray-200 transition-all btn-press">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Utilization</p>
-            {adminLoading
-              ? <><Skeleton className="h-8 w-16 mt-1 mx-auto lg:mx-0" /><Skeleton className="h-3 w-24 mt-1 mx-auto lg:mx-0" /></>
-              : <><p className={`text-2xl lg:text-3xl font-extrabold mt-1 ${availableItems < 5 ? 'text-orange-500' : 'text-gray-900'}`}>{utilizationRate}%</p>
-              <p className="text-[10px] font-bold mt-0.5 text-gray-400">{availableItems} of {totalItems} items free</p></>}
-          </button>
+          <StatCard label="Monthly Revenue" value={`₱${monthlyRevenue.toLocaleString()}`} loading={adminLoading} skeletonWidth="w-24"
+            sub={`${revDiff >= 0 ? '+' : '-'}₱${Math.abs(revDiff).toLocaleString()} vs last month`}
+            subTone={revDiff >= 0 ? 'good' : 'bad'}
+            onClick={() => onNavigate('AI Insights')} />
+          <StatCard label="Active Rentals" value={activeRentals} loading={adminLoading}
+            tone={overdueReturns > 0 ? 'alert' : undefined}
+            sub={overdueReturns > 0 ? `${overdueReturns} overdue` : 'all on time'}
+            subTone={overdueReturns > 0 ? 'bad' : 'good'}
+            onClick={() => goFiltered('History', overdueReturns > 0 ? 'Overdue' : 'Active')} />
+          <StatCard label="Due Today" value={todayStats ? todayStats.dueToday.length : upcomingToday.length} loading={adminLoading}
+            sub="returns due"
+            onClick={() => onNavigate('Tasks')} />
+          <StatCard label="Utilization" value={`${utilizationRate}%`} loading={adminLoading} skeletonWidth="w-16"
+            tone={availableItems < 5 ? 'warning' : undefined}
+            sub={`${availableItems} of ${totalItems} items free`}
+            onClick={() => onNavigate('Catalog')} />
         </div>
 
         {/* Left column — Revenue Trend + Top Items + Overdue follow-ups */}

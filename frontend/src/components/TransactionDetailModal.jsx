@@ -8,7 +8,7 @@ import ItemImage from './ItemImage';
 import BookingQR from './BookingQR';
 import { Skeleton } from './Skeleton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
-import { useLockScroll } from '../hooks/useLockScroll';
+import BottomSheet from './BottomSheet';
 import { TX_STATUS_PILLS } from '../utils/statusColors';
 import { api } from '../utils/api';
 import ManualQrPanel from './ManualQrPanel';
@@ -74,7 +74,6 @@ const auditLabel = (log) => {
 export default function TransactionDetailModal({ transaction, onClose, fetchFull, role, onReturn }) {
   const flags = useFeatureFlags();
   // Freeze the page behind the sheet; the backdrop is tap-to-close only.
-  useLockScroll(true);
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
   const [tx, setTx] = useState(transaction);
   const [showPayModal, setShowPayModal] = useState(false);
@@ -99,27 +98,20 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const isStaffView = role === 'Admin' || role === 'Staff';
   const [audits, setAudits] = useState([]);
   const [auditsLoading, setAuditsLoading] = useState(true);
-  // Smooth exits: play the slide/fade-out, then unmount. Every dismiss path
-  // goes through these instead of cutting instantly.
-  const [closing, setClosing] = useState(false);
-  const [payClosing, setPayClosing] = useState(false);
-  // Guards late fetch resolutions: a record landing mid-exit would swap the
-  // content under the fade-out = the visible "glitch" on close.
+  // The shared BottomSheet owns drag-to-dismiss + enter/exit animations.
+  // closingRef guards late fetch resolutions: a record landing mid-exit
+  // would swap the content under the fade-out.
   const closingRef = useRef(false);
   const requestClose = useCallback(() => {
-    if (closing || closingRef.current) return;
+    if (closingRef.current) return;
     closingRef.current = true;
-    setDragY(null);
-    setClosing(true);
-    setTimeout(onClose, 150);
-  }, [closing, onClose]);
+    onClose();
+  }, [onClose]);
   const closePayModal = useCallback(() => {
-    if (payLoading || payClosing) return;
-    setPayClosing(true);
-    setTimeout(() => { setShowPayModal(false); setPayClosing(false); }, 150);
-  }, [payLoading, payClosing]);
+    if (payLoading) return;
+    setShowPayModal(false);
+  }, [payLoading]);
   const openPayModal = () => {
-    setPayClosing(false);
     setPayChannel('counter');
     setPayError('');
     setPaySuccess(false);
@@ -140,64 +132,6 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     else requestClose();
   }, [showPayModal, closePayModal, requestClose]);
   useEscapeClose(handleEscape);
-
-  // Swipe-down-to-dismiss (mobile bottom sheet). Touch-only handlers so the
-  // desktop mouse path is untouched. Takes over only for downward drags that
-  // start with the body scrolled to the top — anything else stays a scroll.
-  const bodyRef = useRef(null);
-  const sheetRef = useRef(null);
-  const [dragY, setDragY] = useState(null);
-  const [dismissing, setDismissing] = useState(false);
-  // Enter animation plays once on mount — never re-applied (e.g. after a
-  // drag snap-back), or the sheet would visibly replay the slide-in.
-  const [entered, setEntered] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setEntered(true), 250);
-    return () => clearTimeout(t);
-  }, []);
-  const dragState = useRef({ startY: 0, lastY: 0, lastT: 0, active: false, atTop: true });
-  const onSheetTouchStart = (e) => {
-    if (dismissing || closingRef.current || e.touches.length !== 1) return;
-    const t = e.touches[0];
-    // Latch whether the gesture STARTED at the top: a scroll that merely
-    // arrives at the top mid-gesture must never turn into a dismiss — only
-    // a fresh, deliberate swipe from the top may close the sheet.
-    dragState.current = { startY: t.clientY, lastY: t.clientY, lastT: Date.now(), active: false, atTop: bodyRef.current ? bodyRef.current.scrollTop <= 0 : true };
-  };
-  const onSheetTouchMove = (e) => {
-    const s = dragState.current;
-    if (s.dismissing || closingRef.current || e.touches.length !== 1) return;
-    const dy = e.touches[0].clientY - s.startY;
-    if (!s.active) {
-      if (!s.atTop) return;
-      if (dy < 10) return; // taps and upward scrolls behave normally
-      s.active = true;
-    }
-    if (dy <= 0) { setDragY(null); return; } // finger back up: ease home, don't jump
-    s.lastY = e.touches[0].clientY;
-    s.lastT = Date.now();
-    setDragY(dy);
-  };
-  const onSheetTouchEnd = (e) => {
-    const s = dragState.current;
-    s.active = false;
-    if (s.dismissing || closingRef.current) return;
-    const endY = e.changedTouches[0].clientY;
-    const dy = Math.max(0, endY - s.startY);
-    // Deliberate long drag only: ~45% of the sheet height (min 180px). Fast
-    // flicks no longer dismiss on velocity — the swipe must truly reach.
-    const threshold = Math.max(180, (sheetRef.current?.offsetHeight ?? 600) * 0.45);
-    if (dy >= threshold) {
-      // Dragged far enough — slide off and unmount.
-      s.dismissing = true;
-      closingRef.current = true;
-      setDismissing(true);
-      setDragY(null);
-      setTimeout(onClose, 190);
-      return;
-    }
-    setDragY(null); // snap back (transition animates it)
-  };
 
   // Fetch enrichment only when the transaction id changes — `transaction` is a
   // new object identity on every parent render, and `normalizeTx()` also
@@ -361,34 +295,14 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
 
   return (
-    <div
-      className={`fixed inset-0 z-[300] transition-opacity duration-150 ${closing || dismissing ? 'opacity-0' : 'opacity-100'}`}
-      style={dragY != null && !dismissing ? { opacity: Math.max(0.25, 1 - dragY / 500) } : undefined}
-    >
-      <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
-        {/* dvh cap + top gap: plain vh includes the mobile browser chrome, so the
-            sheet used to slide under it and read as full-screen. */}
-        {/* Flex column: static header + scrolling body + pinned footer, so the
-            actions never scroll away on mobile (sticky-inside-scroller janks
-            on some browsers when the sheet itself is the scroll container). */}
-        <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-transaction-detail"
-          ref={sheetRef}
-          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg sheet-cap sm:max-h-[90vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing && dragY == null && !dismissing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : !entered && !closing && !dismissing && dragY == null ? 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200' : ''}`}
-          style={
-            dismissing
-              ? { transform: 'translateY(105%)', transition: 'transform 190ms ease-in' }
-              : dragY != null
-                ? { transform: `translateY(${dragY}px)`, transition: 'none' }
-                : { transform: 'translateY(0)', transition: 'transform 220ms cubic-bezier(0.2, 0.9, 0.25, 1.2)' }
-          }
-          onTouchStart={onSheetTouchStart}
-          onTouchMove={onSheetTouchMove}
-          onTouchEnd={onSheetTouchEnd}
-          onClick={e => e.stopPropagation()}>
+    <>
+      {/* Flex column: static header + scrolling body + pinned footer, so the
+          actions never scroll away on mobile. Own white handle lives on the
+          gradient header, so the sheet's gray one is hidden. */}
+      <BottomSheet onClose={requestClose} labelledby="dialog-title-transaction-detail" z="z-[300]" maxWidth="sm:max-w-lg" hideHandle>
 
         {/* Header — brand gradient band */}
-        <div className="shrink-0 overflow-hidden rounded-t-3xl">
+        <div className="shrink-0 overflow-hidden">
           <div className="bg-gradient-to-r from-[#bf4a53] to-[#e07080] px-5 sm:px-6 pt-2 pb-4 relative">
             <div className="flex justify-center" aria-hidden="true">
               <div className="w-10 h-1 rounded-full bg-white/40 mb-2" />
@@ -412,7 +326,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   </p>
                 </div>
               </div>
-              <button onClick={requestClose} aria-label="Close transaction details" className="p-1.5 text-white/80 hover:bg-white/20 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+              <button onClick={requestClose} aria-label="Close transaction details" className="p-2 text-white/80 hover:bg-white/20 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
                 <X size={18} />
               </button>
             </div>
@@ -425,7 +339,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           </div>
         </div>
 
-        <div ref={bodyRef} className="p-5 sm:p-6 space-y-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+        <div data-sheet-scroll className="p-5 sm:p-6 space-y-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
           {(enriching || (isStaffView && auditsLoading)) ? (
             // Structural placeholder matching the body rhythm — swapped for
             // the real sections in one paint, no staged pop-ins. Staff view
@@ -799,16 +713,14 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             )}
           </div>
         </div>
-      </div>
+      </BottomSheet>
 
-      {/* Record Payment Modal — same bottom-sheet treatment on mobile */}
+      {/* Record Payment — stacked sheet. No second blur: the parent sheet
+          already blurs beneath, and two stacked blurs jank low-end phones. */}
       {showPayModal && (
-        <div className={`fixed inset-0 z-[310] transition-opacity duration-150 ${payClosing ? 'opacity-0' : 'opacity-100'}`}>
-          {/* No blur here — the parent sheet already blurs beneath, and two
-              stacked blurs jank low-end phones. */}
-          <div className={`fixed inset-0 bg-gray-900/50 ${payClosing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-150'}`} onClick={closePayModal} />
-          <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-12 pb-0 sm:p-4 pointer-events-none">
-            <div role="dialog" aria-modal="true" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm sheet-cap overflow-y-auto p-5 sm:p-6 space-y-5 pointer-events-auto transform-gpu ${payClosing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
+        <BottomSheet onClose={closePayModal} labelledby="dialog-title-record-payment" z="z-[310]" maxWidth="sm:max-w-sm"
+          interceptClose={payLoading} backdropClass="bg-gray-900/50">
+            <div data-sheet-scroll className="overflow-y-auto min-h-0 p-5 sm:p-6 space-y-5">
             {paySuccess ? (
               <div className="text-center py-4">
                 <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -820,9 +732,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             ) : (
               <>
                 <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-lg text-gray-900">Record Payment</h4>
-                  <button onClick={closePayModal} className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-full transition-colors" aria-label="Close payment form">
-                    <X size={16} />
+                  <h4 id="dialog-title-record-payment" className="font-bold text-lg text-gray-900">Record Payment</h4>
+                  <button onClick={closePayModal} className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors" aria-label="Close payment form">
+                    <X size={18} />
                   </button>
                 </div>
 
@@ -917,10 +829,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               </>
             )}
             </div>
-          </div>
-        </div>
+        </BottomSheet>
       )}
-      </div>
-    </div>
+    </>
   );
 }

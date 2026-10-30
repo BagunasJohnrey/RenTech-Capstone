@@ -26,7 +26,9 @@ function unlockBody() {
 // TransactionDetailModal treatment so every modal behaves the same.
 // Scrollable bodies inside should carry `data-sheet-scroll` so a downward
 // drag that starts mid-scroll stays a scroll instead of dismissing.
-export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWidth = 'sm:max-w-lg', interceptClose = false, hideHandle = false, children }) {
+// `backdropClass` lets a sheet stacked on another skip the second blur
+// (two stacked backdrop blurs jank low-end phones).
+export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWidth = 'sm:max-w-lg', interceptClose = false, hideHandle = false, backdropClass = 'bg-gray-900/40 backdrop-blur-sm', children }) {
   const [dragY, setDragY] = useState(null);
   const [dismissing, setDismissing] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -122,7 +124,7 @@ export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWid
     <div className={`fixed inset-0 ${z} transition-opacity duration-150 ${closing || dismissing ? 'opacity-0' : 'opacity-100'}`}
       style={dragY != null && !dismissing ? { opacity: Math.max(0.25, 1 - dragY / 500) } : undefined}
     >
-      <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={requestClose} />
+      <div className={`fixed inset-0 ${backdropClass}`} onClick={requestClose} />
       <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
         <div
           role="dialog"

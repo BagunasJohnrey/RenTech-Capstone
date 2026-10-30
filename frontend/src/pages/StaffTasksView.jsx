@@ -17,6 +17,7 @@ import { peso } from '../utils/receipt';
 import { txPill } from '../utils/statusColors';
 import { tabPath } from '../utils/routing';
 import PageHeader from '../components/ui/PageHeader';
+import { Skeleton } from '../components/Skeleton';
 
 // Collapsible SMS log that mounts its data-fetching panel only after the
 // first expand — keeps GET /sms/history off the Tasks critical path.
@@ -49,7 +50,7 @@ function SmsLogSection() {
   );
 }
 
-export default function StaffTasksView({ transactions, digestTransactions, digestLoading, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
+export default function StaffTasksView({ transactions, digestTransactions, digestLoading, digestError, onRetryDigest, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
   const navigate = useNavigate();
   // Fast first paint: action queues render from the tiny today-digest rows
   // (~20 rows) the moment they land; the full 500-row list merges in behind
@@ -363,7 +364,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           <div className="flex items-center justify-between mb-3">
             <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Today's Priority</p>
             {!focusKnown
-              ? <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue...</p>
+              ? (digestError && !queuesKnown
+                ? null
+                : <p className="text-xs text-gray-300 font-semibold animate-pulse">Checking today's queue...</p>)
               : focusItems.length === 0
                 ? <p className="text-xs text-emerald-600 font-semibold">All clear for today</p>
                 : <p className="text-xs text-gray-400 font-medium">{focusItems.length} item{focusItems.length === 1 ? '' : 's'} requiring action</p>
@@ -371,16 +374,24 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           </div>
 
           <div className="space-y-2">
-            {!focusKnown ? (
+            {!focusKnown && digestError && !queuesKnown ? (
+              <div role="alert" className="flex items-center justify-between gap-3 p-4 rounded-xl bg-red-50/60 border border-red-100">
+                <p className="text-sm font-semibold text-red-700">Couldn&rsquo;t load today&rsquo;s tasks.</p>
+                <button type="button" onClick={onRetryDigest}
+                  className="shrink-0 min-h-[36px] px-4 rounded-full text-xs font-bold text-white bg-[#bf4a53] hover:bg-[#a83d46] transition-colors">
+                  Retry
+                </button>
+              </div>
+            ) : !focusKnown ? (
               // Wait for digest + proofs together (normally both are cached),
               // so the priority list never stages rows in.
               <div className="space-y-2" aria-label="Loading today's queue">
                 {[0, 1, 2, 3].map((i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 animate-pulse">
-                    <div className="w-4 h-4 rounded-full bg-gray-200 shrink-0" />
+                  <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100">
+                    <Skeleton className="w-4 h-4 rounded-full shrink-0" />
                     <div className="flex-1 space-y-1.5">
-                      <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
-                      <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
+                      <Skeleton className="h-3.5 w-2/3" />
+                      <Skeleton className="h-2.5 w-1/3" />
                     </div>
                   </div>
                 ))}
@@ -434,20 +445,28 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
             Unknown (digest still pending, list empty) → skeleton cards, never
             a missing section that reads as "nothing to do". Known-empty
             (quiet day) → compact "all clear" card. */}
-        {!queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
+        {!queuesKnown && digestError && pendingPickup.length === 0 && overdueItems.length === 0 ? (
+          <div role="alert" className="flex items-center justify-between gap-3 p-4 rounded-xl bg-red-50/60 border border-red-100">
+            <p className="text-sm font-semibold text-red-700">Couldn&rsquo;t load pickups and overdue rentals.</p>
+            <button type="button" onClick={onRetryDigest}
+              className="shrink-0 min-h-[36px] px-4 rounded-full text-xs font-bold text-white bg-[#bf4a53] hover:bg-[#a83d46] transition-colors">
+              Retry
+            </button>
+          </div>
+        ) : !queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Loading pickup and overdue queues">
             {['Ready for Pickup', 'Overdue Rentals'].map((title) => (
-              <div key={title} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 animate-pulse">
+              <div key={title} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6">
                 <div className="flex items-center mb-4">
                   <h3 className="font-bold text-lg text-gray-900">{title}</h3>
                 </div>
                 <div className="space-y-2">
                   {[0, 1, 2].map((j) => (
                     <div key={j} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl">
-                      <div className="w-9 h-9 rounded-full bg-gray-200 shrink-0" />
+                      <Skeleton className="w-9 h-9 rounded-full shrink-0" />
                       <div className="flex-1 space-y-1.5">
-                        <div className="h-3.5 w-2/3 bg-gray-200 rounded" />
-                        <div className="h-2.5 w-1/3 bg-gray-100 rounded" />
+                        <Skeleton className="h-3.5 w-2/3" />
+                        <Skeleton className="h-2.5 w-1/3" />
                       </div>
                     </div>
                   ))}
@@ -618,13 +637,13 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
               {!fullListReady ? (
                 <div className="space-y-1" aria-label="Loading recent activity">
                   {[0, 1, 2, 3, 4].map((i) => (
-                    <div key={i} className="flex items-center gap-3.5 px-1 py-3 animate-pulse">
-                      <div className="w-10 h-10 rounded-full bg-gray-200 shrink-0" />
+                    <div key={i} className="flex items-center gap-3.5 px-1 py-3">
+                      <Skeleton className="w-10 h-10 rounded-full shrink-0" />
                       <div className="flex-1 space-y-1.5">
-                        <div className="h-3.5 w-1/2 bg-gray-200 rounded" />
-                        <div className="h-3 w-1/3 bg-gray-100 rounded" />
+                        <Skeleton className="h-3.5 w-1/2" />
+                        <Skeleton className="h-3 w-1/3" />
                       </div>
-                      <div className="h-6 w-16 rounded-full bg-gray-100 shrink-0" />
+                      <Skeleton className="h-6 w-16 rounded-full shrink-0" />
                     </div>
                   ))}
                 </div>

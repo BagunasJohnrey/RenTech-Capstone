@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../utils/api';
 
 // SWR-style cache: the initial render always seeds from the last-known server
@@ -28,8 +28,14 @@ function poll(fn) {
 // Server-authoritative today-digest (due/overdue/cleaning) — see readCache for
 // the SWR behavior. Falls back to null so callers can keep their local
 // derivation when nothing has been fetched yet this session.
-export function useTodayTasks(role) {
+//
+// `{ withStatus: true }` returns `{ data, error, retry }` instead of the bare
+// data, so a screen can show "Couldn't load - Retry" rather than an endless
+// skeleton. Existing callers keep getting the plain data.
+export function useTodayTasks(role, { withStatus = false } = {}) {
   const [data, setData] = useState(() => readCache(role));
+  const [error, setError] = useState(null);
+  const fetchRef = useRef(null);
 
   useEffect(() => {
     if (role !== 'Admin' && role !== 'Staff') return;
@@ -38,15 +44,21 @@ export function useTodayTasks(role) {
       api.get('/dashboard/today')
         .then((d) => {
           cache.set(role, { data: d, at: Date.now() });
-          if (active) setData(d);
+          if (active) { setData(d); setError(null); }
         })
-        .catch(() => {});
+        .catch((err) => { if (active) setError(err || new Error('Failed to load')); });
     };
+    fetchRef.current = fetchDigest;
     const id = poll(fetchDigest);
-    return () => { active = false; clearInterval(id); };
+    return () => { active = false; fetchRef.current = null; clearInterval(id); };
   }, [role]);
 
-  return data;
+  const retry = useCallback(() => {
+    setError(null);
+    fetchRef.current?.();
+  }, []);
+
+  return withStatus ? { data, error, retry } : data;
 }
 
 // Server-authoritative business KPIs (monthly revenue, utilization, rates…)
