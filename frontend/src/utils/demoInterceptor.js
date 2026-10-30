@@ -299,31 +299,67 @@ const insights = () => {
 };
 
 // Shape matches backend getForecast (monthly) so SMA chart + outlook render.
+// Mock monthly demand by calendar month (Jan..Dec): May + December peaks.
+const DEMO_SEASON = [6, 6, 9, 7, 12, 8, 6, 6, 7, 8, 9, 14];
+
 const forecast = () => {
-  const months = lastMonths(6);
+  // 18 complete months + the month in progress (mirrors the backend: the
+  // average runs on complete months only; the current month is "so far").
+  const months = lastMonths(19);
   const labels = months.map((m) => m.label);
-  const counts = [5, 7, 6, 8, 9, 10];
-  const smaVals = counts.map((_, i) => (i < 2 ? null : round1((counts[i - 2] + counts[i - 1] + counts[i]) / 3)));
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysElapsed = now.getDate();
+  const full = months.map((m, i) => Math.round(DEMO_SEASON[m.month - 1] * (i >= 12 ? 1.1 : 1)));
+  const complete = full.slice(0, -1);
+  const soFar = Math.round(full[full.length - 1] * (daysElapsed / daysInMonth));
+  const counts = [...complete, soFar];
+  const smaVals = [
+    ...complete.map((_, i) => (i < 2 ? null : round1((complete[i - 2] + complete[i - 1] + complete[i]) / 3))),
+    null,
+  ];
+  const lastSma = smaVals[smaVals.length - 2] ?? 0;
+  const err = 21;
+  const range = (v) => ({ low: round1(Math.max(0, v * (1 - err / 100))), high: round1(v * (1 + err / 100)) });
+  // Mock seasonal outlook (the backend only picks this when it backtests
+  // better than the flat average): half recent average, half last year ×1.1.
+  const seasonalFor = (m) => round1(0.5 * lastSma + 0.5 * DEMO_SEASON[m - 1] * 1.1);
   const last = months[months.length - 1];
-  const nextLabels = nextMonthLabelsFrom(last.year, last.month, 3);
-  const lastSma = smaVals[smaVals.length - 1] ?? 0;
+  const next = nextMonthLabelsFrom(last.year, last.month, 3);
+  const nextMonthNums = [1, 2, 3].map((k) => ((last.month - 1 + k) % 12) + 1);
+  const curProj = seasonalFor(last.month);
   return {
     labels,
     counts,
     sma: smaVals,
     period: 3,
     granularity: 'monthly',
-    projections: nextLabels.map((label) => ({ label, value: round1(lastSma) })),
+    errorPct: 34,
+    partialIndex: months.length - 1,
+    current: {
+      label: last.label, count: soFar, daysElapsed, daysInMonth,
+      pace: round1((soFar * daysInMonth) / Math.max(1, daysElapsed)),
+      projected: curProj, ...range(curProj),
+    },
+    projections: next.map((label, i) => {
+      const value = seasonalFor(nextMonthNums[i]);
+      return { label, value, lastYear: DEMO_SEASON[nextMonthNums[i] - 1], seasonal: true, ...range(value) };
+    }),
+    projectionMethod: 'seasonal',
+    seasonality: { growth: 1.1, averageErrorPct: 34, seasonalErrorPct: err, backtestPoints: 6 },
+    seasonalProfile: DEMO_SEASON.map((avg, i) => ({
+      month: i + 1, avg, index: Math.round((avg / (DEMO_SEASON.reduce((a, b) => a + b, 0) / 12)) * 100) / 100, samples: 1,
+    })),
     byCategory: [
-      { category: 'Gown', latest: 4, average: 3.1, projection: 3.8, trend: 'up' },
-      { category: 'Filipiniana', latest: 1, average: 0.9, projection: 1, trend: 'flat' },
-      { category: 'Costume', latest: 1, average: 0.7, projection: 0.9, trend: 'up' },
-      { category: 'Barong', latest: 1, average: 0.8, projection: 1, trend: 'flat' },
-      { category: 'Suit', latest: 0, average: 0.3, projection: 0.2, trend: 'down' },
+      { category: 'Gown', latest: 4, average: 3.1, projection: 3.8, trend: 'up', share: 48 },
+      { category: 'Filipiniana', latest: 1, average: 0.9, projection: 1, trend: 'flat', share: 17 },
+      { category: 'Costume', latest: 1, average: 0.7, projection: 0.9, trend: 'up', share: 15 },
+      { category: 'Barong', latest: 1, average: 0.8, projection: 1, trend: 'flat', share: 13 },
+      { category: 'Suit', latest: 0, average: 0.3, projection: 0.2, trend: 'down', share: 7 },
     ],
-    historyMonths: 6,
-    confidence: 'medium',
-    confidenceNote: 'Based on 6 months of history · medium confidence',
+    historyMonths: 18,
+    confidence: 'high',
+    confidenceNote: `Based on 18 complete months · high confidence · error ±${err}%`,
   };
 };
 
@@ -334,20 +370,34 @@ const weeklyForecast = () => {
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i * 7);
     labels.push(d.toLocaleString('en-US', { month: 'short', day: 'numeric' }));
   }
-  const counts = [2, 1, 3, 2, 4, 3, 2, 3, 4, 2, 3, 4];
-  const smaVals = counts.map((_, i) => (i < 2 ? null : round1((counts[i - 2] + counts[i - 1] + counts[i]) / 3)));
-  const lastSma = smaVals[smaVals.length - 1] ?? 0;
+  const counts = [2, 1, 3, 2, 4, 3, 2, 3, 4, 2, 3, 2];
+  // Last bucket = week in progress: shown, not averaged (mirrors backend).
+  const smaVals = [
+    ...counts.slice(0, -1).map((_, i) => (i < 2 ? null : round1((counts[i - 2] + counts[i - 1] + counts[i]) / 3))),
+    null,
+  ];
+  const lastSma = smaVals[smaVals.length - 2] ?? 0;
   const nextLabels = [1, 2, 3].map((i) => {
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i * 7);
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric' });
   });
+  const daysElapsed = ((now.getDay() + 6) % 7) + 1;
   return {
     labels,
     counts,
     sma: smaVals,
     period: 3,
     granularity: 'weekly',
-    projections: nextLabels.map((label) => ({ label, value: round1(lastSma) })),
+    errorPct: 38,
+    partialIndex: counts.length - 1,
+    current: {
+      label: `Week of ${labels[labels.length - 1]}`, count: 2, daysElapsed, daysInMonth: 7,
+      pace: round1((2 * 7) / daysElapsed), projected: round1(lastSma),
+      low: round1(lastSma * 0.62), high: round1(lastSma * 1.38),
+    },
+    seasonalProfile: [],
+    projectionMethod: 'average',
+    projections: nextLabels.map((label) => ({ label, value: round1(lastSma), low: round1(lastSma * 0.62), high: round1(lastSma * 1.38) })),
     byCategory: [],
     historyMonths: 6,
     confidence: 'medium',

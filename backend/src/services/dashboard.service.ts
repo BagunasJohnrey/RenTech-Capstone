@@ -1,6 +1,6 @@
 import { prisma } from '../config/database.js';
 import { TransactionStatus } from '@prisma/client';
-import { sma, smaCapped, mape } from '../utils/sma.js';
+import { sma, smaCapped, mape, type SpikeFlag } from '../utils/sma.js';
 import { cacheOrCompute, setDataCacheWarmer } from '../utils/ttlCache.js';
 import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
 import { manilaDayStart, manilaNextDayStart } from '../utils/manilaDay.js';
@@ -351,15 +351,33 @@ async function getTodayTasksUncached() {
   };
 }
 
-async function getDataMonths() {
+// `includeHistory` (forecast only): start at the OLDEST of the first app
+// transaction and the first imported logbook record — otherwise paper history
+// older than the app was silently dropped from the forecast. Capped at 5
+// years so a mistyped 1990 event date can't explode the series.
+const MAX_HISTORY_MONTHS = 60;
+async function getDataMonths(includeHistory = false) {
   const firstTx = await prisma.transaction.findFirst({
     orderBy: { createdAt: 'asc' },
     select: { createdAt: true },
   });
   const now = new Date();
-  const start = firstTx
-    ? new Date(firstTx.createdAt.getFullYear(), firstTx.createdAt.getMonth(), 1)
+  let earliest: Date | null = firstTx?.createdAt ?? null;
+  if (includeHistory) {
+    try {
+      const firstLog = await prisma.historicalRecord.findFirst({
+        orderBy: { eventDate: 'asc' },
+        select: { eventDate: true },
+      });
+      if (firstLog?.eventDate && (!earliest || firstLog.eventDate < earliest)) earliest = firstLog.eventDate;
+    } catch { /* no logbook table/rows — app history only */ }
+  }
+  const floor = new Date(now.getFullYear(), now.getMonth() - (MAX_HISTORY_MONTHS - 1), 1);
+  let start = earliest
+    ? new Date(earliest.getFullYear(), earliest.getMonth(), 1)
     : new Date(now.getFullYear(), now.getMonth() - 3, 1);
+  if (start < floor) start = floor;
+  if (start > now) start = new Date(now.getFullYear(), now.getMonth(), 1);
   const months: { label: string; year: number; month: number }[] = [];
   const cursor = new Date(start);
   while (cursor <= now) {
@@ -448,6 +466,152 @@ function projectForward(smaValues: (number | null)[], labels: string[], nextLabe
   return nextLabels.map((label) => ({ label, value: round1(last as number) }));
 }
 
+// Seasonal blend for the MONTHLY outlook. A flat SMA can't see that rental
+// demand swings with the calendar (wedding/debut season, Christmas parties,
+// graduation), so each future month blends the recent average 50/50 with
+// the SAME month last year, scaled by year-over-year growth (last 3 complete
+// months vs the same 3 a year earlier, clamped ×0.5–×2).
+//
+// It is only USED when a one-step backtest over the trailing complete months
+// beats the plain SMA (≥3 comparable points) — otherwise the flat projection
+// stands. The partial current month never enters the growth base or the
+// backtest, and a spike-flagged month is never copied forward (that month
+// falls back to the flat average). Pure + exported for unit tests.
+export const SEASONAL_WEIGHT = 0.5;
+const GROWTH_MIN = 0.5;
+const GROWTH_MAX = 2;
+
+export function seasonalProjection(
+  counts: number[],
+  months: { year: number; month: number }[],
+  smaValues: (number | null)[],
+  spikeIdx: Set<number>,
+  next: { label: string; year: number; month: number }[],
+  now = new Date(),
+) {
+  const n = counts.length;
+  const last = months[n - 1];
+  const partial = !!last && last.year === now.getFullYear() && last.month === now.getMonth() + 1;
+  const lastComplete = partial ? n - 2 : n - 1;
+  const indexOf = (year: number, month: number) =>
+    months.findIndex((m) => m.year === year && m.month === month);
+  const sum = (from: number, to: number) => {
+    let s = 0;
+    for (let i = from; i <= to; i++) s += counts[i] || 0;
+    return s;
+  };
+  // Growth as known at the END of month `end` (3 months ending there vs the
+  // same 3 a year earlier). Null when the year-ago window is missing/empty.
+  const growthAt = (end: number) => {
+    if (end - 14 < 0) return null;
+    const prior = sum(end - 14, end - 12);
+    if (prior <= 0) return null;
+    return Math.min(GROWTH_MAX, Math.max(GROWTH_MIN, sum(end - 2, end) / prior));
+  };
+  const usableYearAgo = (i: number) => i >= 0 && !spikeIdx.has(i) && counts[i] > 0;
+
+  // Backtest: predict each of the last ≤8 complete months from what was
+  // known the month before, both ways, on the SAME points.
+  const actual: number[] = [];
+  const smaPred: (number | null)[] = [];
+  const blendPred: (number | null)[] = [];
+  for (let t = Math.max(0, lastComplete - 7); t <= lastComplete; t++) {
+    const base = smaValues[t - 1];
+    const g = growthAt(t - 1);
+    if (t < 1 || base === null || base === undefined || g === null || !usableYearAgo(t - 12) || !counts[t]) continue;
+    actual.push(counts[t]);
+    smaPred.push(base);
+    blendPred.push((1 - SEASONAL_WEIGHT) * base + SEASONAL_WEIGHT * counts[t - 12] * g);
+  }
+  const smaErrorPct = mape(actual, smaPred);
+  const seasonalErrorPct = mape(actual, blendPred);
+  const growth = lastComplete >= 0 ? growthAt(lastComplete) : null;
+  const used = actual.length >= 3
+    && growth !== null
+    && smaErrorPct !== null && seasonalErrorPct !== null
+    && seasonalErrorPct < smaErrorPct;
+
+  let base: number | null = null;
+  for (const v of smaValues) if (v !== null && v !== undefined) base = v;
+
+  const projections = next.map((t) => {
+    const flat = base === null ? null : round1(base);
+    const ya = indexOf(t.year - 1, t.month);
+    if (!used || base === null || growth === null || !usableYearAgo(ya)) {
+      return { label: t.label, value: flat, lastYear: ya >= 0 ? counts[ya] : null, seasonal: false };
+    }
+    const value = round1((1 - SEASONAL_WEIGHT) * base + SEASONAL_WEIGHT * counts[ya] * growth);
+    return { label: t.label, value, lastYear: counts[ya], seasonal: true };
+  });
+
+  return {
+    used,
+    growth: growth === null ? null : Math.round(growth * 100) / 100,
+    smaErrorPct,
+    seasonalErrorPct,
+    backtestPoints: actual.length,
+    projections,
+  };
+}
+
+// ---- Small pure forecast helpers (shared by the monthly + weekly paths) ----
+
+// Expected range: ±backtest error around a projection. Above 100% it is not
+// a range, so none is given (the UI says "varies a lot").
+function rangeFor(value: number | null, errPct: number | null | undefined) {
+  if (value === null || errPct === null || errPct === undefined || errPct > 100) return { low: null, high: null };
+  return { low: Math.max(0, round1(value * (1 - errPct / 100))), high: round1(value * (1 + errPct / 100)) };
+}
+
+// The period in progress: count so far, straight-line pace for the whole
+// period, and the projection it is tracking against.
+function currentPeriod(
+  label: string, count: number, daysElapsed: number, daysTotal: number,
+  proj: { value: number | null; low: number | null; high: number | null } | null,
+) {
+  return {
+    label,
+    count,
+    daysElapsed,
+    daysInMonth: daysTotal,
+    pace: round1((count * daysTotal) / Math.max(1, daysElapsed)),
+    projected: proj?.value ?? null,
+    low: proj?.low ?? null,
+    high: proj?.high ?? null,
+  };
+}
+
+// A busy month is a one-off spike only if that CALENDAR month isn't busy in
+// any other year: a December rush every year is the seasonal pattern itself,
+// and dropping it removed exactly the peaks the seasonal outlook needs.
+function oneOffSpikes(flags: SpikeFlag[], counts: number[], months: { month: number }[]) {
+  const sorted = [...counts].sort((a, b) => a - b);
+  const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+  const busy = (i: number) => counts[i] > Math.max(1, median) * 1.5;
+  return flags.filter((f) => !months.some((m, j) => j !== f.index && m.month === months[f.index].month && busy(j)));
+}
+
+// Average rentals per calendar month across complete history, indexed to the
+// typical month (1.4 = 40% busier). One-off spikes are left out. Needs a year.
+function calendarProfile(counts: number[], months: { month: number }[], spikes: SpikeFlag[]) {
+  if (counts.length < 12) return [];
+  const buckets = Array.from({ length: 12 }, () => ({ sum: 0, n: 0 }));
+  months.forEach((m, i) => {
+    if (spikes.some((f) => f.index === i)) return;
+    buckets[m.month - 1].sum += counts[i];
+    buckets[m.month - 1].n += 1;
+  });
+  const avgs = buckets.map((b) => (b.n ? b.sum / b.n : null));
+  const known = avgs.filter((a): a is number => a !== null);
+  const overall = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 0;
+  return avgs.map((a, i) => ({
+    month: i + 1,
+    avg: a === null ? 0 : round1(a),
+    index: a === null || overall <= 0 ? 0 : Math.round((a / overall) * 100) / 100,
+    samples: buckets[i].n,
+  }));
+}
+
 function nextMonthLabels(lastYear: number, lastMonth: number, n: number): { label: string; year: number; month: number }[] {
   const out: { label: string; year: number; month: number }[] = [];
   let y = lastYear, m = lastMonth;
@@ -473,7 +637,7 @@ function startOfWeekMonday(d: Date): Date {
 export async function getForecast(period: number = 3, granularity: 'monthly' | 'weekly' = 'monthly') {
   const key = `forecast:${period}:${granularity}`;
   return cacheOrCompute(key, async () => {
-    const { months, firstMonth } = await getDataMonths();
+    const { months, firstMonth } = await getDataMonths(true);
 
     // ONE query instead of one count per month — bucket by period in JS so the
     // remote pooler only sees a single round trip regardless of history length.
@@ -528,7 +692,10 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
         const end = i + 1 < weeks.length ? weeks[i + 1].start : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
         return points.filter(t => t.date >= w.start && t.date < end).length;
       });
-      const series = buildForecastSeries(weeklyCounts, period);
+      // The last bucket is the week in progress — shown, never averaged (same
+      // rule as the unfinished month).
+      const done = weeklyCounts.slice(0, -1);
+      const series = buildForecastSeries(done, period);
       const nextLabels = [1, 2, 3].map(i => {
         const d = new Date(weeks[weeks.length - 1].start);
         d.setDate(d.getDate() + i * 7);
@@ -536,17 +703,28 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       });
       const historyMonths = (now.getFullYear() - firstMonday.getFullYear()) * 12 + (now.getMonth() - firstMonday.getMonth()) + 1;
       const confidence = effectiveConfidence(forecastConfidence(historyMonths), series.errorPct);
+      const err = series.errorPct;
+      const weekProj = projectForward(series.values, weeks.map(w => w.label), nextLabels)
+        .map((p) => ({ ...p, ...rangeFor(p.value, err) }));
+      const lastWeek = weeks[weeks.length - 1];
+      const daysElapsed = Math.min(7, Math.floor((now.getTime() - lastWeek.start.getTime()) / 86400000) + 1);
+      const flat = weekProj[0]?.value ?? null;
       return {
         labels: weeks.map(w => w.label),
         counts: weeklyCounts,
-        sma: series.values,
+        sma: [...series.values, null],
         flags: series.flags,
         errorPct: series.errorPct,
-        band: series.band,
+        band: { lo: [...series.band.lo, null], hi: [...series.band.hi, null] },
         provisional: series.provisional,
         period: series.effectivePeriod,
         granularity,
-        projections: projectForward(series.values, weeks.map(w => w.label), nextLabels),
+        partialIndex: weeks.length - 1,
+        current: currentPeriod(`Week of ${lastWeek.label}`, weeklyCounts[weeklyCounts.length - 1], daysElapsed, 7,
+          { value: flat, ...rangeFor(flat, err) }),
+        seasonalProfile: [],
+        projectionMethod: 'average',
+        projections: weekProj,
         byCategory: [],
         historyMonths,
         historyPoints: historyRows.length,
@@ -559,13 +737,52 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       points.filter(t => t.date.getFullYear() === m.year && t.date.getMonth() === m.month - 1).length
     );
 
-    const series = buildForecastSeries(monthlyCounts, period);
+    // The unfinished current month is NOT a data point for the average: on
+    // the 30th it holds a month's worth, on the 3rd almost nothing, and in
+    // both cases it dragged the trend down and widened the backtest error.
+    // The series is built on COMPLETE months; the current month is reported
+    // separately (so far + full-month projection) and keeps its bar.
+    const nowM = new Date();
     const last = months[months.length - 1];
-    const projections = projectForward(
+    const partial = !!last && last.year === nowM.getFullYear() && last.month === nowM.getMonth() + 1;
+    const completeN = partial ? months.length - 1 : months.length;
+    const completeCounts = monthlyCounts.slice(0, completeN);
+    const completeMonths = months.slice(0, completeN);
+    const rawSeries = buildForecastSeries(completeCounts, period);
+    // The moving average still caps every spike; only yearly-recurring peaks
+    // are dropped from the one-off flags (see oneOffSpikes).
+    const series = { ...rawSeries, flags: oneOffSpikes(rawSeries.flags, completeCounts, completeMonths) };
+    const pad = <T,>(arr: T[]) => (partial ? [...arr, null] : arr);
+
+    // Targets: the current month (when partial) + the next 3 full months.
+    const lastComplete = completeMonths[completeMonths.length - 1];
+    const targets = lastComplete
+      ? nextMonthLabels(lastComplete.year, lastComplete.month, FORECAST_HORIZON + (partial ? 1 : 0))
+      : [];
+    // Seasonal blend when it backtests better than the flat average; the
+    // flat projection otherwise (seasonalProjection falls back per month).
+    const seasonal = seasonalProjection(
+      completeCounts,
+      completeMonths,
       series.values,
-      months.map(m => m.label),
-      last ? nextMonthLabels(last.year, last.month, FORECAST_HORIZON).map(x => x.label) : []
+      new Set(series.flags.map((f) => f.index)),
+      targets,
+      nowM,
     );
+    // Ranges come from the WINNING method's backtest error.
+    const winErr = seasonal.used ? seasonal.seasonalErrorPct : series.errorPct;
+    const allProj = seasonal.projections.map(({ label, value, lastYear, seasonal: s }) => (
+      { label, value, lastYear, seasonal: s, ...rangeFor(value, winErr) }
+    ));
+    const projections = partial ? allProj.slice(1) : allProj;
+    const current = partial && last
+      ? (() => {
+          const daysInMonth = new Date(last.year, last.month, 0).getDate();
+          return currentPeriod(last.label, monthlyCounts[months.length - 1],
+            Math.min(daysInMonth, nowM.getDate()), daysInMonth, allProj[0]);
+        })()
+      : null;
+    const seasonalProfile = calendarProfile(completeCounts, completeMonths, series.flags);
 
     // Per-category series over the same month buckets (top categories by
     // volume) so the UI can show which lines are actually driving demand.
@@ -579,15 +796,12 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
     // reads "down" all month and silenced the restock rule). Once a week of
     // the current month has passed, its count is pro-rated to a full-month
     // pace; before that the two latest COMPLETE months are compared.
-    const nowD = new Date();
-    const lastM = months[months.length - 1];
-    const inCurrentMonth = !!lastM && lastM.year === nowD.getFullYear() && lastM.month === nowD.getMonth() + 1;
-    const daysElapsed = nowD.getDate();
-    const daysInCur = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate();
+    const daysElapsed = nowM.getDate();
+    const daysInCur = new Date(nowM.getFullYear(), nowM.getMonth() + 1, 0).getDate();
     const trendOf = (counts: number[]): 'up' | 'down' | 'flat' => {
       let latest = counts.length ? counts[counts.length - 1] : 0;
       let prev = counts.length > 1 ? counts[counts.length - 2] : 0;
-      if (inCurrentMonth) {
+      if (partial) {
         if (daysElapsed >= 7) {
           latest = (latest * daysInCur) / daysElapsed;
         } else {
@@ -597,43 +811,66 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       }
       return latest > prev ? 'up' : latest < prev ? 'down' : 'flat';
     };
-    const byCategory = topCats.map(category => {
+    // Recent volume (last 3 complete months) for each category's demand share.
+    const recentFrom = Math.max(0, completeN - 3);
+    let recentTotal = 0;
+    const byCategoryRaw = topCats.map(category => {
       const counts = months.map(m =>
         points.filter(t =>
           t.category === category &&
           t.date.getFullYear() === m.year && t.date.getMonth() === m.month - 1
         ).length
       );
-      const catSma = sma(counts, period);
+      // Same rule as the total: the average runs on complete months only.
+      const catSma = sma(counts.slice(0, completeN), period);
       let catLast: number | null = null;
       for (const v of catSma) if (v !== null && v !== undefined) catLast = v;
       const latest = counts.length ? counts[counts.length - 1] : 0;
       const average = counts.length ? round1(counts.reduce((a, b) => a + b, 0) / counts.length) : 0;
+      const recent = counts.slice(recentFrom, completeN).reduce((a, b) => a + b, 0);
+      recentTotal += recent;
       return {
         category,
         latest,
         average,
+        recent,
         projection: catLast === null ? null : round1(catLast),
         trend: trendOf(counts),
       };
     });
+    const byCategory = byCategoryRaw.map(({ recent, ...c }) => ({
+      ...c,
+      share: recentTotal > 0 ? Math.round((recent / recentTotal) * 100) : 0,
+    }));
 
     return {
       labels: months.map(m => m.label),
       counts: monthlyCounts,
-      sma: series.values,
+      sma: pad(series.values),
       flags: series.flags,
       errorPct: series.errorPct,
-      band: series.band,
+      band: { lo: pad(series.band.lo), hi: pad(series.band.hi) },
       provisional: series.provisional,
       period: series.effectivePeriod,
       granularity,
+      partialIndex: partial ? months.length - 1 : null,
+      current,
+      seasonalProfile,
       projections,
+      // How the outlook was made, so the UI can say it in plain words and
+      // show the backtest that justified it.
+      projectionMethod: seasonal.used ? 'seasonal' : 'average',
+      seasonality: {
+        growth: seasonal.growth,
+        averageErrorPct: seasonal.smaErrorPct,
+        seasonalErrorPct: seasonal.seasonalErrorPct,
+        backtestPoints: seasonal.backtestPoints,
+      },
       byCategory,
-      historyMonths: months.length,
+      historyMonths: completeN,
       historyPoints: historyRows.length,
-      confidence: effectiveConfidence(forecastConfidence(months.length), series.errorPct),
-      confidenceNote: `Based on ${months.length} month${months.length === 1 ? '' : 's'} of history · ${effectiveConfidence(forecastConfidence(months.length), series.errorPct)} confidence${forecastErrorNote(series.errorPct)}`,
+      confidence: effectiveConfidence(forecastConfidence(completeN), winErr),
+      confidenceNote: `Based on ${completeN} complete month${completeN === 1 ? '' : 's'} · ${effectiveConfidence(forecastConfidence(completeN), winErr)} confidence${forecastErrorNote(winErr)}`,
     };
   });
 }
@@ -719,10 +956,14 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     ? itemRentalCounts.filter(i => i.rentals === 0).slice(0, 10)
     : [];
 
-  const { months } = await getDataMonths();
-  const filteredMonths = filter?.start
-    ? months.filter(m => new Date(m.year, m.month - 1, 1) >= filter.start!)
-    : months;
+  // Months span logbook history too (the chart adds logbook revenue per bar),
+  // and the window is cut at BOTH ends: a past year used to run on past its
+  // December into the present, drawing a row of empty ₱0 months.
+  const { months } = await getDataMonths(true);
+  const filteredMonths = months.filter((m) => {
+    const d = new Date(m.year, m.month - 1, 1);
+    return (!filter?.start || d >= filter.start) && (!filter?.end || d < filter.end);
+  });
 
   // Revenue is collected payments only (both ledger paths — see
   // COLLECTED_PAYMENT_STATUS), bucketed by payment date in JS. Category

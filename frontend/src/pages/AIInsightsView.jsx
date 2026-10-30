@@ -13,7 +13,7 @@ import CategoryPerformance from '../components/insights/CategoryPerformance';
 import InsightsPanel from '../components/insights/InsightsPanel';
 import ReportSection from '../components/insights/ReportSection';
 import SmartListModal from '../components/insights/SmartListModal';
-import { extractRecommendations, shortMonth, SHORT_MONTHS, SEASON_MARKERS, STATUS_COLORS } from '../components/insights/shared';
+import { extractRecommendations, shortMonth, SHORT_MONTHS, STATUS_COLORS } from '../components/insights/shared';
 import { api } from '../utils/api';
 import { formatCheckedAgo } from '../utils/cache';
 import { reorderSuggestions, restockWatch, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
@@ -473,8 +473,6 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // -- Raw data (forecast follows the Monthly/Weekly toggle; revenue +
   // smart-action rules stay on the monthly series) --
   const activeForecast = granularity === 'weekly' ? (weeklyForecast || forecast) : forecast;
-  const fLabels = activeForecast?.labels || [];
-  const fCounts = activeForecast?.counts || [];
   const fSma = activeForecast?.sma || [];
 
 
@@ -555,13 +553,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   ].filter(d => d.value > 0);
   const totalTx = statusDist.reduce((s, d) => s + d.value, 0);
 
-  // -- SMA data (follows the card toggle) --
+  // -- Latest average (KPI card fallback; follows the card toggle) --
   const smaVals = fSma.filter(v => v !== null && v !== undefined);
   const latestSmaVal = smaVals.length > 0 ? smaVals[smaVals.length - 1] : 0;
-  const prevSmaVal = smaVals.length >= 2 ? smaVals[smaVals.length - 2] : 0;
-  const smaTrend = latestSmaVal > prevSmaVal ? 'up' : latestSmaVal < prevSmaVal ? 'down' : 'stable';
-  const showingWeekly = granularity === 'weekly';
-  const smaName = 'Average trend';
 
   // -- Revenue projection math stays monthly no matter the toggle: weekly
   // rental counts must never divide a full month's revenue.
@@ -601,71 +595,15 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     const nextIdx = (idx + 1) % 12;
     return `${months[nextIdx]} ${nextIdx === 0 ? +p[1] + 1 : p[1]}`;
   };
-  const nextLabel = nextLabelFrom(fLabels);
   // Revenue chart's projection bar always talks months — pin it to the
   // monthly series even while the forecast card shows weeks.
   const monthlyNextLabel = nextLabelFrom(forecast?.labels || []);
 
-  // Spike flags → human rows ("May 2026: bulk booking — excluded from the
-  // average"), resolved against the active series' labels.
-  const spikeNotes = (activeForecast?.flags || [])
-    .map((f) => ({ ...(fLabels[f.index] ? { label: fLabels[f.index] } : {}), reason: f.reason }))
-    .filter((f) => f.label);
-  const forecastErrorPct = activeForecast?.errorPct ?? null;
-  const forecastProvisional = !!activeForecast?.provisional;
-
-  // -- Chart data (weekly labels shown in full — shortMonth would
-  // collapse every week of a month onto one tick). bandLo/bandSpan stack
-  // into the shaded expected-range polygon behind the trend line.
-  const bandLo = activeForecast?.band?.lo || [];
-  const bandHi = activeForecast?.band?.hi || [];
-  // X-axis ticks must be UNIQUE: recharts matches duplicate categories by
-  // label, so two bare "Apr" ticks (2025 vs 2026) make every hover resolve to
-  // the first match — April 2026 kept showing April 2025's numbers no matter
-  // what the tooltip read. Every monthly tick carries its year instead.
-  const shortMonthYear = (l) => {
-    const parts = String(l || '').split(' ');
-    if (!parts[0]) return '';
-    if (parts[1]) return `${parts[0]} ’${parts[1].slice(2)}`;
-    return parts[0];
-  };
-  const forecastData = fLabels.map((l, i) => ({
-    label: showingWeekly ? l : shortMonthYear(l),
-    full: l,
-    count: fCounts[i] || 0,
-    sma: fSma[i] ?? null,
-    bandLo: bandLo[i] ?? null,
-    bandSpan: bandLo[i] == null || bandHi[i] == null ? null : Math.max(0, Math.round((bandHi[i] - bandLo[i]) * 100) / 100),
-  }));
-  forecastData.push({
-    label: showingWeekly ? nextLabel : shortMonthYear(nextLabel),
-    full: nextLabel,
-    count: null,
-    sma: latestSmaVal,
-    forecast: true,
-    // Carry the band forward so the shaded range reaches the projection
-    // point too — otherwise the ribbon visibly stops one tick early.
-    ...(latestSmaVal !== null && latestSmaVal !== undefined && forecastErrorPct !== null && forecastErrorPct !== undefined
-      ? {
-          bandLo: Math.max(0, Math.round(latestSmaVal * (1 - forecastErrorPct / 100) * 100) / 100),
-          bandSpan: Math.round(latestSmaVal * (2 * forecastErrorPct / 100) * 100) / 100,
-        }
-      : { bandLo: null, bandSpan: null }),
-  });
-  const validSmaCount = forecastData.filter(d => d.sma !== null && !d.forecast).length;
-  const hasSma = validSmaCount >= 2;
-  const countChart = fLabels.map(l => ({ label: shortMonthYear(l), full: l, count: fCounts[fLabels.indexOf(l)] || 0 }));
-
-  // Season markers on observed monthly points only (never on projections,
-  // never on weekly view).
-  const seasonDots = !showingWeekly
-    ? forecastData.filter((d) => !d.forecast && d.count !== null && SEASON_MARKERS[SHORT_MONTHS.indexOf(d.full.split(' ')[0])])
-    : [];
+  // The forecast card derives its own chart rows (components/insights/forecast).
 
   // -- Multi-period outlook (server SMA projections) + deterministic rules --
   // The outlook table follows the card's Monthly/Weekly toggle; the smart
   // rules always use the monthly per-category series.
-  const projections = activeForecast?.projections || [];
   const forecastCats = forecast?.byCategory || [];
   const analyticsItems = inventoryAnalytics?.items || [];
   // Insights rows (top/underperforming) carry no image — resolve via analytics.
@@ -733,17 +671,23 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     // deliberately hides the windowed logbook companion). Monthly/Yearly show
     // the combined bar, same as their cards.
     const showLogbook = !isOverallView;
+    // Yearly is a single year, so bare month names are unique ("Jan".."Dec")
+    // and fit without angled labels. The month we're in is still ongoing.
+    const yearly = timeRange === 'Yearly';
+    const nowKey = `${SHORT_MONTHS[now0.getMonth()]} ${now0.getFullYear()}`;
     revChart = (revByMonth || [])
       .map((d, i) => {
         const logbook = showLogbook ? (lgByMonthAll[i] || 0) : 0;
         return {
-          label: d.label || shortMonth(d.label),
+          label: yearly ? shortMonth(d.label) : d.label,
           full: d.label,
           rev: d.revenue + logbook,
           payments: d.revenue,
           logbook,
+          ...(d.label === nowKey ? { wip: true } : {}),
         };
       });
+    revChartEmptyLabel = yearly ? `No revenue in ${appliedYear}.` : revChartEmptyLabel;
   }
 
   // Current month: only Week 5 is projected. Weeks 1–4 stay actual (the week
@@ -801,8 +745,13 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // A1 unit-mix guard: forecastRevValue is a rental COUNT when the average
   // ticket is unknown (avg price falls back to a hard-coded 1500), so it must
   // never render as a peso bar. The outlook table already shows '—' there.
-  } else if (avgPriceKnown && forecastRevValue > 0 && revChart.length > 0) {
-    revChart = [...revChart, { label: monthlyNextLabel, full: monthlyNextLabel, rev: forecastRevValue, forecast: true }];
+  // Next-month projection bar only when the chart reaches the present: never
+  // after a past year's December (that drew "Nov 2026" onto a 2025 chart),
+  // and not once the current year is complete (Dec → next Jan is next year).
+  } else if (avgPriceKnown && forecastRevValue > 0 && revChart.length > 0
+    && (isOverallView || (isCurrentYear(appliedYear) && now0.getMonth() < 11))) {
+    const label = timeRange === 'Yearly' ? shortMonth(monthlyNextLabel) : monthlyNextLabel;
+    revChart = [...revChart, { label, full: monthlyNextLabel, rev: forecastRevValue, forecast: true }];
   }
 
   // -- Insights --
@@ -865,6 +814,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           logbookRentals={analyticsSummary?.logbookRentals || 0}
           rentedCount={rentedCount} totalItems={totalItems}
           smaVals={smaVals} latestSmaVal={latestSmaVal} forecastRev={forecastRev}
+          nextForecast={forecast?.projections?.[0]?.value ?? null}
           avgPriceKnown={avgPriceKnown}
           analyticsSummary={analyticsSummary}
         />
@@ -891,17 +841,14 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           />
         </div>
 
-        {/* Row 2: Demand Forecast + Top Items */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Row 2: Demand Forecast + Top Items (items-start: the forecast is
+            much taller, so the side card keeps its own height) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           <DemandForecast
             granularity={granularity} setGranularity={changeGranularity}
             loadWeeklyForecast={loadWeeklyForecast} weeklyLoading={weeklyLoading}
-            showingWeekly={showingWeekly} activeForecast={activeForecast}
-            hasSma={hasSma} countChart={countChart} validSmaCount={validSmaCount}
-            forecastData={forecastData} latestSmaVal={latestSmaVal} prevSmaVal={prevSmaVal}
-            smaTrend={smaTrend} smaName={smaName} seasonDots={seasonDots}
-            projections={projections} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice}
-            spikeNotes={spikeNotes} forecastProvisional={forecastProvisional} forecastErrorPct={forecastErrorPct}
+            activeForecast={activeForecast} monthlyForecast={forecast}
+            avgPriceKnown={avgPriceKnown} avgPrice={avgPrice}
           />
           <TopRented
             popularItems={popularItems} underperforming={underperforming}

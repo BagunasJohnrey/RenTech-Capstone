@@ -69,11 +69,15 @@ export default function RevenueChart({
   const hasWip = revChart.some((e) => e.wip);
   const hasForecast = revChart.some((e) => e.forecast);
   const hasLogbook = revChart.some((e) => (e.logbook || 0) > 0);
+  const unit = isMonthlyView ? 'week' : 'month';
+  // Angle only long labels ("Oct 2025") when there are many; Yearly's bare
+  // month names ("Jan") fit flat.
+  const angled = revChart.length > 7 && String(revChart[0]?.label ?? '').length > 4;
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-5 md:px-7 pt-5 md:pt-7 pb-2">
         <h3 className="font-bold text-gray-900 text-base md:text-lg">
-          {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : 'Monthly Revenue'}
+          {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : appliedYear ? `${appliedYear} · Monthly Revenue` : 'Monthly Revenue'}
         </h3>
         {isMonthlyView && (
           <div className="flex items-center gap-0.5 shrink-0">
@@ -101,9 +105,8 @@ export default function RevenueChart({
             : hasLogbook
               ? 'Week-by-week revenue · collected + imported logbook'
               : 'Week-by-week revenue for the selected month')
-          : (hasLogbook
-            ? 'Revenue trend · collected + imported logbook · next month projected'
-            : 'Revenue trend with next month projection')}
+          : [hasLogbook ? 'Revenue by month · collected + imported logbook' : 'Revenue by month',
+              hasForecast ? 'next month projected' : null].filter(Boolean).join(' · ')}
       </p>
       {revChart.length === 0 ? (
         <p className="text-sm text-gray-400 text-center py-12">{revChartEmptyLabel}</p>
@@ -111,7 +114,7 @@ export default function RevenueChart({
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={revChart} margin={{ top: chartTop, right: 16, bottom: 8, left: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={revChart.length > 7 ? -35 : 0} textAnchor={revChart.length > 7 ? 'end' : 'middle'} height={revChart.length > 7 ? 56 : 30} />
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} angle={angled ? -35 : 0} textAnchor={angled ? 'end' : 'middle'} height={angled ? 56 : 30} />
             <YAxis domain={[0, (dataMax) => hasLabels ? Math.ceil((dataMax * 1.18) / 1000) * 1000 : dataMax]} tick={{ fontSize: 11, fill: '#9ca3af' }} tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} tickLine={false} axisLine={false} width={52} allowDataOverflow={false} />
             <Tooltip content={<RevenueTooltip />} cursor={{ fill: '#f9fafb' }} />
             <Bar dataKey="rev" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={56} minPointSize={4}>
@@ -132,7 +135,7 @@ export default function RevenueChart({
       )}
       <div className="flex items-center justify-center gap-4 pt-1 text-[11px] text-gray-500">
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded bg-gray-800" aria-hidden="true" /> Finished week
+          <span className="w-2.5 h-2.5 rounded bg-gray-800" aria-hidden="true" /> Finished {unit}
         </span>
         {hasWip && (
           <span className="inline-flex items-center gap-1.5">
@@ -150,7 +153,7 @@ export default function RevenueChart({
       )}
       {hasWip && (
         <p className={`text-[11px] text-gray-400 italic px-5 md:px-7 ${revFootnote ? 'pt-1' : 'pt-2'} pb-5`}>
-          The current week is still ongoing, so it will naturally look lower.
+          The current {unit} is still ongoing, so it will naturally look lower.
         </p>
       )}
     </div>

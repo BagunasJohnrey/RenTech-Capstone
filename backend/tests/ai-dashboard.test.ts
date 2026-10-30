@@ -97,10 +97,14 @@ describe('GET /api/dashboard/forecast', () => {
       .set('Authorization', 'Bearer admin-token');
 
     expect(res.status).toBe(200);
-    // sma(10,15,12,18 @4) = [null,null,null,13.75] → flat projection of 13.8 (1dp).
+    // The current month (18) is in progress, so the average runs on the
+    // complete months 10,15,12 only: period adapts 4 → 3 → 12.33 → 12.3.
     expect(res.body.projections).toHaveLength(3);
-    expect(res.body.projections[0].value).toBe(13.8);
+    expect(res.body.projections[0].value).toBe(12.3);
     expect(res.body.projections[0]).toHaveProperty('label');
+    expect(res.body.sma[res.body.sma.length - 1]).toBeNull(); // no average for the partial month
+    expect(res.body.partialIndex).toBe(3);
+    expect(res.body.current).toMatchObject({ count: 18, projected: 12.3 });
     const cats = (res.body.byCategory as { category: string }[]).map((c) => c.category);
     expect(cats).toContain('Gown');
     expect(cats).toContain('Suit');
@@ -110,6 +114,44 @@ describe('GET /api/dashboard/forecast', () => {
     // first 6 days the two latest complete months (0 vs 15) are compared.
     expect(gown.trend).toBe(new Date().getDate() >= 7 ? 'flat' : 'down');
     expect(suit.trend).toBe('up'); // Suit [0,0,12,18]: 18 (pro-rated) vs 12, or 12 vs 0
+  });
+
+  it('reaches back to logbook history older than the first app booking and builds a seasonal profile', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const monthsAgo = (n: number) => {
+      const d = new Date();
+      d.setDate(10);
+      d.setMonth(d.getMonth() - n);
+      return d;
+    };
+    // 26 months of paper logbook only (no app transactions at all): December
+    // is three times a normal month EVERY year — a recurring peak, not a spike.
+    const records: { eventDate: Date; category: string }[] = [];
+    for (let n = 26; n >= 1; n--) {
+      const d = monthsAgo(n);
+      const k = d.getMonth() === 11 ? 30 : 10;
+      for (let i = 0; i < k; i++) records.push({ eventDate: d, category: 'Gown' });
+    }
+    prisma.historicalRecord.findFirst.mockResolvedValueOnce({ eventDate: monthsAgo(26) });
+    prisma.historicalRecord.findMany.mockResolvedValueOnce(records);
+    prisma.transaction.findMany.mockResolvedValueOnce([]);
+
+    // period=6 → its own cache key.
+    const res = await request(app)
+      .get('/api/dashboard/forecast?period=6')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.historyMonths).toBe(26); // every logbook month, current month excluded
+    expect(res.body.historyPoints).toBe(records.length);
+    expect(res.body.seasonalProfile).toHaveLength(12);
+    const dec = res.body.seasonalProfile.find((m: any) => m.month === 12);
+    const other = res.body.seasonalProfile.find((m: any) => m.month !== 12 && m.samples > 0);
+    expect(dec.index).toBeGreaterThan(other.index * 2); // ~3× a normal month
+    // The yearly December rush is NOT reported as a one-off spike.
+    const decIdx = res.body.labels.findIndex((l: string) => l.startsWith('Dec'));
+    expect(res.body.flags.some((f: any) => f.index === decIdx)).toBe(false);
+    expect(res.body.byCategory[0]).toMatchObject({ category: 'Gown', share: 100 });
   });
 
   it('pro-rates the current partial month so mid-month demand is not read as a drop', async () => {
@@ -229,6 +271,25 @@ describe('GET /api/dashboard/insights', () => {
     // Transaction query excludes rentals of archived items.
     const txArg = (prisma.transaction.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(txArg.where.item).toMatchObject({ status: { not: 'Deleted' } });
+  });
+
+  it('yearly revenue chart covers only that year (no empty months after December)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    // History starts Jan 2023; a 2023 chart used to run on to the present.
+    prisma.transaction.findFirst.mockResolvedValueOnce({ createdAt: new Date(2023, 0, 5) });
+
+    // year=2023 → its own cache key.
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=yearly&year=2023')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    const labels = (res.body.revenueByMonth as { label: string }[]).map((m) => m.label);
+    expect(labels).toHaveLength(12);
+    expect(labels[0]).toBe('Jan 2023');
+    expect(labels[11]).toBe('Dec 2023');
+    expect(labels.every((l) => l.endsWith('2023'))).toBe(true);
+    expect(res.body.logbookByMonth).toHaveLength(12);
   });
 
   it('buckets this month\'s revenue into weekly chunks on period=monthly', async () => {

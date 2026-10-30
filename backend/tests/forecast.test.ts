@@ -62,8 +62,10 @@ describe('GET /api/dashboard/forecast granularity=weekly', () => {
   it('adapts the period down on thin history and marks it provisional', async () => {
     const { prisma } = await import('../src/config/database.js');
     const now = new Date();
-    const d1 = new Date(now); d1.setDate(d1.getDate() - 3);
-    const d2 = new Date(now); d2.setDate(d2.getDate() - 10);
+    // Both in COMPLETE weeks (the in-progress week is shown but never
+    // averaged, so a booking from 3 days ago would not count).
+    const d1 = new Date(now); d1.setDate(d1.getDate() - 10);
+    const d2 = new Date(now); d2.setDate(d2.getDate() - 17);
     // Two non-zero weeks out of twelve → period adapts 3 → 2, provisional.
     prisma.transaction.findMany.mockResolvedValueOnce([
       { createdAt: d1, itemId: 1 },

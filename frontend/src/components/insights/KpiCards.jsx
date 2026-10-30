@@ -12,7 +12,7 @@ export default function KpiCards({
   // merged into the ledger figures above.
   logbookRevenue = 0, logbookRentals = 0,
   rentedCount, totalItems,
-  smaVals, latestSmaVal, forecastRev, avgPriceKnown,
+  smaVals, latestSmaVal, nextForecast, forecastRev, avgPriceKnown,
   analyticsSummary,
 }) {
   const foot = 'mt-auto min-h-[54px] flex flex-col justify-end gap-0.5';
@@ -62,7 +62,10 @@ export default function KpiCards({
         </div>
         <p className="text-[10px] md:text-xs text-gray-500 font-medium">Forecast</p>
         <h4 className="text-base md:text-xl font-bold text-gray-900 mt-0.5">
-          {smaVals.length >= 2 ? `${Math.round(latestSmaVal)}` : '—'}
+          {/* Next month's projected count (seasonal when that won the
+              backtest) — the same value the ₱ figure below multiplies. */}
+          {smaVals.length >= 2 ? Number(nextForecast ?? latestSmaVal).toFixed(1) : '—'}
+          {smaVals.length >= 2 && <span className="text-xs md:text-sm font-medium text-gray-400"> rentals</span>}
         </h4>
         <div className={foot}>
           {smaVals.length >= 2 && (

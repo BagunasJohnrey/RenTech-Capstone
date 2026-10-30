@@ -1,433 +1,170 @@
-// Demand forecast card: average-trend chart (monthly/weekly toggle) with
-// expected-range band and spike flags, summary tiles, 3-period outlook
-// table, and a deterministic plain-words explainer (no AI — every sentence
-// is templated from numbers already on screen). Pure presentational — series
-// math stays in parent.
-import { useState, useRef, useEffect } from 'react';
-import {
-  ComposedChart, BarChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceDot,
-} from 'recharts';
-import { Sparkles } from 'lucide-react';
-import { CustomTooltip, CONFIDENCE_STYLES, SHORT_MONTHS, fmt, getUpcomingSeason } from './shared';
+// Demand forecast — rule-based (no AI, no ML): a moving average over COMPLETE
+// periods, blended 50/50 with the same month last year when that beat the
+// plain average on past months (server backtest).
+//
+// Card (on the page): next period + this period so far, the chart, and the
+// outlook table. Full view (⤢): adds trend, accuracy, seasonal pattern, the
+// categories driving demand, and the plain-words "Explain" view.
+// The pieces live in ./forecast/; this file only lays them out.
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { Sparkles, Maximize2, X, CalendarClock, ChevronRight } from 'lucide-react';
+import { CONFIDENCE_STYLES } from './shared';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
+import { deriveForecast } from './forecast/forecastData';
+import ForecastChart from './forecast/ForecastChart';
+import ForecastTiles from './forecast/ForecastTiles';
+import { OutlookTable, OutlookCards, SeasonalPattern, DemandDrivers } from './forecast/ForecastDetails';
+import ForecastExplainer from './forecast/ForecastExplainer';
 
-export default function DemandForecast({
-  granularity, setGranularity, loadWeeklyForecast, weeklyLoading, showingWeekly,
-  activeForecast, hasSma, countChart, validSmaCount,
-  forecastData, latestSmaVal, prevSmaVal, smaTrend, smaName,
-  seasonDots, projections, avgPriceKnown, avgPrice,
-  spikeNotes, forecastProvisional, forecastErrorPct,
-}) {
-  // Explainer toggle: swaps tiles + outlook table for plain words. The graph,
-  // legend, and flags stay put — only the numbers get translated.
-  const [explaining, setExplaining] = useState(false);
-  const histMonths = activeForecast?.historyMonths ?? null;
-  // A backtested range is only useful while the error is sane. Once the last
-  // periods swing wildly (structural break, a partial current month, sparse
-  // logbook weeks), ±300–600% is not a range — it is noise that would also
-  // blow up the Y axis and flatten every bar. Hide it and scale to the data.
-  const bandReliable = forecastErrorPct !== null && forecastErrorPct !== undefined && forecastErrorPct <= 100;
-  const projRows = (projections || []).filter((p) => p.value !== null && p.value !== undefined);
-  // Weekly view: show only points where the average trend line exists (plus
-  // the forecast projection). The first period-1 weeks have null SMA while
-  // the window fills — their bars without a line are noise, so they are cut.
-  const displayForecastData = showingWeekly && forecastData.some((d) => d.sma !== null && !d.forecast)
-    ? forecastData.filter((d) => d.sma !== null || d.forecast)
-    : forecastData;
-  // Long series (25+ months) never squeeze: the chart keeps a readable
-  // per-bar width inside a horizontal scroller, always parked at the latest
-  // months. Ticks stay horizontal — no angled text.
-  const scrollRef = useRef(null);
-  const seriesKey = `${showingWeekly}-${displayForecastData.length}-${displayForecastData[0]?.label ?? ''}-${displayForecastData[displayForecastData.length - 1]?.label ?? ''}`;
+const ICON_BTN = 'w-8 h-8 rounded-full flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60';
+
+export default function DemandForecast(props) {
+  const [expanded, setExpanded] = useState(false);
+  const close = useCallback(() => setExpanded(false), []);
+  useEscapeClose(close, expanded);
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollLeft = el.scrollWidth;
-  }, [seriesKey]);
-  const chartMinWidth = Math.max(560, displayForecastData.length * 48);
+    if (!expanded) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [expanded]);
 
-  // Fixed Y-axis beside the horizontal scroller: same data (invisible bars),
-  // height, margins, and explicit domain as the scrolling chart, so ticks
-  // always compute identically while the axis itself never scrolls away.
-  // Y axis follows the bars + trend line, never an unreliable band. A 4-digit
-  // count still gets a readable 0…500 scale instead of 0…2110.
-  const yPeak = Math.max(
-    0,
-    ...displayForecastData.flatMap((d) => (bandReliable
-      ? [d.count ?? 0, d.sma ?? 0, (d.bandLo ?? 0) + (d.bandSpan ?? 0)]
-      : [d.count ?? 0, d.sma ?? 0]))
-  );
-  const niceCeil = (n) => {
-    const mag = 10 ** Math.floor(Math.log10(Math.max(1, n)));
-    const norm = n / mag;
-    const step = norm <= 1 ? 1 : norm <= 1.5 ? 1.5 : norm <= 2 ? 2 : norm <= 3 ? 3 : norm <= 5 ? 5 : norm <= 7.5 ? 7.5 : 10;
-    return step * mag;
-  };
-  const yDomain = [0, niceCeil(Math.max(10, yPeak * 1.05))];
-  const yTick = (v) => (v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : v);
-  const FixedYAxis = ({ height, top, data }) => (
-    <div style={{ width: 42 }} className="shrink-0">
-      <ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={data} margin={{ top, right: 0, bottom: 8, left: 4 }}>
-          <YAxis domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={34} allowDecimals={false} tickFormatter={yTick} />
-          <Bar dataKey="count" fill="transparent" isAnimationActive={false} />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
-  const maxProj = projRows.length > 0 ? Math.max(...projRows.map((p) => p.value)) : 0;
-  const trendWord = smaTrend === 'up' ? 'rising' : smaTrend === 'down' ? 'slowing a little' : 'steady';
-  // History depth in the active unit: weekly spans 12 weeks, monthly spans
-  // the real month count — never "4 months of history" for a weekly view.
-  const histDepth = showingWeekly ? 'the last 12 weeks' : histMonths ? `${histMonths} month${histMonths === 1 ? '' : 's'}` : null;
   return (
-    <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2">
-      <div className="flex items-center justify-between gap-3 px-5 md:px-7 pt-5 md:pt-7 pb-2">
-        <h3 className="font-bold text-gray-900 text-base md:text-lg">Demand Forecast</h3>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={() => setExplaining((v) => !v)}
-            aria-pressed={explaining}
-            className={`inline-flex items-center gap-1.5 px-3.5 min-h-[32px] rounded-full text-[11px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
-              explaining ? 'bg-gray-900 text-white hover:bg-gray-700' : 'bg-gray-900 text-white hover:bg-gray-700'
-            }`}
-          >
-            <Sparkles size={13} /> {explaining ? 'Hide explanation' : 'Explain this forecast'}
-          </button>
-          <div role="tablist" aria-label="Forecast granularity" className="flex gap-1 bg-gray-100 rounded-xl p-1 shrink-0">
-            {['monthly', 'weekly'].map((g) => (
-              <button
-                key={g}
-                type="button"
-                role="tab"
-                aria-selected={granularity === g}
-                onClick={() => { setGranularity(g); if (g === 'weekly') loadWeeklyForecast(); }}
-                className={`px-3 min-h-[32px] rounded-lg text-[11px] font-bold capitalize transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
-                  granularity === g ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {g}
-              </button>
-            ))}
+    <>
+      <ForecastPanel {...props} onExpand={() => setExpanded(true)} />
+      {expanded && createPortal(
+        <div className="fixed inset-0 z-[250] flex items-stretch md:items-center justify-center md:p-6"
+          role="dialog" aria-modal="true" aria-label="Demand forecast, full view">
+          <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={close} />
+          <div className="relative w-full max-w-[1400px] h-full md:h-auto md:max-h-[94vh] overflow-y-auto overscroll-contain bg-white md:rounded-3xl shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <ForecastPanel {...props} full onClose={close} />
           </div>
-        </div>
-      </div>
-      <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-1">
-        {weeklyLoading
-          ? 'Loading weekly buckets…'
-          : showingWeekly
-            ? 'Average rental trend with weekly counts'
-            : 'Average rental trend with monthly counts'}
-      </p>
-      {(activeForecast?.confidenceNote || forecastProvisional) && (
-        <p className="px-5 md:px-7 pb-4 flex flex-wrap gap-1.5">
-          {activeForecast?.confidenceNote && (
-            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${CONFIDENCE_STYLES[activeForecast.confidence] || 'bg-gray-100 text-gray-500'}`}>
-              {activeForecast.confidenceNote}
-            </span>
-          )}
-          {activeForecast?.historyPoints > 0 && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-violet-50 text-violet-700">
-              incl. {activeForecast.historyPoints.toLocaleString()} logbook record{activeForecast.historyPoints === 1 ? '' : 's'}
-            </span>
-          )}
-          {forecastProvisional && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700">
-              Early forecast — still learning
-            </span>
-          )}
-        </p>
+        </div>,
+        document.body,
       )}
-      {spikeNotes?.length > 0 && (
-        <div className="px-5 md:px-7 pb-3 space-y-1">
-          {spikeNotes.map((s) => (
-            <p key={s.label} className="text-[11px] font-semibold text-amber-700">
-              ⚠ {s.label} had a one-time spike — excluded from the average so it doesn’t inflate the forecast.
-            </p>
-          ))}
-        </div>
-      )}
-      {!hasSma ? (
-        <div>
-          <div className="flex">
-          <FixedYAxis height={230} top={8} data={countChart} />
-          <div ref={scrollRef} className="flex-1 min-w-0 overflow-x-auto overscroll-x-contain">
-          <div style={{ minWidth: chartMinWidth }}>
-          <ResponsiveContainer width="100%" height={230}>
-            <ComposedChart data={countChart} margin={{ top: 8, right: 12, bottom: 8, left: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} />
-              <YAxis hide domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={0} allowDecimals={false} tickFormatter={yTick} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={56} fill="#1f2937" />
-            </ComposedChart>
-          </ResponsiveContainer>
-          </div>
-          </div>
-          </div>
-          <p className="text-xs text-gray-400 text-center pb-4 px-7">At least {3 - validSmaCount} more {showingWeekly ? 'weeks' : 'months'} of data needed for SMA trend.</p>
-        </div>
-      ) : (
-        <div>
-          <div className="flex">
-          <FixedYAxis height={270} top={16} data={displayForecastData} />
-          <div ref={scrollRef} className="flex-1 min-w-0 overflow-x-auto overscroll-x-contain">
-          <div style={{ minWidth: chartMinWidth }}>
-          <ResponsiveContainer width="100%" height={270}>
-            <ComposedChart data={displayForecastData} margin={{ top: 16, right: 16, bottom: 8, left: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval={0} />
-              <YAxis hide domain={yDomain} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} width={0} allowDecimals={false} tickFormatter={yTick} />
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (!active || !payload?.length) return null;
-                  // The datum straight from the hovered point — never looked
-                  // up by label: month abbreviations repeat across years
-                  // ("Apr" 2025 vs "Apr" 2026) and a label search always
-                  // lands on the first match, showing last year's data.
-                  const month = payload[0]?.payload;
-                  if (!month) return null;
-                  // Band areas share the payload — hide their raw math rows,
-                  // but surface the range itself in plain words.
-                  const rows = payload.filter((p) => p.name === 'Rentals' || p.name === smaName);
-                  if (rows.length === 0) return null;
-                  const hi = bandReliable && month && month.bandLo != null && month.bandSpan != null
-                    ? Math.round((month.bandLo + month.bandSpan) * 10) / 10
-                    : null;
-                  return (
-                    <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm space-y-1">
-                      <p className="font-bold text-gray-900">{month?.full || month?.label}</p>
-                      {showingWeekly && month?.full && (() => {
-                        const parts = String(month.full).split(' ');
-                        const idx = SHORT_MONTHS.indexOf(parts[0]);
-                        if (idx === -1 || parts.length < 2) return null;
-                        const start = new Date(2024, idx, Number(parts[1]));
-                        const end = new Date(start);
-                        end.setDate(end.getDate() + 6);
-                        const sameMonth = end.getMonth() === start.getMonth();
-                        return (
-                          <p className="text-[11px] text-gray-400">
-                            Week of {parts[0]} {parts[1]}–{sameMonth ? '' : `${SHORT_MONTHS[end.getMonth()]} `}{end.getDate()}
-                          </p>
-                        );
-                      })()}
-                      {rows.map((p, i) => (
-                        <p key={i} className="text-gray-600" style={{ color: p.color }}>
-                          {p.name}: {p.name === smaName ? Number(p.value).toFixed(1) : p.value}
-                        </p>
-                      ))}
-                      {hi !== null && (
-                        <p className="text-gray-600">Expected range: {Number(month.bandLo).toFixed(1)}–{hi.toFixed(1)}</p>
-                      )}
-                      {month?.forecast && <p className="text-[11px] text-gray-400 italic">Projected</p>}
-                    </div>
-                  );
-                }}
-              />
-              <Bar dataKey="count" name="Rentals" radius={[4, 4, 0, 0]} maxBarSize={48} fill="#1f2937" fillOpacity={0.35} />
-              {/* Expected-range band: invisible base + visible span stack into
-                  the shaded polygon behind the trend line. Zero-span when the
-                  error is unknown, so nothing renders then. */}
-              {bandReliable && <Area dataKey="bandLo" stackId="band" stroke="none" fill="none" legendType="none" />}
-              {bandReliable && <Area dataKey="bandSpan" name="Expected range" stackId="band" stroke="none" fill="rgba(191,74,83,.18)" legendType="none" />}
-              <Line type="monotone" dataKey="sma" name={smaName} stroke="#bf4a53" strokeWidth={3}
-                dot={{ r: 5, fill: '#bf4a53', strokeWidth: 0 }}
-                activeDot={{ r: 8, fill: '#bf4a53', stroke: '#fff', strokeWidth: 2 }}
-                connectNulls={false}
-              />
-              {/* Season markers sit ON the trend line (sma), falling back to
-                  the bar top only where the line has no point yet. */}
-              {seasonDots.map((d) => (
-                <ReferenceDot key={d.full} x={d.label} y={d.sma ?? d.count} r={5} fill="#bf4a53" stroke="#fff" strokeWidth={2} />
-              ))}
-            </ComposedChart>
-          </ResponsiveContainer>
-          </div>
-          </div>
-          </div>
+    </>
+  );
+}
 
-          <div className="flex items-center justify-center gap-4 pb-1 text-xs text-gray-700 font-semibold">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded bg-gray-800/60" aria-hidden="true" /> Rentals
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-3 h-[3px] rounded-full bg-[#bf4a53]" aria-hidden="true" /> Average trend
-            </span>
-            {bandReliable && (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="w-3 h-2.5 rounded-sm border border-[#bf4a53] bg-[#bf4a53]/25" aria-hidden="true" /> Expected range
+function ForecastPanel({
+  full = false, onExpand, onClose,
+  granularity, setGranularity, loadWeeklyForecast, weeklyLoading,
+  activeForecast, monthlyForecast, avgPriceKnown, avgPrice,
+}) {
+  const [explaining, setExplaining] = useState(false);
+  const weekly = granularity === 'weekly';
+  const fc = useMemo(() => deriveForecast(activeForecast, weekly), [activeForecast, weekly]);
+  const period = activeForecast?.period || 3;
+  const unit = weekly ? 'week' : 'month';
+  const profile = weekly ? [] : (monthlyForecast?.seasonalProfile || []);
+  const drivers = weekly ? [] : (monthlyForecast?.byCategory || []).filter((c) => c.projection !== null);
+  const isPhone = typeof window !== 'undefined' && window.innerWidth < 768;
+
+  return (
+    <div className={full ? 'bg-white' : 'bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden'}>
+      {/* Header (sticky in the full view so close + toggles stay reachable) */}
+      <div className={`px-5 md:px-7 pt-5 md:pt-7 pb-3 space-y-3 ${full ? 'sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-gray-100' : ''}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className={`font-bold text-gray-900 ${full ? 'text-lg md:text-2xl' : 'text-base md:text-lg'}`}>Demand Forecast</h3>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {weeklyLoading ? 'Loading weekly buckets…'
+                : `Rule-based · ${fc.seasonal ? `last ${period} months + same month last year` : `${period}-${unit} moving average`}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {full && (
+              <button type="button" onClick={() => setExplaining((v) => !v)} aria-pressed={explaining}
+                className="inline-flex items-center gap-1.5 px-3.5 min-h-[32px] rounded-full text-[11px] font-bold bg-gray-900 text-white hover:bg-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
+                <Sparkles size={13} /> {explaining ? 'Show numbers' : 'Explain'}
+              </button>
+            )}
+            <div role="tablist" aria-label="Forecast granularity" className="flex gap-1 bg-gray-100 rounded-xl p-1">
+              {['monthly', 'weekly'].map((g) => (
+                <button key={g} type="button" role="tab" aria-selected={granularity === g}
+                  onClick={() => { setGranularity(g); if (g === 'weekly') loadWeeklyForecast(); }}
+                  className={`px-3 min-h-[28px] rounded-lg text-[11px] font-bold capitalize transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
+                    granularity === g ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  {g}
+                </button>
+              ))}
+            </div>
+            {full
+              ? <button type="button" onClick={onClose} aria-label="Close full view" title="Close (Esc)" className={ICON_BTN}><X size={18} /></button>
+              : <button type="button" onClick={onExpand} aria-label="Open demand forecast in full view" title="Full view" className={ICON_BTN}><Maximize2 size={15} /></button>}
+          </div>
+        </div>
+        {full && (
+          <div className="flex flex-wrap gap-1.5">
+            {activeForecast?.confidenceNote && (
+              <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${CONFIDENCE_STYLES[activeForecast.confidence] || 'bg-gray-100 text-gray-500'}`}>
+                {activeForecast.confidenceNote}
               </span>
             )}
+            {activeForecast?.historyPoints > 0 && (
+              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-violet-50 text-violet-700">
+                incl. {activeForecast.historyPoints.toLocaleString()} logbook record{activeForecast.historyPoints === 1 ? '' : 's'}
+              </span>
+            )}
+            {activeForecast?.provisional && (
+              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700">Early forecast — still learning</span>
+            )}
           </div>
+        )}
+      </div>
 
-          {seasonDots.length > 0 && (() => {
-            const upcoming = getUpcomingSeason();
-            return (
-            <p className="text-[11px] text-gray-400 text-center px-7 -mt-1">
-              <span className="inline-block w-2 h-2 rounded-full bg-[#bf4a53] mr-1.5" aria-hidden="true" />
-              Upcoming trend{upcoming.isNow ? ' this month' : ` (${upcoming.monthName})`}: {upcoming.label}
+      {!fc.hasTrend ? (
+        <div className="px-5 md:px-7 pb-6">
+          <div className="rounded-2xl bg-gray-50 py-10 text-center">
+            <CalendarClock size={22} className="mx-auto text-gray-300" />
+            <p className="text-sm font-bold text-gray-700 mt-2">Not enough history yet</p>
+            <p className="text-xs text-gray-400 mt-1">
+              At least {Math.max(1, 2 - fc.completeCount)} more complete {unit}{2 - fc.completeCount === 1 ? '' : 's'} of bookings needed for a trend.
             </p>
-            );
-          })()}
-
-          {/* SMA Summary — hidden while explaining (the words below say it) */}
-          {!explaining && (
-          <>
-          <div className="grid grid-cols-3 gap-2 md:gap-3 px-5 md:px-7 pb-5 md:pb-6">
-            <div className="bg-gray-50 rounded-xl p-3 text-center">
-              <p className="text-[11px] text-gray-500 font-medium">Current SMA</p>
-              <p className="text-lg font-bold text-gray-900">{latestSmaVal.toFixed(1)}</p>
-            </div>
-            <div className="bg-gray-50 rounded-xl p-3 text-center">
-              <p className="text-[11px] text-gray-500 font-medium">Previous</p>
-              <p className="text-lg font-bold text-gray-900">{prevSmaVal.toFixed(1)}</p>
-            </div>
-            <div className="bg-gray-50 rounded-xl p-3 text-center">
-              <p className="text-[11px] text-gray-500 font-medium">Trend</p>
-              <p className={`text-lg font-bold flex items-center justify-center gap-1 ${smaTrend === 'up' ? 'text-emerald-600' : smaTrend === 'down' ? 'text-red-500' : 'text-gray-500'}`}>
-                {smaTrend === 'stable' ? 'Flat' : `${smaTrend === 'up' ? '▲ +' : '▼ −'}${Math.abs(latestSmaVal - prevSmaVal).toFixed(1)}`}
-              </p>
-              {smaTrend !== 'stable' && <p className="text-[10px] text-gray-400">vs previous</p>}
-            </div>
           </div>
-
-          {/* 3-period outlook table (projected rentals + peso estimate) */}
-          {projections.length > 0 && (
-            <div className="px-5 md:px-7 pb-2 md:pb-3">
-              <div className="border border-dashed border-[#bf4a53]/30 rounded-2xl overflow-hidden">
-                <p className="text-[11px] font-bold text-[#bf4a53] uppercase tracking-wide px-4 pt-3">Next 3 periods · projected</p>
-                <table className="w-full text-sm mt-1">
-                  <thead>
-                    <tr className="text-[11px] text-gray-400">
-                      <th className="text-left font-semibold px-4 py-2">Period</th>
-                      <th className="text-right font-semibold px-4 py-2">Rentals</th>
-                      <th className="text-right font-semibold px-4 py-2">Est. revenue</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {projections.map((p) => (
-                      <tr key={p.label} className="border-t border-gray-100">
-                        <td className="px-4 py-2 font-semibold text-gray-800">{p.label}</td>
-                        <td className="px-4 py-2 text-right tabular-nums text-gray-700">{p.value ?? '—'}</td>
-                        <td className="px-4 py-2 text-right tabular-nums font-bold text-gray-900">
-                          {p.value === null || p.value === undefined ? '—' : avgPriceKnown ? fmt(p.value * avgPrice) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-          </>)}
-          {/* Plain-words explainer — deterministic template over the numbers
-              already on screen (no AI call, nothing to hallucinate). Numbered
-              rows mirror the tiles + table above so each line is checkable. */}
-          {explaining && (
-            <div className="mx-5 md:mx-7 mb-5 md:mb-6 rounded-2xl border border-gray-100 bg-gray-50/60 p-5 space-y-4">
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center">
-                  <Sparkles size={15} />
-                </span>
-                <p className="font-bold text-sm text-gray-900">What this forecast means</p>
-              </div>
-              <ol className="space-y-3">
-                <li className="flex gap-3">
-                  <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">1</span>
-                  <p className="text-sm text-gray-700 leading-relaxed">
-                    <strong className="text-gray-900">Demand is {trendWord}.</strong>{' '}
-                    The last {showingWeekly ? 'few weeks' : 'few months'} average {latestSmaVal.toFixed(1)} rentals,{' '}
-                    {smaTrend === 'stable'
-                      ? 'about the same as before — no real direction.'
-                      : `${smaTrend === 'up' ? 'up' : 'down'} from ${prevSmaVal.toFixed(1)} the window before.`}{' '}
-                    {histDepth ? `Based on ${histDepth} of history.` : ''}
-                  </p>
-                </li>
-                {projRows.length > 0 && (
-                  <li className="flex gap-3">
-                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">2</span>
-                    <p className="text-sm text-gray-700 leading-relaxed">
-                      <strong className="text-gray-900">
-                        Expect about {maxProj} rental{maxProj === 1 ? '' : 's'} per upcoming period
-                      </strong>{' '}
-                      ({projRows.map((p) => p.label).join(' · ')})
-                      {avgPriceKnown ? ` — roughly ${fmt(maxProj * avgPrice)} in revenue each.` : '.'}
-                    </p>
-                  </li>
-                )}
-                {(() => {
-                  const rangeNum = 2 + (projRows.length > 0 ? 1 : 0);
-                  return bandReliable ? (
-                    <li className="flex gap-3">
-                      <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">{rangeNum}</span>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        <strong className="text-gray-900">
-                          Reality usually lands within ±{forecastErrorPct}% of that number{forecastErrorPct >= 50 ? ' — a wide band' : ''}.
-                        </strong>{' '}
-                        That range comes from backtesting past forecasts, not guessing. Plan stock for the top of it, not the middle.
-                      </p>
-                    </li>
-                  ) : (
-                    <li className="flex gap-3">
-                      <span className="shrink-0 w-6 h-6 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center">{rangeNum}</span>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        <strong className="text-gray-900">No reliable range right now.</strong>{' '}
-                        The last few periods swing too much (partial months, sparse weeks, or a sudden volume jump) for a ±% band to mean anything. Treat the trend as a direction, not a precise number.
-                      </p>
-                    </li>
-                  );
-                })()}
-                {(() => {
-                  const upcoming = getUpcomingSeason();
-                  const seasonNum = 2 + (projRows.length > 0 ? 1 : 0) + 1;
-                  if (!upcoming) return null;
-                  return (
-                  <li className="flex gap-3">
-                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">{seasonNum}</span>
-                    <p className="text-sm text-gray-700 leading-relaxed">
-                      <strong className="text-gray-900">
-                        Upcoming trend{upcoming.isNow ? ' this month' : ` (${upcoming.monthName})`}: {upcoming.label}.
-                      </strong>{' '}
-                      Expect more requests for themed outfits around this season — keep matching pieces clean and ready.
-                    </p>
-                  </li>
-                  );
-                })()}
-                {spikeNotes?.length > 0 && (
-                  <li className="flex gap-3">
-                    <span className="shrink-0 w-6 h-6 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center">!</span>
-                    <p className="text-sm text-gray-700 leading-relaxed">
-                      <strong className="text-gray-900">{spikeNotes.map((s) => s.label).join(', ')} doesn’t count.</strong>{' '}
-                      One-time bulk booking{spikeNotes.length === 1 ? '' : 's'}, left out of the average — otherwise every future period would look bigger than it really is.
-                    </p>
-                  </li>
-                )}
-              </ol>
-              <div className="bg-white border border-[#bf4a53]/20 rounded-xl px-4 py-3 text-sm text-gray-700 flex items-start gap-2.5">
-                <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
-                  <Sparkles size={14} />
-                </span>
-                <p>
-                  <strong className="text-gray-900">Suggested action: </strong>
-                  {projRows.length > 0
-                    ? (() => {
-                        // A ±600% band must not turn into a 7× stock order.
-                        // Keep the buffer useful: cap the risk uplift at 50%.
-                        const riskPct = bandReliable ? Math.min(forecastErrorPct ?? 0, 50) : 0;
-                        return `keep at least ${Math.max(1, Math.ceil(maxProj * (1 + riskPct / 100)))} pieces ready per period${riskPct > 0 ? ' (top of the expected range)' : ''}${smaTrend === 'down' ? ', and push a promo if bookings dip further' : ''}.`;
-                      })()
-                    : 'collect a few more periods of bookings first — the forecast is still learning.'}
-                </p>
-              </div>
-            </div>
-          )}
-          <p className="text-[11px] text-gray-400 italic px-5 md:px-7 pb-5 md:pb-6">
-            Counts are actual rentals; the trend line averages them
-            {bandReliable
-              ? ` — shaded band shows the expected range (±${forecastErrorPct}%, backtested).`
-              : ' — the expected-range band is hidden because the recent periods vary too much to give a reliable range.'}
-          </p>
         </div>
+      ) : (
+        <>
+          <div className={full ? 'pt-4' : ''}>
+            <ForecastTiles fc={fc} weekly={weekly} full={full} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice} />
+          </div>
+          <ForecastChart rows={fc.rows} weekly={weekly} rangeReliable={fc.rangeReliable} seasonDots={fc.seasonDots}
+            height={full ? (isPhone ? 300 : 420) : 260} minBarWidth={full ? 40 : 46} showCurrent={!!fc.current} />
+
+          {!full ? (
+            <div className="px-5 md:px-7 pb-5 space-y-3">
+              <OutlookTable projections={fc.projections} weekly={weekly} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice} />
+              <button type="button" onClick={onExpand}
+                className="w-full inline-flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 transition-colors">
+                See full forecast — trend, accuracy, seasons <ChevronRight size={14} />
+              </button>
+            </div>
+          ) : (
+            <div key={explaining ? 'explain' : 'numbers'} className="animate-in fade-in duration-300">
+              {explaining ? (
+                <ForecastExplainer fc={fc} weekly={weekly} period={period} seasonality={activeForecast?.seasonality}
+                  profile={profile} drivers={drivers} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice} />
+              ) : weekly ? (
+                <div className="px-5 md:px-7 pb-5">
+                  <OutlookCards projections={fc.projections} />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-5 md:px-7 pb-5">
+                  <OutlookTable projections={fc.projections} weekly={weekly} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice}
+                    seasonality={activeForecast?.seasonality} showMethodNote={fc.seasonal} />
+                  <SeasonalPattern profile={profile} projections={fc.projections} />
+                  <DemandDrivers drivers={drivers} />
+                </div>
+              )}
+              <p className="text-[11px] text-gray-400 px-5 md:px-7 pb-6 leading-relaxed">
+                How it works: average of the last {period} complete {unit}s
+                {fc.seasonal ? ', blended 50/50 with the same month last year (adjusted for growth)' : ''}.
+                One-off spikes are capped; regular yearly peaks are kept. Cancelled bookings count, since they still show demand.
+              </p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
