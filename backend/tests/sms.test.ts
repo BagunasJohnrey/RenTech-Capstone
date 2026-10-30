@@ -142,6 +142,17 @@ describe('SMS scheduler service (Phase 2.4)', () => {
     expect(out[0].message.toLowerCase()).not.toMatch(/penalty|fee|₱|\d+\s*\/\s*day.*fee/);
   });
 
+  it('once-guard flag writes keep updatedAt so the staff freshness poll stays quiet', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const stamp = new Date('2026-10-01T00:00:00Z');
+    prisma.transaction.findMany.mockResolvedValueOnce([{ ...baseTx, status: 'Overdue', updatedAt: stamp }]);
+    const svc = await reload();
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([{ message_id: 'm1' }]) });
+    await svc.autoNotifyOverdue();
+    const sentCall = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.overdueSmsSent === true);
+    expect(sentCall?.[0].data.updatedAt).toEqual(stamp);
+  });
+
   it('send failure leaves overdueSmsSent false so next tick retries', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findMany.mockResolvedValueOnce([baseTx]);

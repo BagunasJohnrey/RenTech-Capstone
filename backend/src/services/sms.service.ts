@@ -1,4 +1,5 @@
 import { prisma } from '../config/database.js';
+import type { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
 import { sendSms, applyTemplate, smsShortName, smsItemName, finalizeSms } from './semaphore.service.js';
@@ -100,6 +101,16 @@ export function formatPhpAmount(n: number | null | undefined): string {
   return Number(n || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 });
 }
 
+// Scheduler bookkeeping (once-guards / retry markers) is invisible to staff,
+// so it must not move Transaction.updatedAt: the staff freshness poll
+// (GET /dashboard/version = max updatedAt) would otherwise show "New data
+// available" every time a reminder fired, with nothing new on screen.
+// Explicitly writing the row's current updatedAt overrides Prisma's
+// @updatedAt bump. Real changes (e.g. the status flip to Overdue) still bump.
+async function markScheduled(tx: { id: string; updatedAt: Date }, data: Prisma.TransactionUpdateInput) {
+  await prisma.transaction.update({ where: { id: tx.id }, data: { ...data, updatedAt: tx.updatedAt } });
+}
+
 const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your {item} is overdue ({days} day(s)). Balance: PHP {balance}. Thank you! Automated message - do not reply.';
 
 export async function autoNotifyOverdue() {
@@ -130,7 +141,9 @@ export async function autoNotifyOverdue() {
     // but skip the no-op write: Prisma bumps updatedAt, which the staff
     // freshness poll would report as a change on every retry tick.
     if (tx.status !== 'Overdue') {
-      await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
+      const flipped = await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
+      // Carry the bumped timestamp so the flag writes below don't rewind it.
+      if (flipped?.updatedAt) tx.updatedAt = flipped.updatedAt;
     }
 
     // Respect customer opt-out (notifyPrefs.lateReturn === false → skip SMS,
@@ -152,7 +165,7 @@ export async function autoNotifyOverdue() {
       try {
         const emailResult = await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
         if (emailResult) {
-          await prisma.transaction.update({ where: { id: tx.id }, data: { overdueEmailSent: true } });
+          await markScheduled(tx, { overdueEmailSent: true });
         }
         // Null (disabled/failed send) leaves the flag false: nothing was
         // delivered, so retrying next tick is harmless.
@@ -161,7 +174,7 @@ export async function autoNotifyOverdue() {
 
     if (!tx.customer.phone || !wantsSms) {
       // Nothing to send (no phone or opted out) — flag as done so we don't retry.
-      await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsSent: true } });
+      await markScheduled(tx, { overdueSmsSent: true });
       results.push({ transactionId: tx.id, customerName: tx.customer.name, message: '', status: 'skipped' });
     } else {
       let message = template?.content ?? OVERDUE_TEMPLATE_FALLBACK;
@@ -185,7 +198,7 @@ export async function autoNotifyOverdue() {
           },
         });
         // Mark SENT — once-guard. On success the scheduler won't retry.
-        await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsSent: true } });
+        await markScheduled(tx, { overdueSmsSent: true });
         results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: smsResult.messageId ? 'sent' : 'queued' });
       } catch {
         // Send failed: leave overdueSmsSent FALSE so the next tick retries,
@@ -194,7 +207,7 @@ export async function autoNotifyOverdue() {
         // Only write the flag once — rewriting it on every failed tick bumps
         // updatedAt and makes the freshness poll fire with nothing changed.
         if (!tx.overdueSmsRetried) {
-          await prisma.transaction.update({ where: { id: tx.id }, data: { overdueSmsRetried: true } });
+          await markScheduled(tx, { overdueSmsRetried: true });
         }
         results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: 'failed' });
       }
@@ -262,7 +275,7 @@ export async function notifyOverdue3Days() {
       try {
         const emailResult = await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
         if (emailResult) {
-          await prisma.transaction.update({ where: { id: tx.id }, data: { overdueEscalationEmailSent: true } });
+          await markScheduled(tx, { overdueEscalationEmailSent: true });
         }
       } catch { /* email is non-critical */ }
     }
@@ -282,7 +295,7 @@ export async function notifyOverdue3Days() {
     }
 
     if (sent || !tx.customer.phone || !wantsSms) {
-      await prisma.transaction.update({ where: { id: tx.id }, data: { overdueEscalationSent: true } });
+      await markScheduled(tx, { overdueEscalationSent: true });
       results.push({ transactionId: tx.id, customerName: tx.customer.name, sent });
     }
   }
@@ -340,7 +353,7 @@ export async function notifyDueToday() {
           tx.dueDate.toLocaleDateString('en-PH'),
         );
         if (emailResult) {
-          await prisma.transaction.update({ where: { id: tx.id }, data: { dueReminderEmailSent: true } });
+          await markScheduled(tx, { dueReminderEmailSent: true });
         }
       } catch { /* email is non-critical */ }
     }
@@ -364,14 +377,14 @@ export async function notifyDueToday() {
             status: smsResult.messageId ? 'sent' : 'queued',
           },
         });
-        await prisma.transaction.update({ where: { id: tx.id }, data: { dueReminderSent: true } });
+        await markScheduled(tx, { dueReminderSent: true });
         sent = true;
       } catch {
         // leave dueReminderSent false so the next tick retries the SMS
       }
     } else {
       // No phone on file: nothing to send, so don't keep retrying every minute.
-      await prisma.transaction.update({ where: { id: tx.id }, data: { dueReminderSent: true } });
+      await markScheduled(tx, { dueReminderSent: true });
     }
 
     // Staff in-app alert (existing behavior).
@@ -427,7 +440,7 @@ export async function checkNoShowAndNotify() {
         title: 'No-Show Pickup',
         message: `${tx.customer.name} didn't pick up "${tx.item.name}" (reserved for ${tx.rentalDate.toLocaleDateString('en-PH')}). Cancel the booking?`,
       });
-      await prisma.transaction.update({ where: { id: tx.id }, data: { noShowNotified: true } });
+      await markScheduled(tx, { noShowNotified: true });
       results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name });
     } catch {
       // leave noShowNotified false so the next tick retries the notification

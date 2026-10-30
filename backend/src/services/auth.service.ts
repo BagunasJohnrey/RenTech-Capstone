@@ -1,4 +1,4 @@
-import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
+import { supabaseAdmin, supabaseSession, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
@@ -131,7 +131,7 @@ export async function signupCustomer(data: {
     },
   });
 
-  const { data: sessionData } = await supabaseAdmin.auth.signInWithPassword({
+  const { data: sessionData } = await supabaseSession.auth.signInWithPassword({
     email,
     password: data.password,
   });
@@ -158,7 +158,7 @@ export async function loginUser(rawEmail: string, password: string, trustedDevic
     throw new AppError(401, 'Invalid email or password');
   }
 
-  const { data, error } = await supabaseAdmin.auth.signInWithPassword({
+  const { data, error } = await supabaseSession.auth.signInWithPassword({
     email,
     password,
   });
@@ -423,7 +423,7 @@ export async function changeOwnPassword(
   if (!profile) throw new AppError(401, 'Not authenticated');
 
   // Verify the current password before allowing the change.
-  const { error: verifyError } = await supabaseAdmin.auth.signInWithPassword({
+  const { error: verifyError } = await supabaseSession.auth.signInWithPassword({
     email: profile.email,
     password: oldPassword,
   });
@@ -668,7 +668,7 @@ export async function removeStaffAccount(adminId: string, staffId: string) {
 // setSessionCookies. Throws AppError(401) on invalid/expired refresh tokens
 // so the caller can clear stale cookies.
 export async function refreshWithRefreshToken(refreshToken: string) {
-  const { data, error } = await supabaseAdmin.auth.refreshSession({
+  const { data, error } = await supabaseSession.auth.refreshSession({
     refresh_token: refreshToken,
   });
 
@@ -813,7 +813,7 @@ export async function verifyEmailToken(token: string) {
     });
     const hashed = (linkData as { properties?: { hashed_token?: string } } | null)?.properties?.hashed_token;
     if (!linkError && hashed) {
-      const { data: otpData, error: otpError } = await supabaseAdmin.auth.verifyOtp({
+      const { data: otpData, error: otpError } = await supabaseSession.auth.verifyOtp({
         token_hash: hashed,
         type: 'magiclink',
       });
@@ -888,7 +888,7 @@ export async function resetPasswordWithToken(
 
   // Optional old-password gate — verified BEFORE the token is consumed.
   if (currentPassword) {
-    const { error: verifyError } = await supabaseAdmin.auth.signInWithPassword({
+    const { error: verifyError } = await supabaseSession.auth.signInWithPassword({
       email: profile.email,
       password: currentPassword,
     });
@@ -1051,7 +1051,7 @@ export async function setAdminPin(userId: string, pin: string, password?: string
     });
     if (!profile?.email) throw new AppError(401, 'Invalid password');
 
-    const { data: authData, error } = await supabaseAdmin.auth.signInWithPassword({ email: profile.email, password });
+    const { data: authData, error } = await supabaseSession.auth.signInWithPassword({ email: profile.email, password });
     if (error || !authData.user || authData.user.id !== userId) {
       throw new AppError(401, 'Invalid password');
     }

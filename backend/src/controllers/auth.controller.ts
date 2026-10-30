@@ -5,7 +5,7 @@ import * as authService from '../services/auth.service.js';
 import * as mfaService from '../services/mfa.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { supabaseAdmin, supabaseSignUp } from '../config/supabase.js';
+import { supabaseAdmin, supabaseSession, supabaseSignUp } from '../config/supabase.js';
 import { prisma } from '../config/database.js';
 import { env } from '../config/env.js';
 import { setSessionCookies, clearSessionCookies, getRefreshTokenFromCookie, RtSession, setPkceCookie, getPkceCookie, clearPkceCookie, setOauthPendingCookie, clearOauthPendingCookie, getAccessTokenFromCookie, OAUTH_PKCE_COOKIE, OAUTH_PENDING_COOKIE, setMfaPendingCookie, getMfaPendingCookie, clearMfaPendingCookie, setMfaVerifiedCookie, isMfaVerifiedCookie, isMfaTrustedCookie, setMfaTrustedCookie } from '../middleware/cookies.js';
@@ -578,7 +578,7 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
     let sessionTokenForRevoke: string | undefined;
 
     if (token_hash) {
-      const { data, error } = await supabaseAdmin.auth.verifyOtp({
+      const { data, error } = await supabaseSession.auth.verifyOtp({
         token_hash,
         type: 'recovery',
       });
@@ -670,7 +670,7 @@ export async function verifyEmail(req: Request, res: Response, next: NextFunctio
     let user: { id: string; email?: string | null } | null = null;
     let session: { access_token: string | null; refresh_token: string | null } | null = null;
     if (token_hash) {
-      const { data, error } = await supabaseAdmin.auth.verifyOtp({
+      const { data, error } = await supabaseSession.auth.verifyOtp({
         token_hash,
         type: 'signup',
       });

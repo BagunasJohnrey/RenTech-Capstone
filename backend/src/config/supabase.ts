@@ -12,6 +12,26 @@ export const supabaseAdmin = createClient(
   }
 );
 
+// Client for every call that MINTS A USER SESSION (signInWithPassword,
+// verifyOtp, refreshSession). supabase-js keeps the last session in memory
+// even with persistSession:false, and from then on sends THAT user's JWT
+// instead of the service-role key on storage/postgrest calls
+// (SupabaseClient._getAccessToken). Doing those calls on supabaseAdmin meant
+// one login turned every later storage request into "as that user" — and
+// once their token expired (~1h, no auto-refresh) private `rental/` signing
+// 404'd until a restart. Keep supabaseAdmin session-free; never use this
+// client for storage or admin work.
+export const supabaseSession = createClient(
+  env.SUPABASE_URL,
+  env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
+
 // Ops safeguard: which role does the configured service key actually carry?
 // Decodes the JWT claims ONLY (never logs the secret). An anon key here
 // silently degrades every service-role path — storage uploads fail RLS,
