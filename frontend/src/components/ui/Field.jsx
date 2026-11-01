@@ -1,4 +1,7 @@
 import { useId } from 'react';
+import PhoneInput from './PhoneInput';
+import CharCount from './CharCount';
+import { validatePhone, validateEmail } from '../../utils/inputLimits';
 
 const DEFAULT_INPUT_CLASS =
   'w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-all';
@@ -15,6 +18,7 @@ export default function Field({
   placeholder,
   error,
   required = false,
+  valid, // optional: caller's verdict; hides the required asterisk when true
   disabled = false,
   autoComplete,
   inputMode,
@@ -23,27 +27,46 @@ export default function Field({
   wrapClassName = '',
   showLabel = true,
   children,
+  showCount = false, // show a live "n/max" counter (needs maxLength)
   endAccessory, // optional node absolutely anchored to the input's right edge (e.g. show/hide password toggle)
   ...rest
 }) {
   const uid = useId();
   const id = `field-${uid.replace(/[^a-zA-Z0-9_]/g, '')}`;
   const errId = error ? `${id}-error` : undefined;
+  // The asterisk shows only while a required field is still empty/invalid.
+  const filled = String(value ?? '').trim() !== '';
+  const isValid = valid ?? (filled && !error
+    && (type !== 'tel' || validatePhone(value) === true)
+    && (type !== 'email' || validateEmail(value) === true));
   return (
     <div className={wrapClassName}>
       {showLabel && label != null && label !== '' ? (
         <label htmlFor={id} className={labelClassName}>
           {label}
-          {/* Required marker only while the field still needs input — once
-              it holds a value the asterisk goes away (the error message, if
-              any, takes over). */}
-          {required && String(value ?? '').trim() === '' ? (
+          {required && !isValid ? (
             <span aria-hidden="true" className="text-[#bf4a53] ml-0.5">*</span>
           ) : null}
         </label>
       ) : null}
       <div className={`relative ${label != null && label !== '' && showLabel ? 'mt-1.5' : ''}`}>
         {children /* optional custom content replacing the input */}
+        {/* tel fields are PH mobiles: fixed +639 prefix, stored as 09XXXXXXXXX */}
+        {type === 'tel' ? (
+          <PhoneInput
+            id={id}
+            name={id}
+            value={value}
+            onChange={onChange}
+            onBlur={onBlur}
+            required={required}
+            disabled={disabled}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={errId}
+            className={className}
+            {...rest}
+          />
+        ) : (
         <input
           id={id}
           name={id}
@@ -61,12 +84,18 @@ export default function Field({
           className={className}
           {...rest}
         />
+        )}
         {endAccessory}
       </div>
-      {error ? (
-        <p id={errId} role="alert" className="text-[11px] text-red-500 font-medium mt-1 ml-1">
-          {error}
-        </p>
+      {error || (showCount && rest.maxLength) ? (
+        <div className="flex items-start justify-between gap-2">
+          {error ? (
+            <p id={errId} role="alert" className="text-[11px] text-red-500 font-medium mt-1 ml-1">
+              {error}
+            </p>
+          ) : <span />}
+          {showCount && rest.maxLength ? <CharCount value={value} max={rest.maxLength} className="shrink-0" /> : null}
+        </div>
       ) : null}
     </div>
   );

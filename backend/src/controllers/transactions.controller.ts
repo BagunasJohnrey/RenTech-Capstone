@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { phMobile } from '../utils/phone.js';
 import { prisma } from '../config/database.js';
 import * as transactionService from '../services/transactions.service.js';
 import { AuthenticatedRequest, Role } from '../types/index.js';
@@ -36,7 +37,7 @@ export const createRentalSchema = z.object({
     customerId: z.string().optional(),
     customerName: z.string().min(2).max(50, 'Name must be 50 characters or fewer')
       .regex(/^\D+$/, 'Name must not contain numbers').optional(),
-    contact: z.string().regex(/^\d{11}$/, 'Phone must be exactly 11 digits').optional(),
+    contact: phMobile.optional(),
     address: z.string().max(100, 'Address must be 100 characters or fewer').optional(),
     notes: z.string().max(300, 'Notes must be 300 characters or fewer').optional(),
     conditionPhoto: z.string().optional(),

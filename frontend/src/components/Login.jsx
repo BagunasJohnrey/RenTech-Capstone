@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail, X, ScrollText } from 'lucide-react';
+import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
 import { api, API_ORIGIN } from '../utils/api';
-import TermsContent from './TermsContent';
+import TermsModal from './TermsModal';
 import {
   INPUT_LIMITS,
   sanitizeName,
@@ -96,6 +96,8 @@ export default function Login({ onLogin, onVerifyMfa }) {
   const [signupNeedsVerification, setSignupNeedsVerification] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+  // The agree checkbox unlocks only after the terms were scrolled to the end.
+  const [termsRead, setTermsRead] = useState(false);
 
   const updateSignup = (field, value) => setSignupData(prev => ({ ...prev, [field]: value }));
   const markTouched = (field) => setTouched(prev => ({ ...prev, [field]: true }));
@@ -556,22 +558,26 @@ export default function Login({ onLogin, onVerifyMfa }) {
                     <Field label="Full Name" type="text" required value={signupData.name}
                       onChange={(e) => updateSignup('name', sanitizeName(e.target.value))} onBlur={() => markTouched('name')}
                       className={inputClass + ' ' + glowClass('name')} placeholder="Juan Dela Cruz" autoComplete="name"
-                      maxLength={INPUT_LIMITS.NAME_MAX}
+                      maxLength={INPUT_LIMITS.NAME_MAX} showCount
+                      valid={fieldState('name').valid}
                       error={touched.name && !fieldState('name').valid ? fieldState('name').error : undefined} />
                     <Field label="Email" type="email" required value={signupData.email}
                       onChange={(e) => updateSignup('email', sanitizeEmail(e.target.value))} onBlur={() => markTouched('email')}
                       className={inputClass + ' ' + glowClass('email')} placeholder="you@example.com" autoComplete="email"
                       maxLength={INPUT_LIMITS.EMAIL_MAX}
+                      valid={fieldState('email').valid}
                       error={touched.email && !fieldState('email').valid ? fieldState('email').error : undefined} />
                     <Field label="Phone" type="tel" required value={signupData.phone}
                       onChange={(e) => updateSignup('phone', sanitizePhone(e.target.value))} onBlur={() => markTouched('phone')}
                       className={inputClass + ' ' + glowClass('phone')} placeholder="0917 123 4567" autoComplete="tel" inputMode="numeric"
                       maxLength={INPUT_LIMITS.PHONE_LENGTH}
+                      valid={fieldState('phone').valid}
                       error={touched.phone && !fieldState('phone').valid ? fieldState('phone').error : undefined} />
                     <Field label="Address" type="text" required value={signupData.address}
                       onChange={(e) => updateSignup('address', sanitizeAddress(e.target.value))} onBlur={() => markTouched('address')}
                       className={inputClass + ' ' + glowClass('address')} placeholder="123 Rizal St, Balayan, Batangas" autoComplete="street-address"
                       maxLength={INPUT_LIMITS.ADDRESS_MAX}
+                      valid={fieldState('address').valid}
                       error={touched.address && !fieldState('address').valid ? fieldState('address').error : undefined} />
                   </div>
 
@@ -592,19 +598,13 @@ export default function Login({ onLogin, onVerifyMfa }) {
                     </div>
                   </div>
 
-                  <label className={`flex items-start gap-2.5 cursor-pointer select-none rounded-xl border p-3.5 transition-colors ${acceptedTerms ? 'bg-emerald-50/60 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'}`}>
+                  <label onClick={() => { if (!termsRead) setShowTerms(true); }} className={`flex items-start gap-2.5 cursor-pointer select-none rounded-xl border p-3.5 transition-colors ${acceptedTerms ? 'bg-emerald-50/60 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'}`}>
                     <input
                       type="checkbox"
                       checked={acceptedTerms}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setAcceptedTerms(true);
-                          setShowTerms(true);
-                        } else {
-                          setAcceptedTerms(false);
-                        }
-                      }}
-                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-[#bf4a53] focus:ring-[#bf4a53]"
+                      disabled={!termsRead}
+                      onChange={(e) => setAcceptedTerms(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-[#bf4a53] focus:ring-[#bf4a53] disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                     <span className="text-xs text-gray-600 leading-relaxed">
                       I have read and agree to the{' '}
@@ -624,6 +624,9 @@ export default function Login({ onLogin, onVerifyMfa }) {
                         Privacy Policy
                       </button>
                       , including the Data Privacy Act of 2012 (RA 10173).
+                      {!termsRead && (
+                        <span className="block text-[10px] font-semibold text-amber-700 mt-1">Open the terms and scroll to the end to enable this box.</span>
+                      )}
                     </span>
                   </label>
 
@@ -641,7 +644,8 @@ export default function Login({ onLogin, onVerifyMfa }) {
                     type={showSignupPassword ? 'text' : 'password'} value={signupData.password}
                     onChange={(e) => updateSignup('password', e.target.value)} onBlur={() => markTouched('password')}
                     className={inputClass + ' pr-10 ' + glowClass('password')}
-                    error={touched.password && !fieldState('password').valid ? fieldState('password').error : undefined}
+                    valid={fieldState('password').valid}
+                      error={touched.password && !fieldState('password').valid ? fieldState('password').error : undefined}
                     endAccessory={
                       <button type="button" onClick={() => setShowSignupPassword(!showSignupPassword)}
                         aria-label={showSignupPassword ? 'Hide password' : 'Show password'} aria-pressed={showSignupPassword}
@@ -653,7 +657,8 @@ export default function Login({ onLogin, onVerifyMfa }) {
                     type={showSignupPassword ? 'text' : 'password'} value={signupData.confirm}
                     onChange={(e) => updateSignup('confirm', e.target.value)} onBlur={() => markTouched('confirm')}
                     className={inputClass + ' ' + glowClass('confirm')}
-                    error={touched.confirm && !fieldState('confirm').valid ? fieldState('confirm').error : undefined} />
+                    valid={fieldState('confirm').valid}
+                      error={touched.confirm && !fieldState('confirm').valid ? fieldState('confirm').error : undefined} />
                    <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1.5 mb-2">
                      <ShieldCheck size={12} className="text-gray-300" />
                      Password requirements
@@ -733,48 +738,12 @@ export default function Login({ onLogin, onVerifyMfa }) {
 
       {/* Terms & Conditions / Privacy Policy modal */}
       {showTerms && (
-        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowTerms(false)}>
-          <div
-            className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100 shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-[#bf4a53]/10 border border-[#bf4a53]/20 flex items-center justify-center text-[#bf4a53] shrink-0">
-                  <ScrollText size={18} />
-                </span>
-                <div className="min-w-0">
-                  <h3 className="font-bold text-gray-900 text-sm sm:text-base">Terms and Conditions</h3>
-                  <p className="text-[11px] sm:text-xs text-gray-500">Effective date: August 2026</p>
-                </div>
-              </div>
-              <button onClick={() => setShowTerms(false)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0" aria-label="Close terms">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="px-4 sm:px-6 py-5 overflow-y-auto">
-              <TermsContent />
-            </div>
-            <div className="px-4 sm:px-6 py-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 bg-gray-50/60">
-              <p className="text-[11px] sm:text-xs text-gray-500 flex items-center gap-1.5">
-                <ShieldCheck size={14} className="text-emerald-600 shrink-0" />
-                We collect your data securely and never sell it.
-              </p>
-              <div className="flex gap-2 w-full sm:w-auto">
-                <button onClick={() => setShowTerms(false)}
-                  className="flex-1 sm:flex-none px-4 py-2.5 text-sm font-bold text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-100">
-                  Close
-                </button>
-                <button
-                  onClick={() => { setAcceptedTerms(true); setShowTerms(false); }}
-                  className="flex-1 sm:flex-none px-4 py-2.5 text-sm font-bold text-white bg-[#bf4a53] rounded-xl hover:bg-red-700 transition-colors"
-                >
-                  I Agree
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <TermsModal
+          alreadyRead={termsRead}
+          onRead={() => setTermsRead(true)}
+          onAgree={() => { setTermsRead(true); setAcceptedTerms(true); setShowTerms(false); }}
+          onClose={() => setShowTerms(false)}
+        />
       )}
     </div>
   );

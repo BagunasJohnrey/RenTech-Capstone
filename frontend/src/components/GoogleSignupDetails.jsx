@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { ArrowRight, Heart, X, ScrollText, ShieldCheck } from 'lucide-react';
+import RequiredMark from './ui/RequiredMark';
+import CharCount from './ui/CharCount';
+import { ArrowRight, Heart } from 'lucide-react';
 import { api } from '../utils/api';
-import TermsContent from './TermsContent';
+import TermsModal from './TermsModal';
+import PhoneInput from './ui/PhoneInput';
 import {
   INPUT_LIMITS,
   sanitizeName,
@@ -36,6 +39,8 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
   const [loading, setLoading] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+  // The agree checkbox unlocks only after the terms were scrolled to the end.
+  const [termsRead, setTermsRead] = useState(false);
 
   const markTouched = (f) => setTouched((p) => ({ ...p, [f]: true }));
   const fieldState = (f) => {
@@ -128,7 +133,7 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Full Name</label>
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Full Name<RequiredMark show={!fieldState('name').valid} /></label>
               <input
                 type="text"
                 required
@@ -139,6 +144,7 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
                 placeholder="Juan Dela Cruz"
                 maxLength={INPUT_LIMITS.NAME_MAX}
               />
+              <CharCount value={name} max={INPUT_LIMITS.NAME_MAX} />
               <FieldError show={touched.name && !fieldState('name').valid} message={fieldState('name').error} />
             </div>
             <div>
@@ -146,22 +152,19 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
               <input type="email" value={email} disabled className={inputClass + ' bg-gray-100 text-gray-400 cursor-not-allowed'} />
             </div>
             <div>
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Phone</label>
-              <input
-                type="tel"
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Phone<RequiredMark show={!fieldState('phone').valid} /></label>
+              <PhoneInput
                 required
                 value={phone}
                 onChange={(e) => setPhone(sanitizePhone(e.target.value))}
                 onBlur={() => markTouched('phone')}
                 className={inputClass + ' ' + glowClass('phone')}
-                placeholder="0917 123 4567"
-                inputMode="numeric"
-                maxLength={INPUT_LIMITS.PHONE_LENGTH}
+                aria-label="Phone"
               />
               <FieldError show={touched.phone && !fieldState('phone').valid} message={fieldState('phone').error} />
             </div>
             <div>
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Address</label>
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Address<RequiredMark show={!fieldState('address').valid} /></label>
               <input
                 type="text"
                 required
@@ -197,19 +200,13 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
 
             {error && <p className="text-red-500 text-xs font-semibold text-center">{error}</p>}
 
-            <label className={`flex items-start gap-2.5 cursor-pointer select-none rounded-xl border p-3.5 transition-colors ${acceptedTerms ? 'bg-emerald-50/60 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'}`}>
+            <label onClick={() => { if (!termsRead) setShowTerms(true); }} className={`flex items-start gap-2.5 cursor-pointer select-none rounded-xl border p-3.5 transition-colors ${acceptedTerms ? 'bg-emerald-50/60 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'}`}>
               <input
                 type="checkbox"
                 checked={acceptedTerms}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setAcceptedTerms(true);
-                    setShowTerms(true);
-                  } else {
-                    setAcceptedTerms(false);
-                  }
-                }}
-                className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-[#bf4a53] focus:ring-[#bf4a53]"
+                disabled={!termsRead}
+                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-[#bf4a53] focus:ring-[#bf4a53] disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <span className="text-xs text-gray-600 leading-relaxed">
                 I have read and agree to the{' '}
@@ -229,6 +226,9 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
                   Privacy Policy
                 </button>
                 , including the Data Privacy Act of 2012 (RA 10173).
+                {!termsRead && (
+                  <span className="block text-[10px] font-semibold text-amber-700 mt-1">Open the terms and scroll to the end to enable this box.</span>
+                )}
               </span>
             </label>
 
@@ -254,48 +254,12 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
 
       {/* Terms & Conditions / Privacy Policy modal */}
       {showTerms && (
-        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowTerms(false)}>
-          <div
-            className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100 shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-[#bf4a53]/10 border border-[#bf4a53]/20 flex items-center justify-center text-[#bf4a53] shrink-0">
-                  <ScrollText size={18} />
-                </span>
-                <div className="min-w-0">
-                  <h3 className="font-bold text-gray-900 text-sm sm:text-base">Terms and Conditions</h3>
-                  <p className="text-[11px] sm:text-xs text-gray-500">Effective date: August 2026</p>
-                </div>
-              </div>
-              <button onClick={() => setShowTerms(false)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0" aria-label="Close terms">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="px-4 sm:px-6 py-5 overflow-y-auto">
-              <TermsContent />
-            </div>
-            <div className="px-4 sm:px-6 py-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 bg-gray-50/60">
-              <p className="text-[11px] sm:text-xs text-gray-500 flex items-center gap-1.5">
-                <ShieldCheck size={14} className="text-emerald-600 shrink-0" />
-                We collect your data securely and never sell it.
-              </p>
-              <div className="flex gap-2 w-full sm:w-auto">
-                <button onClick={() => setShowTerms(false)}
-                  className="flex-1 sm:flex-none px-4 py-2.5 text-sm font-bold text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-100">
-                  Close
-                </button>
-                <button
-                  onClick={() => { setAcceptedTerms(true); setShowTerms(false); }}
-                  className="flex-1 sm:flex-none px-4 py-2.5 text-sm font-bold text-white bg-[#bf4a53] rounded-xl hover:bg-red-700 transition-colors"
-                >
-                  I Agree
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <TermsModal
+          alreadyRead={termsRead}
+          onRead={() => setTermsRead(true)}
+          onAgree={() => { setTermsRead(true); setAcceptedTerms(true); setShowTerms(false); }}
+          onClose={() => setShowTerms(false)}
+        />
       )}
     </div>
   );

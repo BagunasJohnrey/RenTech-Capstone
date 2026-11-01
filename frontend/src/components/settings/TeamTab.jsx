@@ -5,10 +5,16 @@ import { api } from '../../utils/api';
 import CollapsibleCard from './CollapsibleCard';
 import PinInput from './PinInput';
 import { IconButton } from '../ui/Button';
+import PhoneInput from '../ui/PhoneInput';
+import RequiredMark from '../ui/RequiredMark';
+import CharCount from '../ui/CharCount';
 import {
   INPUT_LIMITS,
   sanitizeName,
   sanitizePhone,
+  validatePhone,
+  validateName,
+  PHONE_ERROR,
 } from '../../utils/inputLimits';
 
 // Admin Team & Security tab: staff account management + the admin's own TOTP
@@ -221,8 +227,8 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
       setEditError(`Name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`);
       return;
     }
-    if (editDraft.phone.trim() && editDraft.phone.replace(/\D/g, '').length !== INPUT_LIMITS.PHONE_LENGTH) {
-      setEditError(`Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`);
+    if (editDraft.phone.trim() && validatePhone(editDraft.phone) !== true) {
+      setEditError(PHONE_ERROR);
       return;
     }
     setEditSaving(true);
@@ -267,7 +273,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
           )}
           <form onSubmit={handleAddStaff} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
             <input type="text" placeholder="Name" value={newStaffName} onChange={(e) => setNewStaffName(sanitizeName(e.target.value))} className={inputClass} maxLength={INPUT_LIMITS.NAME_MAX} />
-            <input type="text" placeholder="Username (email)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className={inputClass} required />
+            <input type="text" placeholder="Username (email) *" aria-required="true" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className={inputClass} required />
             <button type="submit" disabled={staffAdding} className="bg-[#bf4a53] text-white px-5 py-3 rounded-full text-sm font-semibold hover:bg-red-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-red-500/20 disabled:opacity-50">
               <Plus size={16} /> {staffAdding ? 'Adding...' : 'Add'}
             </button>
@@ -564,7 +570,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               </div>
             )}
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Name</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Name<RequiredMark show={validateName(editDraft.name) !== true} /></label>
               <input
                 type="text"
                 value={editDraft.name}
@@ -574,18 +580,16 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
                 maxLength={INPUT_LIMITS.NAME_MAX}
                 autoFocus
               />
+              <CharCount value={editDraft.name} max={INPUT_LIMITS.NAME_MAX} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1.5">Phone</label>
-              <input
-                type="text"
-                inputMode="numeric"
+              <PhoneInput
                 value={editDraft.phone}
                 onChange={(e) => { setEditDraft({ ...editDraft, phone: sanitizePhone(e.target.value) }); if (editError) setEditError(''); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') saveEditStaff(); }}
                 className="w-full p-3 bg-gray-50 rounded-xl border text-sm text-gray-900 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15"
-                placeholder="0917 123 4567"
-                maxLength={INPUT_LIMITS.PHONE_LENGTH}
+                aria-label="Staff phone"
               />
             </div>
             <div className="flex gap-3 pt-1">

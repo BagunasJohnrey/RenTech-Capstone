@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import RequiredMark from './ui/RequiredMark';
 import { createPortal } from 'react-dom';
 import { X, Camera, Shirt, Loader2, SwitchCamera, ImagePlus } from 'lucide-react';
 import BottomSheet from './BottomSheet';
@@ -400,7 +401,7 @@ export default function ItemForm({
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
-                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Garment Name</label>
+                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Garment Name<RequiredMark show={!String(name ?? '').trim()} /></label>
                 <span className={`text-[10px] ${name.trim().length >= INPUT_LIMITS.ITEM_NAME_MAX ? 'text-amber-600 font-bold' : 'text-gray-400'}`}>
                   {name.trim().length}/{INPUT_LIMITS.ITEM_NAME_MAX}
                 </span>
@@ -417,7 +418,7 @@ export default function ItemForm({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Price (₱)</label>
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Price (₱)<RequiredMark show={!(Number(price) > 0)} /></label>
               <input
                 type="number"
                 required
@@ -433,7 +434,7 @@ export default function ItemForm({
           <div className="grid grid-cols-2 gap-3">
             {showCategory && (
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Category</label>
+                <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Category<RequiredMark show={!category} /></label>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
@@ -463,7 +464,7 @@ export default function ItemForm({
               joins the dropdown above (and the catalog filters) automatically. */}
           {showCategory && category === CUSTOM_OPTION && (
             <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
-              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom category name</label>
+              <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom category name<RequiredMark show={!String(customCategory ?? '').trim()} /></label>
               <input
                 type="text"
                 autoFocus

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { phMobile } from '../utils/phone.js';
 import { prisma } from '../config/database.js';
 import * as inventoryService from '../services/inventory.service.js';
 import * as transactionService from '../services/transactions.service.js';
@@ -183,7 +184,7 @@ export const updateCustomerSchema = z.object({
   body: z.object({
     name: z.string().min(2).max(50, 'Name must be 50 characters or fewer')
       .regex(/^\D+$/, 'Name must not contain numbers').optional(),
-    phone: z.string().regex(/^\d{11}$/, 'Phone must be exactly 11 digits').optional().nullable(),
+    phone: phMobile.optional().nullable(),
     address: z.string().max(100, 'Address must be 100 characters or fewer').optional().nullable(),
     preferences: z.array(z.string()).optional().nullable(),
   }),

@@ -1,13 +1,16 @@
 // Shared input limits + sanitizers for names, phones, addresses, emails.
 // Single source of truth so signup, OAuth details, and both rental flows
-// enforce the exact same rules: phone never exceeds 11 digits, names never
+// enforce the exact same rules: phones are PH mobiles (+63 9…), names never
 // contain numbers, and every field has a character cap.
 
 export const INPUT_LIMITS = {
   NAME_MAX: 50,
   NAME_MIN: 2,
   EMAIL_MAX: 100,
+  // Stored phone form: 09XXXXXXXXX (11 digits). Shown as +63 + 10 digits.
   PHONE_LENGTH: 11,
+  PHONE_PREFIX: '+63',
+  PHONE_LOCAL_DIGITS: 10,
   ADDRESS_MAX: 100,
   ADDRESS_MIN: 5,
   NOTES_MAX: 300,
@@ -27,6 +30,27 @@ export function sanitizeName(value, max = INPUT_LIMITS.NAME_MAX) {
 
 export function sanitizePhone(value, max = INPUT_LIMITS.PHONE_LENGTH) {
   return String(value ?? '').replace(/\D/g, '').slice(0, max);
+}
+
+// The 10 digits after +63 for any shape: the stored 09…, a partly typed
+// stored value (0 + digits so far), or a pasted 0917… / 63917… / +63917….
+// A +63 number never continues with 0, so leading zeros are dropped.
+export function phoneLocalDigits(value) {
+  let d = String(value ?? '').replace(/\D/g, '');
+  if (d.length >= 12 && d.startsWith('63')) d = d.slice(2);
+  return d.replace(/^0+/, '').slice(0, INPUT_LIMITS.PHONE_LOCAL_DIGITS);
+}
+
+// Text typed after the +63 prefix -> stored 0XXXXXXXXXX ('' when empty).
+export function phoneFromLocalInput(value) {
+  const local = phoneLocalDigits(value);
+  return local ? `0${local}` : '';
+}
+
+// +63XXXXXXXXXX for display; falls back to the raw value when not a PH mobile.
+export function formatPhoneDisplay(value) {
+  const v = String(value ?? '');
+  return /^09\d{9}$/.test(v) ? `+63${v.slice(1)}` : v;
 }
 
 export function sanitizeAddress(value, max = INPUT_LIMITS.ADDRESS_MAX) {
@@ -52,11 +76,13 @@ export function validateName(value) {
   return true;
 }
 
+export const PHONE_ERROR = 'Enter a valid mobile number: +63 followed by 10 digits starting with 9';
+
+// Accepts the stored form (09XXXXXXXXX) or +639XXXXXXXXX.
 export function validatePhone(value) {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  if (digits.length !== INPUT_LIMITS.PHONE_LENGTH)
-    return `Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`;
-  return true;
+  const v = String(value ?? '').replace(/[\s\-().]/g, '');
+  if (/^09\d{9}$/.test(v) || /^\+639\d{9}$/.test(v)) return true;
+  return PHONE_ERROR;
 }
 
 export function validateAddress(value) {

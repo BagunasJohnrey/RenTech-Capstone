@@ -28,6 +28,10 @@ import {
   INPUT_LIMITS,
   sanitizeName,
   sanitizePhone,
+  validatePhone,
+  validateName,
+  validateAddress,
+  PHONE_ERROR,
   sanitizeAddress,
   sanitizeNotes,
 } from '../utils/inputLimits';
@@ -345,7 +349,7 @@ export default function CustomerRentalFlow({
     if (nameTrimmed.length < INPUT_LIMITS.NAME_MIN) errs.name = 'Full name is required (min 2 characters)';
     else if (nameTrimmed.length > INPUT_LIMITS.NAME_MAX) errs.name = `Full name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`;
     else if (/\d/.test(nameTrimmed)) errs.name = 'Name must not contain numbers';
-    if (!customer.contact || !/^\d{11}$/.test(customer.contact.trim())) errs.contact = 'Contact number must be exactly 11 digits';
+    if (validatePhone(customer.contact) !== true) errs.contact = PHONE_ERROR;
     const addrTrimmed = (customer.address || '').trim();
     if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
     else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
@@ -861,10 +865,10 @@ export default function CustomerRentalFlow({
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Contact Details</h4>
                 <div data-field="name">
-                <Field type="text" label="Full Name" placeholder="Full Name" value={customer.name} required
+                <Field type="text" label="Full Name" placeholder="Full Name" value={customer.name} required valid={validateName(customer.name) === true}
                   onChange={(e) => { setCustomer({ ...customer, name: sanitizeName(e.target.value) }); clearFieldError('name'); }}
                   className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.name ? 'border-red-300 bg-red-50' : ''}`}
-                  maxLength={INPUT_LIMITS.NAME_MAX}
+                  maxLength={INPUT_LIMITS.NAME_MAX} showCount
                   error={fieldErrors.name || undefined} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -876,7 +880,7 @@ export default function CustomerRentalFlow({
                     error={fieldErrors.contact || undefined} />
                   </div>
                   <div data-field="address">
-                  <Field type="text" label="Address" placeholder="Address" value={customer.address} required
+                  <Field type="text" label="Address" placeholder="Address" value={customer.address} required valid={validateAddress(customer.address) === true}
                     onChange={(e) => { setCustomer({ ...customer, address: sanitizeAddress(e.target.value) }); clearFieldError('address'); }}
                     className={`w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] ${fieldErrors.address ? 'border-red-300 bg-red-50' : ''}`}
                     maxLength={INPUT_LIMITS.ADDRESS_MAX}

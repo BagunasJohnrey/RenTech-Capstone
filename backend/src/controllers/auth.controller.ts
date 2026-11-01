@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { phMobile } from '../utils/phone.js';
 import * as qrcode from 'qrcode';
 import * as authService from '../services/auth.service.js';
 import * as mfaService from '../services/mfa.service.js';
@@ -21,10 +22,10 @@ export const passwordSchema = z.string()
   .regex(/[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;'`~]/, 'Must contain a symbol');
 
 // Shared contact-field rules: names never contain numbers (max 50 chars),
-// phones are exactly 11 digits, addresses cap at 100 chars.
+// phones are PH mobiles (+639XXXXXXXXX, stored 09XXXXXXXXX), addresses cap at 100 chars.
 const nameField = z.string().min(1).max(50, 'Name must be 50 characters or fewer')
   .regex(/^\D+$/, 'Name must not contain numbers');
-const phoneField = z.string().regex(/^\d{11}$/, 'Phone must be exactly 11 digits');
+const phoneField = phMobile;
 const addressField = z.string().max(100, 'Address must be 100 characters or fewer');
 // Email identity is case-insensitive for delivery/login, but string comparison
 // is not — so every inbound email is trimmed + lowercased BEFORE validation.

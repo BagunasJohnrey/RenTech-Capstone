@@ -9,6 +9,8 @@ import {
   INPUT_LIMITS,
   sanitizeName,
   sanitizePhone,
+  validatePhone,
+  PHONE_ERROR,
   sanitizeAddress,
 } from '../utils/inputLimits';
 
@@ -41,8 +43,8 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
       toastError(`Name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`);
       return;
     }
-    if (form.phone && form.phone.length !== INPUT_LIMITS.PHONE_LENGTH) {
-      toastError(`Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`);
+    if (form.phone && validatePhone(form.phone) !== true) {
+      toastError(PHONE_ERROR);
       return;
     }
     if (form.address && form.address.trim().length > INPUT_LIMITS.ADDRESS_MAX) {
@@ -92,9 +94,9 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
         </div>
 
         <div className="p-5 space-y-4">
-          <Field label="Full Name" required value={form.name} onChange={(e) => update('name', sanitizeName(e.target.value))} className={inputClass} autoComplete="name" maxLength={INPUT_LIMITS.NAME_MAX} />
-          <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', sanitizePhone(e.target.value))} className={`${inputClass}${form.phone && form.phone.length !== 11 ? ' border-red-300' : ''}`} inputMode="numeric" autoComplete="tel" placeholder="09171234567" maxLength={INPUT_LIMITS.PHONE_LENGTH} />
-          {form.phone && form.phone.length !== 11 && <p className="text-[10px] text-red-500 -mt-2">Phone must be exactly 11 digits (e.g. 09171234567)</p>}
+          <Field label="Full Name" required value={form.name} onChange={(e) => update('name', sanitizeName(e.target.value))} className={inputClass} autoComplete="name" maxLength={INPUT_LIMITS.NAME_MAX} showCount />
+          <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', sanitizePhone(e.target.value))} className={`${inputClass}${form.phone && validatePhone(form.phone) !== true ? ' border-red-300' : ''}`} />
+          {form.phone && validatePhone(form.phone) !== true && <p className="text-[10px] text-red-500 -mt-2">{PHONE_ERROR} (e.g. +639171234567)</p>}
           <Field label="Address" value={form.address} onChange={(e) => update('address', sanitizeAddress(e.target.value))} className={inputClass} autoComplete="street-address" placeholder="Street, Balayan, Batangas" maxLength={INPUT_LIMITS.ADDRESS_MAX} />
           <Field label="Interests (comma separated item types)" value={form.preferences}
             onChange={(e) => update('preferences', e.target.value)} className={inputClass}

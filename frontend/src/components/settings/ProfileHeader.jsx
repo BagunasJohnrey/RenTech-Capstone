@@ -4,10 +4,16 @@ import { api } from '../../utils/api';
 import { resolveAvatarUrl } from '../../utils/images';
 import PhotoCropper from '../PhotoCropper';
 import { ITEM_TYPES } from './constants';
+import PhoneInput from '../ui/PhoneInput';
+import RequiredMark from '../ui/RequiredMark';
+import CharCount from '../ui/CharCount';
 import {
   INPUT_LIMITS,
   sanitizeName,
   sanitizePhone,
+  validatePhone,
+  validateName,
+  PHONE_ERROR,
   sanitizeAddress,
 } from '../../utils/inputLimits';
 
@@ -97,8 +103,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
   const handleSaveCustomer = () => {
     const nm = (localCustomer.name || '').trim();
     if (nm.length < INPUT_LIMITS.NAME_MIN || /\d/.test(nm) || nm.length > INPUT_LIMITS.NAME_MAX) return;
-    const digits = (localCustomer.contact || '').replace(/\D/g, '');
-    if (localCustomer.contact && digits.length !== INPUT_LIMITS.PHONE_LENGTH) return;
+    if (localCustomer.contact && validatePhone(localCustomer.contact) !== true) return;
     if ((localCustomer.address || '').trim().length > INPUT_LIMITS.ADDRESS_MAX) return;
     onUpdateCustomer(localCustomer);
     setEditCustomer(false);
@@ -127,8 +132,8 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
       setStaffError(`Name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`);
       return;
     }
-    if (staffDraft.phone.trim() && staffDraft.phone.replace(/\D/g, '').length !== INPUT_LIMITS.PHONE_LENGTH) {
-      setStaffError(`Phone must be exactly ${INPUT_LIMITS.PHONE_LENGTH} digits`);
+    if (staffDraft.phone.trim() && validatePhone(staffDraft.phone) !== true) {
+      setStaffError(PHONE_ERROR);
       return;
     }
     setStaffSaving(true);
@@ -284,12 +289,13 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className={labelClass}>Full Name</label>
+                    <label className={labelClass}>Full Name<RequiredMark show={validateName(localCustomer.name) !== true} /></label>
                     <input type="text" value={localCustomer.name} onChange={(e) => setLocalCustomer({ ...localCustomer, name: sanitizeName(e.target.value) })} className={inputClass} placeholder="Full Name" maxLength={INPUT_LIMITS.NAME_MAX} />
+                    <CharCount value={localCustomer.name} max={INPUT_LIMITS.NAME_MAX} />
                   </div>
                   <div>
                     <label className={labelClass}>Contact Number</label>
-                    <input type="text" inputMode="numeric" value={localCustomer.contact} onChange={(e) => setLocalCustomer({ ...localCustomer, contact: sanitizePhone(e.target.value) })} className={inputClass} placeholder="Contact Number" maxLength={INPUT_LIMITS.PHONE_LENGTH} />
+                    <PhoneInput value={localCustomer.contact} onChange={(e) => setLocalCustomer({ ...localCustomer, contact: sanitizePhone(e.target.value) })} className={inputClass} aria-label="Contact number" />
                   </div>
                 </div>
                 <div>
@@ -372,12 +378,13 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className={labelClass}>Full Name</label>
+                  <label className={labelClass}>Full Name<RequiredMark show={validateName(staffDraft.name) !== true} /></label>
                   <input type="text" value={staffDraft.name} onChange={(e) => setStaffDraft({ ...staffDraft, name: sanitizeName(e.target.value) })} className={inputClass} placeholder="Full Name" maxLength={INPUT_LIMITS.NAME_MAX} />
+                  <CharCount value={staffDraft.name} max={INPUT_LIMITS.NAME_MAX} />
                 </div>
                 <div>
                   <label className={labelClass}>Contact Number</label>
-                  <input type="text" inputMode="numeric" value={staffDraft.phone} onChange={(e) => setStaffDraft({ ...staffDraft, phone: sanitizePhone(e.target.value) })} className={inputClass} placeholder="Contact Number" maxLength={INPUT_LIMITS.PHONE_LENGTH} />
+                  <PhoneInput value={staffDraft.phone} onChange={(e) => setStaffDraft({ ...staffDraft, phone: sanitizePhone(e.target.value) })} className={inputClass} aria-label="Contact number" />
                 </div>
               </div>
               {staffError && <p className="text-[#bf4a53] text-xs font-semibold">{staffError}</p>}

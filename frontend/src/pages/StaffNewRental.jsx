@@ -21,6 +21,8 @@ import {
   INPUT_LIMITS,
   sanitizeName,
   sanitizePhone,
+  validatePhone,
+  PHONE_ERROR,
   sanitizeAddress,
   sanitizeNotes,
 } from '../utils/inputLimits';
@@ -269,7 +271,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
     if (nameTrimmed.length < INPUT_LIMITS.NAME_MIN) errs.name = 'Full name is required (min 2 characters)';
     else if (nameTrimmed.length > INPUT_LIMITS.NAME_MAX) errs.name = `Full name must be ${INPUT_LIMITS.NAME_MAX} characters or fewer`;
     else if (/\d/.test(nameTrimmed)) errs.name = 'Name must not contain numbers';
-    if (!customer.contact || !/^\d{11}$/.test(customer.contact.trim())) errs.contact = 'Contact number must be exactly 11 digits';
+    if (validatePhone(customer.contact) !== true) errs.contact = PHONE_ERROR;
     const addrTrimmed = (customer.address || '').trim();
     if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
     else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
@@ -850,7 +852,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                     onChange={e => { setCustomer({...customer, name: sanitizeName(e.target.value)}); clearFieldError('name'); touchField('name'); }}
                     onBlur={() => touchField('name')}
                     className={inputClass('name')} aria-label="Customer full name"
-                    maxLength={INPUT_LIMITS.NAME_MAX}
+                    maxLength={INPUT_LIMITS.NAME_MAX} showCount
                     error={fieldErrors.name || undefined} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
