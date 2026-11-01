@@ -11,6 +11,19 @@ import { LS_BUSINESS, LS_POLICIES, LS_AUTOMATION, DEFAULT_BUSINESS, DEFAULT_POLI
 // Failure messages all start with "Could not" — render them red, not green.
 const msgTone = (msg) => (msg.startsWith('Could not') ? 'text-red-600' : 'text-emerald-600');
 
+// Saved rule -> number, keeping the fallback for missing/garbage values. Unlike
+// `parseInt(x) || d`, a saved 0 (e.g. no cleaning buffer) is kept.
+const ruleNum = (raw, fallback) => {
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+// 8 -> "8:00 AM", 21 -> "9:00 PM", 24 -> "12:00 AM (midnight)".
+const hourLabel = (h) => {
+  if (h === 24 || h === 0) return h === 24 ? '12:00 AM (midnight)' : '12:00 AM';
+  return `${h % 12 || 12}:00 ${h < 12 ? 'AM' : 'PM'}`;
+};
+
 // Admin General tab: business profile, rental policies/fees, automation &
 // data retention, and the QR-code receipts toggle.
 export default function GeneralTab() {
@@ -21,13 +34,13 @@ export default function GeneralTab() {
   const [bizMsg, setBizMsg] = useState('');
 
   // Rental Policies
-  const [policies, setPolicies] = useState(() => loadJSON(LS_POLICIES, DEFAULT_POLICIES));
+  const [policies, setPolicies] = useState(() => ({ ...DEFAULT_POLICIES, ...loadJSON(LS_POLICIES, DEFAULT_POLICIES) }));
   const [editPolicies, setEditPolicies] = useState(false);
   const [localPolicies, setLocalPolicies] = useState(policies);
   const [polMsg, setPolMsg] = useState('');
 
   // Automation & data retention
-  const [automation, setAutomation] = useState(() => loadJSON(LS_AUTOMATION, DEFAULT_AUTOMATION));
+  const [automation, setAutomation] = useState(() => ({ ...DEFAULT_AUTOMATION, ...loadJSON(LS_AUTOMATION, DEFAULT_AUTOMATION) }));
   const [editAutomation, setEditAutomation] = useState(false);
   const [localAutomation, setLocalAutomation] = useState(automation);
   const [autoMsg, setAutoMsg] = useState('');
@@ -57,17 +70,21 @@ export default function GeneralTab() {
       localStorage.setItem(LS_BUSINESS, JSON.stringify(biz));
 
       const pol = { ...policies };
-      if (rules.rental_period_days) pol.defaultDays = parseInt(rules.rental_period_days) || pol.defaultDays;
-      if (rules.return_days_after_event) pol.returnAfterEvent = parseInt(rules.return_days_after_event) || pol.returnAfterEvent;
-      if (rules.min_downpayment) pol.minDown = parseInt(rules.min_downpayment) || pol.minDown;
-      if (rules.damage_fee) pol.damageFee = parseInt(rules.damage_fee) || pol.damageFee;
+      pol.defaultDays = ruleNum(rules.rental_period_days, pol.defaultDays);
+      pol.returnAfterEvent = ruleNum(rules.return_days_after_event, pol.returnAfterEvent);
+      pol.minDown = ruleNum(rules.min_downpayment, pol.minDown);
+      pol.damageFee = ruleNum(rules.damage_fee, pol.damageFee);
+      pol.cleaningBuffer = ruleNum(rules.cleaning_buffer_days, pol.cleaningBuffer);
+      pol.noShowDays = ruleNum(rules.no_show_after_days, pol.noShowDays);
       setPolicies(pol);
       setLocalPolicies(pol);
       localStorage.setItem(LS_POLICIES, JSON.stringify(pol));
 
       const auto = { ...automation };
-      if (rules.overdue_escalation_days) auto.escalationDays = parseInt(rules.overdue_escalation_days) || auto.escalationDays;
-      if (rules.data_retention_months) auto.retentionMonths = parseInt(rules.data_retention_months) || auto.retentionMonths;
+      auto.escalationDays = ruleNum(rules.overdue_escalation_days, auto.escalationDays);
+      auto.retentionMonths = ruleNum(rules.data_retention_months, auto.retentionMonths);
+      auto.sendStart = ruleNum(rules.reminder_send_start_hour, auto.sendStart);
+      auto.sendEnd = ruleNum(rules.reminder_send_end_hour, auto.sendEnd);
       setAutomation(auto);
       setLocalAutomation(auto);
       localStorage.setItem(LS_AUTOMATION, JSON.stringify(auto));
@@ -108,16 +125,24 @@ export default function GeneralTab() {
       return_days_after_event: String(localPolicies.returnAfterEvent),
       min_downpayment: String(localPolicies.minDown),
       damage_fee: String(localPolicies.damageFee),
+      cleaning_buffer_days: String(localPolicies.cleaningBuffer),
+      no_show_after_days: String(localPolicies.noShowDays),
     }, setPolMsg, 'Rental policies saved!');
   };
 
   const saveAutomation = () => {
+    if (localAutomation.sendStart >= localAutomation.sendEnd) {
+      setAutoMsg('Could not save: the reminder start time must be earlier than the end time.');
+      return;
+    }
     localStorage.setItem(LS_AUTOMATION, JSON.stringify(localAutomation));
     setAutomation(localAutomation);
     setEditAutomation(false);
     syncRulesToBackend({
       overdue_escalation_days: String(localAutomation.escalationDays),
       data_retention_months: String(localAutomation.retentionMonths),
+      reminder_send_start_hour: String(localAutomation.sendStart),
+      reminder_send_end_hour: String(localAutomation.sendEnd),
     }, setAutoMsg, 'Automation settings saved!');
   };
 
@@ -221,6 +246,12 @@ export default function GeneralTab() {
             <NumberField label="Default Damage Fee" value={localPolicies.damageFee} min={0}
               onChange={(v) => setLocalPolicies({ ...localPolicies, damageFee: v })} prefix="₱" suffix="per damaged item" widthClass="w-32"
               hint="Applied when the return form's fee field is left blank — staff can still type a custom amount per return." />
+            <NumberField label="Cleaning Buffer" value={localPolicies.cleaningBuffer} min={0} max={7}
+              onChange={(v) => setLocalPolicies({ ...localPolicies, cleaningBuffer: v })} suffix="days after due date"
+              hint="Days an item is held for cleaning before the next customer can pick it up. Blocks those days on the booking calendar." />
+            <NumberField label="No-show Alert After" value={localPolicies.noShowDays} min={1} max={14}
+              onChange={(v) => setLocalPolicies({ ...localPolicies, noShowDays: v })} suffix="days past pickup"
+              hint="Staff get a one-time alert when a reserved item still hasn't been picked up this long after the pickup date." />
             <div className="flex gap-2 pt-1 sm:col-span-2">
               <button onClick={savePolicies} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
               <button onClick={() => { setEditPolicies(false); setLocalPolicies(policies); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
@@ -233,6 +264,8 @@ export default function GeneralTab() {
             <InfoTile label="Return After Event" value={`${policies.returnAfterEvent} day${policies.returnAfterEvent !== 1 ? 's' : ''}`} />
             <InfoTile label="Min Downpayment" value={`₱${policies.minDown}`} />
             <InfoTile label="Default Damage Fee" value={`₱${policies.damageFee}`} />
+            <InfoTile label="Cleaning Buffer" value={policies.cleaningBuffer === 0 ? 'None' : `${policies.cleaningBuffer} day${policies.cleaningBuffer !== 1 ? 's' : ''} after due date`} />
+            <InfoTile label="No-show Alert" value={`after ${policies.noShowDays} day${policies.noShowDays !== 1 ? 's' : ''}`} />
           </div>
         )}
       </CollapsibleCard>
@@ -257,6 +290,12 @@ export default function GeneralTab() {
             <NumberField label="Keep history for" value={localAutomation.retentionMonths} min={3} max={60}
               onChange={(v) => setLocalAutomation({ ...localAutomation, retentionMonths: v })}
               suffix="months" hint="Old notifications, SMS, and audit logs older than this are purged nightly." />
+            <NumberField label="Send reminders from" value={localAutomation.sendStart} min={0} max={23}
+              onChange={(v) => setLocalAutomation({ ...localAutomation, sendStart: v })} suffix={`:00 · ${hourLabel(localAutomation.sendStart)}`}
+              hint="Automatic customer SMS and emails wait until this hour (Philippine time)." />
+            <NumberField label="Stop reminders at" value={localAutomation.sendEnd} min={1} max={24}
+              onChange={(v) => setLocalAutomation({ ...localAutomation, sendEnd: v })} suffix={`:00 · ${hourLabel(localAutomation.sendEnd)}`}
+              hint="Nothing automatic is sent from this hour until the start hour. 24 = midnight." />
             <div className="flex gap-2 pt-1 sm:col-span-2">
               <button onClick={saveAutomation} className="px-5 py-2 bg-[#bf4a53] text-white rounded-full text-sm font-bold hover:bg-red-700 transition-colors">Save</button>
               <button onClick={() => { setEditAutomation(false); setLocalAutomation(automation); }} className="px-5 py-2 border border-gray-200 rounded-full text-sm font-bold hover:bg-gray-50 transition-colors">Cancel</button>
@@ -267,6 +306,7 @@ export default function GeneralTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <InfoTile label="Overdue Escalation" value={`after ${automation.escalationDays} days overdue`} />
             <InfoTile label="History Retention" value={`${automation.retentionMonths} months`} />
+            <InfoTile label="Reminder Hours" value={`${hourLabel(automation.sendStart)} – ${hourLabel(automation.sendEnd)}`} />
           </div>
         )}
       </CollapsibleCard>

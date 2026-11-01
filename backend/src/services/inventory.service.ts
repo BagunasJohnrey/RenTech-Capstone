@@ -3,11 +3,14 @@ import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
 import { ItemStatus, Prisma } from '@prisma/client';
+import { getNumberRules } from './settings.service.js';
 
-// After an item is returned it enters a cleaning window of this many days
-// before it can be rented again. Staff manually flip the item back to
-// Available once cleaning is finished.
-const CLEANING_DELAY_DAYS = 1;
+// After an item's due date it is held for cleaning this many days before the
+// next pickup can start — the admin's `cleaning_buffer_days` setting
+// (default 1). Staff manually flip the item back to Available once cleaned.
+async function cleaningBufferDays(): Promise<number> {
+  return (await getNumberRules('cleaning_buffer_days')).cleaning_buffer_days;
+}
 
 export async function listItems(
   statusFilter?: string,
@@ -393,10 +396,10 @@ export async function checkAvailability(itemId: number, rentalDate: string, dueD
   // Only currently-active rentals/reservations block a new booking. Returned
   // transactions are not shown (the item is in Cleaning status instead).
   // A returned item is unavailable while being cleaned: the next pickup may
-  // only start CLEANING_DELAY_DAYS after the previous due date, so shift the
+  // only start the cleaning buffer after the previous due date, so shift the
   // requested start back by that delay when checking active rentals.
   const startMinusDelay = new Date(start);
-  startMinusDelay.setDate(startMinusDelay.getDate() - CLEANING_DELAY_DAYS);
+  startMinusDelay.setDate(startMinusDelay.getDate() - await cleaningBufferDays());
 
   const overlappingTx = await prisma.transaction.findFirst({
     where: {
@@ -431,11 +434,12 @@ export async function getBlockedDates(itemId: number) {
 
   // SECURITY: this endpoint is public — customer names must never be exposed
   // (previously returned `customerName`, leaking who rented an item and when).
+  const bufferDays = await cleaningBufferDays();
   const blockedRanges = transactions.map(tx => {
     // Extend the blocked range by the cleaning delay so the calendar shades
     // the day the item is being cleaned as unavailable.
     const end = new Date(tx.dueDate);
-    end.setDate(end.getDate() + CLEANING_DELAY_DAYS);
+    end.setDate(end.getDate() + bufferDays);
     return {
       transactionId: tx.id,
       start: tx.rentalDate.toISOString().split('T')[0],

@@ -134,6 +134,22 @@ let notifications = [
   { id: 'n3', type: 'late_return', title: 'Late return', message: 'Ivory Lace Wedding Gown returned late — inspected and sent to cleaning.', transactionId: '33333333-3333-4333-8333-333333333333', isRead: true, createdAt: day(-2) + 'T14:00:00Z' },
 ];
 
+// Audit trail (demo): a few representative events, newest first.
+const DEMO_AUDIT = (() => {
+  const admin = { id: 'demo-admin-profile', name: 'Mylene (Demo Admin)', email: 'admin@rentech.demo', role: 'Admin' };
+  const staffer = { id: 'demo-staff-profile', name: 'Kai (Demo Staff)', email: 'staff@rentech.demo', role: 'Staff' };
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+  return [
+    { id: 'a1', action: 'settings.rules.update', entity: 'settings', entityId: 'business_rules', actor: admin, createdAt: ago(1), oldValue: { late_penalty_per_day: '100' }, newValue: { late_penalty_per_day: '150' } },
+    { id: 'a2', action: 'payment_proof.approve', entity: 'payment_proof', entityId: 'proof-1042', actor: staffer, createdAt: ago(3), oldValue: { status: 'pending' }, newValue: { status: 'approved', amount: 750 } },
+    { id: 'a3', action: 'export.download', entity: 'export', entityId: 'workbook', actor: admin, createdAt: ago(5), oldValue: null, newValue: { report: 'workbook', scope: 'Oct 2026' } },
+    { id: 'a4', action: 'update', entity: 'transaction', entityId: 'TX-2026-0188', actor: staffer, createdAt: ago(9), oldValue: { status: 'Reserved' }, newValue: { status: 'Active' } },
+    { id: 'a5', action: 'inventory.price.update', entity: 'inventory', entityId: 'Ivory Ball Gown', actor: admin, createdAt: ago(26), oldValue: { price: 2500 }, newValue: { price: 2800 } },
+    { id: 'a6', action: 'backup.auto', entity: 'backup', entityId: 'backup-2026-11-01', actor: null, createdAt: ago(30), oldValue: null, newValue: { tables: 14 } },
+    { id: 'a7', action: 'staff.create', entity: 'staff', entityId: 'staff@rentech.demo', actor: admin, createdAt: ago(72), oldValue: null, newValue: { name: 'Kai (Demo Staff)' } },
+  ];
+})();
+
 let staff = [
   { id: 'demo-staff-profile', email: 'staff@rentech.demo', name: 'Kai (Demo Staff)', phone: '09181234567', createdAt: day(-30) },
   { id: 's-2', email: 'ana@rentech.demo', name: 'Ana (Demo Staff 2)', phone: null, createdAt: day(-12) },
@@ -1044,6 +1060,30 @@ function route(method, path, body) {
     // Signed-URL resolution for bucket paths. Demo images are absolute URLs
     // already, so this only fires for uploaded demo paths — echo a placeholder.
     return { value: { url: IMG('demo-' + Math.abs(hash(path)) % 50) } };
+  }
+
+  // Audit trail (demo): filtered in memory like the backend.
+  if (P(/^\/audit\/facets/) && method === 'GET') {
+    const actors = [...new Map(DEMO_AUDIT.filter((a) => a.actor).map((a) => [a.actor.id, a.actor])).values()];
+    return { value: { actions: [...new Set(DEMO_AUDIT.map((a) => a.action))].sort(), entities: [...new Set(DEMO_AUDIT.map((a) => a.entity))].sort(), actors } };
+  }
+  if (P(/^\/audit(\/export)?(\?|$)/) && method === 'GET') {
+    const q = new URLSearchParams(path.split('?')[1] || '');
+    const rows = DEMO_AUDIT.filter((a) => {
+      if (q.get('action') && a.action !== q.get('action')) return false;
+      if (q.get('entity') && a.entity !== q.get('entity')) return false;
+      if (q.get('actorId') === 'system' ? a.actor : q.get('actorId') && a.actor?.id !== q.get('actorId')) return false;
+      const term = (q.get('q') || '').toLowerCase();
+      if (term && !a.action.includes(term) && !a.entityId.toLowerCase().includes(term)) return false;
+      const day = a.createdAt.slice(0, 10);
+      if (q.get('from') && day < q.get('from')) return false;
+      if (q.get('to') && day > q.get('to')) return false;
+      return true;
+    });
+    if (path.startsWith('/audit/export')) return { value: { demo: true, rows } };
+    const page = Number(q.get('page') || 1);
+    const size = Number(q.get('pageSize') || 25);
+    return { value: { rows: rows.slice((page - 1) * size, page * size), total: rows.length, page, pageSize: size } };
   }
 
   // Historical records import (demo): stats / list / import / delete against

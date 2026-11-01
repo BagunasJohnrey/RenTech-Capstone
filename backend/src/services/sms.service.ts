@@ -5,7 +5,7 @@ import { createAuditLog } from '../utils/audit.js';
 import { sendSms, applyTemplate, smsShortName, smsItemName, finalizeSms } from './semaphore.service.js';
 import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
-import { getBusinessRules, isSmsEnabled } from './settings.service.js';
+import { getBusinessRules, isSmsEnabled, getReminderWindow, reminderWindowFrom, numberRule, getNumberRules } from './settings.service.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import {
   manilaDayStart, manilaNextDayStart, manilaDaysPastDue, isReminderQuietHours, formatManilaDate,
@@ -136,7 +136,7 @@ export async function autoNotifyOverdue(now: Date = new Date()) {
 
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'late_return' } });
   const smsGloballyOn = await isSmsEnabled().catch(() => true);
-  const quiet = isReminderQuietHours(now);
+  const quiet = isReminderQuietHours(now, await getReminderWindow());
 
   const results: { transactionId: string; customerName: string; message: string; status: string }[] = [];
   let statusFlipped = false;
@@ -254,15 +254,11 @@ export async function autoNotifyOverdue(now: Date = new Date()) {
 // Day-N escalation: rentals still overdue after `overdue_escalation_days` get a
 // single follow-up text. Guarded by overdueEscalationSent so it fires once.
 export async function notifyOverdue3Days(now: Date = new Date()) {
-  if (isReminderQuietHours(now)) return [];
-
-  let escalationDays = 3;
-  try {
-    const rules = await getBusinessRules();
-    const raw = rules['overdue_escalation_days'];
-    const parsed = raw != null ? parseInt(raw, 10) : NaN;
-    if (Number.isFinite(parsed) && parsed > 0) escalationDays = parsed;
-  } catch { /* keep default */ }
+  // One rules read covers both the send window and the escalation day.
+  let rules: Record<string, string> = {};
+  try { rules = await getBusinessRules(); } catch { /* keep defaults */ }
+  if (isReminderQuietHours(now, reminderWindowFrom(rules))) return [];
+  const escalationDays = numberRule(rules, 'overdue_escalation_days');
 
   const txs = await prisma.transaction.findMany({
     where: {
@@ -330,7 +326,7 @@ export async function notifyOverdue3Days(now: Date = new Date()) {
 }
 
 export async function notifyDueToday(now: Date = new Date()) {
-  if (isReminderQuietHours(now)) return [];
+  if (isReminderQuietHours(now, await getReminderWindow())) return [];
   const startOfToday = manilaDayStart(now);
   const endOfToday = manilaNextDayStart(now);
 
@@ -427,13 +423,13 @@ export async function notifyDueToday(now: Date = new Date()) {
 }
 
 // No-show detection: a Reserved transaction whose pickup (rentalDate) passed
-// more than NO_SHOW_WINDOW_DAYS ago with no release/condition photo means the
-// customer never picked the item up. Staff get ONE alert per transaction
-// (noShowNotified once-guard) so they can cancel and free the item.
-const NO_SHOW_WINDOW_DAYS = 1;
-
+// more than `no_show_after_days` (admin setting, default 1) ago with no
+// release/condition photo means the customer never picked the item up. Staff
+// get ONE alert per transaction (noShowNotified once-guard) so they can
+// cancel and free the item.
 export async function checkNoShowAndNotify() {
-  const cutoff = new Date(Date.now() - NO_SHOW_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const { no_show_after_days: noShowDays } = await getNumberRules('no_show_after_days');
+  const cutoff = new Date(Date.now() - noShowDays * 24 * 60 * 60 * 1000);
 
   const noShowTxs = await prisma.transaction.findMany({
     where: {

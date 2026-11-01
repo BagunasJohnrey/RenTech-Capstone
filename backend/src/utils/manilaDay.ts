@@ -31,9 +31,14 @@ export function manilaHour(at: Date = new Date()): number {
 export const REMINDER_SEND_START_HOUR = 8;
 export const REMINDER_SEND_END_HOUR = 21;
 
-export function isReminderQuietHours(at: Date = new Date()): boolean {
+// `window` comes from the admin's reminder hours (settings.getReminderWindow);
+// omitted = the 08:00–21:00 default.
+export function isReminderQuietHours(
+  at: Date = new Date(),
+  window: { startHour: number; endHour: number } = { startHour: REMINDER_SEND_START_HOUR, endHour: REMINDER_SEND_END_HOUR },
+): boolean {
   const h = manilaHour(at);
-  return h < REMINDER_SEND_START_HOUR || h >= REMINDER_SEND_END_HOUR;
+  return h < window.startHour || h >= window.endHour;
 }
 
 // Customer-facing date text. Without a timeZone, toLocaleDateString uses the

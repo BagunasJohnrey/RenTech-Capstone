@@ -64,12 +64,18 @@ export async function updateRules(req: AuthenticatedRequest, res: Response, next
     if (typeof req.body.manual_qr_codes === 'string') {
       settingsService.assertValidManualQrCodes(req.body.manual_qr_codes);
     }
+    const before = await settingsService.getBusinessRules();
+    settingsService.assertValidRuleValues(req.body, before);
     const result = await settingsService.updateBusinessRules(req.body);
     try {
+      // Only the keys that actually changed, old vs new, so the Audit Trail
+      // can show "late fee 100 → 150" instead of a full settings dump.
+      const changed = Object.keys(req.body ?? {}).filter((k) => before[k] !== req.body[k]);
       await createAuditLog({
         action: 'settings.rules.update', entity: 'settings', entityId: 'rental-rules',
         performedById: req.user?.id ?? null,
-        newValue: req.body ?? {},
+        oldValue: Object.fromEntries(changed.map((k) => [k, before[k] ?? null])),
+        newValue: Object.fromEntries(changed.map((k) => [k, req.body[k]])),
       });
     } catch {
       // audit is best-effort — never fail the save because of it

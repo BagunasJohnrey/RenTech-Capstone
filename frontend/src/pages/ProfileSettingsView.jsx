@@ -6,6 +6,7 @@ import GeneralTab from '../components/settings/GeneralTab';
 import DataBackupsTab from '../components/settings/DataBackupsTab';
 import NotificationsTab from '../components/settings/NotificationsTab';
 import IntegrationsTab from '../components/settings/IntegrationsTab';
+import AuditTrailTab from '../components/settings/AuditTrailTab';
 import TeamTab from '../components/settings/TeamTab';
 import AccountActions from '../components/settings/AccountActions';
 import HistoryImportPanel from '../components/settings/HistoryImportPanel';
@@ -70,6 +71,7 @@ export default function ProfileSettingsView({
           {adminSection === 'data' && <DataBackupsTab />}
           {adminSection === 'notifications' && <NotificationsTab profile={profile} />}
           {adminSection === 'integrations' && <IntegrationsTab />}
+          {adminSection === 'audit' && <AuditTrailTab />}
           {adminSection === 'team' && (
             <TeamTab
               staffList={staffList}

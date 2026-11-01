@@ -506,6 +506,55 @@ export async function exportWorkbook(win?: ExportWindow, scopeLabel?: string, ex
   return toBuffer(wb);
 }
 
+// Audit trail export (Admin). Rows come pre-filtered from audit.service so
+// the sheet matches what the admin sees on screen.
+export interface AuditExportRow {
+  createdAt: Date;
+  action: string;
+  entity: string;
+  entityId: string;
+  oldValue: unknown;
+  newValue: unknown;
+  actor: { name: string; role: string } | null;
+}
+
+const JSON_CELL_MAX = 500;
+function jsonCell(v: unknown): string {
+  if (v == null) return '';
+  const text = typeof v === 'string' ? v : JSON.stringify(v);
+  return text.length > JSON_CELL_MAX ? `${text.slice(0, JSON_CELL_MAX)}...` : text;
+}
+
+export async function exportAuditTrail(rows: AuditExportRow[], scopeLabel: string, exportedBy?: ExportedBy): Promise<Buffer> {
+  const columns: ColDef[] = [
+    { header: 'Date & Time', key: 'When', width: 22 },
+    { header: 'Performed By', key: 'Actor', width: 24 },
+    { header: 'Role', key: 'Role', width: 10, align: 'center' },
+    { header: 'Action', key: 'Action', width: 28 },
+    { header: 'Target', key: 'Entity', width: 16 },
+    { header: 'Target ID', key: 'EntityId', width: 30 },
+    { header: 'Before', key: 'Before', width: 40 },
+    { header: 'After', key: 'After', width: 40 },
+  ];
+  const sheetRows = rows.map((r) => ({
+    When: r.createdAt.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }),
+    Actor: r.actor?.name || 'System',
+    Role: r.actor?.role || 'Auto',
+    Action: r.action,
+    Entity: r.entity,
+    EntityId: r.entityId,
+    Before: jsonCell(r.oldValue),
+    After: jsonCell(r.newValue),
+  }));
+  return toBuffer(await buildWorkbook({
+    sheetName: 'Audit Trail',
+    title: 'Audit Trail',
+    subtitle: `Period: ${scopeLabel} · ${rows.length} event(s)`,
+    columns,
+    rows: sheetRows,
+  }, exportedBy));
+}
+
 // L1: CSV-formula-injection note — cell values are written as literal
 // strings via ExcelJS, so formulas in customer/item names are inert here by
 // construction (no leading-sign escaping needed as with a CSV string).

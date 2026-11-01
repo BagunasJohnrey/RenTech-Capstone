@@ -10,6 +10,82 @@ export async function getBusinessRules() {
   return map;
 }
 
+// Numeric business rules the admin can change in Settings. One table holds
+// each rule's default and allowed range so the readers (fallback/clamp) and
+// the save validation never disagree.
+export const NUMERIC_RULES = {
+  rental_period_days: { def: 3, min: 1, max: 30 },
+  return_days_after_event: { def: 1, min: 0, max: 7 },
+  min_downpayment: { def: 200, min: 0, max: 1_000_000 },
+  damage_fee: { def: 1000, min: 0, max: 1_000_000 },
+  overdue_escalation_days: { def: 3, min: 1, max: 30 },
+  data_retention_months: { def: 12, min: 3, max: 60 },
+  // Days an item is held for cleaning after a rental's due date before the
+  // next pickup can start (blocks the calendar).
+  cleaning_buffer_days: { def: 1, min: 0, max: 7 },
+  // Reserved bookings not picked up this many days after the pickup date
+  // raise a "no-show" alert to staff.
+  no_show_after_days: { def: 1, min: 1, max: 14 },
+  // Automatic customer SMS/email go out only between these Manila hours.
+  reminder_send_start_hour: { def: 8, min: 0, max: 23 },
+  reminder_send_end_hour: { def: 21, min: 1, max: 24 },
+} as const;
+export type NumericRuleKey = keyof typeof NUMERIC_RULES;
+
+// Parsed, range-clamped value with the default for missing/garbage input.
+export function numberRule(rules: Record<string, string | undefined>, key: NumericRuleKey): number {
+  const { def, min, max } = NUMERIC_RULES[key];
+  const n = Number(rules[key]);
+  if (rules[key] == null || rules[key] === '' || !Number.isFinite(n)) return def;
+  return Math.min(Math.max(n, min), max);
+}
+
+export async function getNumberRules(...keys: NumericRuleKey[]): Promise<Record<NumericRuleKey, number>> {
+  let rules: Record<string, string> = {};
+  try { rules = await getBusinessRules(); } catch { /* defaults */ }
+  const out = {} as Record<NumericRuleKey, number>;
+  for (const k of keys) out[k] = numberRule(rules, k);
+  return out;
+}
+
+export interface ReminderWindow { startHour: number; endHour: number }
+export function reminderWindowFrom(rules: Record<string, string | undefined>): ReminderWindow {
+  const startHour = numberRule(rules, 'reminder_send_start_hour');
+  const endHour = numberRule(rules, 'reminder_send_end_hour');
+  // A saved window is validated start < end; guard old/odd rows anyway.
+  if (startHour >= endHour) {
+    return { startHour: NUMERIC_RULES.reminder_send_start_hour.def, endHour: NUMERIC_RULES.reminder_send_end_hour.def };
+  }
+  return { startHour, endHour };
+}
+
+export async function getReminderWindow(): Promise<ReminderWindow> {
+  let rules: Record<string, string> = {};
+  try { rules = await getBusinessRules(); } catch { /* defaults */ }
+  return reminderWindowFrom(rules);
+}
+
+// Rejects out-of-range / non-numeric values for known numeric rules and an
+// inverted reminder window. Unknown keys pass through (text settings).
+export function assertValidRuleValues(data: Record<string, string>, current: Record<string, string> = {}) {
+  for (const [key, raw] of Object.entries(data)) {
+    const spec = (NUMERIC_RULES as Record<string, { min: number; max: number }>)[key];
+    if (!spec) continue;
+    const n = Number(raw);
+    if (String(raw).trim() === '' || !Number.isFinite(n)) {
+      throw new AppError(400, `${key} must be a number`);
+    }
+    if (n < spec.min || n > spec.max) {
+      throw new AppError(400, `${key} must be between ${spec.min} and ${spec.max}`);
+    }
+  }
+  const start = Number(data.reminder_send_start_hour ?? current.reminder_send_start_hour ?? NUMERIC_RULES.reminder_send_start_hour.def);
+  const end = Number(data.reminder_send_end_hour ?? current.reminder_send_end_hour ?? NUMERIC_RULES.reminder_send_end_hour.def);
+  if (('reminder_send_start_hour' in data || 'reminder_send_end_hour' in data) && start >= end) {
+    throw new AppError(400, 'Reminder start hour must be earlier than the end hour');
+  }
+}
+
 export type ManualQrCode = { id: string; label: string; accountName: string; imagePath: string };
 
 const MAX_QR_CODES = 10;

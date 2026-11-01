@@ -11,14 +11,16 @@ import { sendSms, applyTemplate, smsShortName, smsItemName, finalizeSms } from '
 import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { verifyDiscountPin } from './auth.service.js';
-import { getBusinessRules, getFeatureFlags, isSmsEnabled } from './settings.service.js';
+import { getBusinessRules, getFeatureFlags, isSmsEnabled, getNumberRules } from './settings.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 import { manilaDayStart, manilaNextDayStart, manilaDaysPastDue, formatManilaDate } from '../utils/manilaDay.js';
 
-// After an item is returned it enters a cleaning window of this many days
-// before it can be rented again. Staff manually flip the item back to
-// Available once cleaning is finished.
-const CLEANING_DELAY_DAYS = 1;
+// After an item's due date it is held for cleaning this many days before the
+// next pickup can start — the admin's `cleaning_buffer_days` setting
+// (default 1). Staff manually flip the item back to Available once cleaned.
+async function cleaningBufferDays(): Promise<number> {
+  return (await getNumberRules('cleaning_buffer_days')).cleaning_buffer_days;
+}
 
 // SECURITY: the price charged for a rental is ALWAYS derived server-side from
 // the item. Client-supplied rentalFee values are ignored (never trusted).
@@ -182,10 +184,10 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
 
   // Only currently-active rentals/reservations block a new booking. Returned
   // transactions are no longer shown — the item is in Cleaning status instead.
-  // The next pickup may only start CLEANING_DELAY_DAYS after a previous due
+  // The next pickup may only start the cleaning buffer after a previous due
   // date, so shift the requested start back by that delay.
   const startMinusDelay = new Date(start);
-  startMinusDelay.setDate(startMinusDelay.getDate() - CLEANING_DELAY_DAYS);
+  startMinusDelay.setDate(startMinusDelay.getDate() - await cleaningBufferDays());
 
   const overlapWhere: Prisma.TransactionWhereInput = {
     itemId: data.itemId,
@@ -717,6 +719,7 @@ export async function updateTransaction(
 
   let updated;
   try {
+    const bufferDays = await cleaningBufferDays();
     updated = await prisma.$transaction(async (tx) => {
       await assertItemAvailable(
         {
@@ -724,7 +727,7 @@ export async function updateTransaction(
           rentalDate: nextRental,
           dueDate: nextDue,
           excludeTxId: transactionId,
-          cleaningDelayDays: CLEANING_DELAY_DAYS,
+          cleaningDelayDays: bufferDays,
         },
         tx
       );
@@ -844,6 +847,7 @@ export async function swapBookingItem(
 
   let updated;
   try {
+    const bufferDays = await cleaningBufferDays();
     updated = await prisma.$transaction(async (tx) => {
       await assertItemAvailable(
         {
@@ -851,7 +855,7 @@ export async function swapBookingItem(
           rentalDate: existing.rentalDate,
           dueDate: existing.dueDate,
           excludeTxId: transactionId,
-          cleaningDelayDays: CLEANING_DELAY_DAYS,
+          cleaningDelayDays: bufferDays,
         },
         tx
       );
