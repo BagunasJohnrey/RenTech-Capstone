@@ -213,8 +213,16 @@ export function visualsFor(visuals, title) {
   return has ? v : null;
 }
 
+// Report prices always carry 2 decimals (₱1,234.00).
 export function formatMoney(n) {
-  return `₱${Math.round(n).toLocaleString('en-PH')}`;
+  return `₱${(Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// "₱22,450" / "PHP 22,450.5" written by the AI -> "₱22,450.50". Anything that
+// isn't a plain peso amount is returned unchanged.
+export function normalizeMoneyText(value) {
+  const m = /^(?:₱|PHP|Php)\s?([\d,]+(?:\.\d+)?)$/.exec(String(value).trim());
+  return m ? formatMoney(Number(m[1].replace(/,/g, ''))) : value;
 }
 
 export function formatCompactMoney(n) {
@@ -246,7 +254,7 @@ function isMetricLine(line) {
   if (!m) return null;
   const value = m[2].trim().replace(/\.$/, '');
   if (!/\d/.test(value) || value.split(/\s+/).length > 4) return null;
-  return { label: m[1].trim(), value };
+  return { label: m[1].trim(), value: normalizeMoneyText(value) };
 }
 
 const pct = (part, whole) => (whole ? `${Math.round((part / whole) * 100)}%` : '—');

@@ -5,6 +5,24 @@ const ACCENT = '#bf4a53';
 const COMPANY = "Mylene's Boutique";
 const TAGLINE = 'Rental Attire & Formal Wear';
 const ADDRESS = 'Balayan, Batangas, Philippines';
+export const REPORT_LOGO_URL = '/pwa-192x192.png';
+
+// Fetch the boutique logo as a data URL for jsPDF (null when unavailable).
+export async function loadReportLogo() {
+  try {
+    const res = await fetch(REPORT_LOGO_URL);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(typeof r.result === 'string' ? r.result : null);
+      r.onerror = () => resolve(null);
+      r.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
 
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -48,26 +66,38 @@ function buildDoc(bodySize, sections, meta) {
   const titleSize = bodySize + 3;
   const footerRoom = 16; // mm reserved at the bottom for the footer
 
-  // ---- Letterhead band ----
-  const headerH = 24;
+  // ---- Letterhead band: logo + business profile | report meta ----
+  const headerH = 30;
   doc.setFillColor(ar, ag, ab);
   doc.rect(0, 0, pageW, headerH, 'F');
+  let textX = margin;
+  if (meta.logo) {
+    const size = 20;
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(margin - 1, 5 - 1, size + 2, size + 2, 3, 3, 'F');
+    try {
+      doc.addImage(meta.logo, 'PNG', margin, 5, size, size);
+      textX = margin + size + 5;
+    } catch { /* logo is decorative */ }
+  }
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
-  doc.text(toPdfText(COMPANY), margin, 10);
+  doc.text(toPdfText(meta.business || COMPANY), textX, 10.5);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
-  doc.text(toPdfText(TAGLINE), margin, 15);
-  doc.text(toPdfText(ADDRESS), margin, 19.5);
+  doc.text(toPdfText(TAGLINE), textX, 15.5);
+  doc.text(toPdfText(meta.address || ADDRESS), textX, 20);
+  if (meta.contact) doc.text(toPdfText(`Contact: ${meta.contact}`), textX, 24.5);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text('Business Performance Report', pageW - margin, 9, { align: 'right' });
+  doc.text('Business Performance Report', pageW - margin, 9.5, { align: 'right' });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.text(`Date: ${meta.generatedDate || ''}`, pageW - margin, 14, { align: 'right' });
-  doc.text(`Ref: ${meta.docRef || ''}`, pageW - margin, 18.5, { align: 'right' });
+  doc.text(`Date: ${meta.generatedDate || ''}`, pageW - margin, 14.5, { align: 'right' });
+  doc.text(`Ref: ${meta.docRef || ''}`, pageW - margin, 19, { align: 'right' });
+  if (meta.exportedBy) doc.text(toPdfText(`Exported by: ${meta.exportedBy}`), pageW - margin, 23.5, { align: 'right' });
 
   let y = headerH + 9;
   const ensureSpace = (needed) => {
@@ -351,7 +381,7 @@ function buildDoc(bodySize, sections, meta) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
     doc.text(
-      toPdfText(`${COMPANY} AI Analytics - Confidential, for management use only`),
+      toPdfText(`${meta.business || COMPANY} AI Analytics - Confidential, for management use only${meta.exportedBy ? ` - Exported by ${meta.exportedBy}` : ''}`),
       margin,
       pageH - footerRoom + 8
     );
@@ -379,5 +409,5 @@ export function generateReportPdf(sections, meta = {}) {
     bodySize -= 0.5;
     doc = buildDoc(bodySize, sections, meta);
   }
-  doc.save(`${COMPANY} - Business Performance Report.pdf`);
+  doc.save(`${meta.business || COMPANY} - Business Performance Report.pdf`);
 }

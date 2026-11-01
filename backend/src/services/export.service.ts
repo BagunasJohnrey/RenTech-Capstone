@@ -1,5 +1,7 @@
+import { readFile } from 'node:fs/promises';
 import { prisma } from '../config/database.js';
 import ExcelJS from 'exceljs';
+import { getBusinessRules } from './settings.service.js';
 
 // ── Brand palette (mirrors frontend #bf4a53 brand) ──────────────────────────
 const BRAND = 'BF4A53';
@@ -57,8 +59,8 @@ function columnLetter(n: number): string {
 
 interface SheetSpec {
   sheetName: string;
-  title: string;
-  subtitle: string;
+  title: string;    // report name, e.g. "Transactions"
+  subtitle: string; // period + row count
   columns: ColDef[];
   rows: Record<string, unknown>[];
   statusKey?: string;
@@ -66,49 +68,109 @@ interface SheetSpec {
   totalLabel?: string;
 }
 
-function newWorkbook(title: string): ExcelJS.Workbook {
+// ── Letterhead: logo + business profile + who exported it ─────────────────
+// Same identity as the PDF report. Name/address/contact come from the
+// admin's Settings → General → Business Profile (BusinessRule rows).
+export interface ExportedBy { name: string; role: string }
+
+interface Letterhead {
+  business: string;
+  address: string;
+  contact: string;
+  exportedBy?: ExportedBy;
+  generatedAt: string;
+  logo: Buffer | null;
+}
+
+const DEFAULT_BUSINESS = "Mylene's Boutique";
+const DEFAULT_ADDRESS = 'Balayan, Batangas, Philippines';
+const LOGO_URL = new URL('../../assets/report-logo.png', import.meta.url);
+const HEADER_ROWS = 4;
+
+let logoCache: Buffer | null | undefined;
+async function loadLogo(): Promise<Buffer | null> {
+  if (logoCache !== undefined) return logoCache;
+  try { logoCache = await readFile(LOGO_URL); } catch { logoCache = null; }
+  return logoCache;
+}
+
+async function loadLetterhead(exportedBy?: ExportedBy): Promise<Letterhead> {
+  let rules: Record<string, string> = {};
+  try { rules = await getBusinessRules(); } catch { /* fall back to defaults */ }
+  return {
+    business: rules.business_name?.trim() || DEFAULT_BUSINESS,
+    address: rules.business_address?.trim() || DEFAULT_ADDRESS,
+    contact: rules.business_contact?.trim() || '',
+    exportedBy,
+    generatedAt: new Date().toLocaleString('en-PH', {
+      dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila',
+    }),
+    logo: await loadLogo(),
+  };
+}
+
+function newWorkbook(title: string, head: Letterhead): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'RenTech';
-  wb.title = title;
-  wb.subject = title;
+  wb.creator = head.exportedBy?.name || 'RenTech';
+  wb.title = `${head.business} — ${title}`;
+  wb.subject = wb.title;
   return wb;
 }
 
 // Adds one report sheet to an (existing) workbook so the combined download can
 // hold Transactions + Revenue + Inventory as separate sheets in a single file.
-function addSheet(wb: ExcelJS.Workbook, opts: SheetSpec): void {
+function addSheet(wb: ExcelJS.Workbook, opts: SheetSpec, head: Letterhead): void {
   const {
     sheetName, title, subtitle, columns, rows,
     statusKey, totalsCols = [], totalLabel = 'TOTAL',
   } = opts;
 
   const ws = wb.addWorksheet(sheetName, {
-    views: [{ state: 'frozen', ySplit: 3 }], // freeze header under the title bar
+    views: [{ state: 'frozen', ySplit: HEADER_ROWS + 1 }], // freeze table header under the letterhead
     pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } as never,
   });
   ws.properties.defaultRowHeight = 18;
 
   const lastCol = columns.length;
-  const headerRowIdx = 3;
+  const headerRowIdx = HEADER_ROWS + 1;
   const dataStartRow = headerRowIdx + 1;
   const lastDataRow = dataStartRow + rows.length - 1;
 
-  // ── Title bar (rows 1-2, merged across all columns) ──────────────────
-  ws.mergeCells(1, 1, 1, lastCol);
-  const titleCell = ws.getCell(1, 1);
-  titleCell.value = title;
-  titleCell.font = { name: 'Segoe UI', size: 16, bold: true, color: { argb: WHITE } };
-  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND_DEEP } };
-  titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(1).height = 32;
-
-  ws.mergeCells(2, 1, 2, lastCol);
-  const subCell = ws.getCell(2, 1);
-  subCell.value = subtitle;
-  subCell.font = { name: 'Segoe UI', size: 10, color: { argb: '6B7280' } };
-  subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FAF5F6' } };
-  subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(2).height = 20;
+  // ── Letterhead (rows 1-4): logo in column A, text merged across B..last ──
+  //   1  Business name — report title
+  //   2  Address · Contact
+  //   3  Period · row count
+  //   4  Exported by <name> (<role>) · Generated <Manila time>
+  const LIGHT = 'FFFAF5F6';
+  const textCol = lastCol > 1 ? 2 : 1;
+  const exporter = head.exportedBy ? `${head.exportedBy.name} (${head.exportedBy.role})` : 'RenTech';
+  const lines: { text: string; size: number; bold?: boolean; color: string; height: number }[] = [
+    { text: `${head.business} — ${title}`, size: 16, bold: true, color: BRAND_DEEP, height: 30 },
+    { text: [head.address, head.contact && `Contact: ${head.contact}`].filter(Boolean).join('  ·  '), size: 10, color: '4B5563', height: 18 },
+    { text: subtitle, size: 10, color: '6B7280', height: 18 },
+    { text: `Exported by ${exporter}  ·  Generated ${head.generatedAt}`, size: 9, color: '6B7280', height: 18 },
+  ];
+  lines.forEach((line, i) => {
+    const r = i + 1;
+    for (let c = 1; c <= lastCol; c++) {
+      ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT } };
+    }
+    if (lastCol > textCol) ws.mergeCells(r, textCol, r, lastCol);
+    const cell = ws.getCell(r, textCol);
+    cell.value = line.text;
+    cell.font = { name: 'Segoe UI', size: line.size, bold: !!line.bold, color: { argb: line.color } };
+    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(r).height = line.height;
+  });
+  // Brand rule under the letterhead.
+  for (let c = 1; c <= lastCol; c++) {
+    ws.getCell(HEADER_ROWS, c).border = { bottom: { style: 'medium', color: { argb: BRAND } } };
+  }
+  if (head.logo) {
+    const imageId = wb.addImage({ buffer: head.logo as unknown as ExcelJS.Buffer, extension: 'png' });
+    // 64px square floated over A1:A4 (column A is widened below to fit it).
+    ws.addImage(imageId, { tl: { col: 0.15, row: 0.2 }, ext: { width: 64, height: 64 }, editAs: 'oneCell' });
+  }
 
   // ── Header row ────────────────────────────────────────────────────────
   ws.getRow(headerRowIdx).height = 24;
@@ -119,11 +181,12 @@ function addSheet(wb: ExcelJS.Workbook, opts: SheetSpec): void {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND } };
     cell.alignment = {
       vertical: 'middle',
-      horizontal: col.align === 'right' ? 'right' : col.type === 'date' || col.align === 'center' ? 'center' : 'left',
-      indent: col.align === 'right' || col.type === 'date' || col.align === 'center' ? 0 : 1,
+      horizontal: isRightAligned(col) ? 'right' : col.type === 'date' || col.align === 'center' ? 'center' : 'left',
+      indent: isRightAligned(col) || col.type === 'date' || col.align === 'center' ? 0 : 1,
     };
     cell.border = { bottom: { style: 'thin', color: { argb: BRAND_DEEP } } };
-    ws.getColumn(i + 1).width = col.width;
+    // Column A also hosts the letterhead logo, so keep it at least logo-wide.
+    ws.getColumn(i + 1).width = i === 0 ? Math.max(col.width, 12) : col.width;
   });
 
   // ── Data rows ─────────────────────────────────────────────────────────
@@ -213,9 +276,15 @@ function addSheet(wb: ExcelJS.Workbook, opts: SheetSpec): void {
   }
 }
 
-function buildWorkbook(opts: SheetSpec): ExcelJS.Workbook {
-  const wb = newWorkbook(opts.title);
-  addSheet(wb, opts);
+// Money and counts always sit on the right (header and cells alike).
+function isRightAligned(col: ColDef): boolean {
+  return col.align === 'right' || col.type === 'currency' || col.type === 'number';
+}
+
+async function buildWorkbook(opts: SheetSpec, exportedBy?: ExportedBy): Promise<ExcelJS.Workbook> {
+  const head = await loadLetterhead(exportedBy);
+  const wb = newWorkbook(opts.title, head);
+  addSheet(wb, opts, head);
   return wb;
 }
 
@@ -235,10 +304,6 @@ export interface ExportWindow { start?: Date; end?: Date }
 function txDateWhere(win?: ExportWindow) {
   if (!win?.start) return {};
   return { createdAt: { gte: win.start, ...(win.end ? { lt: win.end } : {}) } };
-}
-
-function scopeSuffix(scopeLabel?: string): string {
-  return scopeLabel ? ` · ${scopeLabel}` : '';
 }
 
 async function transactionsSheet(win?: ExportWindow, scopeLabel?: string): Promise<SheetSpec> {
@@ -295,8 +360,8 @@ async function transactionsSheet(win?: ExportWindow, scopeLabel?: string): Promi
 
   return {
     sheetName: 'Transactions',
-    title: "Mylene's Boutique — Transactions",
-    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}${scopeSuffix(scopeLabel)} · ${transactions.length} rental record(s)`,
+    title: 'Transactions',
+    subtitle: `Period: ${scopeLabel || 'All records'} · ${transactions.length} rental record(s)`,
     columns,
     rows,
     statusKey: 'Status',
@@ -304,8 +369,8 @@ async function transactionsSheet(win?: ExportWindow, scopeLabel?: string): Promi
   };
 }
 
-export async function exportTransactions(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
-  return toBuffer(buildWorkbook(await transactionsSheet(win, scopeLabel)));
+export async function exportTransactions(win?: ExportWindow, scopeLabel?: string, exportedBy?: ExportedBy): Promise<Buffer> {
+  return toBuffer(await buildWorkbook(await transactionsSheet(win, scopeLabel), exportedBy));
 }
 
 async function revenueSheet(win?: ExportWindow, scopeLabel?: string): Promise<SheetSpec> {
@@ -354,8 +419,8 @@ async function revenueSheet(win?: ExportWindow, scopeLabel?: string): Promise<Sh
 
   return {
     sheetName: 'Revenue',
-    title: "Mylene's Boutique — Revenue",
-    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}${scopeSuffix(scopeLabel)} · ${rows.length} paid rental(s)`,
+    title: 'Revenue',
+    subtitle: `Period: ${scopeLabel || 'All records'} · ${rows.length} paid rental(s)`,
     columns,
     rows,
     statusKey: 'Status',
@@ -363,8 +428,8 @@ async function revenueSheet(win?: ExportWindow, scopeLabel?: string): Promise<Sh
   };
 }
 
-export async function exportRevenue(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
-  return toBuffer(buildWorkbook(await revenueSheet(win, scopeLabel)));
+export async function exportRevenue(win?: ExportWindow, scopeLabel?: string, exportedBy?: ExportedBy): Promise<Buffer> {
+  return toBuffer(await buildWorkbook(await revenueSheet(win, scopeLabel), exportedBy));
 }
 
 async function inventorySheet(win?: ExportWindow, scopeLabel?: string): Promise<SheetSpec> {
@@ -417,8 +482,8 @@ async function inventorySheet(win?: ExportWindow, scopeLabel?: string): Promise<
 
   return {
     sheetName: 'Inventory',
-    title: "Mylene's Boutique — Inventory",
-    subtitle: `Generated ${new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}${scopeSuffix(scopeLabel)} · ${items.length} item(s)`,
+    title: 'Inventory',
+    subtitle: `Period: ${scopeLabel || 'All records'} · ${items.length} item(s)`,
     columns,
     rows,
     statusKey: 'Status',
@@ -426,17 +491,18 @@ async function inventorySheet(win?: ExportWindow, scopeLabel?: string): Promise<
   };
 }
 
-export async function exportInventory(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
-  return toBuffer(buildWorkbook(await inventorySheet(win, scopeLabel)));
+export async function exportInventory(win?: ExportWindow, scopeLabel?: string, exportedBy?: ExportedBy): Promise<Buffer> {
+  return toBuffer(await buildWorkbook(await inventorySheet(win, scopeLabel), exportedBy));
 }
 
 // One .xlsx with a sheet per report — the AI Insights "Excel" button calls
 // this so Overall / Yearly / Monthly all download together, pre-scoped.
-export async function exportWorkbook(win?: ExportWindow, scopeLabel?: string): Promise<Buffer> {
-  const wb = newWorkbook("Mylene's Boutique — Full Report");
-  addSheet(wb, await transactionsSheet(win, scopeLabel));
-  addSheet(wb, await revenueSheet(win, scopeLabel));
-  addSheet(wb, await inventorySheet(win, scopeLabel));
+export async function exportWorkbook(win?: ExportWindow, scopeLabel?: string, exportedBy?: ExportedBy): Promise<Buffer> {
+  const head = await loadLetterhead(exportedBy);
+  const wb = newWorkbook('Full Report', head);
+  addSheet(wb, await transactionsSheet(win, scopeLabel), head);
+  addSheet(wb, await revenueSheet(win, scopeLabel), head);
+  addSheet(wb, await inventorySheet(win, scopeLabel), head);
   return toBuffer(wb);
 }
 

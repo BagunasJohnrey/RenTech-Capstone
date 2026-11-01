@@ -28,6 +28,12 @@ async function auditExport(req: AuthenticatedRequest, report: string, scope: str
   } catch { /* audit is non-critical */ }
 }
 
+// Printed on every exported sheet ("Exported by Name (Role)").
+function exporter(req: AuthenticatedRequest): exportService.ExportedBy | undefined {
+  const u = req.user;
+  return u ? { name: u.name || u.email, role: String(u.role) } : undefined;
+}
+
 router.use(authMiddleware);
 
 // One .xlsx with Transactions + Revenue + Inventory as separate sheets,
@@ -48,7 +54,7 @@ router.get('/workbook', requireRole(Role.Admin, Role.Staff), async (req, res: Re
       scopeLabel = String(win.start.getFullYear());
       filename = `rentech-report-${win.start.getFullYear()}.xlsx`;
     }
-    const buffer = await exportService.exportWorkbook(win, scopeLabel);
+    const buffer = await exportService.exportWorkbook(win, scopeLabel, exporter(authReq));
     await auditExport(authReq, 'workbook', scopeLabel, filename);
     sendXlsx(res, buffer, filename);
   } catch (err) { next(err); }
@@ -56,7 +62,7 @@ router.get('/workbook', requireRole(Role.Admin, Role.Staff), async (req, res: Re
 
 router.get('/transactions', requireRole(Role.Admin, Role.Staff), async (req, res: Response, next: NextFunction) => {
   try {
-    const buffer = await exportService.exportTransactions();
+    const buffer = await exportService.exportTransactions(undefined, undefined, exporter(req as AuthenticatedRequest));
     await auditExport(req as AuthenticatedRequest, 'transactions', 'all', 'transactions.xlsx');
     sendXlsx(res, buffer, 'transactions.xlsx');
   } catch (err) { next(err); }
@@ -64,7 +70,7 @@ router.get('/transactions', requireRole(Role.Admin, Role.Staff), async (req, res
 
 router.get('/revenue', requireRole(Role.Admin, Role.Staff), async (req, res: Response, next: NextFunction) => {
   try {
-    const buffer = await exportService.exportRevenue();
+    const buffer = await exportService.exportRevenue(undefined, undefined, exporter(req as AuthenticatedRequest));
     await auditExport(req as AuthenticatedRequest, 'revenue', 'all', 'revenue.xlsx');
     sendXlsx(res, buffer, 'revenue.xlsx');
   } catch (err) { next(err); }
@@ -72,7 +78,7 @@ router.get('/revenue', requireRole(Role.Admin, Role.Staff), async (req, res: Res
 
 router.get('/inventory', requireRole(Role.Admin, Role.Staff), async (req, res: Response, next: NextFunction) => {
   try {
-    const buffer = await exportService.exportInventory();
+    const buffer = await exportService.exportInventory(undefined, undefined, exporter(req as AuthenticatedRequest));
     await auditExport(req as AuthenticatedRequest, 'inventory', 'all', 'inventory.xlsx');
     sendXlsx(res, buffer, 'inventory.xlsx');
   } catch (err) { next(err); }
