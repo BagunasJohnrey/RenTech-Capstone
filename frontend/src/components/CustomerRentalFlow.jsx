@@ -212,6 +212,8 @@ export default function CustomerRentalFlow({
   // Fetched once per payment-step visit; manual entry works regardless.
   const [availablePromos, setAvailablePromos] = useState([]);
   const [promosLoading, setPromosLoading] = useState(false);
+  // Vouchers stay collapsed until the customer taps "View all".
+  const [showPromos, setShowPromos] = useState(false);
   useEffect(() => {
     if (step !== 2) return;
     let active = true;
@@ -295,9 +297,10 @@ export default function CustomerRentalFlow({
   const keepEditing = useCallback(() => setShowDiscardConfirm(false), []);
   // Escape leaves through the same guard; a second handler closes just the
   // confirm (Keep Editing) while it's up — same two-level pattern as staff.
-  useEscapeClose(() => requestLeave(), !showDiscardConfirm && !photoViewer);
+  useEscapeClose(() => requestLeave(), !showDiscardConfirm && !photoViewer && !showPromos);
   useEscapeClose(() => setShowDiscardConfirm(false), showDiscardConfirm);
   useEscapeClose(() => setPhotoViewer(false), photoViewer);
+  useEscapeClose(() => setShowPromos(false), showPromos);
   // A committed booking may have consumed the voucher — drop the cached
   // public list so an exhausted code disappears from offers immediately.
   useEffect(() => {
@@ -1119,38 +1122,19 @@ export default function CustomerRentalFlow({
                         </span>
                         <p className="text-sm font-extrabold text-gray-900">Save with a voucher</p>
                         {!promosLoading && availablePromos.length > 0 && (
-                          <span className="ml-auto text-[10px] font-extrabold text-[#bf4a53] bg-[#bf4a53]/10 rounded-full px-2.5 py-1 whitespace-nowrap">
-                            {availablePromos.length} available
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowPromos(true)}
+                            aria-haspopup="dialog"
+                            className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-extrabold text-[#bf4a53] bg-[#bf4a53]/10 hover:bg-[#bf4a53]/15 rounded-full px-3 py-1 whitespace-nowrap transition-colors"
+                          >
+                            View all ({availablePromos.length})
+                            <ChevronRight size={12} />
+                          </button>
                         )}
                       </div>
-                      {!promosLoading && availablePromos.length > 0 && (
-                        <div className="mx-4 rounded-xl border border-gray-200 overflow-hidden divide-y divide-dashed divide-gray-200">
-                          {availablePromos.map((p) => (
-                            <button
-                              key={p.code}
-                              type="button"
-                              disabled={promoApplying}
-                              onClick={() => handleApplyPromo(p.code)}
-                              className="w-full flex items-stretch text-left hover:bg-red-50/50 active:bg-red-50 transition-colors disabled:opacity-50"
-                            >
-                              <span className="w-[76px] shrink-0 bg-red-50/80 border-r border-dashed border-red-200 flex flex-col items-center justify-center py-2.5 px-1">
-                                <span className="text-[13px] font-extrabold text-[#bf4a53] tabular-nums leading-none">{promoShortLabel(p)}</span>
-                                <span className="text-[9px] font-bold text-[#bf4a53]/70 uppercase tracking-wide mt-1">off</span>
-                              </span>
-                              <span className="flex-1 min-w-0 px-3 py-2.5">
-                                <span className="block text-xs font-extrabold text-gray-900 font-mono tracking-wide truncate">{p.code}</span>
-                                {promoTermsLabel(p) && (
-                                  <span className="block text-[10px] text-gray-400 font-medium truncate mt-0.5">{promoTermsLabel(p)}</span>
-                                )}
-                              </span>
-                              <span className="self-center mr-3 text-[11px] font-extrabold text-[#bf4a53] border border-[#bf4a53]/30 rounded-full px-3.5 py-1.5 shrink-0">Apply</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      <div className="px-4 pb-4 pt-3">
-                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Or enter a code</p>
+                      <div className="px-4 pb-4">
+                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Enter a code</p>
                         <div className="flex gap-2">
                           <input type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
                             placeholder="Enter a code" maxLength={20} aria-label="Promo code"
@@ -1369,6 +1353,55 @@ export default function CustomerRentalFlow({
     </div>
   );
 
+  // Voucher picker — its own stacked sheet, opened from "View all". No
+  // second blur: the flow sheet already blurs beneath.
+  const voucherModal = showPromos && (
+    <BottomSheet onClose={() => setShowPromos(false)} labelledby="dialog-title-vouchers" z="z-[250]" maxWidth="sm:max-w-md" backdropClass="bg-gray-900/50">
+      <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-3 pb-3 border-b border-gray-100">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
+            <Tag size={15} />
+          </span>
+          <div className="min-w-0">
+            <h3 id="dialog-title-vouchers" className="text-sm font-extrabold text-gray-900">Available vouchers</h3>
+            <p className="text-[11px] text-gray-400 font-medium">Tap a voucher to apply it</p>
+          </div>
+        </div>
+        <button onClick={() => setShowPromos(false)} aria-label="Close vouchers"
+          className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors shrink-0">
+          <X size={18} />
+        </button>
+      </div>
+      <div data-sheet-scroll className="overflow-y-auto min-h-0 p-4">
+        <div className="rounded-xl border border-gray-200 overflow-hidden divide-y divide-dashed divide-gray-200">
+          {availablePromos.map((p) => (
+            <button
+              key={p.code}
+              type="button"
+              disabled={promoApplying}
+              onClick={async () => { await handleApplyPromo(p.code); setShowPromos(false); }}
+              className="w-full flex items-stretch text-left hover:bg-red-50/50 active:bg-red-50 transition-colors disabled:opacity-50"
+            >
+              <span className="w-[76px] shrink-0 bg-red-50/80 border-r border-dashed border-red-200 flex flex-col items-center justify-center py-3 px-1">
+                <span className="text-[13px] font-extrabold text-[#bf4a53] tabular-nums leading-none">{promoShortLabel(p)}</span>
+                <span className="text-[9px] font-bold text-[#bf4a53]/70 uppercase tracking-wide mt-1">off</span>
+              </span>
+              <span className="flex-1 min-w-0 px-3 py-3">
+                <span className="block text-xs font-extrabold text-gray-900 font-mono tracking-wide truncate">{p.code}</span>
+                {promoTermsLabel(p) && (
+                  <span className="block text-[10px] text-gray-400 font-medium truncate mt-0.5">{promoTermsLabel(p)}</span>
+                )}
+              </span>
+              <span className="self-center mr-3 text-[11px] font-extrabold text-[#bf4a53] border border-[#bf4a53]/30 rounded-full px-3.5 py-1.5 shrink-0">
+                {promoApplying ? <Loader2 size={12} className="animate-spin" /> : 'Apply'}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </BottomSheet>
+  );
+
   return inline ? (
     <>
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={requestLeave}>
@@ -1380,6 +1413,7 @@ export default function CustomerRentalFlow({
       <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
     )}
     {photoViewerModal}
+    {voucherModal}
     </>
   ) : (
     <>
@@ -1390,6 +1424,7 @@ export default function CustomerRentalFlow({
         <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
       )}
       {photoViewerModal}
+      {voucherModal}
 
       {/* Size Guide */}
       {showSizeGuide && (

@@ -1,6 +1,6 @@
 // Page header: title left, filter + export controls top-right on desktop,
 // stacked on mobile. Pure presentational — all state lives in the parent.
-import { Download, RefreshCw } from 'lucide-react';
+import { ChevronDown, Download, RefreshCw } from 'lucide-react';
 import { TIME_OPTIONS, SHORT_MONTHS } from './shared';
 
 export default function InsightsHeader({
@@ -43,25 +43,30 @@ export default function InsightsHeader({
           )}
         </button>
 
-        {/* Range pills — segmented control */}
-        <div className="flex bg-gray-100 rounded-full p-0.5 shrink-0">
-          {TIME_OPTIONS.map(t => (
-            <button key={t} onClick={() => setTimeRange(t)}
-              className={`px-2 sm:px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-full transition-colors text-center whitespace-nowrap ${timeRange === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-              {t}
-            </button>
-          ))}
+        {/* Range dropdown */}
+        <div className="relative shrink-0">
+          <select
+            aria-label="Time range"
+            value={timeRange}
+            onChange={e => setTimeRange(e.target.value)}
+            className="appearance-none bg-gray-100 hover:bg-gray-200 rounded-full pl-4 pr-9 py-2.5 text-sm sm:pl-3 sm:pr-7 sm:py-1.5 sm:text-xs font-bold text-gray-900 cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50"
+          >
+            {TIME_OPTIONS.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <ChevronDown size={15} className="pointer-events-none absolute right-3 sm:right-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
         </div>
 
         {/* Month + Year — compact pill, hidden on Overall */}
         {timeRange !== 'Overall' && (
-          <div className="flex items-center gap-0.5 bg-gray-100 rounded-full px-1.5 py-1 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-0.5 bg-gray-100 rounded-full px-3 py-2 sm:px-1.5 sm:py-1 shrink-0">
             {timeRange === 'Monthly' && (
               <select
                 aria-label="Month"
                 value={appliedMonth}
                 onChange={e => setSelMonth(Number(e.target.value))}
-                className="bg-transparent text-[11px] sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer pl-0.5"
+                className="bg-transparent text-sm sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer pl-0.5"
               >
                 {SHORT_MONTHS.map((name, i) => {
                   const m = i + 1;
@@ -74,7 +79,7 @@ export default function InsightsHeader({
               aria-label="Year"
               value={appliedYear}
               onChange={e => setSelYear(Number(e.target.value))}
-              className="bg-transparent text-[11px] sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
+              className="bg-transparent text-sm sm:text-xs font-bold text-gray-700 focus:outline-none cursor-pointer"
             >
               {yearOptions.map(y => (
                 <option key={y} value={y}>{y}</option>

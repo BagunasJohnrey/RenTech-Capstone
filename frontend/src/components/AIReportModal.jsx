@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { X, Sparkles, Download, Loader2, AlertCircle } from 'lucide-react';
 import { parseReportSections } from '../utils/formatReport';
 import { generateReportPdf } from '../utils/reportPdf';
 import { extractReportVisuals, layoutSection } from '../utils/reportVisuals';
 import ReportVisuals, { ReportTable } from './ReportVisuals';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import BottomSheet from './BottomSheet';
 
 const COMPANY = "Mylene's Boutique";
 const TAGLINE = 'Rental Attire & Formal Wear';
@@ -27,14 +28,8 @@ export default function AIReportModal({ geminiReport, onClose }) {
   ).padStart(2, '0')}`;
 
   const [downloading, setDownloading] = useState(false);
-  // Timed exit like the other sheets: play the fade/slide-out, then unmount.
-  const [closing, setClosing] = useState(false);
-  const requestClose = useCallback(() => {
-    if (closing) return;
-    setClosing(true);
-    setTimeout(onClose, 150);
-  }, [closing, onClose]);
-  useEscapeClose(requestClose);
+  // The shared BottomSheet owns swipe-down-to-dismiss + enter/exit animations.
+  useEscapeClose(onClose);
   const handleDownloadPdf = () => {
     try {
       setDownloading(true);
@@ -47,28 +42,22 @@ export default function AIReportModal({ geminiReport, onClose }) {
   };
 
   return (
-    <div
-      className={`fixed inset-0 z-[100] transition-opacity duration-150 ${closing ? 'opacity-0' : 'opacity-100'}`}
-    >
-      <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
-      <div
-        className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-3xl sheet-cap sm:max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* On-screen modal header (not printed) */}
-        <div className="shrink-0 flex justify-between items-center gap-3 px-4 sm:px-5 py-3.5 sm:py-4 border-b border-gray-100/80 bg-gradient-to-r from-red-50 to-white no-print">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-ai-report" z="z-[100]" maxWidth="sm:max-w-3xl" hideHandle>
+        {/* On-screen modal header (not printed). The swipe handle overlays
+            its top edge so there's no empty strip above the header. */}
+        <div className="relative shrink-0 flex justify-between items-center gap-3 px-4 sm:px-5 py-3.5 sm:py-4 border-b border-gray-100/80 bg-gradient-to-r from-red-50 to-white no-print">
+          <div className="sm:hidden absolute top-1.5 left-1/2 -translate-x-1/2 w-10 h-1 rounded-full bg-gray-300/80" aria-hidden="true" />
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="p-2 rounded-xl text-white shrink-0" style={{ backgroundColor: ACCENT }}>
               <Sparkles size={17} />
             </div>
             <div className="min-w-0">
-              <h3 className="font-bold text-[15px] sm:text-lg text-gray-900 leading-tight truncate">AI Business Report</h3>
+              <h3 id="dialog-title-ai-report" className="font-bold text-[15px] sm:text-lg text-gray-900 leading-tight truncate">AI Business Report</h3>
               <p className="text-[11px] sm:text-xs text-gray-500 truncate">Powered by Gemini · Real-time analytics</p>
             </div>
           </div>
           <button
-            onClick={requestClose}
+            onClick={onClose}
             aria-label="Close report"
             className="text-gray-400 hover:bg-gray-200 p-2 rounded-full transition-colors shrink-0"
           >
@@ -77,7 +66,7 @@ export default function AIReportModal({ geminiReport, onClose }) {
         </div>
 
         {/* Scrollable report body */}
-        <div className="overflow-y-auto overscroll-contain flex-1 min-h-0 custom-scrollbar bg-gray-50/40">
+        <div data-sheet-scroll className="overflow-y-auto overscroll-contain flex-1 min-h-0 custom-scrollbar bg-gray-50/40">
           {!geminiReport ? (
             <div className="flex flex-col items-center justify-center py-20 px-6 text-center space-y-3">
               <AlertCircle size={32} className="text-gray-300" />
@@ -148,8 +137,6 @@ export default function AIReportModal({ geminiReport, onClose }) {
             {downloading ? 'Generating…' : 'Download PDF'}
           </button>
         </div>
-        </div>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }
