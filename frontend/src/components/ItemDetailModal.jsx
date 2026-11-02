@@ -78,8 +78,20 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
           </button>
         </div>
 
-        <div data-sheet-scroll className="overflow-y-auto p-4 min-h-0">
-<div className="space-y-4 panel-cols">
+        <div data-sheet-scroll className="overflow-y-auto p-4 lg:p-6 min-h-0 flex-1">
+{/* Desktop (lg+): the photo fills the left column; price, description,
+    availability and the date checker stack on the right. Below lg: the
+    compact single column (photo stays a header thumbnail). */}
+<div className="panel-split panel-split-hero">
+          <div className="hidden lg:flex panel-col">
+            <div className="panel-grow relative rounded-2xl overflow-hidden bg-gray-100 min-h-[24rem]">
+              <ItemImage image={item.image} alt={item.name} eager className="absolute inset-0 w-full h-full object-cover" placeholderSize={48} />
+              {sale.active && (
+                <span className="absolute top-3 left-3 text-xs font-bold text-white bg-[#bf4a53] rounded-full px-3 py-1 shadow-sm">On Sale</span>
+              )}
+            </div>
+          </div>
+          <div className="space-y-4 panel-col">
           <div className="flex items-end gap-2">
             {sale.active ? (
               <>
@@ -95,6 +107,18 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               {item.status}
             </span>
           </div>
+          {/* Desktop has room for the full description and fit details. */}
+          {(item.description || item.size || item.occasions?.length > 0) && (
+            <div className="hidden lg:block space-y-2">
+              {item.description && <p className="text-sm text-gray-600 leading-relaxed">{item.description}</p>}
+              <div className="flex flex-wrap gap-1.5">
+                {item.size && <span className="text-[11px] font-bold text-gray-600 bg-gray-100 rounded-full px-2.5 py-1">Size {item.size}</span>}
+                {(item.occasions || []).map((o) => (
+                  <span key={o} className="text-[11px] font-semibold text-gray-500 bg-gray-50 border border-gray-100 rounded-full px-2.5 py-1">{o}</span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Availability */}
           <div>
@@ -119,7 +143,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
                 <p className="text-[11px] text-emerald-600 mt-0.5">No bookings block this item.</p>
               </div>
             ) : (
-              <div className="space-y-1.5 max-h-32 overflow-y-auto">
+              <div className="space-y-1.5 max-h-32 lg:max-h-48 overflow-y-auto">
                 {blockedRanges.map((range, i) => (
                   <div key={range.transactionId || i} className="flex items-center justify-between px-3 py-2 bg-red-50/70 rounded-lg">
                     <span className="text-xs font-medium text-red-700 whitespace-nowrap">{range.start} — {range.end}</span>
@@ -133,7 +157,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
           </div>
 
           {/* Date check */}
-          <div className="border-t border-gray-100 pt-4">
+          <div className="border-t border-gray-100 pt-4 lg:border-t-0 lg:pt-0">
             <div className="flex items-center gap-1.5 mb-2.5">
               <Search size={13} className="text-gray-400" />
               <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Check Dates</span>
@@ -154,19 +178,24 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
               </div>
             )}
           </div>
+          </div>
         </div>
 </div>
 
-        {/* Footer */}
-        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-gray-100 shrink-0">
+        {/* Footer — desktop: name + price on the left, a sized button on the right. */}
+        <div className="p-4 lg:px-6 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-gray-100 shrink-0 lg:flex lg:items-center lg:gap-6">
+          <div className="hidden lg:block flex-1 min-w-0">
+            <p className="text-sm font-bold text-gray-900">{item.name}</p>
+            <p className="text-xs text-gray-500">{item.category} · ₱{(sale.active ? sale.price : item.price).toLocaleString()} per rental</p>
+          </div>
           {guest ? (
             <button onClick={onGuestBook}
-              className="w-full py-3 rounded-full bg-[#bf4a53] text-white font-bold hover:bg-[#a63f47] transition-colors">
+              className="w-full lg:w-auto lg:px-12 py-3 rounded-full bg-[#bf4a53] text-white font-bold hover:bg-[#a63f47] transition-colors">
               Sign In to Rent
             </button>
           ) : (
             <button onClick={onBook} disabled={item.status === 'OutOfService' || item.status === 'Deleted'}
-              className={`w-full py-3 rounded-full font-bold transition-colors ${
+              className={`w-full lg:w-auto lg:px-12 py-3 rounded-full font-bold transition-colors ${
                 (item.status === 'OutOfService' || item.status === 'Deleted')
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : 'bg-[#bf4a53] text-white hover:bg-[#a63f47]'

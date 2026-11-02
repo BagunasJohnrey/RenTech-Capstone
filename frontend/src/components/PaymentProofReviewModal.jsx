@@ -124,11 +124,15 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
         </div>
 
         <div data-sheet-scroll className="p-5 sm:p-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
-<div className="space-y-5 panel-cols">
+{/* Desktop (lg+): the screenshot is the hero — it fills the whole left
+    column so staff can read the reference number without zooming; the
+    details and the credit amount sit on the right. Below lg: one column. */}
+<div className="space-y-5 panel-split panel-split-hero">
+          <div className="panel-col">
           <button
             type="button"
             onClick={() => setZoom(true)}
-            className="relative block w-full rounded-2xl overflow-hidden border border-gray-100 bg-gray-50"
+            className="panel-grow relative block w-full rounded-2xl overflow-hidden border border-gray-100 bg-gray-50 lg:flex lg:items-center lg:justify-center lg:min-h-[24rem]"
             aria-label="Zoom payment screenshot"
           >
             <ItemImage
@@ -136,13 +140,15 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
               alt="Payment screenshot"
               eager
               placeholderSize={40}
-              className="w-full max-h-72 object-contain"
+              className="w-full max-h-72 object-contain lg:absolute lg:inset-0 lg:h-full lg:max-h-none"
             />
             <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-900/70 text-white text-[10px] font-bold">
               <ZoomIn size={11} /> Tap to zoom
             </span>
           </button>
 
+          </div>
+          <div className="space-y-5 panel-col">
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3.5 bg-gray-50 rounded-2xl">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
@@ -282,6 +288,7 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
               )}
             </div>
           )}
+          </div>
         </div>
 </div>
 

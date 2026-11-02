@@ -324,8 +324,8 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
   // list carries data-sheet-scroll so a downward drag mid-scroll stays a
   // scroll — only a drag from the top dismisses.
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-ai-stylist" maxWidth="sm:max-w-md" hideHandle>
-      <div className="h-[88dvh] sm:h-[90vh] sm:max-h-[680px] flex flex-col min-h-0 overflow-hidden">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-ai-stylist" maxWidth="sm:max-w-md" panelWidth="md:w-[520px] lg:w-[640px]" hideHandle>
+      <div className="h-[88dvh] sm:h-[90vh] sm:max-h-[680px] lg:h-full lg:max-h-none flex flex-col min-h-0 overflow-hidden">
 
         {/* Header */}
         <div className="relative px-5 py-4 bg-gradient-to-br from-[#8e323a] via-[#a63f47] to-[#bf4a53] shrink-0 overflow-hidden">
@@ -483,7 +483,7 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
         </div>
 
         {/* Suggestions - dynamic based on conversation state */}
-        <div className="px-4 py-2.5 flex gap-2 overflow-x-auto bg-white border-t border-gray-100 hide-scrollbar shrink-0">
+        <div className="px-4 py-2.5 flex gap-2 overflow-x-auto lg:flex-wrap lg:overflow-visible bg-white border-t border-gray-100 hide-scrollbar shrink-0">
           {suggestions.map((suggestion) => {
             const Icon = chipIcon(suggestion);
             return (

@@ -440,9 +440,12 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               <Skeleton className="h-[88px] rounded-2xl" />
             </div>
           ) : (
-          // Desktop (lg+): sections flow into two balanced columns
-          // (.panel-cols). Below lg: the same single column as before.
-          <div className="space-y-6 panel-cols">
+          // Desktop (lg+): two full-height columns (.panel-split) — people &
+          // schedule on the left, money & records on the right, with one
+          // card per column stretching so neither leaves an empty band.
+          // Below lg: the same single column, same order, as before.
+          <div className="space-y-6 panel-split">
+          <div className="space-y-6 panel-col">
           {/* Customer & Item — profile-tile cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
@@ -520,12 +523,12 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               and who released the item at pickup, plus the full activity
               timeline. Staff/Admin only; never rendered for customers. */}
           {showStaffAudit && (
-            <div>
+            <div className="panel-grow panel-stack">
               <div className="flex items-center gap-1.5 text-gray-400 mb-3">
                 <UserCheck size={13} />
                 <span className="text-xs font-bold uppercase tracking-wide">Staff Audit</span>
               </div>
-              <div className="bg-white border border-gray-100/80 rounded-2xl p-4 space-y-3">
+              <div className="panel-fill bg-white border border-gray-100/80 rounded-2xl p-4 space-y-3">
                 {assistedName && (
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
@@ -580,12 +583,12 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           )}
 
           {/* Schedule timeline */}
-          <div>
+          <div className={showStaffAudit ? '' : 'panel-grow panel-stack'}>
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
               <Calendar size={13} />
               <span className="text-xs font-bold uppercase tracking-wide">Schedule</span>
             </div>
-            <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
+            <div className="panel-fill bg-white border border-gray-100/80 rounded-2xl p-4">
               <ol className="relative space-y-4 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-gray-200">
                 <li className="relative pl-7">
                   <span className="absolute left-0 top-1 w-[11px] h-[11px] rounded-full bg-blue-500 ring-4 ring-blue-100" />
@@ -608,6 +611,8 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             </div>
           </div>
 
+          </div>
+          <div className="space-y-6 panel-col">
           {/* Payment Summary */}
           <div>
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
@@ -721,12 +726,12 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           )}
 
           {/* Notes */}
-          <div>
+          <div className="panel-grow panel-stack">
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
               <FileText size={13} />
               <span className="text-xs font-bold uppercase tracking-wide">Notes</span>
             </div>
-            <div className="bg-white border border-gray-100/80 rounded-2xl p-4 text-sm">
+            <div className="panel-fill bg-white border border-gray-100/80 rounded-2xl p-4 text-sm">
               {tx.notes ? (
                 <p className="text-gray-700 whitespace-pre-wrap">{tx.notes}</p>
               ) : (
@@ -766,6 +771,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             </div>
           )}
 
+          </div>
           </div>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import {
-  AlertTriangle, Calendar, ClipboardCheck, Hash, MapPin, Package, Phone, X,
+  AlertTriangle, Calendar, ClipboardCheck, Hash, ImageOff, MapPin, Package, Phone, X, XCircle,
 } from 'lucide-react';
 import BottomSheet from './BottomSheet';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -23,6 +23,7 @@ export default function AwaitingProofModal({ booking, onClose }) {
   const downpayment = Number(booking?.downpayment) || 0;
   const paid = Number(booking?.totalPaid) || 0;
   const remaining = Math.max(0, downpayment - paid);
+  const paidPct = downpayment > 0 ? Math.min(100, Math.round((paid / downpayment) * 100)) : 0;
   const custPhone = customerPhone(booking?.customer);
   const custTel = customerTelLink(booking?.customer);
 
@@ -48,7 +49,11 @@ export default function AwaitingProofModal({ booking, onClose }) {
       </div>
 
       <div data-sheet-scroll className="p-5 sm:p-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
-<div className="space-y-5 panel-cols">
+{/* Desktop (lg+): booking + customer on the left, money + proof status on
+    the right; the customer and proof cards stretch to the panel's height.
+    Below lg: one column, same order. */}
+<div className="space-y-5 panel-split">
+        <div className="space-y-5 panel-col">
         <div className="grid grid-cols-2 gap-3">
           <div className="p-3.5 bg-gray-50 rounded-2xl">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
@@ -76,17 +81,18 @@ export default function AwaitingProofModal({ booking, onClose }) {
           </div>
         </div>
 
-        <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center text-sm font-extrabold shrink-0">
+        {/* Desktop: a centered contact card that fills the column. */}
+        <div className="panel-grow bg-white border border-gray-100/80 rounded-2xl p-4 lg:p-8 lg:flex lg:flex-col lg:items-center lg:justify-center lg:text-center">
+          <div className="flex items-center gap-3 lg:flex-col lg:gap-3">
+            <div className="w-10 h-10 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center text-sm font-extrabold shrink-0 lg:w-20 lg:h-20 lg:text-2xl">
               {(customerLabel(booking?.customer) || '?').charAt(0).toUpperCase()}
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Customer</p>
-              <p className="font-bold text-gray-900 truncate">{customerLabel(booking?.customer) || '—'}</p>
+              <p className="font-bold text-gray-900 truncate lg:text-xl">{customerLabel(booking?.customer) || '—'}</p>
             </div>
           </div>
-          <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
+          <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 lg:mt-5 lg:pt-5 lg:w-full lg:max-w-xs lg:flex lg:flex-col lg:items-center lg:text-sm">
             {custPhone ? (
               custTel ? (
                 <a
@@ -121,8 +127,17 @@ export default function AwaitingProofModal({ booking, onClose }) {
               </p>
             )}
           </div>
+          {/* Desktop: the follow-up action sits at the foot of the card. */}
+          {custTel && (
+            <a href={custTel}
+              className="hidden lg:flex mt-6 items-center justify-center gap-2 w-full max-w-xs py-3 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-2xl transition-colors">
+              <Phone size={15} /> Call {customerLabel(booking?.customer) || 'customer'}
+            </a>
+          )}
+        </div>
         </div>
 
+        <div className="space-y-5 panel-col">
         <div className="bg-amber-50 border border-amber-200/70 rounded-2xl p-4">
           <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
             <AlertTriangle size={14} className="text-amber-600" /> Downpayment
@@ -134,19 +149,30 @@ export default function AwaitingProofModal({ booking, onClose }) {
               Still needed: <span className="font-bold text-[#bf4a53]">{peso(remaining)}</span>
             </p>
           </div>
+          {downpayment > 0 && (
+            <div className="hidden lg:block mt-3">
+              <div className="h-2 bg-white rounded-full overflow-hidden">
+                <div className="h-full bg-amber-500 rounded-full" style={{ width: `${paidPct}%` }} />
+              </div>
+              <p className="mt-1 text-[11px] font-semibold text-amber-700">{paidPct}% of the downpayment received</p>
+            </div>
+          )}
         </div>
 
-        <div className={`rounded-2xl border p-4 ${rejected ? 'bg-red-50 border-red-200/70' : 'bg-gray-50 border-gray-200/70'}`}>
-          <p className={`text-sm font-bold ${rejected ? 'text-red-700' : 'text-gray-800'}`}>
+        <div className={`panel-grow rounded-2xl border p-4 lg:flex lg:flex-col lg:items-center lg:justify-center lg:text-center lg:p-8 ${rejected ? 'bg-red-50 border-red-200/70' : 'bg-gray-50 border-gray-200/70'}`}>
+          <div className={`hidden lg:flex w-16 h-16 rounded-2xl items-center justify-center mb-4 ${rejected ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'}`}>
+            {rejected ? <XCircle size={28} /> : <ImageOff size={28} />}
+          </div>
+          <p className={`text-sm font-bold lg:text-lg ${rejected ? 'text-red-700' : 'text-gray-800'}`}>
             {rejected ? 'Last proof was rejected' : 'No proof submitted yet'}
           </p>
-          <p className="mt-1 text-xs text-gray-600">
+          <p className="mt-1 text-xs text-gray-600 lg:text-sm lg:max-w-sm">
             {rejected
               ? <>Rejected {timeAgo(booking?.latestProof?.reviewedAt || booking?.latestProof?.createdAt)}. The customer can re-upload from My Rentals.</>
               : 'The customer needs to upload a screenshot of the transfer from My Rentals before pickup.'}
           </p>
           {rejected && booking?.latestProof?.rejectionReason && (
-            <p className="mt-2 text-xs font-medium text-red-600">Reason: {booking.latestProof.rejectionReason}</p>
+            <p className="mt-2 text-xs font-medium text-red-600 lg:mt-4 lg:text-sm lg:max-w-sm lg:bg-white/70 lg:rounded-xl lg:px-4 lg:py-3">Reason: {booking.latestProof.rejectionReason}</p>
           )}
         </div>
 
@@ -157,6 +183,7 @@ export default function AwaitingProofModal({ booking, onClose }) {
         >
           Close
         </button>
+        </div>
       </div>
 </div>
     </BottomSheet>,

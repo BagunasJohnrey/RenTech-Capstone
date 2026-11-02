@@ -4,6 +4,7 @@ import { CheckSquare, Droplets, Square, X } from 'lucide-react';
 import { useToast } from './Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import ItemImage from './ItemImage';
+import { panelTiles } from '../utils/panelTiles';
 
 // Admin-facing read/action view of the cleaning queue. Staff keep the full
 // interactive workflow in Tasks; this modal lets the admin review the backlog
@@ -11,6 +12,7 @@ import ItemImage from './ItemImage';
 export default function CleaningQueueModal({ items, onClose, onBulkClean, initialSelected = [] }) {
   const { success: toastSuccess, error: toastError } = useToast();
   const [selected, setSelected] = useState(initialSelected);
+  const tiles = panelTiles(items.length);
   const [busy, setBusy] = useState(false);
 
   // BottomSheet owns the enter/exit motion and swipe-to-dismiss.
@@ -80,7 +82,10 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean, initia
           </div>
 
           <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 pt-4 pb-8 min-h-[220px]">
-<div className="space-y-2.5 panel-cols panel-cols-tight">
+{/* Desktop (lg+): photo tiles (panelTiles) so pieces are recognisable at a
+    glance and the panel fills; the empty state sits centered.
+    Below lg: the compact row list. */}
+<div className={items.length === 0 ? 'panel-center' : tiles.grid}>
             {items.length === 0 ? (
               <div className="text-center py-10">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-3">
@@ -94,21 +99,21 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean, initia
                 const checked = selected.includes(item.id);
                 return (
                   <button key={item.id} type="button" onClick={() => !busy && toggleOne(item.id)} disabled={busy}
-                    className={`w-full rounded-2xl p-3 border flex items-center gap-3 text-left transition-all active:scale-[0.99] disabled:opacity-60 ${
+                    className={`relative w-full rounded-2xl p-3 border flex items-center gap-3 text-left transition-all active:scale-[0.99] disabled:opacity-60 ${tiles.tile} ${
                       checked ? 'border-emerald-400 ring-2 ring-emerald-400/30 bg-emerald-50/40' : 'bg-gray-50/50 border-gray-100 hover:border-gray-200 hover:bg-gray-50'
                     }`}
                   >
-                    <span className={`p-0.5 rounded-md shrink-0 ${checked ? 'text-emerald-600' : 'text-gray-300'}`}>
+                    <span className={`p-0.5 rounded-md shrink-0 lg:absolute lg:top-2.5 lg:left-2.5 lg:z-10 lg:bg-white/95 lg:shadow-sm ${checked ? 'text-emerald-600' : 'text-gray-300 lg:text-gray-400'}`}>
                       {checked ? <CheckSquare size={19} /> : <Square size={19} />}
                     </span>
-                    <ItemImage thumb image={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={18} />
-                    <div className="flex-1 min-w-0">
+                    <span className={tiles.frame}><ItemImage thumb image={item.image} alt={item.name} className={`w-12 h-12 rounded-xl object-cover bg-gray-100 shrink-0 ${tiles.img}`} placeholderSize={18} /></span>
+                    <div className={`flex-1 min-w-0 ${tiles.text}`}>
                       <p className="text-sm font-bold text-gray-900 truncate">{item.name}</p>
                       <p className="text-xs text-gray-500 truncate mt-0.5">
                         {item.category}
                       </p>
                     </div>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0 ${checked ? 'bg-emerald-500 text-white' : 'bg-orange-100 text-orange-600'}`}>
+                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0 lg:absolute lg:top-2.5 lg:right-2.5 lg:shadow-sm ${checked ? 'bg-emerald-500 text-white' : 'bg-orange-100 text-orange-600'}`}>
                       {checked ? 'Selected' : 'Cleaning'}
                     </span>
                   </button>

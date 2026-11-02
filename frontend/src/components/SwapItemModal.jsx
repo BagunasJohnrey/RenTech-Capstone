@@ -117,8 +117,11 @@ export default function SwapItemModal({ transaction, inventory: inventoryProp = 
             </div>
           </div>
 
+          {/* Desktop (lg+): picker on the left, fee summary docked as a right
+              sidebar. Below lg: picker, then the summary pinned above the footer. */}
+          <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
           <div data-sheet-scroll className="p-5 sm:p-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
-<div className="space-y-4 panel-cols">
+<div className="space-y-4">
           <div className="relative">
             <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -132,7 +135,7 @@ export default function SwapItemModal({ transaction, inventory: inventoryProp = 
           {visible.length === 0 ? (
             <p className="text-sm text-gray-400 font-medium text-center py-6">No available items match.</p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 lg:gap-3">
               {visible.map((item) => {
                 const sale = getSaleInfo(item);
                 const active = item.id === selectedId;
@@ -141,16 +144,16 @@ export default function SwapItemModal({ transaction, inventory: inventoryProp = 
                     key={item.id}
                     type="button"
                     onClick={() => setSelectedId(item.id)}
-                    className={`flex items-center gap-3 p-2.5 rounded-2xl border text-left transition-colors ${active ? 'border-blue-500 bg-blue-50/60' : 'border-gray-200/80 hover:border-gray-300 bg-white'}`}
+                    className={`relative flex items-center gap-3 p-2.5 rounded-2xl border text-left transition-colors lg:flex-col lg:items-stretch lg:gap-0 lg:p-0 lg:overflow-hidden ${active ? 'border-blue-500 bg-blue-50/60' : 'border-gray-200/80 hover:border-gray-300 bg-white'}`}
                   >
-                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-gray-100 shrink-0">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-gray-100 shrink-0 lg:w-full lg:h-auto lg:aspect-[4/5] lg:rounded-none">
                       <ItemImage thumb image={item.image} alt={item.name} className="w-full h-full object-cover" placeholderSize={18} />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 lg:p-3">
                       <p className="text-[13px] font-bold text-gray-900 truncate">{item.name}</p>
                       <p className="text-[11px] text-gray-500">{item.category} · {sale.active ? (<><span className="line-through">{peso(item.price)}</span> <span className="font-bold text-[#bf4a53]">{peso(sale.price)}</span></>) : peso(item.price)}</p>
                     </div>
-                    {active && <CheckCircle size={16} className="text-blue-600 shrink-0" />}
+                    {active && <CheckCircle size={16} className="text-blue-600 shrink-0 lg:absolute lg:top-2.5 lg:right-2.5 lg:w-6 lg:h-6 lg:bg-white lg:rounded-full lg:shadow-sm" />}
                   </button>
                 );
               })}
@@ -166,10 +169,28 @@ export default function SwapItemModal({ transaction, inventory: inventoryProp = 
           </div>
 </div>
 
+          {!selected && (
+            <div className="hidden lg:flex lg:w-[320px] shrink-0 border-l border-gray-100/80 bg-gray-50/40 flex-col items-center justify-center text-center p-8">
+              <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center mb-3">
+                <Repeat size={22} className="text-blue-500" />
+              </div>
+              <p className="text-sm font-bold text-gray-700">Pick a replacement</p>
+              <p className="text-xs text-gray-400 mt-1 leading-relaxed">The new fee, balance and availability for these dates show up here.</p>
+            </div>
+          )}
+
           {/* Price + availability summary — pinned above the footer (never
               scrolls) so the totals stay visible while picking on mobile. */}
           {selected && (
-            <div className="shrink-0 border-t border-gray-100/80 px-5 sm:px-6 py-3 bg-white space-y-2">
+            <div className="shrink-0 border-t border-gray-100/80 px-5 sm:px-6 py-3 bg-white space-y-2 lg:w-[320px] lg:border-t-0 lg:border-l lg:py-6 lg:overflow-y-auto lg:space-y-3">
+              {/* Desktop sidebar: the picked item, photo + full name. */}
+              <div className="hidden lg:block">
+                <div className="rounded-2xl overflow-hidden bg-gray-100 aspect-square">
+                  <ItemImage image={selected.image} alt={selected.name} className="w-full h-full object-cover" placeholderSize={24} />
+                </div>
+                <p className="mt-2.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Swapping to</p>
+                <p className="text-sm font-bold text-gray-900">{selected.name}</p>
+              </div>
               <div className="bg-gray-50 border border-gray-100 rounded-2xl px-4 py-3 space-y-1.5 text-sm">
                 <div className="flex justify-between"><span className="text-gray-500">Old fee</span><span className="font-bold text-gray-900">{peso(oldFee)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">New fee</span><span className="font-bold text-gray-900">{peso(newFee)}</span></div>
@@ -197,6 +218,7 @@ export default function SwapItemModal({ transaction, inventory: inventoryProp = 
               <p className="text-[10px] text-gray-400">Sizes are cleared and the old release photo is voided — release must be taken for the new item.</p>
             </div>
           )}
+          </div>
 
           {/* Footer actions — pinned below the scrolling body so
               Cancel / Confirm Swap never scroll out of reach. */}

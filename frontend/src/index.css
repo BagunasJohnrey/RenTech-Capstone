@@ -185,6 +185,19 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
   .sheet-panel .panel-center { min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
   /* One section (e.g. an empty state) never splits into a lopsided pair. */
   .sheet-panel .panel-cols:has(> :only-child) { column-count: 1; }
+  /* A grown section stacks its heading + card so the card takes the height. */
+  .sheet-panel .panel-grow.panel-stack { display: flex; flex-direction: column; }
+  .sheet-panel .panel-stack > .panel-fill { flex: 1 1 auto; }
+  /* Wider split for panels whose left column is a hero (photo, screenshot). */
+  .sheet-panel .panel-split.panel-split-hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+  /* Desktop has room: names and labels that are cut off ("Maria Clara …")
+     on phones wrap in full inside panels. `.keep-truncate` opts out. */
+  .sheet-panel .truncate:not(.keep-truncate) {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* On-screen (non-print) tightening so the long report reads on phones.

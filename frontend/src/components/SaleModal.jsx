@@ -6,6 +6,7 @@ import { getSaleInfo } from './ItemCard';
 import ItemImage from './ItemImage';
 import { Skeleton } from './Skeleton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import PanelHero from './PanelHero';
 
 // Admin-only quick sale editor: opened from the Insights clearance /
 // never-rented lists so idle pieces go on sale without leaving the page.
@@ -78,7 +79,7 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
   };
 
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-sale" z="z-[320]" maxWidth="sm:max-w-lg">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-sale" z="z-[320]" maxWidth="sm:max-w-lg" panelWidth="md:w-[560px] lg:w-[min(920px,94vw)]">
           <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80">
             <div className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center shrink-0">
               <Tag size={18} className="text-amber-600" />
@@ -102,7 +103,13 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
             ) : loadError ? (
               <p className="text-sm text-red-600 bg-red-50 rounded-2xl px-4 py-3">{loadError}</p>
             ) : (
-              <div className="space-y-4">
+              // Desktop (lg+): item photo on the left; toggle, fields and a
+              // live price preview on the right. Below lg: one column.
+              <div className="panel-split panel-split-hero">
+              <PanelHero image={item.image} alt={item.name} eyebrow={item.category} title={item.name}>
+                <p className="text-sm text-gray-500">Regular price ₱{Number(item.price).toLocaleString()}</p>
+              </PanelHero>
+              <div className="space-y-4 panel-col">
                 <div className="flex items-center gap-3 bg-gray-50/70 border border-gray-100 rounded-2xl p-3">
                   <ItemImage image={item.image} alt={item.name} thumb className="w-12 h-12 rounded-xl object-cover shrink-0" />
                   <div className="min-w-0 flex-1">
@@ -155,6 +162,30 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
                 )}
 
                 {saveError && <p className="text-xs text-red-600 font-medium bg-red-50 rounded-xl px-3 py-2">{saveError}</p>}
+
+                {/* Desktop: what customers will see, live. */}
+                <div className={`hidden lg:flex panel-grow flex-col items-center justify-center text-center rounded-2xl border p-8 ${preview?.active ? 'bg-emerald-50/60 border-emerald-100' : 'bg-gray-50/70 border-gray-100'}`}>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Customers will see</p>
+                  <p className={`mt-2 text-4xl font-extrabold tabular-nums ${preview?.active ? 'text-[#bf4a53]' : 'text-gray-900'}`}>
+                    ₱{Number(preview?.active ? preview.price : item.price).toLocaleString()}
+                  </p>
+                  {preview?.active ? (
+                    <>
+                      <p className="mt-1 text-sm text-gray-400 line-through tabular-nums">₱{Number(item.price).toLocaleString()}</p>
+                      {preview.price < Number(item.price) && (
+                        <span className="mt-3 text-xs font-bold text-white bg-[#bf4a53] rounded-full px-3 py-1">
+                          {Math.round((1 - preview.price / Number(item.price)) * 100)}% off
+                        </span>
+                      )}
+                      <p className="mt-3 text-xs text-gray-500">
+                        {saleEndsAt ? `Until ${new Date(saleEndsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : 'No end date — runs until you turn it off'}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-sm text-gray-500">Regular price — {onSale ? 'set a discount or sale price' : 'not on sale'}</p>
+                  )}
+                </div>
+              </div>
               </div>
             )}
           </div>

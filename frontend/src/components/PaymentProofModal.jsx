@@ -53,8 +53,8 @@ export default function PaymentProofModal({ tx, onClose, onSubmitted }) {
   };
 
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-payment-proof" z="z-[200]" maxWidth="sm:max-w-lg">
-      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-payment-proof" z="z-[200]" maxWidth="sm:max-w-lg" panelWidth="md:w-[560px] lg:w-[min(920px,94vw)]">
+      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain lg:flex lg:flex-col">
         <div className="flex items-center justify-between p-5 border-b border-gray-100/80">
           <div>
             <h2 id="dialog-title-payment-proof" className="text-lg font-bold text-gray-900">Upload payment proof</h2>
@@ -62,8 +62,11 @@ export default function PaymentProofModal({ tx, onClose, onSubmitted }) {
           </div>
           <button onClick={onClose} aria-label="Close payment proof" className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
         </div>
-        <div className="p-5 space-y-4">
+        {/* Desktop (lg+): QR left, reference + screenshot right, filling the
+            panel; submit sits at the bottom. */}
+        <div className="p-5 space-y-4 lg:p-8 lg:flex-1 lg:flex lg:flex-col">
           <ManualQrPayment
+            split
             qrCodes={qrCodes}
             channel={channel} onChannelChange={setChannel}
             reference={reference} onReferenceChange={setReference}

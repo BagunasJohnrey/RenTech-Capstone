@@ -6,6 +6,8 @@ import { useToast } from './Toast';
 import BottomSheet from './BottomSheet';
 import ItemImage from './ItemImage';
 import { Skeleton } from './Skeleton';
+import BookingCalendar from './BookingCalendar';
+import { itemPill } from '../utils/statusColors';
 import { todayYmd } from '../utils/format';
 
 export default function AvailabilityCalendar({ item, onClose }) {
@@ -43,7 +45,7 @@ export default function AvailabilityCalendar({ item, onClose }) {
   // Bottom-sheet shell (same as the transaction sheet): bottom-anchored on
   // mobile with swipe-down-to-close, centered card on desktop.
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-check-availability">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-check-availability" panelWidth="md:w-[560px] lg:w-[min(960px,94vw)]">
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-gray-100/80 bg-gray-50/50">
           <div className="w-10 h-10 rounded-lg bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
@@ -59,7 +61,27 @@ export default function AvailabilityCalendar({ item, onClose }) {
         </div>
 
         {/* Body */}
-        <div data-sheet-scroll className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-4 overflow-y-auto min-h-0">
+        <div data-sheet-scroll className="p-4 lg:p-6 pb-[max(1rem,env(safe-area-inset-bottom))] overflow-y-auto min-h-0 flex-1">
+        {/* Desktop (lg+): the item photo fills the left column; blocked dates
+            and a visual month calendar (booked days marked) on the right.
+            Below lg: the compact column with two date inputs. */}
+        <div className="panel-split panel-split-hero">
+          <div className="hidden lg:flex panel-col">
+            <div className="panel-grow relative rounded-2xl overflow-hidden bg-gray-100 min-h-[20rem]">
+              <ItemImage image={item.image} alt={item.name} eager className="absolute inset-0 w-full h-full object-cover" placeholderSize={48} />
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                {item.category && <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</p>}
+                <p className="font-bold text-gray-900">{item.name}</p>
+              </div>
+              {item.price != null && <p className="text-lg font-extrabold text-gray-900">₱{Number(item.price).toLocaleString()}</p>}
+              {item.status && (
+                <span className={`text-[11px] font-bold px-2 py-1 rounded-full ${itemPill(item.status).bg} ${itemPill(item.status).text}`}>{item.status}</span>
+              )}
+            </div>
+          </div>
+          <div className="space-y-4 panel-col">
           {/* Same height contract as ItemDetailModal: mirror the Fully
               Available box so the sheet doesn't jump when data lands. */}
           {loading ? (
@@ -82,7 +104,7 @@ export default function AvailabilityCalendar({ item, onClose }) {
                     <p className="text-[11px] text-emerald-600 mt-0.5">No bookings block this item.</p>
                   </div>
                 ) : (
-                  <div data-sheet-scroll className="space-y-1.5 max-h-36 overflow-y-auto">
+                  <div data-sheet-scroll className="space-y-1.5 max-h-36 lg:max-h-48 overflow-y-auto">
                     {blockedRanges.map((range, i) => (
                       <div key={range.transactionId || i} className="flex items-center justify-between px-3 py-2 bg-red-50/70 rounded-lg">
                         <div className="flex items-center gap-2 min-w-0">
@@ -104,12 +126,20 @@ export default function AvailabilityCalendar({ item, onClose }) {
                 )}
               </div>
 
-              <div className="border-t border-gray-100 pt-4">
+              <div className="border-t border-gray-100 pt-4 lg:border-t-0 lg:pt-0">
                 <div className="flex items-center gap-1.5 mb-2.5">
                   <Search size={13} className="text-gray-400" />
                   <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Check Dates</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="hidden lg:block">
+                  <BookingCalendar
+                    pickup={selectedStart}
+                    event={selectedEnd}
+                    onChange={(p, e) => { setSelectedStart(p); setSelectedEnd(e); setCheckResult(null); }}
+                    bookedRanges={blockedRanges}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2.5 lg:hidden">
                   <div>
                     <label className="text-[10px] font-medium text-gray-400 mb-1 block">Start<RequiredMark show={!String(selectedStart ?? '').trim()} /></label>
                     <input type="date" value={selectedStart} min={today}
@@ -138,6 +168,8 @@ export default function AvailabilityCalendar({ item, onClose }) {
               </div>
             </>
           )}
+          </div>
+        </div>
         </div>
     </BottomSheet>
   );

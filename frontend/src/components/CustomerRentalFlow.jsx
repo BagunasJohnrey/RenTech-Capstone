@@ -39,7 +39,9 @@ import {
 // Short booking code for the QR/receipt.
 const bookingCode = (tx) => getBookingCode(tx);
 
-const ITEMS_PER_LOAD = 6;
+// Desktop (lg+) pickers show photo tiles in a full-height list, so a page
+// of six would leave the panel half empty.
+const ITEMS_PER_LOAD = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 1024px)').matches ? 12 : 6;
 
 // Customer-saved "usual sizes" (Settings) — used to prefill the booking size.
 const LS_SIZES = 'rentech_pref_sizes';
@@ -733,11 +735,13 @@ export default function CustomerRentalFlow({
                 {displayedItems.map((item) => (
                   <button type="button" key={item.id} onClick={() => setSelectedItem(item)}
                     aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per event`}
-                    className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
-                      selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'}`}>
-                    <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-gray-900 line-clamp-1">{item.name}</p>
+                    className={`relative bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 lg:flex-col lg:items-stretch lg:gap-0 lg:p-0 lg:overflow-hidden ${
+                      selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200 lg:border-gray-100'}`}>
+                    <span className="flex shrink-0 lg:relative lg:w-full lg:aspect-[4/5]">
+                      <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100 lg:absolute lg:inset-0 lg:w-full lg:h-full lg:rounded-none" />
+                    </span>
+                    <div className="flex-1 min-w-0 lg:px-3.5 lg:py-3">
+                      <p className="text-xs font-bold text-gray-900 line-clamp-1 lg:line-clamp-none lg:text-sm">{item.name}</p>
                       {getSaleInfo(item).active ? (
                         <p className="text-[10px] text-gray-500">
                           <span className="text-red-500 font-bold">₱{getSaleInfo(item).price.toLocaleString()}</span>
@@ -755,7 +759,7 @@ export default function CustomerRentalFlow({
                       </span>
                     </div>
                     {selectedItem?.id === item.id && (
-                      <svg className="w-5 h-5 text-[#bf4a53]" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                      <svg className="w-5 h-5 text-[#bf4a53] lg:absolute lg:top-2.5 lg:right-2.5 lg:w-7 lg:h-7 lg:p-1.5 lg:bg-white lg:rounded-full lg:shadow-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                       </svg>
                     )}
@@ -1068,10 +1072,13 @@ export default function CustomerRentalFlow({
           )}
 
           {step === 2 && (
-            <div className="space-y-5">
+            // Desktop (lg+) with the QR gateway: QR + screenshot on the left,
+            // booking summary / voucher / amount due on the right.
+            <div className={`space-y-5 ${isManualGateway ? 'panel-split' : ''}`}>
               {/* Static QR: the customer pays from their own app, then submits
                   a screenshot for staff review - see ManualQrPayment. */}
               {isManualGateway && (
+                <div className="panel-col">
                 <ManualQrPayment
                   qrCodes={rentalDefaults.manual_qr_codes}
                   channel={proofChannel}
@@ -1083,10 +1090,11 @@ export default function CustomerRentalFlow({
                   disabled={isProcessingPayment}
                   storeContact={rentalDefaults.store_contact}
                 />
+                </div>
               )}
                 {/* Pay-now vs pay-later: the customer pays ONLY the downpayment
                     now — the rest is settled at pickup (release is locked until ₱0). */}
-                <div className="space-y-3">
+                <div className="space-y-3 panel-col lg:gap-3">
                   {/* 1 — Booking summary: total, voucher saving, balance left */}
                   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
                     <p className="text-[11px] font-extrabold text-gray-400 uppercase tracking-[0.12em]">Booking summary</p>

@@ -867,6 +867,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
       {editRental && (
         <EditRentalModal
           transaction={editRental}
+          itemImage={editRental.itemImage || inventory?.find((i) => i.id === editRental.itemId)?.image}
           onClose={() => setEditRental(null)}
           onSaved={(r) => {
             // Merge the save into the list (booking dates/notes by id,

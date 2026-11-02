@@ -29,7 +29,9 @@ import {
   sanitizeNotes,
 } from '../utils/inputLimits';
 
-const ITEMS_PER_LOAD = 6;
+// Desktop (lg+) pickers show photo tiles in a full-height list, so a page
+// of six would leave the panel half empty.
+const ITEMS_PER_LOAD = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 1024px)').matches ? 12 : 6;
 
 export default function StaffNewRental({ inventory, transactions = [], onAddTransaction, onClose, initialItem }) {
   // Discard-confirmation for Back / close: shown when the form has unsaved
@@ -766,7 +768,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 ref={catalogRef}
                 onScroll={handleCatalogScroll}
                 data-sheet-scroll
-                className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[36vh] sm:max-h-[44vh]"
+                className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[36vh] sm:max-h-[44vh] lg:max-h-none"
               >
                 {filteredCatalog.length === 0 ? (
                   <div className="flex flex-col items-center justify-center text-center px-6 py-10 min-h-[220px]">
@@ -785,20 +787,22 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   </div>
                 ) : (
                 <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
                   {displayedItems.map(item => (
                   <button
                     type="button"
                     key={item.id}
                     onClick={() => { setSelectedItem(prev => prev?.id === item.id ? null : item); setSize(''); }}
                     aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ${item.status}, ₱${item.price.toLocaleString()} per event`}
-                    className={`bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 ${
-                      selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200'
+                    className={`relative bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 lg:flex-col lg:items-stretch lg:gap-0 lg:p-0 lg:overflow-hidden ${
+                      selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200 lg:border-gray-100'
                     }`}
                   >
-                    <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-gray-900 line-clamp-1">{item.name}</p>
+                    <span className="flex shrink-0 lg:relative lg:w-full lg:aspect-[4/5]">
+                      <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100 lg:absolute lg:inset-0 lg:w-full lg:h-full lg:rounded-none" />
+                    </span>
+                    <div className="flex-1 min-w-0 lg:px-3.5 lg:py-3">
+                      <p className="text-xs font-bold text-gray-900 line-clamp-1 lg:line-clamp-none lg:text-sm">{item.name}</p>
                       <p className="text-[10px] text-gray-500">₱{item.price.toLocaleString()}</p>
                       <span className={`inline-block mt-1 text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
                         item.status === 'Available'
@@ -811,7 +815,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       </span>
                     </div>
                     {selectedItem?.id === item.id && (
-                      <svg className="w-5 h-5 text-[#bf4a53]" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                      <svg className="w-5 h-5 text-[#bf4a53] lg:absolute lg:top-2.5 lg:right-2.5 lg:w-7 lg:h-7 lg:p-1.5 lg:bg-white lg:rounded-full lg:shadow-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
                     )}
                   </button>
                   ))}

@@ -20,14 +20,16 @@ export default function MessageReaderModal({
   const canApprove = !!onApprove && !!message.transactionId && !approveResult?.ok && bookingStatus !== 'Cancelled';
 
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-message" z="z-[300]" maxWidth="sm:max-w-md">
-      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-message" z="z-[300]" maxWidth="sm:max-w-md" panelWidth="md:w-[520px] lg:w-[640px]">
+      {/* Desktop (lg+): reader layout — the message fills the panel and the
+          actions sit at the bottom. */}
+      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6 lg:p-8 lg:flex lg:flex-col">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center shrink-0">
             <MessageCircle size={18} />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 id="dialog-title-message" className="font-bold text-gray-900 leading-tight break-words">{message.title}</h3>
+            <h3 id="dialog-title-message" className="font-bold text-gray-900 leading-tight break-words lg:text-lg">{message.title}</h3>
             <p className="text-[11px] text-gray-400 mt-0.5">{timeAgo(message.time)}</p>
           </div>
           <button onClick={onClose} aria-label="Close message"
@@ -36,8 +38,8 @@ export default function MessageReaderModal({
           </button>
         </div>
 
-        <div className="bg-gray-50 rounded-2xl p-4 mb-4">
-          <p className="text-sm text-gray-700 leading-relaxed break-words whitespace-pre-wrap">{message.text}</p>
+        <div className="bg-gray-50 rounded-2xl p-4 mb-4 lg:flex-1 lg:p-6 lg:min-h-[12rem]">
+          <p className="text-sm text-gray-700 leading-relaxed break-words whitespace-pre-wrap lg:text-[15px]">{message.text}</p>
         </div>
 
         {/* Done / pending state */}

@@ -6,6 +6,8 @@ import { useToast } from './Toast';
 import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useButtonGuard } from '../hooks/useButtonGuard';
+import PanelHero from './PanelHero';
+import ItemImage from './ItemImage';
 import { customerLabel, itemLabel } from '../utils/format';
 import {
   INPUT_LIMITS,
@@ -28,21 +30,28 @@ const toYmd = (d) => {
 //  - "Customer" → edits the customer contact/profile details (PUT /customers/:id)
 // Item & fee stay unchanged in both (cancel + re-book for those). Each tab keeps its
 // own backend call, so a failure in one never half-applies the other.
-export default function EditRentalModal({ transaction, initialTab = 'booking', onClose, onSaved }) {
+export default function EditRentalModal({ transaction, itemImage, initialTab = 'booking', onClose, onSaved }) {
   useEscapeClose(onClose);
   const [tab, setTab] = useState(initialTab);
 
   const inputClass = 'w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]';
   const custName = customerLabel(transaction.customer) || transaction.customer || '';
   const itmName = itemLabel(transaction.item) || transaction.item || '';
+  const photo = itemImage || transaction.itemImage || transaction.item?.image;
+  const fmtDay = (d) => { const x = d ? new Date(d) : null; return x && !isNaN(x.getTime()) ? x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; };
 
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-edit-rental" z="z-[130]" maxWidth="sm:max-w-md">
-      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-edit-rental" z="z-[130]" maxWidth="sm:max-w-md" panelWidth="md:w-[520px] lg:w-[min(920px,94vw)]">
+      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain lg:flex lg:flex-col">
         <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md p-5 border-b border-gray-100/80 rounded-t-3xl">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-amber-50 rounded-xl">
+              {/* Phones/tablets: the item photo as the header icon (desktop
+                  shows it full-size in the left column instead). */}
+              {photo && (
+                <ItemImage thumb image={photo} alt="" className="lg:hidden w-11 h-11 rounded-xl object-cover bg-gray-100 shrink-0" placeholderSize={16} />
+              )}
+              <div className={`p-2.5 bg-amber-50 rounded-xl ${photo ? 'hidden lg:block' : ''}`}>
                 <Pencil size={18} className="text-amber-600" />
               </div>
               <div>
@@ -68,10 +77,18 @@ export default function EditRentalModal({ transaction, initialTab = 'booking', o
           </div>
         </div>
 
-        <div className="p-5">
+        {/* Desktop (lg+): the rental's item and current schedule on the left,
+            the form on the right with its buttons at the bottom. */}
+        <div className="p-5 lg:p-8 lg:flex-1 lg:!min-h-0 panel-split panel-split-hero">
+          <PanelHero image={photo} alt={itmName} eyebrow="Rental" title={itmName}>
+            {custName && <p className="text-sm text-gray-500">{custName}</p>}
+            <p className="mt-1 text-xs text-gray-400">Currently {fmtDay(transaction.rentalDate)} → {fmtDay(transaction.dueDate)}</p>
+          </PanelHero>
+          <div className="panel-col">
           {tab === 'booking'
             ? <BookingTab transaction={transaction} inputClass={inputClass} onClose={onClose} onSaved={onSaved} />
             : <CustomerTab transaction={transaction} inputClass={inputClass} onClose={onClose} onSaved={onSaved} />}
+          </div>
         </div>
       </div>
     </BottomSheet>
@@ -109,7 +126,7 @@ function BookingTab({ transaction, inputClass, onClose, onSaved }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 lg:flex-1 lg:flex lg:flex-col">
       <Field label="Pickup date" type="date" required value={pickup} onChange={(e) => setPickup(e.target.value)} className={inputClass} />
       <Field label="Return due date" type="date" required value={due} onChange={(e) => setDue(e.target.value)} className={inputClass} min={pickup} />
       <div>
@@ -130,7 +147,7 @@ function BookingTab({ transaction, inputClass, onClose, onSaved }) {
 
       <p className="text-[10px] text-gray-400">Item and fee changes require cancel + re-book.</p>
 
-      <div className="grid grid-cols-2 gap-3 pt-1">
+      <div className="grid grid-cols-2 gap-3 pt-1 lg:!mt-auto">
         <button onClick={onClose} className="py-3 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl border border-gray-200 transition-colors">Cancel</button>
         <button onClick={handleSave} disabled={saving}
           className="py-3 bg-[#bf4a53] text-white font-bold text-sm rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
@@ -195,7 +212,7 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 lg:flex-1 lg:flex lg:flex-col">
       <Field label="Full Name" required value={form.name} onChange={(e) => update('name', sanitizeName(e.target.value))} className={inputClass} autoComplete="name" maxLength={INPUT_LIMITS.NAME_MAX} showCount />
       <Field label="Phone" type="tel" value={form.phone} onChange={(e) => update('phone', sanitizePhone(e.target.value))} className={`${inputClass}${form.phone && validatePhone(form.phone) !== true ? ' border-red-300' : ''}`} />
       {form.phone && validatePhone(form.phone) !== true && <p className="text-[10px] text-red-500 -mt-2">{PHONE_ERROR} (e.g. +639171234567)</p>}
@@ -203,7 +220,7 @@ function CustomerTab({ transaction, inputClass, onClose, onSaved }) {
 
       <p className="text-[10px] text-gray-400">Item / payment / fee details still require cancel + re-book.</p>
 
-      <div className="grid grid-cols-2 gap-3 pt-1">
+      <div className="grid grid-cols-2 gap-3 pt-1 lg:!mt-auto">
         <button onClick={onClose} className="py-3 text-sm font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl border border-gray-200 transition-colors">Cancel</button>
         <button onClick={handleSave} disabled={saving}
           className="py-3 bg-[#bf4a53] text-white font-bold text-sm rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">

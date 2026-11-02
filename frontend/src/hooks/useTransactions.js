@@ -13,6 +13,9 @@ export const normalizeTx = (tx) => ({
   customerProfile: tx.customer ?? null,
   customerId: tx.customer?.id ?? tx.customerId ?? '',
   item: tx.item?.name ?? tx.item ?? '',
+  // `item` is flattened to its name above; keep the photo path for views
+  // that show it (e.g. the Edit Rental desktop panel).
+  itemImage: tx.item?.image ?? tx.itemImage ?? null,
   date: tx.rentalDate ?? tx.date ?? '',
   amount: tx.rentalFee ?? tx.amount ?? 0,
 });

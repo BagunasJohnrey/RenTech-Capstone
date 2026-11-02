@@ -5,7 +5,11 @@ import { ScanLine, X, Upload } from 'lucide-react';
 import { publicUrlFor } from '../utils/images';
 
 // Shared customer-facing QR panel (booking flow step 2 + My Rentals resume).
+// `split`: inside a desktop side panel (lg+), QR on the left and reference +
+// screenshot on the right, both stretching to the panel's height. No effect
+// below lg.
 export default function ManualQrPayment({
+  split = false,
   qrCodes = [],
   channel, onChannelChange,
   reference, onReferenceChange,
@@ -36,8 +40,12 @@ export default function ManualQrPayment({
     );
   }
 
+  // Split-mode (lg+) classes; empty strings keep the stacked layout as-is.
+  const s = (cls) => (split ? cls : '');
+
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${s('panel-split lg:flex-1 lg:!min-h-0')}`}>
+      <div className={`space-y-4 ${s('panel-col')}`}>
       {qrCodes.length > 1 && (
         <div>
           <label htmlFor="qr-channel" className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">
@@ -58,9 +66,9 @@ export default function ManualQrPayment({
       )}
 
       {selected && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 text-center">
+        <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm p-5 text-center ${s('panel-grow lg:flex lg:flex-col lg:items-center lg:justify-center')}`}>
           <button type="button" onClick={() => setLightbox(selected)} disabled={disabled}
-            className="block mx-auto w-44 h-44 rounded-xl border border-gray-100 overflow-hidden bg-gray-50">
+            className={`block mx-auto w-44 h-44 rounded-xl border border-gray-100 overflow-hidden bg-gray-50 ${s('lg:w-64 lg:h-64')}`}>
             {selected.imagePath ? (
               <img src={publicUrlFor(selected.imagePath)} alt={`${selected.label} QR code`} className="w-full h-full object-contain" />
             ) : (
@@ -81,7 +89,9 @@ export default function ManualQrPayment({
           </p>
         </div>
       )}
+      </div>
 
+      <div className={`space-y-4 ${s('panel-col')}`}>
       <div>
         <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">
           Transaction or reference number <span className="font-medium normal-case">(optional)</span>
@@ -92,8 +102,13 @@ export default function ManualQrPayment({
           className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 placeholder-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors" />
       </div>
 
-      <div>
+      <div className={s('panel-grow lg:flex lg:flex-col')}>
         <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Payment screenshot<RequiredMark show={!file} /></label>
+        {file && split && (
+          <div className="hidden lg:block relative flex-1 min-h-[12rem] mb-3 rounded-2xl border border-gray-100 bg-gray-50 overflow-hidden">
+            <img src={preview} alt="" className="absolute inset-0 w-full h-full object-contain" />
+          </div>
+        )}
         {file ? (
           <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-2xl p-3">
             <img src={preview} alt="Payment screenshot preview" className="w-14 h-14 rounded-xl object-cover border border-gray-100" />
@@ -107,7 +122,7 @@ export default function ManualQrPayment({
             </button>
           </div>
         ) : (
-          <label className={`flex flex-col items-center justify-center gap-1.5 w-full px-4 py-5 text-center rounded-2xl border-2 border-dashed cursor-pointer transition-colors ${
+          <label className={`flex flex-col items-center justify-center gap-1.5 w-full px-4 py-5 text-center rounded-2xl border-2 border-dashed cursor-pointer transition-colors ${s('lg:flex-1 lg:min-h-[12rem]')} ${
             disabled ? 'border-gray-200 text-gray-300' : 'border-gray-300 text-gray-500 hover:border-[#bf4a53] hover:text-[#bf4a53]'
           }`}>
             <Upload size={22} />
@@ -117,6 +132,7 @@ export default function ManualQrPayment({
               onChange={(e) => onFileChange(e.target.files?.[0] || null)} />
           </label>
         )}
+      </div>
       </div>
 
       {lightbox && createPortal(
