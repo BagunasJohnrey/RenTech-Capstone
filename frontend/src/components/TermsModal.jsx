@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import BottomSheet from './BottomSheet';
 import { X, ScrollText, ShieldCheck, ChevronsDown } from 'lucide-react';
 import TermsContent from './TermsContent';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -24,14 +25,7 @@ export default function TermsModal({ alreadyRead = false, onRead, onAgree, onClo
   useEffect(checkEnd); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="dialog-title-terms"
-        className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <BottomSheet onClose={onClose} labelledby="dialog-title-terms" z="z-[100]" maxWidth="sm:max-w-2xl">
         <div className="flex items-start sm:items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-[#bf4a53]/10 border border-[#bf4a53]/20 flex items-center justify-center text-[#bf4a53] shrink-0">
@@ -46,7 +40,7 @@ export default function TermsModal({ alreadyRead = false, onRead, onAgree, onClo
             <X size={18} />
           </button>
         </div>
-        <div ref={scrollRef} onScroll={checkEnd} className="px-4 sm:px-6 py-5 overflow-y-auto">
+        <div ref={scrollRef} onScroll={checkEnd} data-sheet-scroll className="flex-1 min-h-0 px-4 sm:px-6 py-5 overflow-y-auto overscroll-contain">
           <TermsContent />
         </div>
         <div className="px-4 sm:px-6 py-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 bg-gray-50/60">
@@ -75,7 +69,6 @@ export default function TermsModal({ alreadyRead = false, onRead, onAgree, onClo
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

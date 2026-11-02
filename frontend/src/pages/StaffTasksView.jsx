@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import RequiredMark from '../components/ui/RequiredMark';
 import { useNavigate } from 'react-router-dom';
 import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle, RotateCcw, ScanLine } from 'lucide-react';
 import { api } from '../utils/api';
@@ -835,7 +836,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
           shell (no floating card, no top gap): bottom-anchored on mobile,
           centered on desktop. z-[9999] keeps it above nav/tutorial layers. */}
       {smsModalTx && (
-        <BottomSheet onClose={closeSmsModal} labelledby="dialog-title-confirm-sms" z="z-[9999]" maxWidth="sm:max-w-sm" hideHandle>
+        <BottomSheet onClose={closeSmsModal} labelledby="dialog-title-confirm-sms" z="z-[9999]" maxWidth="sm:max-w-sm" variant="dialog" hideHandle>
           <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
             <div>
               <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
@@ -864,7 +865,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
               </div>
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
+                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message<RequiredMark show={!String(smsMessage ?? '').trim()} /></label>
                   <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx, smsOpts).slice(0, SMS_MAX_LENGTH))}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
                     title="Restore the default message">

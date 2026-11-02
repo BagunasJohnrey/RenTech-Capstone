@@ -382,7 +382,7 @@ export default function ItemForm({
   // downward drag mid-scroll stays a scroll — only a drag from the top (or a
   // flick) dismisses.
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-item-form" z="z-[100]" maxWidth={maxWidth} hideHandle>
+    <BottomSheet columns onClose={onClose} labelledby="dialog-title-item-form" z="z-[100]" maxWidth={maxWidth} hideHandle>
         <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80 rounded-t-3xl sm:rounded-t-3xl">
           <div className="w-10 h-10 rounded-2xl bg-[#bf4a53]/10 flex items-center justify-center shrink-0">
             <Shirt size={18} className="text-[#bf4a53]" />
@@ -397,7 +397,11 @@ export default function ItemForm({
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
-          <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 space-y-4">
+          <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6">
+{/* Desktop (lg+): fields fill the left column; the photo spans the
+    right column for the full height of the fields. Phones/tablets: the same
+    single column, in the same order, as before. */}
+<div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-x-8 lg:gap-y-5 lg:grid-flow-row-dense lg:min-h-full lg:grid-rows-[repeat(5,auto)_1fr] lg:[&>*]:col-start-1 lg:[&>*]:self-start">
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
@@ -576,11 +580,11 @@ export default function ItemForm({
           )}
 
           {showPhoto && (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 lg:flex lg:flex-col lg:!col-start-2 lg:row-start-1 lg:row-span-6 lg:!self-stretch">
               <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
                 <Camera size={14} /> Photo
               </label>
-              <div className="relative h-40 bg-gray-50/70 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden">
+              <div className="relative h-40 lg:h-auto lg:flex-1 lg:min-h-[14rem] bg-gray-50/70 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden">
                 {previewUrl ? (
                   <>
                     <img src={previewUrl} className="w-full h-full object-cover" alt="" />
@@ -721,6 +725,7 @@ export default function ItemForm({
           )}
 
           </div>
+</div>
 
           <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-3.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
             <div className="grid grid-cols-2 gap-3">

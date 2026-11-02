@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import RequiredMark from './ui/RequiredMark';
 import { X, AlertCircle, CheckCircle2, Search } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from './Toast';
@@ -110,13 +111,13 @@ export default function AvailabilityCalendar({ item, onClose }) {
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
                   <div>
-                    <label className="text-[10px] font-medium text-gray-400 mb-1 block">Start</label>
+                    <label className="text-[10px] font-medium text-gray-400 mb-1 block">Start<RequiredMark show={!String(selectedStart ?? '').trim()} /></label>
                     <input type="date" value={selectedStart} min={today}
                       onChange={e => { setSelectedStart(e.target.value); setCheckResult(null); }}
                       className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors" />
                   </div>
                   <div>
-                    <label className="text-[10px] font-medium text-gray-400 mb-1 block">End</label>
+                    <label className="text-[10px] font-medium text-gray-400 mb-1 block">End<RequiredMark show={!String(selectedEnd ?? '').trim()} /></label>
                     <input type="date" value={selectedEnd} min={selectedStart || today}
                       onChange={e => { setSelectedEnd(e.target.value); setCheckResult(null); }}
                       className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-gray-400 transition-colors" />

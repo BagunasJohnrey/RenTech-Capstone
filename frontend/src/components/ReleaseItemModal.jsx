@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import RequiredMark from './ui/RequiredMark';
 import { X, Camera, Package, User, Calendar, Scissors, Banknote, Repeat, QrCode } from 'lucide-react';
 import { api } from '../utils/api';
 import { storageService } from '../services';
@@ -165,7 +166,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
 
   return (
     <>
-      <BottomSheet onClose={requestClose} labelledby="dialog-title-release-item" z="z-[9999]" maxWidth="sm:max-w-md" interceptClose={releasing}>
+      <BottomSheet columns onClose={requestClose} labelledby="dialog-title-release-item" z="z-[9999]" maxWidth="sm:max-w-md" interceptClose={releasing}>
           <div className="shrink-0 overflow-hidden">
             <div className="bg-white flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80">
             <div className="flex items-center gap-3">
@@ -183,7 +184,9 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
             </div>
           </div>
 
-          <div data-sheet-scroll className="p-5 sm:p-6 space-y-5 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+          <div data-sheet-scroll className="p-5 sm:p-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+<div className="space-y-5 panel-split">
+          <div className="space-y-5 panel-col">
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3.5 bg-gray-50 rounded-2xl">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
@@ -215,12 +218,12 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
             </div>
           </div>
 
-          <div>
+          <div className="panel-grow lg:flex lg:flex-col">
             <label className="text-xs font-bold text-gray-700 mb-3 flex items-center gap-1.5">
               <Camera size={14} className="text-blue-500" /> Pre-Rental Condition Photo
             </label>
             <p className="text-[10px] text-gray-400 mb-2">Capture the item's condition before releasing to the customer.</p>
-            <div className="relative h-44 sm:h-48 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden transition-colors hover:border-blue-300">
+            <div className="relative h-44 sm:h-48 lg:h-auto lg:flex-1 lg:min-h-[12rem] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden transition-colors hover:border-blue-300">
               {photoUrl ? (
                 <>
                   <img src={photoUrl} className="w-full h-full object-cover" alt="Pre-rental condition" />
@@ -245,8 +248,10 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
             className="w-full py-2.5 text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-2xl transition-colors flex items-center justify-center gap-1.5">
             <Repeat size={14} /> Customer wants a different item? Swap it
           </button>
+          </div>
 
-          <div>
+          <div className="space-y-5 panel-col">
+          <div className="panel-grow lg:flex lg:flex-col">
             <label className="text-xs font-bold text-gray-700 mb-1.5 flex items-center gap-1.5">
               Notes (optional)
             </label>
@@ -254,7 +259,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
               value={notes}
               onChange={e => setNotes(e.target.value)}
               rows={2}
-              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-blue-400 resize-none"
+              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-blue-400 resize-none lg:flex-1"
             />
           </div>
 
@@ -316,7 +321,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
               {payChannel === 'cash' ? (
               <>
               <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Amount (full balance)</label>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Amount (full balance)<RequiredMark show={!String(payAmount ?? '').trim()} /></label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">₱</span>
                   <input
@@ -356,8 +361,10 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
           {error && (
             <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
           )}
+          </div>
 
           </div>
+</div>
 
           {/* Footer actions — pinned below the scrolling body so
               Cancel / Confirm Release never scroll out of reach. */}

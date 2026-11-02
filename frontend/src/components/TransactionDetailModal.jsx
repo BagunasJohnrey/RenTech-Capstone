@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import RequiredMark from './ui/RequiredMark';
 import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, Maximize2, MapPin, UserCheck, PackageCheck, History, QrCode } from 'lucide-react';
 import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
 import { normalizeTx, invalidateTxCache, getTxAudits, preloadTxPhotos } from '../hooks/useTransactions';
@@ -383,12 +384,12 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       {/* Flex column: static header + scrolling body + pinned footer, so the
           actions never scroll away on mobile. Own white handle lives on the
           gradient header, so the sheet's gray one is hidden. */}
-      <BottomSheet onClose={requestClose} labelledby="dialog-title-transaction-detail" z="z-[300]" maxWidth="sm:max-w-lg" hideHandle>
+      <BottomSheet onClose={requestClose} labelledby="dialog-title-transaction-detail" z="z-[300]" maxWidth="sm:max-w-lg" panelWidth="md:w-[640px] lg:w-[920px]" hideHandle>
 
         {/* Header — brand gradient band */}
         <div className="shrink-0 overflow-hidden">
-          <div className="bg-gradient-to-r from-[#bf4a53] to-[#e07080] px-5 sm:px-6 pt-2 pb-4 relative">
-            <div className="flex justify-center" aria-hidden="true">
+          <div className="bg-gradient-to-r from-[#bf4a53] to-[#e07080] px-5 sm:px-6 pt-2 sm:pt-5 pb-4 relative">
+            <div className="flex justify-center sm:hidden" aria-hidden="true">
               <div className="w-10 h-1 rounded-full bg-white/40 mb-2" />
             </div>
             <div className="absolute inset-0 opacity-10 pointer-events-none">
@@ -423,7 +424,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           </div>
         </div>
 
-        <div data-sheet-scroll className="p-5 sm:p-6 space-y-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+        <div data-sheet-scroll className="p-5 sm:p-6 lg:p-8 space-y-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
           {(enriching || (isStaffView && auditsLoading)) ? (
             // Structural placeholder matching the body rhythm — swapped for
             // the real sections in one paint, no staged pop-ins. Staff view
@@ -439,7 +440,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               <Skeleton className="h-[88px] rounded-2xl" />
             </div>
           ) : (
-          <>
+          // Desktop (lg+): sections flow into two balanced columns
+          // (.panel-cols). Below lg: the same single column as before.
+          <div className="space-y-6 panel-cols">
           {/* Customer & Item — profile-tile cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
@@ -763,27 +766,29 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             </div>
           )}
 
-        </>
+          </div>
           )}
         </div>
 
         {/* Footer actions — pinned below the scrolling body (flex column, not
             sticky) so they stay fixed on mobile. Close removed (header X /
             backdrop / Esc still dismiss). */}
-        <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
-          <div className="space-y-2">
+        <div className="shrink-0 bg-white/95 backdrop-blur-md border-t border-gray-100/80 px-5 sm:px-6 lg:px-8 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-b-3xl">
+          {/* Desktop (lg+): one row — notice on the left, compact buttons on
+              the right. Below lg: stacked full-width, as before. */}
+          <div className="space-y-2 lg:space-y-0 lg:flex lg:items-center lg:justify-end lg:gap-3">
             {(role === 'Admin' || role === 'Staff') && ['Active', 'Overdue'].includes(tx.status) && isReturnBlockedByBalance && (
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-xs font-semibold text-amber-800">
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-xs font-semibold text-amber-800 lg:flex-1">
                 Settle the ₱{outstandingBalance.toLocaleString()} balance first — return is locked until fully paid.
               </div>
             )}
             {canProcessReturn && onReturn && (
-              <button onClick={() => onReturn(tx)} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-2">
+              <button onClick={() => onReturn(tx)} className="w-full lg:w-auto lg:shrink-0 lg:px-8 py-3.5 rounded-2xl font-bold text-sm bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-2">
                 <Undo2 size={16} /> Process Return
               </button>
             )}
             {canRecordPayment && (
-              <button onClick={openPayModal} className="w-full py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
+              <button onClick={openPayModal} className="w-full lg:w-auto lg:shrink-0 lg:px-8 py-3.5 rounded-2xl font-bold text-sm bg-[#bf4a53] text-white hover:bg-[#a83d46] transition-colors shadow-sm flex items-center justify-center gap-2">
                 <Banknote size={16} /> {tx.status === 'Returned' ? `Settle damage ₱${outstandingBalance.toLocaleString()}` : 'Record Payment'}
               </button>
             )}
@@ -794,7 +799,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       {/* Record Payment — stacked sheet. No second blur: the parent sheet
           already blurs beneath, and two stacked blurs jank low-end phones. */}
       {showPayModal && (
-        <BottomSheet onClose={closePayModal} labelledby="dialog-title-record-payment" z="z-[310]" maxWidth="sm:max-w-sm"
+        <BottomSheet onClose={closePayModal} labelledby="dialog-title-record-payment" z="z-[310]" maxWidth="sm:max-w-sm" variant="dialog"
           interceptClose={payLoading} backdropClass="bg-gray-900/50">
             <div data-sheet-scroll className="overflow-y-auto min-h-0 p-5 sm:p-6 space-y-5">
             {paySuccess ? (
@@ -842,7 +847,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Amount</label>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Amount<RequiredMark show={!String(payAmount ?? '').trim()} /></label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">₱</span>
                     <input

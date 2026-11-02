@@ -419,7 +419,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
             </div>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Authentication Code</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Authentication Code<RequiredMark show={String(mfaCode ?? '').length < 6} /></label>
                 <input
                   type="text"
                   value={mfaCode}
@@ -526,7 +526,7 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
         ) : (
           <div className="space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">New PIN</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">New PIN<RequiredMark show={!String(pin ?? '').trim()} /></label>
               <PinInput
                 value={pin}
                 onChange={setPin}
@@ -626,11 +626,11 @@ export default function TeamTab({ staffList, staffLoadError, onAddStaff, onRemov
               </div>
             )}
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Current PIN</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">Current PIN<RequiredMark show={!String(oldPin ?? '').trim()} /></label>
               <PinInput value={oldPin} onChange={setOldPin} autoFocus />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1.5">New PIN</label>
+              <label className="block text-xs font-semibold text-gray-500 mb-1.5">New PIN<RequiredMark show={!String(pin ?? '').trim()} /></label>
               <PinInput value={pin} onChange={setPin} onEnter={() => handleSavePin(true)} />
             </div>
             <input

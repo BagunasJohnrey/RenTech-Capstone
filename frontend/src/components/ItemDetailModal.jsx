@@ -63,7 +63,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
   // mobile with swipe-down-to-close, centered card on desktop. The body
   // carries data-sheet-scroll so a downward drag mid-scroll stays a scroll.
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-item-detail">
+    <BottomSheet columns onClose={onClose} labelledby="dialog-title-item-detail">
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-gray-50/50">
           <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0">
@@ -78,7 +78,8 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
           </button>
         </div>
 
-        <div data-sheet-scroll className="overflow-y-auto p-4 space-y-4 min-h-0">
+        <div data-sheet-scroll className="overflow-y-auto p-4 min-h-0">
+<div className="space-y-4 panel-cols">
           <div className="flex items-end gap-2">
             {sale.active ? (
               <>
@@ -154,6 +155,7 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
             )}
           </div>
         </div>
+</div>
 
         {/* Footer */}
         <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-gray-100 shrink-0">

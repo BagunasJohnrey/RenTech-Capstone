@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
+import BottomSheet from '../components/BottomSheet';
 import { Sparkles, Tag, Percent, Lightbulb, Loader2, AlertCircle, Clock, Trash2, Calendar, X, Check, Undo2, History, ChevronLeft, Pencil, PackageX, Ticket } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
@@ -373,8 +374,21 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
 
   const toggleExpanded = (k) => setExpanded(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
-  const savedTotalPages = Math.max(1, Math.ceil(savedList.length / PAGE_SIZE));
-  const savedPaged = savedList.slice((savedPage - 1) * PAGE_SIZE, savedPage * PAGE_SIZE);
+  // The history panel is full height on desktop, so a page holds twice as
+  // many runs there (no empty band under a short list). Phones keep 6.
+  const [wideScreen, setWideScreen] = useState(() => {
+    try { return window.matchMedia('(min-width: 1024px)').matches; } catch { return false; }
+  });
+  useEffect(() => {
+    let mq;
+    try { mq = window.matchMedia('(min-width: 1024px)'); } catch { return undefined; }
+    const onChange = (e) => setWideScreen(e.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+  const historyPageSize = wideScreen ? PAGE_SIZE * 2 : PAGE_SIZE;
+  const savedTotalPages = Math.max(1, Math.ceil(savedList.length / historyPageSize));
+  const savedPaged = savedList.slice((Math.min(savedPage, savedTotalPages) - 1) * historyPageSize, Math.min(savedPage, savedTotalPages) * historyPageSize);
   const tabCounts = { ideas: ideasWaiting || null, sales: stats.liveSales || null, codes: stats.usableCodes || null };
 
   return (
@@ -656,11 +670,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
 
       {/* ── History sheet (list → detail) ────────────────────────── */}
       {historyOpen && (
-        <div className="fixed inset-0 z-[200]">
-          <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={closeHistory} />
-          <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 sm:p-4 pointer-events-none">
-            <div role="dialog" aria-modal="true" aria-label="Saved AI suggestions"
-              className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg sheet-cap sm:max-h-[85vh] max-h-[92dvh] flex flex-col overflow-hidden pointer-events-auto animate-in slide-in-from-bottom sm:zoom-in-95 duration-200">
+        <BottomSheet onClose={closeHistory} labelledby="dialog-title-ai-history" z="z-[200]" maxWidth="sm:max-w-lg">
               <div className="shrink-0 flex items-center gap-2 p-5 border-b border-gray-100/80">
                 {viewingSaved && (
                   <IconButton label="Back to history" onClick={() => { setViewingSaved(null); setViewingSavedData(null); setViewingError(''); }}>
@@ -668,7 +678,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
                   </IconButton>
                 )}
                 <div className="min-w-0 flex-1">
-                  <h3 className="font-bold text-gray-900">{viewingSaved ? (viewingSaved.currentMonth || 'Saved suggestion') : 'Suggestion history'}</h3>
+                  <h3 id="dialog-title-ai-history" className="font-bold text-gray-900">{viewingSaved ? (viewingSaved.currentMonth || 'Saved suggestion') : 'Suggestion history'}</h3>
                   <p className="text-xs text-gray-500 mt-0.5">
                     {viewingSaved
                       ? new Date(viewingSaved.createdAt).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -684,7 +694,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
                 <IconButton label="Close" onClick={closeHistory}><X size={18} /></IconButton>
               </div>
 
-              <div className="overflow-y-auto p-5 space-y-4 min-h-0">
+              <div data-sheet-scroll className="flex-1 overflow-y-auto overscroll-contain p-5 space-y-4 min-h-0">
                 {!viewingSaved ? (
                   savedLoading ? (
                     <div className="space-y-2">{[1, 2, 3].map(i => <div key={i} className="h-16 bg-gray-50 rounded-2xl shimmer" />)}</div>
@@ -695,7 +705,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
                       <button onClick={loadSaved} className="text-xs font-bold text-red-600 bg-red-100 px-3 py-1.5 rounded-full hover:bg-red-200 shrink-0">Retry</button>
                     </div>
                   ) : savedList.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-8">No saved suggestions yet.</p>
+                    <p className="text-sm text-gray-400 text-center py-8 panel-center">No saved suggestions yet.</p>
                   ) : (
                     <>
                       <ul className="divide-y divide-gray-100 border border-gray-100 rounded-2xl overflow-hidden">
@@ -771,9 +781,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
                   <p className="text-sm text-gray-400 text-center py-6">No suggestion data available.</p>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
+        </BottomSheet>
       )}
     </div>
   );

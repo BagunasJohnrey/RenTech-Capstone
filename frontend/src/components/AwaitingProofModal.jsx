@@ -27,7 +27,7 @@ export default function AwaitingProofModal({ booking, onClose }) {
   const custTel = customerTelLink(booking?.customer);
 
   return createPortal(
-    <BottomSheet onClose={onClose} labelledby="dialog-title-awaiting-proof" z="z-[9999]">
+    <BottomSheet columns onClose={onClose} labelledby="dialog-title-awaiting-proof" z="z-[9999]">
       <div className="flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80 shrink-0">
         <div className="flex items-center gap-3">
           <div className="p-2.5 bg-amber-50 rounded-xl">
@@ -47,7 +47,8 @@ export default function AwaitingProofModal({ booking, onClose }) {
         </button>
       </div>
 
-      <div data-sheet-scroll className="p-5 sm:p-6 space-y-5 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+      <div data-sheet-scroll className="p-5 sm:p-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+<div className="space-y-5 panel-cols">
         <div className="grid grid-cols-2 gap-3">
           <div className="p-3.5 bg-gray-50 rounded-2xl">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">
@@ -157,6 +158,7 @@ export default function AwaitingProofModal({ booking, onClose }) {
           Close
         </button>
       </div>
+</div>
     </BottomSheet>,
     document.body
   );

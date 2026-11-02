@@ -2,6 +2,7 @@
 // block. Motion matches the transaction sheets (timed 150ms exit).
 // `onSaleItem` opens the inline sale editor; `openCleanQueue` the queue modal.
 import { TrendingUp, AlertTriangle, RotateCcw, ChevronRight, Tag, X } from 'lucide-react';
+import BottomSheet from '../BottomSheet';
 import ItemImage from '../ItemImage';
 
 const CFG = {
@@ -20,16 +21,13 @@ export default function SmartListModal({
   const cfg = CFG[smartModal];
   const Icon = cfg.icon;
   return (
-    <div className={`fixed inset-0 z-[200] transition-opacity duration-150 ${smartClosing ? 'opacity-0' : 'opacity-100'}`}>
-      <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${smartClosing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={closeSmartModal} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
-        <div role="dialog" aria-modal="true" className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-md sheet-cap sm:max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${smartClosing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`} onClick={e => e.stopPropagation()}>
+    <BottomSheet columns onClose={closeSmartModal} labelledby="dialog-title-smart-list" z="z-[200]" maxWidth="sm:max-w-md">
           <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80">
             <div className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center shrink-0">
               <Icon size={18} className={cfg.iconCls} />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold text-gray-900 leading-tight">{cfg.title}</h3>
+              <h3 id="dialog-title-smart-list" className="font-bold text-gray-900 leading-tight">{cfg.title}</h3>
               <p className="text-xs text-gray-400 mt-0.5">{cfg.sub}</p>
             </div>
             <button onClick={closeSmartModal} aria-label="Close list"
@@ -37,7 +35,8 @@ export default function SmartListModal({
               <X size={17} />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 pb-8 min-h-[220px] space-y-2.5">
+          <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 pb-8 min-h-[220px]">
+<div className="space-y-2.5 panel-cols panel-cols-tight">
             {smartModal === 'restock' && restockRules.map((r) => (
               <div key={r.category} className="bg-emerald-50/60 rounded-2xl px-4 py-3 text-sm">
                 <p className="font-bold text-gray-900">{r.category} <span className="text-emerald-600">+{r.shortfall} pc{r.shortfall === 1 ? '' : 's'}</span></p>
@@ -82,8 +81,7 @@ export default function SmartListModal({
               </button>
             ))}
           </div>
-        </div>
-      </div>
-    </div>
+</div>
+    </BottomSheet>
   );
 }

@@ -22,6 +22,8 @@ import {
   sanitizeName,
   sanitizePhone,
   validatePhone,
+  validateName,
+  validateAddress,
   PHONE_ERROR,
   sanitizeAddress,
   sanitizeNotes,
@@ -848,7 +850,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Customer</h4>
                 <div>
-                  <Field showLabel={false} type="text" placeholder="Full Name" value={customer.name}
+                  <Field type="text" label="Full Name" required valid={validateName(customer.name) === true} placeholder="Juan Dela Cruz" value={customer.name}
                     onChange={e => { setCustomer({...customer, name: sanitizeName(e.target.value)}); clearFieldError('name'); touchField('name'); }}
                     onBlur={() => touchField('name')}
                     className={inputClass('name')} aria-label="Customer full name"
@@ -857,7 +859,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <Field showLabel={false} type="tel" placeholder="Contact No." value={customer.contact}
+                    <Field type="tel" label="Contact No." required placeholder="Contact No." value={customer.contact}
                       onChange={e => { setCustomer({...customer, contact: sanitizePhone(e.target.value)}); clearFieldError('contact'); touchField('contact'); }}
                       onBlur={() => touchField('contact')}
                       className={inputClass('contact')} inputMode="numeric" aria-label="Customer contact number"
@@ -865,7 +867,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                       error={fieldErrors.contact || undefined} />
                   </div>
                   <div>
-                    <Field showLabel={false} type="text" placeholder="Address" value={customer.address}
+                    <Field type="text" label="Address" required valid={validateAddress(customer.address) === true} placeholder="Street, Balayan, Batangas" value={customer.address}
                       onChange={e => { setCustomer({...customer, address: sanitizeAddress(e.target.value)}); clearFieldError('address'); touchField('address'); }}
                       onBlur={() => touchField('address')}
                       className={inputClass('address')} aria-label="Customer address"

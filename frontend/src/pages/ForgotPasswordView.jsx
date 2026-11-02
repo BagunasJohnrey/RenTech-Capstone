@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import RequiredMark from '../components/ui/RequiredMark';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ShieldCheck, CheckCircle, MapPin, MailWarning, Eye, EyeOff } from 'lucide-react';
 import { api } from '../utils/api';
@@ -155,7 +156,7 @@ export default function ForgotPasswordView() {
                   </p>
                 ) : (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Account Email</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Account Email<RequiredMark show={!String(resendEmail ?? '').trim()} /></label>
                     <input
                       type="email"
                       value={resendEmail}
@@ -193,7 +194,7 @@ export default function ForgotPasswordView() {
         ) : (
           <form onSubmit={handleResetSubmit} className="space-y-4 bg-white rounded-2xl border border-gray-100 p-6 sm:p-8 shadow-sm">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Current Password<RequiredMark show={!String(currentPassword ?? '').trim()} /></label>
               <div className="relative">
                 <input
                   type={showCurrent ? 'text' : 'password'}
@@ -217,7 +218,7 @@ export default function ForgotPasswordView() {
               <p className="text-xs text-red-500 font-semibold bg-red-50 border border-red-100 rounded-xl px-4 py-2.5">{formError}</p>
             )}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">New Password<RequiredMark show={!String(password ?? '').trim()} /></label>
               <div className="relative">
                 <input
                   type={showNew ? 'text' : 'password'}
@@ -247,7 +248,7 @@ export default function ForgotPasswordView() {
               })}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password<RequiredMark show={!confirm || confirm !== password} /></label>
               <div className="relative">
                 <input
                   type={showConfirm ? 'text' : 'password'}

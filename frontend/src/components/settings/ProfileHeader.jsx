@@ -12,6 +12,7 @@ import {
   sanitizeName,
   sanitizePhone,
   validatePhone,
+  formatPhoneDisplay,
   validateName,
   PHONE_ERROR,
   sanitizeAddress,
@@ -343,7 +344,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Phone</p>
-                      <p className="text-xs font-semibold text-gray-800 truncate">{customerInfo?.contact || '—'}</p>
+                      <p className="text-xs font-semibold text-gray-800 truncate">{formatPhoneDisplay(customerInfo?.contact) || '—'}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 p-3.5 bg-[#fafafa] rounded-2xl border border-gray-100">
@@ -428,7 +429,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                 </div>
                 <div className="min-w-0">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Phone</p>
-                  <p className="text-xs font-semibold text-gray-800 truncate">{profile?.phone || '—'}</p>
+                  <p className="text-xs font-semibold text-gray-800 truncate">{formatPhoneDisplay(profile?.phone) || '—'}</p>
                 </div>
               </div>
             </div>

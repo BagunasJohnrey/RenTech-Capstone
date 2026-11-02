@@ -21,14 +21,31 @@ function unlockBody() {
   }
 }
 
-// Shared bottom-sheet shell: bottom-anchored on mobile (rounded top, full
-// width, swipe-down-to-dismiss), centered card on sm+ screens. Mirrors the
-// TransactionDetailModal treatment so every modal behaves the same.
+// Shared sheet shell. Phones: bottom-anchored (rounded top, full width,
+// swipe-down-to-dismiss). Small tablets (sm): centered card. Desktop (md+):
+// `variant="panel"` (default) is a full-height panel docked to the right edge;
+// `variant="dialog"` stays a centered card — use it for small confirms and
+// pickers. Every modal shares this treatment so they all behave the same.
 // Scrollable bodies inside should carry `data-sheet-scroll` so a downward
 // drag that starts mid-scroll stays a scroll instead of dismissing.
 // `backdropClass` lets a sheet stacked on another skip the second blur
 // (two stacked backdrop blurs jank low-end phones).
-export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWidth = 'sm:max-w-lg', interceptClose = false, hideHandle = false, backdropClass = 'bg-gray-900/40 backdrop-blur-sm', children }) {
+// Desktop side-panel width for each sheet size (literal classes for
+// Tailwind). Wider than the phone/tablet card on purpose: desktop has room.
+// `panelWidth` overrides this for sheets with their own desktop layout.
+// `columns` is for sheets whose body uses `.panel-cols` (two balanced
+// columns at lg+, see index.css): the panel widens to fit them.
+const PANEL_WIDTH = {
+  'sm:max-w-sm': 'md:w-[440px]',
+  'sm:max-w-md': 'md:w-[520px]',
+  'sm:max-w-lg': 'md:w-[560px] lg:w-[620px]',
+  'sm:max-w-xl': 'md:w-[620px] lg:w-[680px]',
+  'sm:max-w-2xl': 'md:w-[680px] lg:w-[760px]',
+  'sm:max-w-3xl': 'md:w-[720px] lg:w-[880px]',
+};
+
+export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWidth = 'sm:max-w-lg', variant = 'panel', panelWidth, columns = false, interceptClose = false, hideHandle = false, backdropClass = 'bg-gray-900/40 backdrop-blur-sm', children }) {
+  const isPanel = variant === 'panel';
   const [dragY, setDragY] = useState(null);
   const [dismissing, setDismissing] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -125,7 +142,7 @@ export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWid
       style={dragY != null && !dismissing ? { opacity: Math.max(0.25, 1 - dragY / 500) } : undefined}
     >
       <div className={`fixed inset-0 ${backdropClass}`} onClick={requestClose} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none">
+      <div className={`fixed inset-0 flex items-end sm:items-center justify-center px-0 pt-10 pb-0 sm:p-4 pointer-events-none ${isPanel ? 'md:items-stretch md:justify-end md:p-0' : ''}`}>
         <div
           role="dialog"
           aria-modal="true"
@@ -135,7 +152,7 @@ export default function BottomSheet({ onClose, labelledby, z = 'z-[200]', maxWid
           onTouchMove={onSheetTouchMove}
           onTouchEnd={onSheetTouchEnd}
           onClick={(e) => e.stopPropagation()}
-          className={`relative bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full ${maxWidth} sheet-cap sm:max-h-[90vh] flex flex-col overflow-hidden overscroll-contain pointer-events-auto transform-gpu animate-in slide-in-from-bottom sm:zoom-in-95 duration-200`}
+          className={`relative bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full ${maxWidth} sheet-cap sm:max-h-[90vh] flex flex-col overflow-hidden overscroll-contain pointer-events-auto transform-gpu sheet-enter ${isPanel ? `sheet-panel md:h-full md:max-h-none md:max-w-[92vw] md:rounded-r-none ${panelWidth || (columns ? 'md:w-[640px] lg:w-[min(960px,94vw)]' : PANEL_WIDTH[maxWidth]) || 'md:w-[560px] lg:w-[620px]'}` : ''}`}
           style={
             dismissing
               ? { transform: 'translateY(105%)', transition: 'transform 190ms ease-in' }

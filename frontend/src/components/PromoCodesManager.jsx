@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import RequiredMark from './ui/RequiredMark';
 import { Plus, Trash2, Percent, CheckCircle2, XCircle } from 'lucide-react';
 import { api } from '../utils/api';
 import { SkeletonList } from '../components/Skeleton';
@@ -117,7 +118,7 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
         <form onSubmit={handleCreate} className="bg-gray-50/70 border border-gray-100 rounded-2xl p-4 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Code</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Code<RequiredMark show={!String(form.code ?? '').trim()} /></label>
               <input type="text" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })}
                 placeholder="LOYAL10" required maxLength={20}
                 className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
@@ -135,14 +136,14 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
             </div>
             {form.discountType === 'pct' ? (
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount %</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount %<RequiredMark show={!String(form.discountPct ?? '').trim()} /></label>
                 <input type="number" min={1} max={100} value={form.discountPct}
                   onChange={e => setForm({ ...form, discountPct: Math.min(100, Math.max(1, parseInt(e.target.value) || 1)) })}
                   className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
               </div>
             ) : (
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Amount off (₱)</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Amount off (₱)<RequiredMark show={!String(form.discountAmount ?? '').trim()} /></label>
                 <input type="number" min={1} value={form.discountAmount}
                   onChange={e => setForm({ ...form, discountAmount: e.target.value })}
                   placeholder="200" required

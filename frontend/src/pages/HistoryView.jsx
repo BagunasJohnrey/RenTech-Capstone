@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef } from 'react';
 import { Undo2, Search, X, SlidersHorizontal, RotateCcw, Trash2, Eye, XCircle, Download, Calendar, Package, Pencil, MessageCircle, Phone, Repeat } from 'lucide-react';
+import RequiredMark from '../components/ui/RequiredMark';
 import TransactionDetailModal from '../components/TransactionDetailModal';
 import CancelBookingModal from '../components/CancelBookingModal';
 import SwapItemModal from '../components/SwapItemModal';
@@ -14,10 +15,10 @@ import { isReleased } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
-import { TX_STATUS_PILLS } from '../utils/statusColors';
 import Pagination from '../components/ui/Pagination';
 import PageHeader from '../components/ui/PageHeader';
 import FilterChip from '../components/ui/FilterChip';
+import { displayStatus, qrPaymentUnresolved } from '../utils/txDisplayStatus';
 import { useConfirm } from '../hooks/useConfirm';
 
 const formatDate = (d) => {
@@ -32,11 +33,9 @@ const formatCurrency = (n) => {
   catch { return `₱${n}`; }
 };
 
-const statusColors = Object.fromEntries(
-  Object.entries(TX_STATUS_PILLS).map(([k, v]) => [k, `${v.bg} ${v.text}`])
-);
-
-const ALL_STATUSES = ['All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved'];
+// 'Priority' = rows that need action now (overdue, unverified QR payment,
+// due/pickup today, alteration) — the staff default. Customers start on All.
+const ALL_STATUSES = ['Priority', 'All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved'];
 
 const SORT_OPTIONS = [
   { value: 'priority', label: 'Status priority' },
@@ -58,16 +57,16 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   // Manual-QR bookings whose proof is still awaiting verification (or was
   // never uploaded) cannot be prepared for pickup — the downpayment recorded
   // here would double-charge a transfer that is already under review.
-  const qrPaymentUnresolved = (tx) =>
-    (tx?.paymentPath === 'manual' || tx?.gateway === 'manual') &&
-    Number(tx?.totalPaid || 0) < Number(tx?.downpayment || 0);
+  // (qrPaymentUnresolved lives in utils/txDisplayStatus.)
+  const defaultStatus = isStaff ? 'Priority' : 'All';
+  const statusOptions = isStaff ? ALL_STATUSES : ALL_STATUSES.filter((s) => s !== 'Priority');
   const [searchQuery, setSearchQuery] = useState(initialSearch || '');
   const [showFilters, setShowFilters] = useState(false);
   const initialStatus = (() => {
     try {
       const s = new URLSearchParams(window.location.search).get('status');
-      return ALL_STATUSES.includes(s) ? s : 'All';
-    } catch { return 'All'; }
+      return statusOptions.includes(s) ? s : defaultStatus;
+    } catch { return defaultStatus; }
   })();
   const [activeStatusFilter, setActiveStatusFilter] = useState(initialStatus);
 
@@ -272,12 +271,12 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     </>
   );
 
-  const activeFilterCount = (activeStatusFilter !== 'All' ? 1 : 0)
+  const activeFilterCount = (activeStatusFilter !== defaultStatus ? 1 : 0)
     + ((dateFrom !== '' || dateTo !== '') ? 1 : 0)
     + (sortBy !== 'priority' ? 1 : 0);
 
   const clearFilters = () => {
-    setActiveStatusFilter('All');
+    setActiveStatusFilter(defaultStatus);
 
     setDateFrom('');
     setDateTo('');
@@ -362,12 +361,14 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
       return true;
     });
 
-  const statusCounts = {};
+  const statusCounts = { Priority: 0 };
   for (const tx of searchDateFiltered) {
     if (tx.status) statusCounts[tx.status] = (statusCounts[tx.status] || 0) + 1;
+    if (displayStatus(tx).priority) statusCounts.Priority += 1;
   }
   const filteredTransactions = searchDateFiltered
     .filter((tx) => {
+      if (activeStatusFilter === 'Priority') return displayStatus(tx).priority;
       if (activeStatusFilter !== 'All') {
         return tx.status === activeStatusFilter;
       }
@@ -397,8 +398,12 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           return txAmountOf(b) - txAmountOf(a) || txTiebreak(a, b);
         case 'priority':
         default: {
-          const pa = statusPriority[a.status] ?? 99;
-          const pb = statusPriority[b.status] ?? 99;
+          // Urgent display states (overdue, payment pending, due/pickup
+          // today…) first, then the role-aware base status order.
+          const da = displayStatus(a);
+          const db = displayStatus(b);
+          const pa = da.rank ?? 10 + (statusPriority[a.status] ?? 89);
+          const pb = db.rank ?? 10 + (statusPriority[b.status] ?? 89);
           if (pa !== pb) return pa - pb;
           return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
         }
@@ -481,13 +486,31 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           </div>
         </div>
 
+        {/* Priority is the staff default, so say so even with the filter
+            panel closed, with a one-tap way to the full list and back. */}
+        {isStaff && (activeStatusFilter === 'Priority' || activeStatusFilter === 'All') && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 px-1">
+            <span>
+              {activeStatusFilter === 'Priority'
+                ? 'Showing priority only: overdue, payment pending, due or pickup today, alterations.'
+                : 'Showing all transactions.'}
+            </span>
+            <button
+              onClick={() => { setActiveStatusFilter(activeStatusFilter === 'Priority' ? 'All' : 'Priority'); setCurrentPage(1); }}
+              className="font-bold text-[#bf4a53] hover:underline"
+            >
+              {activeStatusFilter === 'Priority' ? 'Show all' : 'Priority only'}
+            </button>
+          </div>
+        )}
+
         {/* Filter panel */}
         {showFilters && (
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
             {/* Status pills */}
             <div className="px-4 py-3 border-b border-gray-50">
               <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
-                {ALL_STATUSES.map(s => {
+                {statusOptions.map(s => {
                   const active = activeStatusFilter === s;
                   const count = s === 'All' ? searchDateFiltered.length : (statusCounts[s] || 0);
                   return (
@@ -533,10 +556,10 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             {/* Active filter chips + Clear all */}
             {activeFilterCount > 0 && (
               <div className="px-4 py-2 bg-gray-50/80 border-t border-gray-50 flex items-center gap-2 overflow-x-auto hide-scrollbar">
-                {activeStatusFilter !== 'All' && (
+                {activeStatusFilter !== defaultStatus && (
                   <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 bg-white rounded-full border border-gray-200 text-[10px] font-bold text-gray-700 shadow-sm">
                     {activeStatusFilter}
-                    <button onClick={() => { setActiveStatusFilter('All'); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
+                    <button onClick={() => { setActiveStatusFilter(defaultStatus); setCurrentPage(1); }} className="text-gray-400 hover:text-gray-600 ml-0.5">
                       <X size={11} />
                     </button>
                   </span>
@@ -599,7 +622,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                 ) : displayedTransactions.length === 0 ? (
                   <tr>
                     <td colSpan={role !== 'Customer' ? 7 : 6} className="px-6 py-12 text-center text-gray-400">
-                      No transactions match your search/filters.
+                      {activeStatusFilter === 'Priority' && !searchQuery.trim() && !dateFrom && !dateTo ? (
+                        <>Nothing needs attention right now.{' '}
+                          <button onClick={() => { setActiveStatusFilter('All'); setCurrentPage(1); }} className="font-bold text-[#bf4a53] hover:underline">Show all transactions</button>
+                        </>
+                      ) : 'No transactions match your search/filters.'}
                     </td>
                   </tr>
                 ) : (
@@ -621,17 +648,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       <td className="px-6 py-4 text-gray-500">{tx.item || '—'}</td>
                       <td className="px-6 py-4 text-gray-500 text-[13px]">{formatDate(tx.rentalDate || tx.date)}</td>
                       <td className="px-6 py-4">
-                        {/* One pill only: an active alteration replaces the
-                            booking status instead of stacking beside it. */}
-                        {tx.alterationStatus ? (
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                            {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
-                          </span>
-                        ) : (
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
-                            {tx.status || '—'}
-                          </span>
-                        )}
+                        {/* One pill only: the most urgent state wins
+                            (utils/txDisplayStatus). */}
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${displayStatus(tx).className}`}>
+                          {displayStatus(tx).label}
+                        </span>
                       </td>
                       <td className="px-6 py-4 font-bold text-gray-900 text-right">
                         {formatCurrency(tx.rentalFee ?? tx.amount)}
@@ -682,7 +703,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             </div>
           ) : displayedTransactions.length === 0 ? (
             <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 text-center text-gray-500">
-              No transactions match your search/filters.
+              {activeStatusFilter === 'Priority' && !searchQuery.trim() && !dateFrom && !dateTo ? (
+                        <>Nothing needs attention right now.{' '}
+                          <button onClick={() => { setActiveStatusFilter('All'); setCurrentPage(1); }} className="font-bold text-[#bf4a53] hover:underline">Show all transactions</button>
+                        </>
+                      ) : 'No transactions match your search/filters.'}
             </div>
           ) : (
             displayedTransactions.map((tx) => (
@@ -699,15 +724,9 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">{formatDate(tx.rentalDate || tx.date)}</p>
                   </div>
-                  {tx.alterationStatus ? (
-                    <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${tx.alterationStatus === 'ready' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                      {tx.alterationStatus === 'ready' ? 'Alteration Ready' : 'Alteration Pending'}
-                    </span>
-                  ) : (
-                    <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${statusColors[tx.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {tx.status || '—'}
-                    </span>
-                  )}
+                  <span className={`shrink-0 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wide whitespace-nowrap ${displayStatus(tx).className}`}>
+                    {displayStatus(tx).label}
+                  </span>
                 </div>
 
                 {role !== 'Customer' && (
@@ -756,7 +775,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           shell (no floating card, no top gap): bottom-anchored on mobile,
           centered on desktop. */}
       {smsModalTx && (
-        <BottomSheet onClose={closeSmsModal} labelledby="dialog-title-confirm-sms" z="z-[100]" maxWidth="sm:max-w-sm" hideHandle>
+        <BottomSheet onClose={closeSmsModal} labelledby="dialog-title-confirm-sms" z="z-[100]" maxWidth="sm:max-w-sm" variant="dialog" hideHandle>
           <div className="flex justify-between items-center p-6 border-b border-gray-100/80 shrink-0">
             <div>
               <h3 id="dialog-title-confirm-sms" className="font-bold text-lg text-gray-900">Confirm SMS</h3>
@@ -786,7 +805,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
               </div>
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message</label>
+                  <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">Custom message<RequiredMark show={!String(smsMessage ?? '').trim()} /></label>
                   <button onClick={() => setSmsMessage(defaultSmsMessage(smsModalTx).slice(0, SMS_MAX_LENGTH))}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-gray-600 transition-colors"
                     title="Restore the default message">

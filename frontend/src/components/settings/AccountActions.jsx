@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import RequiredMark from '../ui/RequiredMark';
 import { LogOut, KeyRound, Eye, EyeOff, ShieldCheck, CheckCircle } from 'lucide-react';
 import { api } from '../../utils/api';
 import { PASSWORD_REQUIREMENTS } from '../Login';
@@ -76,7 +77,7 @@ export default function AccountActions({ onRequestLogout }) {
           {/* Left — inputs (stacked on mobile, 3/5 width on desktop) */}
           <div className="space-y-4 lg:col-span-3 min-w-0">
             <div>
-              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Current Password</label>
+              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Current Password<RequiredMark show={!String(current ?? '').trim()} /></label>
               <input
                 type={show ? 'text' : 'password'}
                 value={current}
@@ -88,7 +89,7 @@ export default function AccountActions({ onRequestLogout }) {
               />
             </div>
             <div className="relative">
-              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">New Password</label>
+              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">New Password<RequiredMark show={!String(next ?? '').trim()} /></label>
               <input
                 type={show ? 'text' : 'password'}
                 value={next}
@@ -108,7 +109,7 @@ export default function AccountActions({ onRequestLogout }) {
               </button>
             </div>
             <div>
-              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Confirm New Password</label>
+              <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">Confirm New Password<RequiredMark show={!confirm || confirm !== next} /></label>
               <input
                 type={show ? 'text' : 'password'}
                 value={confirm}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import BottomSheet from './BottomSheet';
 import { X, Tag, Loader2 } from 'lucide-react';
 import { inventoryService } from '../services';
 import { getSaleInfo } from './ItemCard';
@@ -21,13 +22,8 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
-  // Timed exit like the other sheets: play the fade/slide-out, then unmount.
-  const [closing, setClosing] = useState(false);
-  const requestClose = useCallback(() => {
-    if (closing) return;
-    setClosing(true);
-    setTimeout(onClose, 150);
-  }, [closing, onClose]);
+  // BottomSheet owns the enter/exit motion and swipe-to-dismiss.
+  const requestClose = onClose;
   useEscapeClose(requestClose);
 
   useEffect(() => {
@@ -82,18 +78,13 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
   };
 
   return (
-    <div className={`fixed inset-0 z-[320] transition-opacity duration-150 ${closing ? 'opacity-0' : 'opacity-100'}`}>
-      <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
-        <div role="dialog" aria-modal="true" aria-label="Put item on sale"
-          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-sm sheet-cap sm:max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`}
-          onClick={e => e.stopPropagation()}>
+    <BottomSheet onClose={onClose} labelledby="dialog-title-sale" z="z-[320]" maxWidth="sm:max-w-lg">
           <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80">
             <div className="w-10 h-10 rounded-2xl bg-amber-50 flex items-center justify-center shrink-0">
               <Tag size={18} className="text-amber-600" />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold text-gray-900 leading-tight">On Sale (Admin)</h3>
+              <h3 id="dialog-title-sale" className="font-bold text-gray-900 leading-tight">On Sale (Admin)</h3>
               <p className="text-xs text-gray-400 mt-0.5 truncate">{item?.name ?? 'Loading…'}</p>
             </div>
             <button onClick={requestClose} aria-label="Close sale editor"
@@ -102,7 +93,7 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6">
+          <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6">
             {loading ? (
               <div className="space-y-3" aria-hidden="true">
                 <Skeleton className="h-[68px] rounded-2xl" />
@@ -183,8 +174,6 @@ export default function SaleModal({ itemId, onClose, onSaved, autoCheck = true }
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>
+    </BottomSheet>
   );
 }

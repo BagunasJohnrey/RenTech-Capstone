@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import BottomSheet from './BottomSheet';
 import { X, Loader2, Clock } from 'lucide-react';
 import ManualQrPayment from './ManualQrPayment';
 import { api } from '../utils/api';
@@ -52,12 +53,11 @@ export default function PaymentProofModal({ tx, onClose, onSubmitted }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] overflow-y-auto">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-payment-proof" z="z-[200]" maxWidth="sm:max-w-lg">
+      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         <div className="flex items-center justify-between p-5 border-b border-gray-100/80">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">Upload payment proof</h2>
+            <h2 id="dialog-title-payment-proof" className="text-lg font-bold text-gray-900">Upload payment proof</h2>
             <p className="text-xs text-gray-500 mt-0.5">Booking #{(tx.txNumber ?? '')} — under review until verified.</p>
           </div>
           <button onClick={onClose} aria-label="Close payment proof" className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"><X size={20} /></button>
@@ -83,6 +83,6 @@ export default function PaymentProofModal({ tx, onClose, onSubmitted }) {
           </button>
         </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }

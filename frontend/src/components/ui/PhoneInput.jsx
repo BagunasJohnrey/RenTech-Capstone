@@ -29,6 +29,12 @@ export default function PhoneInput({ value, onChange, className = '', style, pla
         className={className}
         style={{ ...style, paddingLeft: '2.75rem' }}
       />
+      {/* Live hint: PH mobiles continue with 9 after +63. */}
+      {phoneLocalDigits(value) && !phoneLocalDigits(value).startsWith('9') && (
+        <p role="alert" className="text-[11px] text-red-500 font-medium mt-1 ml-1">
+          Mobile numbers start with 9 after +63 (e.g. +63 917 123 4567)
+        </p>
+      )}
     </div>
   );
 }

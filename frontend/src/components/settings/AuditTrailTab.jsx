@@ -126,7 +126,7 @@ function ActorCell({ actor }) {
 function AuditDetailSheet({ row, onClose }) {
   const fields = changedFields(row.oldValue, row.newValue);
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-audit-detail" maxWidth="sm:max-w-lg">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-audit-detail" maxWidth="sm:max-w-lg" columns>
       <div className="shrink-0 flex items-start justify-between gap-3 px-5 pt-3 pb-3 border-b border-gray-100">
         <div className="min-w-0">
           <h3 id="dialog-title-audit-detail" className="font-bold text-gray-900">{actionLabel(row.action, row.entity)}</h3>
@@ -136,8 +136,10 @@ function AuditDetailSheet({ row, onClose }) {
           <X size={18} />
         </button>
       </div>
-      <div data-sheet-scroll className="overflow-y-auto min-h-0 p-5 space-y-4 text-sm">
-        <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-2">
+      {/* Desktop: details in one row, then the changes, then the full
+          recorded data filling the rest of the panel. Phones: unchanged. */}
+      <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 p-5 lg:p-6 text-sm space-y-4 lg:flex lg:flex-col lg:space-y-0 lg:gap-5">
+        <dl className="grid grid-cols-[110px_1fr] lg:grid-cols-[auto_1fr_auto_1fr] gap-x-3 lg:gap-x-5 gap-y-2 lg:p-4 lg:rounded-2xl lg:bg-gray-50/70">
           <dt className="text-gray-500">Performed by</dt>
           <dd><ActorCell actor={row.actor} /></dd>
           <dt className="text-gray-500">Target</dt>
@@ -153,11 +155,17 @@ function AuditDetailSheet({ row, onClose }) {
             <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2">Changes</p>
             <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
               {fields.map((f) => (
-                <div key={f.key} className="px-3 py-2.5">
+                <div key={f.key} className="px-3 py-2.5 bg-white">
                   <p className="text-xs font-semibold text-gray-700 mb-1">{humanize(f.key)}</p>
                   <p className="text-xs break-all">
-                    <span className="text-red-600 line-through decoration-red-300">{fmtValue(f.before)}</span>
-                    <span className="text-gray-400 mx-1.5">→</span>
+                    {/* No previous value (e.g. an export's details): show the
+                        value alone instead of "— → value". */}
+                    {f.before != null && f.before !== '' && (
+                      <>
+                        <span className="text-red-600 line-through decoration-red-300">{fmtValue(f.before)}</span>
+                        <span className="text-gray-400 mx-1.5">→</span>
+                      </>
+                    )}
                     <span className="text-emerald-700 font-semibold">{fmtValue(f.after)}</span>
                   </p>
                 </div>
@@ -182,6 +190,14 @@ function AuditDetailSheet({ row, onClose }) {
         ) : (
           <p className="text-xs text-gray-400">No extra details were recorded for this event.</p>
         )}
+
+        {/* Desktop only: the complete recorded entry fills the panel. */}
+        <div className="hidden lg:flex lg:flex-col lg:flex-1 lg:min-h-[10rem]">
+          <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-2">Recorded data</p>
+          <pre className="flex-1 min-h-0 overflow-auto text-xs bg-gray-50 border border-gray-200 rounded-xl p-4 whitespace-pre-wrap break-all text-gray-700">
+            {JSON.stringify({ action: row.action, target: row.entity, targetId: row.entityId, before: row.oldValue ?? null, after: row.newValue ?? null }, null, 2)}
+          </pre>
+        </div>
       </div>
     </BottomSheet>
   );

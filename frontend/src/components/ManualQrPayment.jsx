@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import RequiredMark from './ui/RequiredMark';
 import { createPortal } from 'react-dom';
 import { ScanLine, X, Upload } from 'lucide-react';
 import { publicUrlFor } from '../utils/images';
@@ -92,7 +93,7 @@ export default function ManualQrPayment({
       </div>
 
       <div>
-        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Payment screenshot</label>
+        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Payment screenshot<RequiredMark show={!file} /></label>
         {file ? (
           <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-2xl p-3">
             <img src={preview} alt="Payment screenshot preview" className="w-14 h-14 rounded-xl object-cover border border-gray-100" />

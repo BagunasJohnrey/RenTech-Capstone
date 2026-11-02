@@ -149,7 +149,7 @@ const handleRadioKeys = (e) => {
   };
 
   return (
-    <BottomSheet onClose={requestClose} labelledby="dialog-title-process-return" z="z-[310]" maxWidth="sm:max-w-lg" interceptClose={submitting}>
+    <BottomSheet columns onClose={requestClose} labelledby="dialog-title-process-return" z="z-[310]" maxWidth="sm:max-w-lg" interceptClose={submitting}>
         <div className="shrink-0 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 sm:p-6 border-b border-gray-100/80">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-50 rounded-xl">
@@ -165,7 +165,9 @@ const handleRadioKeys = (e) => {
           </button>
         </div>
 
-        <div data-sheet-scroll className="p-5 sm:p-6 space-y-5 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+        <div data-sheet-scroll className="p-5 sm:p-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
+<div className="space-y-5 panel-split">
+          <div className="space-y-5 panel-col">
           {isUnpaid && (
             <div className="flex items-start gap-2 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-2xl p-3.5">
               <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
@@ -273,12 +275,12 @@ const handleRadioKeys = (e) => {
             </div>
           )}
 
-          <div>
+          <div className="panel-grow lg:flex lg:flex-col">
             <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5 mb-1.5">
               <Camera size={14} /> Return Condition Photo
             </label>
             <p className="text-[10px] text-gray-400 mb-2">Document the item's condition upon return for your records.</p>
-            <div className="relative h-44 sm:h-48 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden transition-colors hover:border-emerald-300">
+            <div className="relative h-44 sm:h-48 lg:h-auto lg:flex-1 lg:min-h-[12rem] bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center overflow-hidden transition-colors hover:border-emerald-300">
               {returnPhotoUrl ? (
                 <>
                   <img src={returnPhotoUrl} className="w-full h-full object-cover" alt="Return condition" />
@@ -303,8 +305,11 @@ const handleRadioKeys = (e) => {
             </div>
           </div>
 
+          </div>
+
+          <div className="space-y-5 panel-col">
           {/* Notes */}
-          <div>
+          <div className="panel-grow lg:flex lg:flex-col">
             <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5 mb-2">
               <FileText size={14} /> Notes (optional)
             </label>
@@ -312,7 +317,7 @@ const handleRadioKeys = (e) => {
               value={returnNotes}
               onChange={e => setReturnNotes(e.target.value)}
               rows={2}
-              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] resize-none"
+              className="w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus:border-[#bf4a53] resize-none lg:flex-1"
             />
           </div>
 
@@ -340,7 +345,9 @@ const handleRadioKeys = (e) => {
           {error && (
             <p className="text-xs font-semibold text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
           )}
+          </div>
         </div>
+</div>
 
         {/* Footer actions — pinned below the scrolling body so Cancel/Confirm
             stay fixed on mobile, with safe-area padding. */}

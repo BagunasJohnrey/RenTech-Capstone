@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import RequiredMark from '../ui/RequiredMark';
 import { Building2, DollarSign, Clock, ScanLine } from 'lucide-react';
 import { api } from '../../utils/api';
 import { useFeatureFlags } from '../../hooks/useFeatureFlags';
@@ -188,19 +189,19 @@ export default function GeneralTab() {
           <div className="space-y-3 max-w-xl">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store Name</p>
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store Name<RequiredMark show={!String(localBusiness.name ?? '').trim()} /></p>
                 <input type="text" value={localBusiness.name} onChange={e => setLocalBusiness({ ...localBusiness, name: e.target.value })}
                   className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Name" />
               </div>
               <div>
-                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store inquiry number</p>
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store inquiry number<RequiredMark show={!String(localBusiness.contact ?? '').trim()} /></p>
                 <input type="text" value={localBusiness.contact} onChange={e => setLocalBusiness({ ...localBusiness, contact: e.target.value })}
                   className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="e.g. 0917 123 4567" />
                 <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">Fixed number customers see in Settings → Inquiries &amp; Contact. They call or text this number for bookings and questions.</p>
               </div>
             </div>
             <div>
-              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store Address</p>
+              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Store Address<RequiredMark show={!String(localBusiness.address ?? '').trim()} /></p>
               <input type="text" value={localBusiness.address} onChange={e => setLocalBusiness({ ...localBusiness, address: e.target.value })}
                 className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Address" />
             </div>

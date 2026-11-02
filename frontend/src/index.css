@@ -133,6 +133,60 @@ html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
    always fits with a top gap even when dynamic chrome misreports. */
 .sheet-cap { max-height: 95vh; max-height: 92dvh; max-height: 92svh; }
 
+/* Shared BottomSheet entrance. Phones: slide up from the bottom. Desktop
+   (md+): "panel" sheets slide in from the right as a full-height side panel;
+   "dialog" sheets (small confirms/pickers) pop in centered. */
+@keyframes sheet-enter-up { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes sheet-enter-right { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes sheet-enter-pop { from { transform: scale(0.95); opacity: 0; } to { transform: none; opacity: 1; } }
+.sheet-enter { animation: sheet-enter-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+@media (min-width: 640px) {
+  .sheet-enter { animation: sheet-enter-pop 180ms ease-out; }
+}
+@media (min-width: 768px) {
+  .sheet-enter.sheet-panel { animation: sheet-enter-right 240ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+  /* Full-height panel: lift the phone height cap. */
+  .sheet-panel.sheet-cap { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-enter { animation: none; }
+}
+
+/* Desktop side panels (lg+): sections flow into two balanced columns so a
+   short column never leaves a big empty area. `.panel-cols` wraps a panel's
+   sections (an auto-height wrapper, not the scroll box — a fixed-height box
+   would overflow its columns sideways). Phones/tablets keep the single
+   column and its space-y spacing. */
+@media (min-width: 1024px) {
+  .sheet-panel .panel-cols { column-count: 2; column-gap: 2rem; }
+  .sheet-panel .panel-cols > * {
+    break-inside: avoid;
+    margin-top: 0 !important;
+    margin-bottom: 1.5rem !important;
+  }
+  /* Lists (cleaning queue, smart lists) keep their tight row rhythm. */
+  .sheet-panel .panel-cols.panel-cols-tight > * { margin-bottom: 0.625rem !important; }
+  /* Full-height two-column split for short panels: `.panel-split` holds two
+     `.panel-col` columns that stretch to the panel's height, and one
+     `.panel-grow` element per column (photo area, notes box, changes list)
+     takes up the remaining height — no empty band under the content. */
+  .sheet-panel .panel-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 2rem;
+    min-height: 100%;
+    align-items: stretch;
+  }
+  .sheet-panel .panel-split > * { margin-top: 0 !important; }
+  .sheet-panel .panel-col { display: flex; flex-direction: column; gap: 1.25rem; }
+  .sheet-panel .panel-col > * { margin-top: 0 !important; }
+  .sheet-panel .panel-grow { flex: 1 1 auto; min-height: 8rem; }
+  /* Short single-block content (empty states) sits in the middle. */
+  .sheet-panel .panel-center { min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
+  /* One section (e.g. an empty state) never splits into a lopsided pair. */
+  .sheet-panel .panel-cols:has(> :only-child) { column-count: 1; }
+}
+
 /* On-screen (non-print) tightening so the long report reads on phones.
    Print/PDF output keeps the roomy desktop metrics above. */
 @media (max-width: 639px) {

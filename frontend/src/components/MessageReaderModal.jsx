@@ -1,4 +1,5 @@
 import { X, MessageCircle, CheckCircle2, Clock, XCircle, ExternalLink } from 'lucide-react';
+import BottomSheet from './BottomSheet';
 import { timeAgo } from './NotificationsDropdown';
 
 // Shared customer-message reader dialog (Messages inbox + Notifications page):
@@ -19,10 +20,8 @@ export default function MessageReaderModal({
   const canApprove = !!onApprove && !!message.transactionId && !approveResult?.ok && bookingStatus !== 'Cancelled';
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-message"
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 animate-in fade-in zoom-in-95 duration-200"
-        onClick={(e) => e.stopPropagation()}>
+    <BottomSheet onClose={onClose} labelledby="dialog-title-message" z="z-[300]" maxWidth="sm:max-w-md">
+      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-500 flex items-center justify-center shrink-0">
             <MessageCircle size={18} />
@@ -94,6 +93,6 @@ export default function MessageReaderModal({
           </div>
         </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }

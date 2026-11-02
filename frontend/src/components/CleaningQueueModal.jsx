@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
+import BottomSheet from './BottomSheet';
 import { CheckSquare, Droplets, Square, X } from 'lucide-react';
 import { useToast } from './Toast';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -12,13 +13,8 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean, initia
   const [selected, setSelected] = useState(initialSelected);
   const [busy, setBusy] = useState(false);
 
-  // Timed exit like the other sheets: play the fade/slide-out, then unmount.
-  const [closing, setClosing] = useState(false);
-  const requestClose = useCallback(() => {
-    if (closing) return;
-    setClosing(true);
-    setTimeout(onClose, 150);
-  }, [closing, onClose]);
+  // BottomSheet owns the enter/exit motion and swipe-to-dismiss.
+  const requestClose = onClose;
   useEscapeClose(requestClose);
 
   const allSelected = items.length > 0 && selected.length === items.length;
@@ -43,20 +39,14 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean, initia
   };
 
   return (
-    <div className={`fixed inset-0 z-[200] transition-opacity duration-150 ${closing ? 'opacity-0' : 'opacity-100'}`}>
-      <div className={`fixed inset-0 bg-gray-900/40 backdrop-blur-sm ${closing ? 'animate-out fade-out duration-150' : 'animate-in fade-in duration-200'}`} onClick={requestClose} />
-      <div className="fixed inset-0 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
-        <div
-          className={`bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl w-full sm:max-w-lg sheet-cap sm:max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto transform-gpu ${closing ? 'animate-out slide-out-to-bottom sm:zoom-out-95 fade-out duration-150' : 'animate-in slide-in-from-bottom sm:zoom-in-95 duration-200'}`}
-          onClick={(e) => e.stopPropagation()}
-        >
+    <BottomSheet columns onClose={onClose} labelledby="dialog-title-cleaning-queue" z="z-[200]" maxWidth="sm:max-w-lg">
           <div className="shrink-0 flex items-center gap-3 p-5 sm:p-6 border-b border-gray-100/80">
             <div className="w-11 h-11 rounded-2xl bg-orange-50 text-orange-500 flex items-center justify-center shrink-0">
               <Droplets size={19} />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cleaning Queue</p>
-              <h3 className="font-bold text-gray-900 leading-tight">
+              <h3 id="dialog-title-cleaning-queue" className="font-bold text-gray-900 leading-tight">
                 {items.length} item{items.length === 1 ? '' : 's'} awaiting cleaning
               </h3>
             </div>
@@ -89,7 +79,8 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean, initia
             </span>
           </div>
 
-          <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 pt-4 pb-8 min-h-[220px] space-y-2.5">
+          <div data-sheet-scroll className="flex-1 overflow-y-auto min-h-0 overscroll-contain p-5 sm:p-6 pt-4 pb-8 min-h-[220px]">
+<div className="space-y-2.5 panel-cols panel-cols-tight">
             {items.length === 0 ? (
               <div className="text-center py-10">
                 <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-3">
@@ -125,8 +116,7 @@ export default function CleaningQueueModal({ items, onClose, onBulkClean, initia
               })
             )}
           </div>
-        </div>
-      </div>
-    </div>
+</div>
+    </BottomSheet>
   );
 }

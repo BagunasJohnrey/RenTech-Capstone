@@ -35,10 +35,10 @@ export default function DemandForecast(props) {
     <>
       <ForecastPanel {...props} onExpand={() => setExpanded(true)} />
       {expanded && createPortal(
-        <div className="fixed inset-0 z-[250] flex items-stretch md:items-center justify-center md:p-6"
+        <div className="fixed inset-0 z-[250] flex items-stretch justify-center md:justify-end"
           role="dialog" aria-modal="true" aria-label="Demand forecast, full view">
           <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={close} />
-          <div className="relative w-full max-w-[1400px] h-full md:h-auto md:max-h-[94vh] overflow-y-auto overscroll-contain bg-white md:rounded-3xl shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="relative w-full max-w-[1400px] h-full overflow-y-auto overscroll-contain bg-white md:w-[min(1100px,94vw)] md:rounded-l-3xl shadow-2xl animate-in fade-in zoom-in-95 md:zoom-in-100 md:slide-in-from-right duration-200">
             <ForecastPanel {...props} full onClose={close} />
           </div>
         </div>,

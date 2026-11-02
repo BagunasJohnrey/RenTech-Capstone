@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import BottomSheet from './BottomSheet';
 import { X, Calendar, User, Save, Loader2, Pencil } from 'lucide-react';
 import { transactionsService, customerService } from '../services';
 import { useToast } from './Toast';
@@ -36,10 +37,8 @@ export default function EditRentalModal({ transaction, initialTab = 'booking', o
   const itmName = itemLabel(transaction.item) || transaction.item || '';
 
   return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[130] flex items-center justify-center p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-edit-rental"
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200"
-        onClick={(e) => e.stopPropagation()}>
+    <BottomSheet onClose={onClose} labelledby="dialog-title-edit-rental" z="z-[130]" maxWidth="sm:max-w-md">
+      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md p-5 border-b border-gray-100/80 rounded-t-3xl">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
@@ -75,7 +74,7 @@ export default function EditRentalModal({ transaction, initialTab = 'booking', o
             : <CustomerTab transaction={transaction} inputClass={inputClass} onClose={onClose} onSaved={onSaved} />}
         </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }
 

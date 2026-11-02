@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import BottomSheet from './BottomSheet';
 import { X, User, Save, Loader2 } from 'lucide-react';
 import { customerService } from '../services';
 import { useToast } from './Toast';
@@ -74,10 +75,8 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
   const inputClass = 'w-full p-3 bg-gray-50 rounded-xl border text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53]';
 
   return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[120] flex items-center justify-center p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-edit-customer"
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200"
-        onClick={(e) => e.stopPropagation()}>
+    <BottomSheet onClose={onClose} labelledby="dialog-title-edit-customer" z="z-[120]" maxWidth="sm:max-w-md">
+      <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
         <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md flex justify-between items-center p-5 border-b border-gray-100/80 rounded-t-3xl">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-blue-50 rounded-xl">
@@ -112,6 +111,6 @@ export default function CustomerEditModal({ customer, onClose, onSaved }) {
           <p className="text-[10px] text-gray-400 text-center">Item / payment / fee details still require cancel + re-book.</p>
         </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }

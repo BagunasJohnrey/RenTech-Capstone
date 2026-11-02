@@ -728,8 +728,8 @@ export default function CustomerRentalFlow({
                 so this window is sized to reach the cap too on phones (any
                 overflow scrolls inside the list). Desktop keeps the
                 compact window. */}
-            <div ref={catalogRef} onScroll={handleCatalogScroll} data-sheet-scroll className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[58vh] sm:max-h-[44vh]">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div ref={catalogRef} onScroll={handleCatalogScroll} data-sheet-scroll className="flex-1 overflow-y-auto overscroll-contain pr-1 hide-scrollbar min-h-[240px] max-h-[58vh] sm:max-h-[44vh] md:max-h-none">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {displayedItems.map((item) => (
                   <button type="button" key={item.id} onClick={() => setSelectedItem(item)}
                     aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per event`}
@@ -1360,7 +1360,7 @@ export default function CustomerRentalFlow({
   // Voucher picker — its own stacked sheet, opened from "View all". No
   // second blur: the flow sheet already blurs beneath.
   const voucherModal = showPromos && (
-    <BottomSheet onClose={() => setShowPromos(false)} labelledby="dialog-title-vouchers" z="z-[250]" maxWidth="sm:max-w-md" backdropClass="bg-gray-900/50">
+    <BottomSheet onClose={() => setShowPromos(false)} labelledby="dialog-title-vouchers" z="z-[250]" maxWidth="sm:max-w-md" variant="dialog" backdropClass="bg-gray-900/50">
       <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-3 pb-3 border-b border-gray-100">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
@@ -1408,11 +1408,10 @@ export default function CustomerRentalFlow({
 
   return inline ? (
     <>
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={requestLeave}>
-      <div role="dialog" aria-modal="true" aria-labelledby="dialog-title-complete-booking" className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-        {flowContent}
-      </div>
-    </div>
+    {/* Same right-side panel on desktop as the sheet flow below. */}
+    <BottomSheet onClose={requestLeave} interceptClose={hasUnsavedChanges && !confirmedTx} z="z-[100]" maxWidth="sm:max-w-3xl" labelledby="dialog-title-complete-booking">
+      {flowContent}
+    </BottomSheet>
     {showDiscardConfirm && (
       <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
     )}
