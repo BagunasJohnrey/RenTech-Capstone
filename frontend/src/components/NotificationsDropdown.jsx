@@ -134,8 +134,11 @@ export default function NotificationsDropdown({ role, showNotifications, toggle,
         .then((data) => setUnreadCount(data?.count ?? 0))
         .catch(() => {});
     const t = setTimeout(refresh, 0);
-    const id = setInterval(refresh, 30000);
-    return () => { clearTimeout(t); clearInterval(id); };
+    // Egress: 60s and skipped while the tab is hidden; catch up on return.
+    const id = setInterval(() => { if (!document.hidden) refresh(); }, 60000);
+    const onVisible = () => { if (!document.hidden) refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearTimeout(t); clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
   }, []);
 
   // Load notifications when dropdown opens

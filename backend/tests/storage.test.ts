@@ -269,3 +269,46 @@ describe('Cloudflare R2 provider', () => {
     } finally { delete process.env.STORAGE_PROVIDER; }
   });
 });
+
+describe('r2BucketApi (backup/report facade on R2, S3 client mocked)', () => {
+  it('lists names under the prefix, sorts desc, maps write-once collisions and downloads', async () => {
+    const { S3Client } = await import('@aws-sdk/client-s3');
+    const sent: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const spy = vi.spyOn(S3Client.prototype, 'send').mockImplementation(async (cmd: any) => {
+      const name = cmd.constructor.name as string;
+      sent.push({ name, input: cmd.input });
+      if (name === 'ListObjectsV2Command') {
+        return { Contents: [{ Key: 'backups/a.json' }, { Key: 'backups/c.json' }, { Key: 'backups/sub/x.json' }, { Key: 'backups/b.meta.json' }] } as any;
+      }
+      if (name === 'PutObjectCommand' && cmd.input.Key === 'backups/dup.json') {
+        throw Object.assign(new Error('precondition'), { name: 'PreconditionFailed', $metadata: { httpStatusCode: 412 } });
+      }
+      if (name === 'GetObjectCommand') {
+        return { Body: { transformToByteArray: async () => new TextEncoder().encode('{"ok":true}') } } as any;
+      }
+      return {} as any;
+    });
+    try {
+      process.env.R2_PRIVATE_BUCKET = 'priv';
+      const { r2BucketApi } = await import('../src/services/r2.client.js');
+      const api = r2BucketApi('backups/');
+
+      const listed = await api.list('', { limit: 2, sortBy: { order: 'desc' } });
+      expect(listed.data?.map((f) => f.name)).toEqual(['c.json', 'b.meta.json']);
+      expect(sent[0].input).toMatchObject({ Bucket: 'priv', Prefix: 'backups/' });
+
+      expect((await api.upload('new.json', Buffer.from('{}'), { contentType: 'application/json' })).error).toBeNull();
+      expect(sent.at(-1)!.input).toMatchObject({ Key: 'backups/new.json', IfNoneMatch: '*' });
+      // upsert:true (meta sidecars) must not send the write-once header.
+      await api.upload('s.meta.json', Buffer.from('{}'), { upsert: true });
+      expect(sent.at(-1)!.input.IfNoneMatch).toBeUndefined();
+      expect((await api.upload('dup.json', Buffer.from('{}'))).error?.message).toMatch(/already exists/);
+
+      const dl = await api.download('a.json');
+      expect(dl.data?.toString()).toBe('{"ok":true}');
+    } finally {
+      spy.mockRestore();
+      process.env.R2_PRIVATE_BUCKET = 'rentech-private';
+    }
+  });
+});

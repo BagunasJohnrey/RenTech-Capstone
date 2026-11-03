@@ -64,3 +64,23 @@ describe('PUT /api/settings/rules', () => {
     expect((call![0] as any).data.newValue).toEqual({ damage_fee: '1500' });
   });
 });
+
+describe('getBusinessRules cache (egress)', () => {
+  it('serves repeat reads from memory and refreshes after an update', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const settings = await import('../src/services/settings.service.js');
+    settings.clearBusinessRulesCache();
+    vi.mocked(prisma.businessRule.findMany).mockResolvedValue([{ key: 'k', value: '1' }] as never);
+    const a = await settings.getBusinessRules();
+    const b = await settings.getBusinessRules();
+    expect(a.k).toBe('1');
+    expect(b.k).toBe('1');
+    expect(vi.mocked(prisma.businessRule.findMany)).toHaveBeenCalledTimes(1);
+
+    vi.mocked(prisma.businessRule.upsert).mockResolvedValue({ key: 'k', value: '2' } as never);
+    await settings.updateBusinessRules({ k: '2' });
+    vi.mocked(prisma.businessRule.findMany).mockResolvedValue([{ key: 'k', value: '2' }] as never);
+    expect((await settings.getBusinessRules()).k).toBe('2');
+    expect(vi.mocked(prisma.businessRule.findMany)).toHaveBeenCalledTimes(2);
+  });
+});

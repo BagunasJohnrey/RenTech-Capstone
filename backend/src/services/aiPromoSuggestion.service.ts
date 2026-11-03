@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { AppError } from '../middleware/errorHandler.js';
 import { supabaseAdmin } from '../config/supabase.js';
+import { isR2Enabled, r2BucketApi } from './r2.client.js';
 import type { PromoSuggestion } from './gemini.service.js';
 
 // Saved AI promotion suggestions — same dual-write pattern as aiReport.service.
@@ -42,6 +43,9 @@ type StorageApi = {
 };
 
 function cloudApi(): StorageApi | null {
+  // Cloudflare R2 (zero egress fees) when configured: `ai-promo-suggestions/` in the
+  // private R2 bucket. Otherwise the Supabase bucket below.
+  if (isR2Enabled()) return r2BucketApi('ai-promo-suggestions/') as unknown as StorageApi;
   try {
     const api = (supabaseAdmin as unknown as { storage?: { from?: (b: string) => StorageApi } })
       ?.storage?.from?.(PROMO_SUGGESTIONS_BUCKET);
@@ -52,6 +56,7 @@ function cloudApi(): StorageApi | null {
 }
 
 export async function ensurePromoSuggestionsBucket(): Promise<void> {
+  if (isR2Enabled()) return; // R2 prefix needs no bucket creation
   try {
     const { data: buckets } = await supabaseAdmin.storage.listBuckets();
     const names = new Set((buckets || []).map((b) => b.name));

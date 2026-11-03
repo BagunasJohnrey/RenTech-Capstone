@@ -1,4 +1,5 @@
 import { prisma } from '../config/database.js';
+import { clearBusinessRulesCache } from './settings.service.js';
 import { AppError } from '../middleware/errorHandler.js';
 
 // Restore (import) for the admin one-click JSON backups (Data & Backups tab).
@@ -169,6 +170,7 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
       } else {
         await m.businessRule.create?.({ data: { key, value, description: strOrNull(r.description) } });
       }
+      clearBusinessRulesCache();
       bump(restored, 'business_rules');
     } catch {
       bump(skipped, 'business_rules');

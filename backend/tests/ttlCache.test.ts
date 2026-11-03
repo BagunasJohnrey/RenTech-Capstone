@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { cacheOrCompute, clearDataCache } from '../src/utils/ttlCache.js';
+import { cacheOrCompute, clearDataCache, setDataCacheWarmer } from '../src/utils/ttlCache.js';
 
 describe('ttlCache', () => {
   it('concurrent misses for one key share a single computation', async () => {
@@ -20,5 +20,27 @@ describe('ttlCache', () => {
     expect(await stale).toBe('pre-mutation');
     const fresh = await cacheOrCompute('k-race', async () => 'post-mutation');
     expect(fresh).toBe('post-mutation');
+  });
+
+  it('only re-warms after a clear when the cache was used recently (egress guard)', async () => {
+    vi.useFakeTimers();
+    try {
+      const warmer = vi.fn();
+      setDataCacheWarmer(warmer);
+      await cacheOrCompute('k-warm', async () => 1); // a real request
+      clearDataCache();
+      await Promise.resolve(); await Promise.resolve();
+      expect(warmer).toHaveBeenCalledTimes(1);
+
+      // Nobody used the app for 11 minutes: a scheduler/mutation clear must
+      // NOT re-run the heavy warm-up queries.
+      vi.advanceTimersByTime(11 * 60_000);
+      clearDataCache();
+      await Promise.resolve(); await Promise.resolve();
+      expect(warmer).toHaveBeenCalledTimes(1);
+    } finally {
+      setDataCacheWarmer(() => {});
+      vi.useRealTimers();
+    }
   });
 });

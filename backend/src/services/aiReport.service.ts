@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { AppError } from '../middleware/errorHandler.js';
 import { supabaseAdmin } from '../config/supabase.js';
+import { isR2Enabled, r2BucketApi } from './r2.client.js';
 
 // History of generated AI business reports for the admin "Data & Backups"
 // settings tab + the Business Intelligence page. generateReport() auto-saves
@@ -45,6 +46,9 @@ type StorageApi = {
 };
 
 function cloudApi(): StorageApi | null {
+  // Cloudflare R2 (zero egress fees) when configured: `ai-reports/` in the
+  // private R2 bucket. Otherwise the Supabase bucket below.
+  if (isR2Enabled()) return r2BucketApi('ai-reports/') as unknown as StorageApi;
   try {
     const api = (supabaseAdmin as unknown as { storage?: { from?: (b: string) => StorageApi } })
       ?.storage?.from?.(AI_REPORTS_BUCKET);
@@ -57,6 +61,7 @@ function cloudApi(): StorageApi | null {
 // Creates the private reports bucket on startup (called from index.ts).
 // Best-effort — a failure only logs; local reports still work.
 export async function ensureAiReportsBucket(): Promise<void> {
+  if (isR2Enabled()) return; // R2 prefix needs no bucket creation
   try {
     const { data: buckets } = await supabaseAdmin.storage.listBuckets();
     const names = new Set((buckets || []).map((b) => b.name));

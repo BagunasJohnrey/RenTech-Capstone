@@ -32,11 +32,17 @@ type Warmer = () => void | Promise<unknown>;
 let warmFn: Warmer | null = null;
 let warming = false;
 
+// Egress guard: the warmer re-runs ~10 heavy queries. Only do that when a
+// real request used the cache recently — a mutation or scheduler tick at 3 AM
+// with nobody on the app just clears, and the next real visit computes lazily.
+const WARM_IF_USED_WITHIN_MS = 10 * 60_000;
+let lastRealAccessAt = 0;
+
 export function clearDataCache() {
   generation++;
   store.clear();
   inflight.clear();
-  if (warmFn && !warming) {
+  if (warmFn && !warming && Date.now() - lastRealAccessAt <= WARM_IF_USED_WITHIN_MS) {
     warming = true;
     Promise.resolve()
       .then(() => warmFn!())
@@ -53,6 +59,7 @@ export function setDataCacheWarmer(fn: Warmer) {
 }
 
 export async function cacheOrCompute<T>(key: string, compute: () => Promise<T>): Promise<T> {
+  if (!warming) lastRealAccessAt = Date.now();
   const hit = store.get(key);
   if (hit && Date.now() - hit.at <= TTL_MS) return hit.data as T;
   const pending = inflight.get(key);

@@ -62,7 +62,7 @@ export function usePaymentProofs(enabled) {
   useEffect(() => {
     if (!enabled) return;
     if (!cache.has(KEY) || Date.now() - fetchedAt.current > POLL_MS) refresh();
-    const t = setInterval(refresh, POLL_MS);
+    const t = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
     return () => clearInterval(t);
   }, [enabled, refresh]);
 

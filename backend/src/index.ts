@@ -189,6 +189,18 @@ app.listen(env.PORT, () => {
     m.ensurePromoSuggestionsBucket().catch((err) => console.error('Promo suggestions bucket init failed:', err))
   );
 
+  // Egress: background jobs (cache pre-warm, reminder scheduler, retention,
+  // auto-backup, AI report/promo ticks) all query the shared Supabase DB.
+  // Running them from a laptop's `npm run dev` AND from Render doubles that
+  // traffic, so they are production-only unless RUN_BACKGROUND_JOBS=true.
+  const runBackgroundJobs = process.env.RUN_BACKGROUND_JOBS
+    ? process.env.RUN_BACKGROUND_JOBS === 'true'
+    : env.NODE_ENV === 'production';
+  if (!runBackgroundJobs) {
+    console.log('[jobs] background jobs disabled (set RUN_BACKGROUND_JOBS=true to enable)');
+    return;
+  }
+
   // Pre-warm the dashboard cache so the first page load (AI Insights, KPIs,
   // revenue charts) is a cache hit instead of paying the cold-connection +
   // multi-query cost in front of the user. The QR proof queue rides along so
@@ -242,8 +254,28 @@ app.listen(env.PORT, () => {
       scheduledChecksRunning = false;
     }
   };
-  runScheduledChecks();
-  const scheduler = setInterval(runScheduledChecks, 60 * 1000);
+  // Egress: the checks used to run every minute (~1,440 passes/day). Every
+  // SCHEDULER_INTERVAL_MIN (default 5) is plenty for date-boundary reminders,
+  // and during quiet hours — when no customer SMS/email may go out anyway —
+  // every 30 min still flips overdue status + alerts staff promptly.
+  const activeEveryMs = Math.max(1, Number(process.env.SCHEDULER_INTERVAL_MIN) || 5) * 60 * 1000;
+  const quietEveryMs = 30 * 60 * 1000;
+  let lastScheduledRunAt = 0;
+  const schedulerTick = async () => {
+    let quiet = false;
+    try {
+      const [{ getReminderWindow }, { isReminderQuietHours }] = await Promise.all([
+        import('./services/settings.service.js'),
+        import('./utils/manilaDay.js'),
+      ]);
+      quiet = isReminderQuietHours(new Date(), await getReminderWindow());
+    } catch { /* default: active cadence */ }
+    if (Date.now() - lastScheduledRunAt < (quiet ? quietEveryMs : activeEveryMs)) return;
+    lastScheduledRunAt = Date.now();
+    await runScheduledChecks();
+  };
+  schedulerTick();
+  const scheduler = setInterval(schedulerTick, 60 * 1000);
   scheduler.unref?.();
 
   // Phase 4.3 retention purge: sweep long-tail Notification/SentSms/AuditLog

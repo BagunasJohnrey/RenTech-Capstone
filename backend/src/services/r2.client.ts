@@ -70,6 +70,7 @@ export async function r2PutObject(
   body: Buffer,
   contentType: string,
   cacheControl: string,
+  writeOnce = true,
 ): Promise<'created' | 'exists'> {
   try {
     await getR2Client().send(new PutObjectCommand({
@@ -78,7 +79,7 @@ export async function r2PutObject(
       Body: body,
       ContentType: contentType,
       CacheControl: cacheControl,
-      IfNoneMatch: '*',
+      ...(writeOnce ? { IfNoneMatch: '*' } : {}),
     }));
     return 'created';
   } catch (err) {
@@ -136,4 +137,63 @@ export function r2ErrorStatus(err: unknown): 404 | 500 | 503 {
   if (status === 404 || name === 'NoSuchKey' || name === 'NotFound') return 404;
   // Transport failures carry no HTTP status.
   return status === undefined ? 503 : 404;
+}
+
+export async function r2GetObject(bucket: string, key: string): Promise<Buffer | null> {
+  try {
+    const res = await getR2Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (!res.Body) return null;
+    return Buffer.from(await res.Body.transformToByteArray());
+  } catch (err) {
+    if (httpStatus(err) === 404 || (err as S3ErrorLike)?.name === 'NoSuchKey') return null;
+    throw err;
+  }
+}
+
+type ApiResult<T = unknown> = Promise<{ data?: T | null; error?: { message?: string } | null }>;
+
+/**
+ * Supabase-storage-shaped facade over a key prefix in the private R2 bucket,
+ * so the backup / AI-report / promo-suggestion services (which talk to a
+ * `{ list, upload, download, remove }` object) work unchanged on R2.
+ */
+export function r2BucketApi(prefix: string) {
+  const bucket = r2PrivateBucket();
+  const k = (p: string) => `${prefix}${p}`;
+  const fail = (err: unknown) => ({ data: null, error: { message: (err as Error)?.message ?? String(err) } });
+  return {
+    async list(sub: string, opts?: unknown): ApiResult<{ name: string }[]> {
+      try {
+        const o = (opts ?? {}) as { limit?: number; sortBy?: { order?: string } };
+        const base = k(sub);
+        const names = (await r2ListAll(bucket, base))
+          .map((x) => x.key.slice(base.length))
+          .filter((n) => n && !n.includes('/'));
+        names.sort();
+        if (o.sortBy?.order === 'desc') names.reverse();
+        return { data: names.slice(0, o.limit ?? 100).map((name) => ({ name })), error: null };
+      } catch (err) { return fail(err); }
+    },
+    async upload(path: string, body: unknown, opts?: unknown): ApiResult {
+      try {
+        const o = (opts ?? {}) as { contentType?: string; upsert?: boolean };
+        const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body), 'utf8');
+        const r = await r2PutObject(bucket, k(path), buf, o.contentType || 'application/octet-stream', 'private, no-store', !o.upsert);
+        if (r === 'exists') return { data: null, error: { message: 'The resource already exists' } };
+        return { data: { path }, error: null };
+      } catch (err) { return fail(err); }
+    },
+    async download(path: string): ApiResult<Buffer> {
+      try {
+        const buf = await r2GetObject(bucket, k(path));
+        return buf ? { data: buf, error: null } : { data: null, error: { message: 'Object not found' } };
+      } catch (err) { return fail(err); }
+    },
+    async remove(paths: string[]): ApiResult {
+      try {
+        for (const p of paths) await r2DeleteObject(bucket, k(p));
+        return { data: null, error: null };
+      } catch (err) { return fail(err); }
+    },
+  };
 }

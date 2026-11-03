@@ -13,6 +13,10 @@ beforeEach(async () => {
   // above (which would break e.g. the SEMAPHORE_API_KEY-based send path).
   const { clearAllRateLimiters } = await import('../src/middleware/rateLimiter.js');
   clearAllRateLimiters();
+  // Business rules are cached in-process for 60s — tests mock different rule
+  // values per test, so start every test with a cold cache.
+  const { clearBusinessRulesCache } = await import('../src/services/settings.service.js');
+  clearBusinessRulesCache();
   // The dashboard/proof-queue caches are in-memory too; clear them between
   // tests so mocked query results never leak into the next case.
   const { clearDataCache } = await import('../src/utils/ttlCache.js');

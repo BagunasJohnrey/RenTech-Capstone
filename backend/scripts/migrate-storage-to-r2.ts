@@ -7,6 +7,8 @@
  *
  *   Supabase STORAGE_CATALOG_BUCKET (public)  -> R2_CATALOG_BUCKET
  *   Supabase STORAGE_BUCKET (private, rental/) -> R2_PRIVATE_BUCKET
+ *   Supabase backups / AI reports / promo suggestions -> R2_PRIVATE_BUCKET
+ *     under backups/, ai-reports/, ai-promo-suggestions/
  *
  * Idempotent: objects already present in R2 are skipped (HEAD), so it can be
  * re-run after a partial failure. Supabase objects are NOT deleted — remove
@@ -37,9 +39,13 @@ for (const k of ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY']) {
   }
 }
 
-const PAIRS: Array<{ from: string; to: string }> = [
+const PAIRS: Array<{ from: string; to: string; prefix?: string; json?: boolean }> = [
   { from: process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog', to: r2CatalogBucket() },
   { from: process.env.STORAGE_BUCKET || 'rentech-images', to: r2PrivateBucket() },
+  // Backup / AI report / promo-suggestion history -> prefixes in the private bucket.
+  { from: process.env.STORAGE_BACKUP_BUCKET || 'rentech-backups', to: r2PrivateBucket(), prefix: 'backups/', json: true },
+  { from: process.env.STORAGE_AI_REPORTS_BUCKET || 'rentech-ai-reports', to: r2PrivateBucket(), prefix: 'ai-reports/', json: true },
+  { from: process.env.STORAGE_PROMO_SUGGESTIONS_BUCKET || 'rentech-ai-promo-suggestions', to: r2PrivateBucket(), prefix: 'ai-promo-suggestions/', json: true },
 ];
 
 type Entry = { name: string; id?: string | null };
@@ -66,18 +72,26 @@ async function listAll(bucket: string, prefix = ''): Promise<string[]> {
 
 async function main() {
   let copied = 0, skipped = 0, failed = 0;
-  for (const { from, to } of PAIRS) {
-    const keys = await listAll(from);
+  for (const { from, to, prefix = '', json } of PAIRS) {
+    let keys: string[];
+    try {
+      keys = await listAll(from);
+    } catch (err) {
+      console.log(`
+${from}: skipped (${(err as Error).message})`);
+      continue;
+    }
     console.log(`\n${from} -> R2 ${to}: ${keys.length} objects`);
     for (const key of keys) {
       try {
-        if (await r2ObjectExists(to, key)) { skipped++; continue; }
+        const dest = `${prefix}${key}`;
+        if (await r2ObjectExists(to, dest)) { skipped++; continue; }
         if (DRY_RUN) { console.log('  would copy', key); copied++; continue; }
         const { data, error } = await supabaseAdmin.storage.from(from).download(key);
         if (error || !data) throw new Error(error?.message || 'empty download');
         const buf = Buffer.from(await data.arrayBuffer());
-        const type = data.type || (key.endsWith('.webp') ? 'image/webp' : 'application/octet-stream');
-        await r2PutObject(to, key, buf, type, CACHE);
+        const type = data.type || (key.endsWith('.webp') ? 'image/webp' : key.endsWith('.json') ? 'application/json' : 'application/octet-stream');
+        await r2PutObject(to, dest, buf, type, json ? 'private, no-store' : CACHE);
         copied++;
         if (copied % 25 === 0) console.log(`  …${copied} copied`);
       } catch (err) {

@@ -1,13 +1,25 @@
 import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 
+// Egress: every scheduler job and many requests read the whole rules table
+// (often several times per tick). Cache it briefly; every write path below
+// (updateBusinessRules, backup restore) calls clearBusinessRulesCache().
+const RULES_TTL_MS = 60_000;
+let rulesCache: { at: number; map: Record<string, string> } | null = null;
+
+export function clearBusinessRulesCache() {
+  rulesCache = null;
+}
+
 export async function getBusinessRules() {
+  if (rulesCache && Date.now() - rulesCache.at <= RULES_TTL_MS) return { ...rulesCache.map };
   const rules = await prisma.businessRule.findMany();
   const map: Record<string, string> = {};
   for (const rule of rules) {
     map[rule.key] = rule.value;
   }
-  return map;
+  rulesCache = { at: Date.now(), map };
+  return { ...map };
 }
 
 // Numeric business rules the admin can change in Settings. One table holds
@@ -208,6 +220,7 @@ export async function updateBusinessRules(data: Record<string, string>) {
     });
     results[updated.key] = updated.value;
   }
+  clearBusinessRulesCache();
   return results;
 }
 

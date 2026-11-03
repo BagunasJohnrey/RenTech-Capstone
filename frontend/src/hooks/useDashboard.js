@@ -22,7 +22,8 @@ const POLL_MS = 45_000;
 
 function poll(fn) {
   fn();
-  return setInterval(fn, POLL_MS);
+  // Skip ticks while the tab is hidden (no one is looking; saves DB egress).
+  return setInterval(() => { if (!document.hidden) fn(); }, POLL_MS);
 }
 
 // Server-authoritative today-digest (due/overdue/cleaning) — see readCache for

@@ -5,6 +5,7 @@ import { prisma } from '../config/database.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { collectStorageManifest } from './storage.service.js';
 import { supabaseAdmin } from '../config/supabase.js';
+import { isR2Enabled, r2BucketApi } from './r2.client.js';
 
 // On-disk JSON backups for the admin "Data & Backups" settings tab.
 // Supabase PITR remains the disaster-recovery story (see docs/BACKUPS.md);
@@ -43,6 +44,9 @@ type StorageApi = {
 };
 
 function cloudApi(): StorageApi | null {
+  // Cloudflare R2 (zero egress fees) when configured: `backups/` in the
+  // private R2 bucket. Otherwise the Supabase bucket below.
+  if (isR2Enabled()) return r2BucketApi('backups/') as unknown as StorageApi;
   try {
     const api = (supabaseAdmin as unknown as { storage?: { from?: (b: string) => StorageApi } })
       ?.storage?.from?.(BACKUP_BUCKET);
@@ -55,6 +59,7 @@ function cloudApi(): StorageApi | null {
 // Creates the private backups bucket on startup (called from index.ts).
 // Best-effort — a failure only logs; local backups still work.
 export async function ensureBackupBucket(): Promise<void> {
+  if (isR2Enabled()) return; // R2 prefix needs no bucket creation
   try {
     const { data: buckets } = await supabaseAdmin.storage.listBuckets();
     const names = new Set((buckets || []).map((b) => b.name));

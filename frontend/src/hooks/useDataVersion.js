@@ -14,7 +14,8 @@ import { api } from '../utils/api';
 //   - Quiet while hidden: no polling when the tab isn't visible.
 //   - Staff/Admin only: customers poll nothing (their data barely changes
 //     under them; History refetches on mount anyway).
-const POLL_MS = 15_000;
+// 30s (was 15s): halves version polls; focus/visibility still checks instantly.
+const POLL_MS = 30_000;
 
 // Comparison key: max updatedAt alone misses deletes and logbook imports
 // (no row's updatedAt moves), so the row counts are folded in.

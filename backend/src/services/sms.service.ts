@@ -246,7 +246,10 @@ export async function autoNotifyOverdue(now: Date = new Date()) {
   }
 
   // Overdue flags change dashboard KPIs — refresh cached dashboard data.
-  if (results.length > 0 || statusFlipped) clearDataCache();
+  // A 'failed' send changes nothing the dashboards show and retries every
+  // tick, so it must NOT clear the cache (that re-ran the whole dashboard
+  // warmer every minute for as long as one bad number kept failing).
+  if (statusFlipped || results.some((r) => r.status !== 'failed')) clearDataCache();
 
   return results;
 }

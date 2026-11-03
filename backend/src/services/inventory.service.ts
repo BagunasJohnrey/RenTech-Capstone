@@ -42,6 +42,15 @@ export async function listItems(
       listItemsUncached(statusFilter, category, search, opts)
     );
   }
+  // Egress: the customer catalog ('Available' + optional category/occasion)
+  // and the AI stylist hit this on every visit/message. Those shapes are a
+  // small bounded set, so cache them too (same clear-on-mutation discipline).
+  // Free-text search stays uncached — unbounded keys.
+  if (!search) {
+    const excl = (opts.exclude ?? []).slice().sort().join(',') || 'none';
+    const key = `inventory:filtered:${statusFilter ?? ''}:${(category ?? '').toLowerCase()}:${(opts.occasion ?? '').toLowerCase()}:${opts.rawStatus === true ? 'raw' : 'eff'}:excl:${excl}`;
+    return cacheOrCompute(key, () => listItemsUncached(statusFilter, category, search, opts));
+  }
   return listItemsUncached(statusFilter, category, search, opts);
 }
 
