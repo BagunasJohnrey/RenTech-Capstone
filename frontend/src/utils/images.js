@@ -12,6 +12,10 @@ export const isPrivatePath = (p) =>
   typeof p === 'string' && (p.startsWith('rental/') || p.startsWith('thumbs/rental/') || p.startsWith('blob:'));
 
 const publicBase = () => {
+  // Cloudflare R2 (public catalog bucket via r2.dev or custom domain). When
+  // set it wins; otherwise fall back to the Supabase public bucket URL.
+  const r2 = (import.meta.env.VITE_CATALOG_PUBLIC_URL || '').replace(/\/+$/, '');
+  if (r2) return r2;
   const host = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
   const bucket = import.meta.env.VITE_STORAGE_BUCKET || 'rentech-catalog';
   return `${host}/storage/v1/object/public/${bucket}`;

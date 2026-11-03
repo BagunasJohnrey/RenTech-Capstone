@@ -30,6 +30,18 @@ process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
 // Brevo: blank key forces the simulated (no-network) send path in tests.
 process.env.BREVO_API_KEY = '';
+// Never touch the real Cloudflare R2 buckets from tests: blank the creds so
+// storage.service stays on the mocked Supabase driver (R2 tests opt in).
+for (const k of ['R2_ENDPOINT', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_PUBLIC_URL']) process.env[k] = '';
+process.env.STORAGE_BUCKET = 'rentech-images';
+process.env.R2_CATALOG_BUCKET = 'rentech-catalog';
+process.env.R2_PRIVATE_BUCKET = 'rentech-private';
+// Never touch the real Cloudflare R2 buckets from tests: blank the creds so
+// storage.service stays on the mocked Supabase driver (R2 tests opt in).
+for (const k of ['R2_ENDPOINT', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_PUBLIC_URL']) process.env[k] = '';
+process.env.STORAGE_BUCKET = 'rentech-images';
+process.env.R2_CATALOG_BUCKET = 'rentech-catalog';
+process.env.R2_PRIVATE_BUCKET = 'rentech-private';
 process.env.BREVO_SENDER_EMAIL = 'noreply@test.local';
 process.env.BREVO_SENDER_NAME = 'RenTech Test';
 

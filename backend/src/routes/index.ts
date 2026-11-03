@@ -34,6 +34,10 @@ router.get('/health', async (req, res) => {
       import('../config/supabase.js'),
       import('../services/storage.service.js'),
     ]);
+    if (storageService.storageProvider() === 'r2') {
+      res.json({ ...base, storage: await storageService.probeStorage() });
+      return;
+    }
     const probePath = 'rental/';
     // Private bucket for `rental/` keys per bucketFor() routing.
     const probeBucket = storageService.bucketFor(probePath);

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import sharp from 'sharp';
 
 // Real-sharp unit tests for the server-side image compression pipeline —
@@ -228,5 +228,44 @@ describe('uploadFile (transport-throw retry)', () => {
     const buf = await jpegOf(200, 150);
     await expect(uploadFile('probe-t3.jpg', 'image/jpeg', buf)).rejects.toMatchObject({ statusCode: 500 });
     expect(uploadMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Cloudflare R2 provider', () => {
+  const R2 = {
+    R2_ACCOUNT_ID: 'acct123',
+    R2_ACCESS_KEY_ID: 'AKIATEST',
+    R2_SECRET_ACCESS_KEY: 'secret',
+    R2_CATALOG_BUCKET: 'r2-catalog',
+    R2_PRIVATE_BUCKET: 'r2-private',
+    R2_PUBLIC_URL: 'https://img.example.com/',
+  };
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => { for (const [k, v] of Object.entries(R2)) { saved[k] = process.env[k]; process.env[k] = v; } });
+  afterEach(() => { for (const k of Object.keys(R2)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+
+  it('routes buckets and public URLs to R2 when credentials are set', async () => {
+    const svc = await import('../src/services/storage.service.js');
+    expect(svc.storageProvider()).toBe('r2');
+    expect(svc.bucketFor('rental/abc/return-1.webp')).toBe('r2-private');
+    expect(svc.bucketFor('seed/gown.webp')).toBe('r2-catalog');
+    expect(svc.getPublicUrl('seed/gown.webp')).toBe('https://img.example.com/seed/gown.webp');
+  });
+
+  it('presigns private condition photos locally and keeps catalog URLs public', async () => {
+    const svc = await import('../src/services/storage.service.js');
+    const signed = await svc.getDownloadUrl('rental/abc/return-1.webp');
+    expect(signed.url).toContain('acct123.r2.cloudflarestorage.com');
+    expect(signed.url).toContain('X-Amz-Signature=');
+    const pub = await svc.getDownloadUrl('seed/gown.webp');
+    expect(pub).toEqual({ url: 'https://img.example.com/seed/gown.webp', public: true });
+  });
+
+  it('STORAGE_PROVIDER=supabase forces the Supabase driver', async () => {
+    process.env.STORAGE_PROVIDER = 'supabase';
+    try {
+      const svc = await import('../src/services/storage.service.js');
+      expect(svc.storageProvider()).toBe('supabase');
+    } finally { delete process.env.STORAGE_PROVIDER; }
   });
 });

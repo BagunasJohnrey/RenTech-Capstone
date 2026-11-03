@@ -84,7 +84,7 @@ app.use(errorHandler);
 app.listen(env.PORT, () => {
   console.log(`Server running on port ${env.PORT} [${env.NODE_ENV}]`);
   console.log(`[storage] Supabase URL: ${env.SUPABASE_URL}`);
-  console.log(`[storage] buckets: private=${process.env.STORAGE_BUCKET || 'rentech-images'} catalog=${process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog'}`);
+  if (!process.env.R2_ACCESS_KEY_ID) console.log(`[storage] buckets: private=${process.env.STORAGE_BUCKET || 'rentech-images'} catalog=${process.env.STORAGE_CATALOG_BUCKET || 'rentech-catalog'}`);
 
   // Dev-only .env staleness guard: tsx watch respawns on .ts changes but NEVER
   // re-reads backend/.env, so a long-lived `npm run dev` silently keeps the
@@ -142,6 +142,12 @@ app.listen(env.PORT, () => {
   // signed URLs (otherwise generateUploadUrl throws "Failed to generate upload URL").
   ensureBucket()
     .then(async () => {
+      const storageSvc = await import('./services/storage.service.js');
+      if (storageSvc.storageProvider() === 'r2') {
+        const info = await storageSvc.probeStorage();
+        console.log('[storage] provider=r2', info);
+        return;
+      }
       // Quick startup sanity: verify the bucket has files and signed URLs work.
       // NOTE: root listing can return folder placeholders (e.g. "rental/" —
       // the private bucket now only holds `rental/` condition shots), which

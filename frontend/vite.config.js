@@ -12,7 +12,7 @@ function cspPlugin() {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://*.supabase.co https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com",
+    "connect-src 'self' https://*.supabase.co https://*.r2.dev https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com",
     "frame-src https://www.google.com",
     "object-src 'none'",
     "base-uri 'self'",
@@ -80,7 +80,18 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/,
+            // Public catalog photos on either provider (Cloudflare R2 public
+            // bucket or Supabase /object/public/). Signed URLs — R2 presigned
+            // (X-Amz-Signature) or Supabase /object/sign/ — rotate and are
+            // excluded. Function must stay closure-free (workbox serializes it).
+            urlPattern: ({ request, url }) =>
+              request.destination === 'image' &&
+              url.origin !== self.location.origin &&
+              !url.searchParams.has('X-Amz-Signature') &&
+              !url.pathname.includes('/object/sign/') &&
+              (url.hostname.endsWith('.r2.dev') ||
+                url.pathname.includes('/storage/v1/object/public/') ||
+                /^(img|images|cdn|media)\./.test(url.hostname)),
             handler: 'CacheFirst',
             options: {
               cacheName: 'rentech-public-images',

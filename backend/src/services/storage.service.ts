@@ -1,6 +1,20 @@
 import { supabaseAdmin } from '../config/supabase.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { compressImage, coerceExtension, makeThumb, thumbKeyFor } from '../utils/imageCompress.js';
+import {
+  isR2Enabled,
+  r2CatalogBucket,
+  r2PrivateBucket,
+  r2PublicBase,
+  r2PutObject,
+  r2PresignGet,
+  r2DeleteObject,
+  r2ListAll,
+  r2ErrorStatus,
+} from './r2.client.js';
+
+export { isR2Enabled };
+export const storageProvider = (): 'r2' | 'supabase' => (isR2Enabled() ? 'r2' : 'supabase');
 
 // Object keys are unique per upload (Date.now()/uuid/seed-stable content),
 // so a long browser/CDN cache lifetime is safe — a replaced photo always
@@ -25,6 +39,7 @@ export function isConditionPath(path: string): boolean {
 }
 
 export function bucketFor(path: string): string {
+  if (isR2Enabled()) return isConditionPath(path) ? r2PrivateBucket() : r2CatalogBucket();
   return isConditionPath(path) ? BUCKET_NAME : CATALOG_BUCKET;
 }
 const ALLOWED_MIME = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
@@ -56,6 +71,9 @@ export function assertSafeUploadPath(fileName: string): void {
 }
 
 export async function ensureBucket() {
+  // R2 buckets (and their public access) are created once in the Cloudflare
+  // dashboard — the scoped API token deliberately can't create/alter buckets.
+  if (isR2Enabled()) return;
   const { data: buckets } = await supabaseAdmin.storage.listBuckets();
   const names = new Set((buckets || []).map((b) => b.name));
   try {
@@ -90,6 +108,11 @@ async function ensureOneBucket(exists: boolean, name: string, isPublic: boolean)
 // storage-js getPublicUrl builds), no Supabase call, safe to hand to <img>
 // (long cache headers are set at upload; keys are unique per upload).
 export function getPublicUrl(path: string): string {
+  if (isR2Enabled()) {
+    const r2Base = r2PublicBase();
+    if (!r2Base) console.warn('[storage] R2_PUBLIC_URL is not set — catalog image URLs will be broken');
+    return `${r2Base}/${path}`;
+  }
   const base = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
   return `${base}/storage/v1/object/public/${CATALOG_BUCKET}/${path}`;
 }
@@ -136,6 +159,9 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
   // bytes are already in the bucket. Returning the path makes the retry
   // idempotent instead of stranding the flow with a 500.
   const bucket = bucketFor(fileName);
+  if (isR2Enabled()) {
+    return uploadToR2(bucket, fileName, buffer, contentType);
+  }
   let data: { path: string } | null = null;
   let lastError: { message?: string; statusCode?: string | number } | null = null;
   for (let attempt = 0; attempt < 3 && !data; attempt++) {
@@ -218,11 +244,61 @@ export async function uploadFile(fileName: string, contentType: string, buffer: 
   return { path: data.path, thumbPath };
 }
 
+// R2 upload path: write-once PUT with the same retry + idempotent-collision
+// semantics as the Supabase loop below, then a best-effort thumb.
+async function uploadToR2(bucket: string, fileName: string, buffer: Buffer, contentType: string) {
+  let lastErr: unknown = null;
+  let ok = false;
+  for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+    try {
+      await r2PutObject(bucket, fileName, buffer, contentType, `public, max-age=${CACHE_CONTROL}, immutable`);
+      ok = true; // 'created' or 'exists' (idempotent retry) are both success
+    } catch (err) {
+      lastErr = err;
+      if (r2ErrorStatus(err) === 503 && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        continue;
+      }
+      break;
+    }
+  }
+  if (!ok) {
+    const message = (lastErr as Error)?.message ?? String(lastErr);
+    const transient = r2ErrorStatus(lastErr) === 503;
+    console.error('[storage] R2 upload failed:', message, { bucket, fileName, bytes: buffer.length });
+    throw new AppError(
+      transient ? 503 : 500,
+      transient ? 'Image service temporarily unavailable — please try again' : 'Failed to upload image — please try again',
+      { storageMessage: message, fileName, bytes: buffer.length },
+    );
+  }
+
+  let thumbPath: string | null = null;
+  try {
+    const thumbBytes = await makeThumb(buffer);
+    const thumbKey = thumbKeyFor(fileName);
+    await r2PutObject(bucket, thumbKey, thumbBytes, 'image/webp', `public, max-age=${CACHE_CONTROL}, immutable`);
+    thumbPath = thumbKey;
+  } catch (err) {
+    console.warn('[storage] R2 thumb upload failed:', (err as Error)?.message ?? err, { fileName });
+  }
+  return { path: fileName, thumbPath };
+}
+
 export async function getDownloadUrl(path: string) {
   // Catalog objects are public — hand out the stable URL with no Supabase
   // round-trip. Only `rental/` condition shots go through signing.
   if (!isConditionPath(path)) {
     return { url: getPublicUrl(path), public: true as const };
+  }
+  if (isR2Enabled()) {
+    try {
+      // Presigning is a local HMAC computation — no network round-trip.
+      return { url: await r2PresignGet(r2PrivateBucket(), path, 3600) };
+    } catch (err) {
+      console.error(`[storage] R2 presign failed for "${path}" in bucket "${r2PrivateBucket()}":`, (err as Error)?.message ?? err);
+      throw new AppError(500, 'Image storage is not configured');
+    }
   }
   let data: { signedUrl: string } | null;
   let error: unknown;
@@ -369,8 +445,21 @@ async function listBucketRecursive(bucket: string, prefix: string, out: StorageM
 export async function collectStorageManifest(timeoutMs = 15000): Promise<StorageManifest> {
   const files: StorageManifestFile[] = [];
   let incomplete = false;
-  const buckets = [CATALOG_BUCKET, BUCKET_NAME];
+  const r2 = isR2Enabled();
+  const buckets = r2 ? [r2CatalogBucket(), r2PrivateBucket()] : [CATALOG_BUCKET, BUCKET_NAME];
   const run = (async () => {
+    if (r2) {
+      await Promise.all(buckets.map(async (bucket) => {
+        try {
+          for (const o of await r2ListAll(bucket)) {
+            files.push({ bucket, path: o.key, size: o.size, updatedAt: o.updatedAt });
+          }
+        } catch {
+          incomplete = true;
+        }
+      }));
+      return;
+    }
     await Promise.all(
       buckets.map(async (bucket) => {
         try {
@@ -396,6 +485,13 @@ export async function removeObject(path: string) {
   try {
     if (!path || /^https?:\/\//.test(path)) return; // absolute URLs aren't bucket objects
     const bucket = bucketFor(path);
+    if (isR2Enabled()) {
+      // S3 DELETE is idempotent (204 for missing keys), so a bogus path is harmless.
+      await r2DeleteObject(bucket, path);
+      await r2DeleteObject(bucket, thumbKeyFor(path)).catch((err) =>
+        console.warn('[storage] removeObject thumb failed:', (err as Error)?.message ?? err));
+      return;
+    }
     const { error } = await supabaseAdmin.storage.from(bucket).remove([path]);
     if (error) {
       console.warn('[storage] removeObject failed:', error.message);
@@ -407,5 +503,38 @@ export async function removeObject(path: string) {
     if (thumbError) console.warn('[storage] removeObject thumb failed:', thumbError.message);
   } catch (err) {
     console.warn('[storage] removeObject error:', err);
+  }
+}
+
+// Startup / health probe for whichever provider is active. Never throws.
+export async function probeStorage(): Promise<Record<string, unknown>> {
+  if (isR2Enabled()) {
+    const info: Record<string, unknown> = {
+      provider: 'r2',
+      catalogBucket: r2CatalogBucket(),
+      privateBucket: r2PrivateBucket(),
+      publicUrl: r2PublicBase() || null,
+    };
+    try {
+      const sample = await r2ListAll(r2PrivateBucket(), 'rental/', 1);
+      info.sampleEntries = sample.length;
+      info.listError = null;
+    } catch (err) {
+      info.listError = (err as Error)?.message ?? String(err);
+    }
+    return info;
+  }
+  try {
+    const { data, error } = await supabaseAdmin.storage.from(BUCKET_NAME).list('rental', { limit: 1 });
+    return {
+      provider: 'supabase',
+      bucket: BUCKET_NAME,
+      catalogBucket: CATALOG_BUCKET,
+      supabaseUrl: process.env.SUPABASE_URL || null,
+      listError: error ? String((error as { message?: unknown }).message ?? error) : null,
+      sampleEntries: Array.isArray(data) ? data.length : 0,
+    };
+  } catch (err) {
+    return { provider: 'supabase', listError: (err as Error)?.message ?? String(err) };
   }
 }
