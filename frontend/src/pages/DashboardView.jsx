@@ -7,7 +7,7 @@ import PaymentProofModal from '../components/PaymentProofModal';
 import PaymentHistoryCard from '../components/PaymentHistoryCard';
 import { transactionsService } from '../services/transactions';
 import { normalizeTx } from '../hooks/useTransactions';
-import NeedsCallCard from '../components/NeedsCallCard';
+import NeedsCallCard, { needsCall } from '../components/NeedsCallCard';
 import { useTodayTasks, useKpis } from '../hooks/useDashboard';
 import { Skeleton, SkeletonList, FeaturedSkeleton } from '../components/Skeleton';
 import { api } from '../utils/api';
@@ -404,21 +404,67 @@ export default function DashboardView({ role, transactions, inventory, transacti
     ).length;
     const availableCount = inventory.filter(i => i.status === 'Available').length;
     const cleaningCount = todayStats ? todayStats.inCleaning : inventory.filter(i => i.status === 'Cleaning').length;
-    const recentRentals = transactions.filter(tx => tx.status === 'Active' || tx.status === 'Overdue').slice(0, 3);
+    // Skip rentals already listed on the Needs-a-call card so the same rows
+    // don't appear twice on the page.
+    const recentRentals = transactions
+      .filter(tx => (tx.status === 'Active' || tx.status === 'Overdue') && !needsCall(tx))
+      .slice(0, 3);
     // Desktop-only extras (staff benefit data)
     const pickupsToday = transactions.filter(tx => {
       if (!tx.rentalDate || (tx.status !== 'Reserved' && tx.status !== 'Active')) return false;
       return new Date(tx.rentalDate).toDateString() === today.toDateString();
     });
-    const overdueTxs = transactions.filter(tx =>
-      tx.status === 'Overdue' || (tx.status === 'Active' && new Date(tx.dueDate || tx.date) < dayStart)
-    ).slice(0, 3);
     // Upcoming Today = today's pickups + today's returns in one tagged list.
     const todayList = [
       ...pickupsToday.map((tx) => ({ tx, kind: 'pickup' })),
       ...upcomingToday.map((tx) => ({ tx, kind: 'return' })),
     ].slice(0, 6);
-    const daysLate = (tx) => tx.dueDate ? Math.max(1, Math.ceil((today - new Date(tx.dueDate)) / 86400000)) : '?';
+    // Active Rentals renders twice: in the desktop right rail (under Today at
+    // a Glance) and, on mobile/tablet, after Upcoming Today so the stacked
+    // order reads Needs a call → Upcoming Today → Active Rentals.
+    const renderActiveRentals = (className) => (
+      staffLoading ? (
+            <div className={`bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 ${className}`}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
+              </div>
+              <SkeletonList count={3} />
+            </div>
+          ) : (
+          recentRentals.length > 0 && (
+            <div className={`bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 ${className}`}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
+                <button onClick={() => onNavigate('History')}
+                  className="text-xs font-semibold text-[#bf4a53] hover:underline">
+                  View All
+                </button>
+              </div>
+              <div className="space-y-3">
+                {recentRentals.map(tx => (
+                  <div key={tx.id}
+                    {...rowActivation(onNavigateDetail ? () => onNavigateDetail(tx) : null)}
+                    title={onNavigateDetail ? 'View transaction details' : undefined}
+                    className={`flex items-center gap-3 py-3 border-b border-gray-100 last:border-0 ${onNavigateDetail ? `cursor-pointer hover:bg-gray-50/70 -mx-2 px-2 rounded-xl transition-colors ${ROW_FOCUS}` : ''}`}>
+                    <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
+                      <ShoppingBag size={16} className="text-[#bf4a53]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
+                      <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>
+                        {tx.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+          )
+    );
     return (
       <div className="max-w-lg mx-auto md:max-w-3xl xl:max-w-[1200px]">
         <PageHeader title="Staff Dashboard" subtitle={today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
@@ -443,7 +489,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
             onClick={() => goAnchor('Tasks', 'cleaning-queue')} />
         </div>
 
-        {/* Right rail: Quick Actions + (desktop) Today at a Glance + Overdue Follow-ups */}
+        {/* Right rail: Quick Actions + (desktop) Today at a Glance + Active Rentals */}
         <aside className="xl:col-span-3 xl:col-start-10 xl:row-start-2 xl:row-span-3 xl:self-start space-y-4 md:space-y-6 xl:space-y-6">
 
           {/* Quick Actions panel */}
@@ -477,8 +523,6 @@ export default function DashboardView({ role, transactions, inventory, transacti
             {staffLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-3 w-28" />
               </div>
             ) : (
               <>
@@ -487,39 +531,22 @@ export default function DashboardView({ role, transactions, inventory, transacti
                   <p className="text-sm font-bold">₱{revenueToday.toLocaleString()}</p>
                   <p className="text-xs text-gray-400 font-medium">collected today</p>
                 </div>
-                <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5 text-xs text-gray-500 font-medium">
-                  <p><span className="font-bold text-gray-800">{upcomingToday.length}</span> return{upcomingToday.length === 1 ? '' : 's'} due today</p>
-                  <p><span className="font-bold text-gray-800">{pickupsToday.length}</span> pickup{pickupsToday.length === 1 ? '' : 's'} scheduled</p>
-                </div>
               </>
             )}
           </div>
 
-          {/* Overdue Follow-ups (desktop only) */}
-          {overdueCount > 0 && (
-            <div className="bg-white rounded-2xl border border-red-100 shadow-sm p-4 sm:p-5">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-[11px] font-bold text-red-400 uppercase tracking-widest">Follow Up</p>
-                <button onClick={() => goFiltered('History', 'Overdue')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
-              </div>
-              <div className="space-y-2.5">
-                {overdueTxs.map(tx => (
-                  <div key={tx.id}
-                    {...rowActivation(onNavigateDetail ? () => onNavigateDetail(tx) : null)}
-                    title={onNavigateDetail ? 'View transaction details' : undefined}
-                    className={onNavigateDetail ? `flex items-center justify-between gap-2 cursor-pointer hover:bg-red-50/60 -mx-1 px-1 rounded-lg transition-colors ${ROW_FOCUS}` : 'flex items-center justify-between gap-2'}>
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
-                      <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
-                    </div>
-                    <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">{daysLate(tx)}d late</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Active Rentals (desktop rail position) */}
+          {renderActiveRentals('hidden xl:block')}
 
         </aside>
+
+        {/* Needs a call — long-overdue rentals where automatic reminders have
+            stopped; staff phone the customer from here (also on Tasks). */}
+        {todayStats?.overdue?.some((tx) => needsCall(normalizeTx(tx))) && (
+          <div className="xl:col-span-9 xl:col-start-1">
+            <NeedsCallCard transactions={todayStats.overdue.map(normalizeTx)} onOpen={onNavigateDetail} />
+          </div>
+        )}
 
         {/* Upcoming Today — main column: today's pickups AND returns, tagged.
             Header ALWAYS renders; only the body skeletons while loading
@@ -565,49 +592,8 @@ export default function DashboardView({ role, transactions, inventory, transacti
           )}
         </div>
 
-        {/* Active Rentals — main column. Header stays; skeleton rows while
-            loading; hidden on a genuinely quiet day (same as before). */}
-        {staffLoading ? (
-          <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
-            </div>
-            <SkeletonList count={3} />
-          </div>
-        ) : (
-        recentRentals.length > 0 && (
-          <div className="xl:col-span-9 xl:col-start-1 bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Active Rentals</h3>
-              <button onClick={() => onNavigate('History')}
-                className="text-xs font-semibold text-[#bf4a53] hover:underline">
-                View All
-              </button>
-            </div>
-            <div className="space-y-3">
-              {recentRentals.map(tx => (
-                <div key={tx.id}
-                  {...rowActivation(onNavigateDetail ? () => onNavigateDetail(tx) : null)}
-                  title={onNavigateDetail ? 'View transaction details' : undefined}
-                  className={`flex items-center gap-3 py-3 border-b border-gray-100 last:border-0 ${onNavigateDetail ? `cursor-pointer hover:bg-gray-50/70 -mx-2 px-2 rounded-xl transition-colors ${ROW_FOCUS}` : ''}`}>
-                  <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
-                    <ShoppingBag size={16} className="text-[#bf4a53]" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 truncate">{custName(tx)}</p>
-                    <p className="text-xs text-gray-500 truncate">{itemName(tx)}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>
-                      {tx.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )
-        )}
+        {/* Active Rentals (mobile/tablet position, after Upcoming Today) */}
+        {renderActiveRentals('xl:hidden')}
 
         {/* Needs Attention — sidebar column, row 3 (desktop) / inline (mobile) */}
         {(() => {
