@@ -40,7 +40,8 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
   useEffect(() => { fetchCodes(); }, []);
 
   // Let the page summary count live codes without a second fetch.
-  useEffect(() => { onCodesChange?.(codes); }, [codes]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Wait for the first fetch so the parent can show a skeleton, not "0".
+  useEffect(() => { if (!loading) onCodesChange?.(codes); }, [codes, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async (e) => {
     e.preventDefault();

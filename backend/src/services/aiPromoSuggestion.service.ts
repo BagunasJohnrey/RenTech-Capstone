@@ -35,6 +35,20 @@ const MAX_SAVED = 20;
 export const PROMO_SUGGESTIONS_BUCKET = process.env.STORAGE_PROMO_SUGGESTIONS_BUCKET || 'rentech-ai-promo-suggestions';
 const META_SUFFIX = '.meta.json';
 
+// In-process caches. On Render the local data/ dir is ephemeral, so the list
+// is rebuilt from R2/Supabase sidecars — up to 20 object GETs. Cache the merged
+// list for 60s and full entries (immutable once written) until deleted, so the
+// Promotions page doesn't pay that on every visit. Every write path clears it.
+const LIST_TTL_MS = 60_000;
+let listCache: { at: number; metas: PromoSuggestionMeta[] } | null = null;
+let listInflight: Promise<PromoSuggestionMeta[]> | null = null;
+const fullCache = new Map<string, PromoSuggestionFull>();
+export function clearPromoSuggestionCache(): void {
+  listCache = null;
+  listInflight = null;
+  fullCache.clear();
+}
+
 type StorageApi = {
   list?: (prefix: string, opts?: unknown) => Promise<{ data?: { name: string }[] | null; error?: { message?: string } | null }>;
   upload?: (path: string, body: unknown, opts?: unknown) => Promise<{ error?: { message?: string } | null }>;
@@ -178,12 +192,14 @@ export async function savePromoSuggestion(input: {
     suggestions: input.suggestions,
   };
   await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(full, null, 2), 'utf8');
+  clearPromoSuggestionCache();
   await pruneSuggestions(dir);
   const { suggestions: _omit, ...meta } = full;
   meta.uploaded = await uploadToCloud(meta, full.suggestions);
   if (meta.uploaded) meta.origin = 'both';
   const finalFull = { ...full, uploaded: meta.uploaded, origin: meta.origin };
   await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(finalFull, null, 2), 'utf8').catch(() => {});
+  clearPromoSuggestionCache();
   return meta;
 }
 
@@ -233,6 +249,20 @@ export function mergeSuggestionLists(local: PromoSuggestionMeta[], cloud: PromoS
 }
 
 export async function listPromoSuggestions(limit = 20): Promise<PromoSuggestionMeta[]> {
+  if (listCache && Date.now() - listCache.at < LIST_TTL_MS) return listCache.metas.slice(0, limit);
+  // Coalesce concurrent misses (the page used to request the list twice).
+  if (!listInflight) {
+    const started = listInflight = buildPromoSuggestionList()
+      .then((metas) => {
+        if (listInflight === started) listCache = { at: Date.now(), metas };
+        return metas;
+      })
+      .finally(() => { if (listInflight === started) listInflight = null; });
+  }
+  return (await listInflight).slice(0, limit);
+}
+
+async function buildPromoSuggestionList(): Promise<PromoSuggestionMeta[]> {
   const dir = getSuggestionsDir();
   let local: PromoSuggestionMeta[] = [];
   try {
@@ -244,11 +274,19 @@ export async function listPromoSuggestions(limit = 20): Promise<PromoSuggestionM
   } catch {
     local = [];
   }
-  return mergeSuggestionLists(local, await listCloudMetas()).slice(0, limit);
+  return mergeSuggestionLists(local, await listCloudMetas());
 }
 
 export async function getPromoSuggestion(id: string): Promise<PromoSuggestionFull> {
   if (!ID_RE.test(id)) throw new AppError(400, 'Invalid suggestion id');
+  const hit = fullCache.get(id);
+  if (hit) return hit;
+  const found = await loadPromoSuggestion(id);
+  fullCache.set(id, found);
+  return found;
+}
+
+async function loadPromoSuggestion(id: string): Promise<PromoSuggestionFull> {
   try {
     const raw = await fs.readFile(path.join(getSuggestionsDir(), `${id}.json`), 'utf8');
     const parsed = JSON.parse(raw) as Partial<PromoSuggestionFull>;
@@ -293,6 +331,7 @@ function toFull(id: string, parsed: Partial<PromoSuggestionFull>): PromoSuggesti
 
 export async function deletePromoSuggestion(id: string): Promise<boolean> {
   if (!ID_RE.test(id)) throw new AppError(400, 'Invalid suggestion id');
+  clearPromoSuggestionCache();
   let removed = false;
   await fs.unlink(path.join(getSuggestionsDir(), `${id}.json`)).then(
     () => { removed = true; },
@@ -367,16 +406,16 @@ async function listCloudMetas(): Promise<PromoSuggestionMeta[]> {
         .map((f) => f.name)
         .filter((n) => typeof n === 'string' && n.endsWith(META_SUFFIX))
         .slice(0, MAX_SAVED);
-      const metas: PromoSuggestionMeta[] = [];
-      for (const name of sidecars) {
+      // Download all sidecars in parallel (was one R2 round-trip at a time).
+      const parsedAll = await Promise.all(sidecars.map(async (name): Promise<PromoSuggestionMeta | null> => {
         try {
           const dl = await api.download!(name);
-          if (dl?.error || !dl?.data) continue;
+          if (dl?.error || !dl?.data) return null;
           const buf = Buffer.isBuffer(dl.data) ? dl.data : Buffer.from(await (dl.data as Blob).arrayBuffer());
           const parsed = JSON.parse(buf.toString('utf8')) as Partial<PromoSuggestionMeta> & { id?: string };
-          if (!parsed || typeof parsed.id !== 'string' || !ID_RE.test(parsed.id)) continue;
-          if (!parsed.createdAt) continue;
-          metas.push({
+          if (!parsed || typeof parsed.id !== 'string' || !ID_RE.test(parsed.id)) return null;
+          if (!parsed.createdAt) return null;
+          return {
             id: parsed.id,
             createdAt: String(parsed.createdAt),
             createdBy: (parsed.createdBy as string | null) ?? null,
@@ -389,12 +428,12 @@ async function listCloudMetas(): Promise<PromoSuggestionMeta[]> {
             excerpt: String(parsed.excerpt ?? ''),
             uploaded: true,
             origin: 'cloud',
-          });
+          };
         } catch {
-          continue;
+          return null;
         }
-      }
-      return metas;
+      }));
+      return parsedAll.filter((m): m is PromoSuggestionMeta => m !== null);
     })();
     const result = await Promise.race([run, deadline]);
     return result === 'timeout' ? [] : result;

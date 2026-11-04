@@ -36,6 +36,10 @@ function readCache() {
   return null;
 }
 
+// History list survives page switches (module scope), so returning to
+// Promotions renders the last-known list instantly and refreshes behind it.
+let savedListCache = null;
+
 function writeCache(data, meta = null) {
   const entry = { data, at: Date.now(), meta };
   suggestCache.set('current', entry);
@@ -86,7 +90,17 @@ const savedMeta = (full) => ({
 });
 const shortDate = (iso) => new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
-function StatTile({ icon: Icon, label, value, hint, tone, onClick }) {
+function StatTile({ icon: Icon, label, value, hint, tone, onClick, loading }) {
+  if (loading) {
+    return (
+      <div aria-hidden className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4">
+        <span className="block w-8 h-8 rounded-xl bg-gray-100 shimmer" />
+        <span className="block h-6 w-10 rounded-md bg-gray-100 shimmer mt-3" />
+        <span className="block h-3 w-24 rounded bg-gray-100 shimmer mt-2" />
+        <span className="block h-2.5 w-16 rounded bg-gray-50 shimmer mt-1.5" />
+      </div>
+    );
+  }
   return (
     <button type="button" onClick={onClick}
       className="text-left bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 hover:border-gray-200 hover:shadow transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40">
@@ -107,7 +121,9 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [promoFormPrefill, setPromoFormPrefill] = useState(null);
-  const [promoCodes, setPromoCodes] = useState([]);
+  // null until PromoCodesManager's first fetch lands — the tiles show a
+  // skeleton instead of a misleading "0 live codes".
+  const [promoCodes, setPromoCodes] = useState(null);
   const [appliedItems, setAppliedItems] = useState(new Set());
   const [appliedVouchers, setAppliedVouchers] = useState(new Set());
   const [dismissedItems, setDismissedItems] = useState(new Set());
@@ -117,8 +133,11 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
 
   // Saved suggestions history
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [savedList, setSavedList] = useState([]);
-  const [savedLoading, setSavedLoading] = useState(true);
+  const [savedList, setSavedList] = useState(() => savedListCache || []);
+  const [savedLoading, setSavedLoading] = useState(() => !savedListCache);
+  // True until the first history lookup settles when nothing is cached
+  // locally — keeps "No ideas yet" from flashing before saved ideas arrive.
+  const [ideasLoading, setIdeasLoading] = useState(() => !readCache());
   const [savedError, setSavedError] = useState('');
   const [savedPage, setSavedPage] = useState(1);
   const [viewingSaved, setViewingSaved] = useState(null);
@@ -130,40 +149,6 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
   const currentMonth = new Date().toLocaleString('en-US', { month: 'long' });
   const seasonalTips = SEASONAL_EVENTS[currentMonth] || [];
 
-  // Show what we have right away (this browser's last run), then swap in the
-  // newest saved run if it is newer — e.g. the Monday auto-run, or a run made
-  // on another device. Without this the tab looked empty after 24h even
-  // though history had ideas.
-  useEffect(() => {
-    const cached = readCache();
-    if (cached) {
-      setSuggestions(cached.data);
-      if (cached.meta) setLastResult(cached.meta);
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await api.get('/ai/promo-suggestions');
-        const latest = Array.isArray(list) ? list[0] : null;
-        if (!latest || cancelled) return;
-        // Re-read the cache at each step: a Generate click while this was
-        // loading writes a newer entry, which must win over the saved run.
-        const isStale = () => {
-          const current = readCache();
-          return current && Date.parse(latest.createdAt) <= current.at;
-        };
-        if (isStale()) return;
-        const full = await api.get(`/ai/promo-suggestions/${latest.id}`);
-        if (cancelled || !full?.suggestions || isStale()) return;
-        const meta = savedMeta(full);
-        setSuggestions(full.suggestions);
-        setLastResult(meta);
-        writeCache(full.suggestions, meta);
-      } catch { /* history is optional — the Generate button still works */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
   const sellable = useMemo(() => (inventory || []).filter(i => i.status !== 'Deleted'), [inventory]);
   const findItem = useCallback((s) => sellable.find(i => i.id === s.itemId || i.name === s.itemName), [sellable]);
 
@@ -171,7 +156,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
     const now = new Date();
     const liveSales = sellable.filter(i => getSaleInfo(i).active).length;
     const neverRented = sellable.filter(i => (i.rentalCount ?? 0) === 0).length;
-    const usableCodes = promoCodes.filter(c =>
+    const usableCodes = (promoCodes || []).filter(c =>
       c.isActive
       && !(c.expiresAt && new Date(c.expiresAt) < now)
       && !(c.startsAt && new Date(c.startsAt) > now)
@@ -188,21 +173,60 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
   const ideasWaiting = unappliedItems.length + vouchers.filter(v => !appliedVouchers.has(v.code)).length;
 
   // ─── Load saved suggestions ────────────────────────────────────────
+  // ONE list request feeds both the History sheet and the "latest ideas"
+  // swap-in (the page used to fetch the list twice on every mount).
   const loadSaved = useCallback(async () => {
-    setSavedLoading(true);
+    if (!savedListCache) setSavedLoading(true);
     setSavedError('');
     try {
       const data = await api.get('/ai/promo-suggestions');
-      setSavedList(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      savedListCache = list;
+      setSavedList(list);
+      return list;
     } catch (err) {
       setSavedError(formatError(err));
-      setSavedList([]);
+      if (!savedListCache) setSavedList([]);
+      return null;
     } finally {
       setSavedLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadSaved(); }, [loadSaved]);
+  // Show what we have right away (this browser's last run), then swap in the
+  // newest saved run if it is newer — e.g. the Monday auto-run, or a run made
+  // on another device. Without this the tab looked empty after 24h even
+  // though history had ideas.
+  useEffect(() => {
+    const cached = readCache();
+    if (cached) {
+      setSuggestions(cached.data);
+      if (cached.meta) setLastResult(cached.meta);
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await loadSaved();
+        const latest = Array.isArray(list) ? list[0] : null;
+        if (!latest || cancelled) return;
+        // Re-read the cache at each step: a Generate click while this was
+        // loading writes a newer entry, which must win over the saved run.
+        const isStale = () => {
+          const current = readCache();
+          return current && Date.parse(latest.createdAt) <= current.at;
+        };
+        if (isStale()) return;
+        const full = await api.get(`/ai/promo-suggestions/${latest.id}`);
+        if (cancelled || !full?.suggestions || isStale()) return;
+        const meta = savedMeta(full);
+        setSuggestions(full.suggestions);
+        setLastResult(meta);
+        writeCache(full.suggestions, meta);
+      } catch { /* history is optional — the Generate button still works */ }
+      finally { if (!cancelled) setIdeasLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [loadSaved]);
 
   // ─── Fetch AI suggestions ─────────────────────────────────────────
   const fetchSuggestions = useCallback(async () => {
@@ -345,7 +369,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
     setDeletingId(id);
     try {
       await api.delete(`/ai/promo-suggestions/${id}`);
-      setSavedList(prev => prev.filter(s => s.id !== id));
+      setSavedList(prev => { const next = prev.filter(s => s.id !== id); savedListCache = next; return next; });
       if (viewingSaved?.id === id) setViewingSaved(null);
       toastSuccess('Suggestion deleted');
     } catch (err) {
@@ -389,7 +413,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
   const historyPageSize = wideScreen ? PAGE_SIZE * 2 : PAGE_SIZE;
   const savedTotalPages = Math.max(1, Math.ceil(savedList.length / historyPageSize));
   const savedPaged = savedList.slice((Math.min(savedPage, savedTotalPages) - 1) * historyPageSize, Math.min(savedPage, savedTotalPages) * historyPageSize);
-  const tabCounts = { ideas: ideasWaiting || null, sales: stats.liveSales || null, codes: stats.usableCodes || null };
+  const tabCounts = { ideas: ideasWaiting || null, sales: stats.liveSales || null, codes: (promoCodes && stats.usableCodes) || null };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-5xl">
@@ -420,9 +444,10 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
         <StatTile icon={PackageX} tone="bg-amber-50 text-amber-600" label="Never rented" value={stats.neverRented}
           hint="Good sale candidates" onClick={() => { setSalesFilter('never'); setTab('sales'); }} />
         <StatTile icon={Ticket} tone="bg-emerald-50 text-emerald-600" label="Live promo codes" value={stats.usableCodes}
-          hint={`${promoCodes.length} total`} onClick={() => setTab('codes')} />
+          hint={`${promoCodes?.length ?? 0} total`} onClick={() => setTab('codes')} loading={promoCodes === null} />
         <StatTile icon={Sparkles} tone="bg-violet-50 text-violet-600" label="AI ideas waiting" value={ideasWaiting}
-          hint={suggestions ? 'Not yet applied' : 'None generated yet'} onClick={() => setTab('ideas')} />
+          hint={suggestions ? 'Not yet applied' : 'None generated yet'} onClick={() => setTab('ideas')}
+          loading={ideasLoading && !suggestions} />
       </div>
 
       {/* Tabs */}
@@ -491,13 +516,13 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
           </div>
         )}
 
-        {loading && !suggestions && (
+        {(loading || ideasLoading) && !suggestions && (
           <div className="grid sm:grid-cols-2 gap-3">
             {[1, 2, 3, 4].map(i => <div key={i} className="h-44 bg-white border border-gray-100 rounded-3xl shimmer" />)}
           </div>
         )}
 
-        {!suggestions && !loading && !error && (
+        {!suggestions && !loading && !ideasLoading && !error && (
           <div className="bg-white rounded-3xl border border-dashed border-gray-200 p-8 text-center">
             <Lightbulb size={26} className="mx-auto text-gray-300 mb-3" />
             <p className="text-sm font-semibold text-gray-700">No ideas yet</p>

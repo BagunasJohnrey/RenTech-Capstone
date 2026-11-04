@@ -17,6 +17,8 @@ beforeEach(async () => {
   // values per test, so start every test with a cold cache.
   const { clearBusinessRulesCache } = await import('../src/services/settings.service.js');
   clearBusinessRulesCache();
+  const { clearPromoSuggestionCache } = await import('../src/services/aiPromoSuggestion.service.js');
+  clearPromoSuggestionCache();
   // The dashboard/proof-queue caches are in-memory too; clear them between
   // tests so mocked query results never leak into the next case.
   const { clearDataCache } = await import('../src/utils/ttlCache.js');
