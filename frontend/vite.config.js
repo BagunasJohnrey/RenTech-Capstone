@@ -8,11 +8,13 @@ import { VitePWA } from 'vite-plugin-pwa'
 function cspPlugin() {
   const CSP = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    // static.cloudflareinsights.com: Cloudflare Web Analytics beacon, auto-injected
+    // by the Cloudflare proxy in front of the production domain (not by our code).
+    "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://*.supabase.co https://*.r2.dev https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com",
+    "connect-src 'self' https://*.supabase.co https://*.r2.dev https://*.onrender.com https://*.vercel.app wss://localhost:* https://www.google.com https://cloudflareinsights.com",
     "frame-src https://www.google.com",
     "object-src 'none'",
     "base-uri 'self'",
