@@ -767,10 +767,6 @@ export default function DashboardView({ role, transactions, inventory, transacti
 
         {/* Left column — Revenue Trend + Top Items + Overdue follow-ups */}
         <div className="xl:col-span-9 space-y-4 md:space-y-6 xl:space-y-6">
-          {/* Long-overdue rentals where automatic reminders stopped (admin has no Tasks tab). */}
-          {todayStats?.overdue && (
-            <NeedsCallCard transactions={todayStats.overdue.map(normalizeTx)} onOpen={onNavigateDetail} />
-          )}
           {/* Revenue Trend (6 months) — header stays, bars skeleton */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <div className="flex items-center justify-between mb-4">
@@ -826,6 +822,11 @@ export default function DashboardView({ role, transactions, inventory, transacti
             </div>
             )}
           </div>
+
+          {/* Long-overdue rentals where automatic reminders stopped (admin has no Tasks tab). */}
+          {todayStats?.overdue && (
+            <NeedsCallCard transactions={todayStats.overdue.map(normalizeTx)} onOpen={onNavigateDetail} />
+          )}
 
           {/* Top Rented Items — header stays, rows skeleton while loading */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
