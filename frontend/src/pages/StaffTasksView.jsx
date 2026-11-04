@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import RequiredMark from '../components/ui/RequiredMark';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { X, ChevronLeft, ChevronRight, Undo2, MessageCircle, Calendar, Package, AlertTriangle, RotateCcw, ScanLine } from 'lucide-react';
 import { api } from '../utils/api';
 import { customerLabel, customerPhone, SMS_MAX_LENGTH, itemLabel, defaultSmsMessage, smsIntent } from '../utils/format';
@@ -13,6 +13,7 @@ import PaymentProofsQueue from '../components/PaymentProofsQueue';
 import PaymentProofReviewModal from '../components/PaymentProofReviewModal';
 import AwaitingProofModal from '../components/AwaitingProofModal';
 import NeedsCallCard from '../components/NeedsCallCard';
+import FilterChip from '../components/ui/FilterChip';
 import { usePaymentProofs } from '../hooks/usePaymentProofs';
 import { isReleased } from '../hooks/useTransactions';
 import { peso } from '../utils/receipt';
@@ -25,39 +26,20 @@ import { rowActivation, ROW_FOCUS } from '../utils/a11y';
 // Spoken status for calendar days (screen readers can't see the dot colors).
 const DAY_STATUS_LABEL = { active: 'active rentals', reserved: 'reservations', returned: 'returns', mixed: 'active rentals and returns' };
 
-// Collapsible SMS log that mounts its data-fetching panel only after the
-// first expand — keeps GET /sms/history off the Tasks critical path.
-function SmsLogSection() {
-  const [open, setOpen] = useState(false);
-  const [everOpened, setEverOpened] = useState(false);
-  return (
-    <div className="bg-white rounded-3xl border border-gray-100/50 shadow-sm overflow-hidden">
-      <button
-        type="button"
-        onClick={() => { setOpen((o) => !o); setEverOpened(true); }}
-        aria-expanded={open}
-        className="w-full flex items-center gap-3 p-6 text-left cursor-pointer"
-      >
-        <span className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
-          <MessageCircle size={18} />
-        </span>
-        <span className="flex-1 min-w-0">
-          <span className="block font-bold text-lg text-gray-900">SMS Log</span>
-          <span className="block text-xs text-gray-500 font-medium mt-0.5">Manual + automatic sends and their delivery status</span>
-        </span>
-        <span className={`text-xs font-bold text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
-      </button>
-      {open && (
-        <div className="px-6 pb-6">
-          {everOpened && <SmsLogPanel />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default function StaffTasksView({ transactions, digestTransactions, digestLoading, digestError, onRetryDigest, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp }) {
+export default function StaffTasksView({ transactions, digestTransactions, digestLoading, digestError, onRetryDigest, inventory, onReturn, onNavigate, onRelease, onSwapItem, onNavigateDetail, role: roleProp, cleaningSlot, cleaningCount = 0 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  // One tab per task so staff work a single queue at a time. The dashboard's
+  // "In Cleaning" card deep-links with #cleaning-queue, which opens that tab.
+  const [tab, setTab] = useState(() => (location.hash === '#cleaning-queue' ? 'rentals' : 'today'));
+  useEffect(() => {
+    if (location.hash !== '#cleaning-queue') return undefined;
+    setTab('rentals');
+    const t = setTimeout(() => {
+      document.getElementById('cleaning-queue')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [location.hash]);
   // Fast first paint: action queues render from the tiny today-digest rows
   // (~20 rows) the moment they land; the full 500-row list merges in behind
   // and takes over (it covers history + calendar, which the digest doesn't).
@@ -361,11 +343,31 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
     smsModalTx?.contact || smsModalTx?.customerPhone
   );
 
+  // Three groups (3 / 3 / 2 sections) so related queues sit together.
+  const taskTabs = [
+    { id: 'today', label: 'Today', count: focusKnown ? focusItems.length : 0 },
+    { id: 'rentals', label: 'Rentals', count: queuesKnown ? pendingPickup.length + overdueItems.length + cleaningCount : 0 },
+    { id: 'activity', label: 'Activity', count: 0 },
+  ];
+
   return (
       <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <PageHeader title="Staff Tasks" subtitle="Overdue reminders & upcoming schedule." />
 
+        {/* Task tabs — horizontally scrollable on phones. Counts show only
+            once the underlying queue is known (never a false 0). */}
+        <div role="tablist" aria-label="Task sections"
+          className="-mx-4 px-4 sm:mx-0 sm:px-0 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {taskTabs.map((t) => (
+            <FilterChip key={t.id} active={tab === t.id} count={t.count || undefined}
+              onClick={() => setTab(t.id)} className="shrink-0">
+              {t.label}
+            </FilterChip>
+          ))}
+        </div>
+
         {/* Today's Focus — actionable daily queue (replaces KPI count row) */}
+        {tab === 'today' && (
         <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 lg:p-5">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[11px] font-bold text-gray-500 uppercase tracking-widest">Today's Priority</p>
@@ -436,35 +438,42 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
             )}
           </div>
         </div>
-
-
+        )}
 
         {/* Long-overdue rentals where automatic reminders stopped — staff call. */}
-        <NeedsCallCard transactions={queueTxs} onCalled={onRetryDigest} onOpen={onNavigateDetail} />
+        {tab === 'today' && (
+          <NeedsCallCard transactions={queueTxs} onCalled={onRetryDigest} onOpen={onNavigateDetail} />
+        )}
 
         {/* Payments to verify — manual-QR proofs + unpaid manual checkouts.
-            Always visible at the top of the queues; "All clear" is a real state. */}
+            "All clear" is a real state. */}
+        {tab === 'today' && (
         <PaymentProofsQueue
           role={role}
           onChanged={proofQueue.refresh}
           onSendSms={openSmsModal}
         />
+        )}
 
         {/* Pickup + Overdue — paired action queues (latest 5 each).
             Unknown (digest still pending, list empty) → skeleton cards, never
             a missing section that reads as "nothing to do". Known-empty
             (quiet day) → compact "all clear" card. */}
-        {!queuesKnown && digestError && pendingPickup.length === 0 && overdueItems.length === 0 ? (
+        {tab === 'rentals' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {['pickup', 'overdue'].map((kind) => {
+          const tabRows = kind === 'pickup' ? pendingPickup : overdueItems;
+          return (<div key={kind} className="min-w-0">{!queuesKnown && digestError && tabRows.length === 0 ? (
           <div role="alert" className="flex items-center justify-between gap-3 p-4 rounded-xl bg-red-50/60 border border-red-100">
-            <p className="text-sm font-semibold text-red-700">Couldn&rsquo;t load pickups and overdue rentals.</p>
+            <p className="text-sm font-semibold text-red-700">Couldn&rsquo;t load {kind === 'pickup' ? 'pickups' : 'overdue rentals'}.</p>
             <button type="button" onClick={onRetryDigest}
               className="shrink-0 min-h-[36px] px-4 rounded-full text-xs font-bold text-white bg-[#bf4a53] hover:bg-[#a83d46] transition-colors">
               Retry
             </button>
           </div>
-        ) : !queuesKnown && pendingPickup.length === 0 && overdueItems.length === 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" aria-label="Loading pickup and overdue queues">
-            {['Ready for Pickup', 'Overdue Rentals'].map((title) => (
+        ) : !queuesKnown && tabRows.length === 0 ? (
+          <div className="grid grid-cols-1 gap-6" aria-label="Loading queue">
+            {[kind === 'pickup' ? 'Ready for Pickup' : 'Overdue Rentals'].map((title) => (
               <div key={title} className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6">
                 <div className="flex items-center mb-4">
                   <h3 className="font-bold text-lg text-gray-900">{title}</h3>
@@ -483,20 +492,20 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
               </div>
             ))}
           </div>
-        ) : pendingPickup.length === 0 && overdueItems.length === 0 ? (
+        ) : tabRows.length === 0 ? (
           <div className="flex items-center gap-3 bg-white rounded-2xl border border-gray-100/80 shadow-sm px-5 py-4">
             <span className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
               <Package size={16} />
             </span>
             <div>
-              <p className="text-sm font-bold text-gray-900">No pickups or overdue rentals</p>
-              <p className="text-xs text-gray-500">Bookings ready for release and late returns will show up here.</p>
+              <p className="text-sm font-bold text-gray-900">{kind === 'pickup' ? 'No pickups waiting' : 'No overdue rentals'}</p>
+              <p className="text-xs text-gray-500">{kind === 'pickup' ? 'Bookings ready for release will show up here.' : 'Late returns will show up here.'}</p>
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6">
             {/* Ready for Pickup */}
-            {pendingPickup.length > 0 ? (
+            {kind === 'pickup' && (pendingPickup.length > 0 ? (
               <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col">
                 <div className="flex items-center mb-4">
                   <div className="flex items-center gap-2">
@@ -533,10 +542,10 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                   View All ({pendingPickup.length})
                 </button>
               </div>
-            ) : <div className="hidden lg:block" />}
+            ) : null)}
 
             {/* Overdue Rentals */}
-            {overdueItems.length > 0 ? (
+            {kind === 'overdue' && (overdueItems.length > 0 ? (
               <div className="bg-white rounded-3xl border border-red-100/50 shadow-sm p-6 flex flex-col">
                 <div className="flex items-center mb-4">
                   <div className="flex items-center gap-2">
@@ -580,10 +589,15 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                   View All ({overdueItems.length})
                 </button>
               </div>
-            ) : <div className="hidden lg:block" />}
+            ) : null)}
           </div>
+        )}</div>);
+        })}
+        </div>
         )}
 
+        {/* Activity & Calendar — the calendar picks a day, the list shows it. */}
+        {tab === 'activity' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
           {/* Recent Activity Card — fixed height so it doesn't collapse when empty/filtered */}
           <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm p-6 flex flex-col min-h-[480px]">
@@ -828,13 +842,30 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
 
           </div>
         </div>
+        )}
 
+        {/* Cleaning — the queue component is owned by TasksPage. */}
+        {tab === 'rentals' && cleaningSlot && (
+          <div id="cleaning-queue" className="scroll-mt-4">{cleaningSlot}</div>
+        )}
 
-      {/* SMS Log — read-only here (delete is admin-only in the panel).
-          Lets staff verify what actually went out without leaving Tasks.
-          Perf: the panel fires GET /sms/history on mount (limit 200), so it
-          only mounts after first expand — never on the critical Tasks path. */}
-      <SmsLogSection />
+        {/* SMS Log — read-only here (delete is admin-only in the panel).
+            Lets staff verify what actually went out without leaving Tasks.
+            Only mounts (and fetches /sms/history) when this tab is open. */}
+        {tab === 'activity' && (
+          <div className="bg-white rounded-3xl border border-gray-100/50 shadow-sm p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center shrink-0">
+                <MessageCircle size={18} />
+              </span>
+              <div className="min-w-0">
+                <h3 className="font-bold text-lg text-gray-900">SMS Log</h3>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">Manual + automatic sends and their delivery status</p>
+              </div>
+            </div>
+            <SmsLogPanel />
+          </div>
+        )}
 
       {/* SMS Confirmation Modal — message is editable per send. Bottom-sheet
           shell (no floating card, no top gap): bottom-anchored on mobile,

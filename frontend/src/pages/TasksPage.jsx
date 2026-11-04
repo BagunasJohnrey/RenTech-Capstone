@@ -1,5 +1,5 @@
-import { useEffect, useRef, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import StaffTasksView from './StaffTasksView';
 import CleaningQueue from '../components/CleaningQueue';
 import { HistorySkeleton } from '../components/PageSkeletons';
@@ -11,8 +11,6 @@ import PageHeader from '../components/ui/PageHeader';
 // Route-level container for the staff tasks screen.
 export default function TasksPage({ inventory, transactions, loading, onMarkClean, onBulkClean, onNavigate, role, ...rest }) {
   const navigate = useNavigate();
-  const location = useLocation();
-  const cleaningRef = useRef(null);
   const cleaningItems = inventory.filter((i) => i.status === 'Cleaning');
 
   // Fast first paint: the tiny today-digest (~20 full rows) lands long
@@ -38,17 +36,8 @@ export default function TasksPage({ inventory, transactions, loading, onMarkClea
       .map(normalizeTx);
   }, [digest]);
 
-  // The dashboard "Cleaning Queue" banner deep-links here with
-  // #cleaning-queue — scroll the queue card into view on arrival.
-  useEffect(() => {
-    if (location.hash === '#cleaning-queue') {
-      // Let the queue render first, then smooth-scroll it into view.
-      const t = setTimeout(() => {
-        cleaningRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 100);
-      return () => clearTimeout(t);
-    }
-  }, [location.hash]);
+  // The dashboard "In Cleaning" card deep-links here with #cleaning-queue;
+  // StaffTasksView opens its Cleaning tab for that hash.
 
   // Fast first paint: render the moment the tiny today-digest lands (~20
   // rows) instead of waiting on the 500-row list. The digest carries the
@@ -76,17 +65,19 @@ export default function TasksPage({ inventory, transactions, loading, onMarkClea
 
   return (
     <div className="space-y-6">
-      <StaffTasksView inventory={inventory} transactions={transactions} digestTransactions={digestTransactions} digestLoading={digestLoading} digestError={!digest && !!digestError} onRetryDigest={retryDigest} onMarkClean={onMarkClean} onNavigate={onNavigate} role={role} {...rest} />
-      <div ref={cleaningRef} id="cleaning-queue" className="scroll-mt-4">
-        <CleaningQueue
-          items={cleaningItems}
-          onMarkClean={onMarkClean}
-          onBulkClean={onBulkClean}
-          // Deep-link into the catalog pre-filtered to the Cleaning status —
-          // same pattern as the pickup/overdue "View All" on StaffTasksView.
-          onViewAll={() => navigate(`${tabPath(role || 'Staff', 'Catalog')}?status=Cleaning`)}
-        />
-      </div>
+      <StaffTasksView inventory={inventory} transactions={transactions} digestTransactions={digestTransactions} digestLoading={digestLoading} digestError={!digest && !!digestError} onRetryDigest={retryDigest} onMarkClean={onMarkClean} onNavigate={onNavigate} role={role}
+        cleaningCount={cleaningItems.length}
+        cleaningSlot={
+          <CleaningQueue
+            items={cleaningItems}
+            onMarkClean={onMarkClean}
+            onBulkClean={onBulkClean}
+            // Deep-link into the catalog pre-filtered to the Cleaning status —
+            // same pattern as the pickup/overdue "View All" on StaffTasksView.
+            onViewAll={() => navigate(`${tabPath(role || 'Staff', 'Catalog')}?status=Cleaning`)}
+          />
+        }
+        {...rest} />
     </div>
   );
 }
