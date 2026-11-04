@@ -4,7 +4,7 @@ import CharCount from './ui/CharCount';
 import { ArrowRight } from 'lucide-react';
 import { api } from '../utils/api';
 import TermsModal from './TermsModal';
-import AuthBrandPanel from './AuthBrandPanel';
+import AuthBrandPanel, { AuthMobileHero } from './AuthBrandPanel';
 import PhoneInput from './ui/PhoneInput';
 import {
   INPUT_LIMITS,
@@ -106,11 +106,11 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
     <div className="min-h-screen flex bg-white">
       <AuthBrandPanel showFeatures={false} subtitle="Rent gowns, suits, barongs and more across Batangas. Finish setting up to manage bookings and get AI styling tips." />
 
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-10 bg-[#fcfcfd]">
-        <div className="w-full max-w-md">
-          <div className="lg:hidden flex items-center justify-center gap-2 mb-6">
-            <img src="/logo-128.webp" alt="RENTECH" className="w-10 h-10" />
-          </div>
+      <div className="w-full lg:w-1/2 flex flex-col items-center lg:justify-center px-4 pb-8 sm:px-6 sm:pb-10 lg:p-10 bg-[#fdf6f7] lg:bg-[#fcfcfd]">
+        <div className="self-stretch -mx-4 sm:-mx-6 lg:hidden">
+          <AuthMobileHero />
+        </div>
+        <div className="relative w-full max-w-md -mt-10 lg:mt-0 bg-white rounded-2xl shadow-lg shadow-[#bf4a53]/10 border border-[#f3dfe1] p-6 sm:p-8 lg:rounded-none lg:shadow-none lg:border-0 lg:bg-transparent lg:p-0">
           <h2 className="text-3xl font-extrabold text-gray-900">Just a few details</h2>
           <p className="text-gray-500 text-sm mt-1 mb-7">
             Finish setting up your RenTech account.

@@ -7,6 +7,28 @@ const FEATURES = [
   { icon: ShieldCheck, title: 'Secure bookings', text: 'Your account stays protected' },
 ];
 
+// Mobile/tablet-only brand header (the desktop panel below is lg+): a pink
+// band with the tagline and headline. The form card that follows overlaps its
+// bottom edge (callers add `-mt-10`).
+export function AuthMobileHero({ subtitle }) {
+  return (
+    <div className="lg:hidden relative isolate overflow-hidden text-white bg-gradient-to-br from-[#c4505a] via-[#a93a43] to-[#7f242b] px-5 sm:px-8 pt-10 pb-16 rounded-b-[2rem]">
+      <div className="absolute inset-0 -z-10" aria-hidden="true">
+        <div className="absolute -top-20 -right-16 w-64 h-64 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-24 -left-16 w-64 h-64 rounded-full bg-black/15 blur-3xl" />
+      </div>
+
+      <div className="max-w-md mx-auto">
+        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/70">Mylene&rsquo;s Boutique rentals</p>
+        <h1 className="mt-2 text-[1.75rem] sm:text-3xl font-extrabold leading-[1.15] tracking-tight [text-wrap:balance]">
+          Your perfect outfit, one tap away.
+        </h1>
+        {subtitle && <p className="mt-2.5 text-sm text-white/80 leading-relaxed [text-wrap:pretty]">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
 // Left-hand brand panel shared by the sign-in / sign-up and Google
 // sign-up-details screens (desktop only; phones go straight to the form).
 // Pinned to the viewport height (sticky) so a long form — sign-up — doesn't

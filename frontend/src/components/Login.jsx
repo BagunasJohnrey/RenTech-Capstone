@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
 import { api, API_ORIGIN } from '../utils/api';
 import TermsModal from './TermsModal';
-import AuthBrandPanel from './AuthBrandPanel';
+import AuthBrandPanel, { AuthMobileHero } from './AuthBrandPanel';
 import {
   INPUT_LIMITS,
   sanitizeName,
@@ -323,13 +323,14 @@ export default function Login({ onLogin, onVerifyMfa }) {
         : 'Rent gowns, suits, barongs and more across Batangas. Sign in to manage bookings, get AI styling tips, and track your rentals.'} />
 
       {/* Form panel */}
-      <div className="w-full lg:w-1/2 min-h-screen flex flex-col items-center px-4 py-8 sm:px-6 sm:py-10 lg:px-12 lg:py-6 short:py-4 bg-[#fcfcfd]">
-        <div className={`w-full ${isSignup ? 'max-w-md lg:max-w-xl' : 'max-w-md'} my-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 lg:rounded-none lg:shadow-none lg:border-0 lg:bg-transparent lg:p-0`}>
+      <div className="w-full lg:w-1/2 min-h-screen flex flex-col items-center px-4 pb-8 sm:px-6 sm:pb-10 lg:px-12 lg:py-6 short:py-4 bg-[#fdf6f7] lg:bg-[#fcfcfd]">
+        <div className="self-stretch -mx-4 sm:-mx-6 lg:hidden">
+          {/* No subtitle here: the form card's own subtitle says it on mobile. */}
+          <AuthMobileHero />
+        </div>
+        <div className={`relative w-full ${isSignup ? 'max-w-md lg:max-w-xl' : 'max-w-md'} -mt-10 mb-auto lg:my-auto bg-white rounded-2xl shadow-lg shadow-[#bf4a53]/10 border border-[#f3dfe1] p-6 sm:p-8 lg:rounded-none lg:shadow-none lg:border-0 lg:bg-transparent lg:p-0`}>
           {!isSignup ? (
             <>
-<div className="lg:hidden flex items-center justify-center mb-8">
-                 <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
-               </div>
                 {!forgotMode && (
                   <>
                     <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Welcome back</h2>
@@ -496,9 +497,6 @@ export default function Login({ onLogin, onVerifyMfa }) {
         </>
       ) : (
             <>
-              <div className="lg:hidden flex items-center justify-center mb-8">
-                <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
-              </div>
               <div className="mb-6 lg:mb-5 short:mb-3">
                 <h2 className="text-2xl sm:text-3xl short:text-2xl font-extrabold text-gray-900">Create your account</h2>
                 <p className="text-gray-500 text-sm mt-1 mb-6 lg:mb-4 short:mb-3">Join RenTech to start renting in minutes.</p>
