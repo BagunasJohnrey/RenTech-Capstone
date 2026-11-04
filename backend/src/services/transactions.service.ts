@@ -8,7 +8,8 @@ import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
 import { createNotification, notifyStaffMembers } from './notifications.service.js';
 import { sendSms, applyTemplate, smsShortName, smsItemName, finalizeSms } from './semaphore.service.js';
-import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail } from './brevo.service.js';
+import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCancellationEmail, sendEmail, isSendableEmail, refreshEmailStore } from './resend.service.js';
+import { storeSignoff, storeSignoffHtml } from '../templates/emailTemplates.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { verifyDiscountPin } from './auth.service.js';
 import { getBusinessRules, getFeatureFlags, isSmsEnabled, getNumberRules } from './settings.service.js';
@@ -430,7 +431,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
       ).catch(() => {});
     }
 
-    // Order-confirmation email (Brevo, best-effort — never blocks the booking).
+    // Order-confirmation email (Resend, best-effort — never blocks the booking).
     // Skipped for walk-in synthetic addresses (isSendableEmail) and for
     // customers who opted out of email (notifyPrefs.email === false).
     try {
@@ -662,7 +663,7 @@ export async function processReturn(
     } catch { /* notification is non-critical */ }
   }
 
-  // Order-return email (Brevo receipt + thank-you, best-effort).
+  // Order-return email (Resend receipt + thank-you, best-effort).
   try {
     const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
     const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
@@ -783,11 +784,12 @@ export async function updateTransaction(
       const wantsEmail = !prefs || prefs.email !== false;
       if (customerProfile?.email && wantsEmail) {
         if (isSendableEmail(customerProfile.email)) {
+          await refreshEmailStore();
           await sendEmail({
             to: customerProfile.email,
             subject: `Booking dates updated: ${existing.item.name} — RenTech`,
-            html: `<p>Hi ${customerProfile.name},</p><p>Your rental of "<strong>${existing.item.name}</strong>" was moved to <strong>pickup ${fmt(nextRental)}</strong>, <strong>return by ${fmt(nextDue)}</strong>.</p><p>RenTech · Balayan, Batangas</p>`,
-            text: `Hi ${customerProfile.name},\n\nYour rental of "${existing.item.name}" was moved to pickup ${fmt(nextRental)}, return by ${fmt(nextDue)}.\n\nRenTech · Balayan, Batangas`,
+            html: `<p>Hi ${customerProfile.name},</p><p>Your rental of "<strong>${existing.item.name}</strong>" was moved to <strong>pickup ${fmt(nextRental)}</strong>, <strong>return by ${fmt(nextDue)}</strong>.</p><p>${storeSignoffHtml()}</p>`,
+            text: `Hi ${customerProfile.name},\n\nYour rental of "${existing.item.name}" was moved to pickup ${fmt(nextRental)}, return by ${fmt(nextDue)}.\n\n${storeSignoff()}`,
           });
         }
       }
@@ -980,11 +982,12 @@ export async function swapBookingItem(
     const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
     const wantsEmail = !prefs || prefs.email !== false;
     if (customerProfile?.email && wantsEmail && isSendableEmail(customerProfile.email)) {
+      await refreshEmailStore();
       await sendEmail({
         to: customerProfile.email,
         subject: `Rental item changed: ${replacement.name} — RenTech`,
-        html: `<p>Hi ${customerProfile.name},</p><p>At pickup your rental was changed from "<strong>${existing.item.name}</strong>" to "<strong>${replacement.name}</strong>".${moneyLine}</p><p>RenTech · Balayan, Batangas</p>`,
-        text: `Hi ${customerProfile.name},\n\nAt pickup your rental was changed from "${existing.item.name}" to "${replacement.name}".${moneyLine}\n\nRenTech · Balayan, Batangas`,
+        html: `<p>Hi ${customerProfile.name},</p><p>At pickup your rental was changed from "<strong>${existing.item.name}</strong>" to "<strong>${replacement.name}</strong>".${moneyLine}</p><p>${storeSignoffHtml()}</p>`,
+        text: `Hi ${customerProfile.name},\n\nAt pickup your rental was changed from "${existing.item.name}" to "${replacement.name}".${moneyLine}\n\n${storeSignoff()}`,
       });
     }
   } catch { /* email is non-critical */ }
@@ -1076,7 +1079,7 @@ export async function cancelTransaction(transactionId: string, performedById: st
     oldValue: { status: tx.status },
   });
 
-  // Booking-cancelled email (Brevo, best-effort).
+  // Booking-cancelled email (Resend, best-effort).
   try {
     const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
     const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
@@ -1202,7 +1205,7 @@ export async function releaseRental(
     });
   }
 
-  // Order-pickup email (Brevo, best-effort — the item is in the customer's hands).
+  // Order-pickup email (Resend, best-effort — the item is in the customer's hands).
   try {
     const customerProfile = await prisma.profile.findUnique({ where: { id: tx.customerId } });
     const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;

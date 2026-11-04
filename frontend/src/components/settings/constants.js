@@ -10,7 +10,7 @@ export function loadJSON(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
 }
 
-export const DEFAULT_BUSINESS = { name: 'RenTech Boutique', address: '', contact: '', taxId: '' };
+export const DEFAULT_BUSINESS = { name: 'RenTech Boutique', address: '', contact: '' };
 export const DEFAULT_POLICIES = { defaultDays: 3, returnAfterEvent: 1, minDown: 200, damageFee: 1000, cleaningBuffer: 1, noShowDays: 1 };
 export const DEFAULT_AUTOMATION = { escalationDays: 3, retentionMonths: 12, sendStart: 8, sendEnd: 21 };
 export const DEFAULT_NOTIF = { booking: true, reminder: true, lateReturn: true, email: true };

@@ -195,7 +195,11 @@ export default function PaymentQrManager({ value, onChange }) {
     <div className="rounded-2xl bg-white border border-gray-200 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h4 className={EYEBROW}>Payment QR codes</h4>
+          <div className="flex items-center gap-2">
+            <h4 className={`${EYEBROW} whitespace-nowrap`}>Payment QR codes</h4>
+            {/* Replaces the old separate "Static QR payments · Active" banner. */}
+            <span className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 bg-emerald-50 rounded-full px-2 py-0.5">Active</span>
+          </div>
           <p className="text-xs text-gray-500 mt-1">
             Customers scan one of these and upload a screenshot for staff review.
           </p>
@@ -207,7 +211,7 @@ export default function PaymentQrManager({ value, onChange }) {
             disabled={saving}
             className="shrink-0 inline-flex items-center gap-1.5 text-xs font-bold px-3 py-2 min-h-[40px] rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
           >
-            <Plus size={13} /> Add QR code
+            <Plus size={13} /> <span>Add<span className="hidden sm:inline"> QR code</span></span>
           </button>
         )}
       </div>
@@ -215,9 +219,9 @@ export default function PaymentQrManager({ value, onChange }) {
       {loading ? (
         <p className="text-xs text-gray-400 mt-3">Loading…</p>
       ) : (
-        <div className="mt-3 space-y-2">
+        <div className="mt-3 space-y-2 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-2">
           {codes.length === 0 && !addOpen && (
-            <p className="text-xs text-gray-400">No QR codes yet. Add one so customers can pay by scanning.</p>
+            <p className="text-xs text-gray-400 lg:col-span-2">No QR codes yet. Add one so customers can pay by scanning.</p>
           )}
           {codes.map((qr) => (
             <div key={qr.id} className="flex items-center gap-3 p-3 rounded-2xl bg-gray-50/70 border border-gray-100">

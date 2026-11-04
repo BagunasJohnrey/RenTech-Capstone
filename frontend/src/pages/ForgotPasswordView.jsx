@@ -6,7 +6,7 @@ import { api } from '../utils/api';
 import { PASSWORD_REQUIREMENTS } from '../components/Login';
 import { useToast } from '../components/Toast';
 
-// Reset-password landing page. Brevo links land here with our own single-use
+// Reset-password landing page. Email links land here with our own single-use
 // ?token= (preferred). Legacy Supabase links deliver the recovery credential
 // in one of three shapes (see backend resetPasswordSchema):
 //   - token_hash:   custom email template linking straight here (? or #)

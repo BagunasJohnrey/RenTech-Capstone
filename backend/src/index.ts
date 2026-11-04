@@ -10,7 +10,7 @@ import { rateLimiter } from './middleware/rateLimiter.js';
 import { csrfGuard } from './middleware/csrfGuard.js';
 import { isAllowedOrigin } from './utils/origins.js';
 import routes from './routes/index.js';
-import { autoNotifyOverdue, notifyDueToday, notifyOverdue3Days, checkNoShowAndNotify } from './services/sms.service.js';
+import { autoNotifyOverdue, notifyDueToday, checkNoShowAndNotify } from './services/sms.service.js';
 import { purgeOldData } from './services/retention.service.js';
 import { ensureBucket } from './services/storage.service.js';
 import { ensureBackupBucket, runAutoBackup } from './services/backup.service.js';
@@ -231,14 +231,9 @@ app.listen(env.PORT, () => {
             console.log(`[Overdue] Processed ${overdue.length} overdue transaction(s)`);
           }
         }),
-        notifyOverdue3Days().then((esc) => {
-          if (esc.length > 0) {
-            console.log(`[Overdue+3d] Escalated ${esc.length} long-overdue rental(s)`);
-          }
-        }),
         notifyDueToday().then((dueToday) => {
           if (dueToday.length > 0) {
-            console.log(`[Due Today] Flagged ${dueToday.length} transaction(s) due today`);
+            console.log(`[Due Reminder] Processed ${dueToday.length} upcoming due date(s)`);
           }
         }),
         checkNoShowAndNotify().then((noShows) => {

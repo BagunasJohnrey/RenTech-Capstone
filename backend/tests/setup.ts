@@ -32,8 +32,8 @@ process.env.FRONTEND_URL = 'http://localhost:5173';
 process.env.ALLOWED_ORIGINS = 'https://legacy.example.com';
 process.env.NODE_ENV = 'test';
 process.env.SEMAPHORE_API_KEY = 'test-semaphore-key';
-// Brevo: blank key forces the simulated (no-network) send path in tests.
-process.env.BREVO_API_KEY = '';
+// Resend: blank key forces the simulated (no-network) send path in tests.
+process.env.RESEND_API_KEY = '';
 // Never touch the real Cloudflare R2 buckets from tests: blank the creds so
 // storage.service stays on the mocked Supabase driver (R2 tests opt in).
 for (const k of ['R2_ENDPOINT', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_PUBLIC_URL']) process.env[k] = '';
@@ -46,15 +46,14 @@ for (const k of ['R2_ENDPOINT', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_
 process.env.STORAGE_BUCKET = 'rentech-images';
 process.env.R2_CATALOG_BUCKET = 'rentech-catalog';
 process.env.R2_PRIVATE_BUCKET = 'rentech-private';
-process.env.BREVO_SENDER_EMAIL = 'noreply@test.local';
-process.env.BREVO_SENDER_NAME = 'RenTech Test';
+process.env.RESEND_FROM_EMAIL = 'noreply@test.local';
+process.env.RESEND_FROM_NAME = 'RenTech Test';
 
 // Unit tests must never hit live AI providers: backend/.env contains real
-// Gemini/Groq/OpenRouter keys, and dotenv only fills vars that aren't already
+// Gemini/Groq keys, and dotenv only fills vars that aren't already
 // set — blanking them here forces the deterministic in-app fallback paths.
 process.env.GEMINI_API_KEY = '';
 process.env.GROQ_API_KEY = '';
-process.env.OPENROUTER_API_KEY = '';
 // Tests verify JWTs locally with this secret — must be set BEFORE jwtVerify.ts loads.
 process.env.SUPABASE_JWT_SECRET = 'test-jwt-secret';
 // W3.9: MFA_SECRET_KEY exercises the AES-256-GCM encrypt/decrypt path.
@@ -94,7 +93,7 @@ vi.mock('@supabase/supabase-js', () => {
           data: { user: { id: 'auth-user-id-123', email: 'test@example.com' } },
           error: null,
         }),
-        // Brevo flows: confirmation status check + magiclink session minting.
+        // Email-link flows: confirmation status check + magiclink session minting.
         getUserById: vi.fn().mockResolvedValue({
           data: { user: { id: 'auth-user-id-123', email: 'test@example.com', email_confirmed_at: null } },
           error: null,

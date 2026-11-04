@@ -74,8 +74,8 @@ export const createStaffSchema = z.object({
   }),
 });
 
-// Phase 2: password reset schemas (Brevo + legacy Supabase shapes).
-// Brevo links carry our own single-use `token` (64-char hex) and land on
+// Phase 2: password reset schemas (Resend + legacy Supabase shapes).
+// Resend links carry our own single-use `token` (64-char hex) and land on
 // /reset-password?token=... — the preferred path. The legacy Supabase shapes
 // below are kept so older emailed links still work:
 //   - token_hash: custom template linking straight to the app
@@ -510,7 +510,7 @@ export async function removeStaff(req: AuthenticatedRequest, res: Response, next
 }
 
 // Phase 2: password reset — always returns 200 (no account enumeration).
-// Delivery is via Brevo (branded template, single-use token in EmailToken).
+// Delivery is via Resend (branded template, single-use token in EmailToken).
 // Unknown emails resolve to the same generic message, so the endpoint can
 // never be used to probe which addresses are registered.
 export async function forgotPassword(req: Request, res: Response, next: NextFunction) {
@@ -554,12 +554,12 @@ function resetLinkError(upstream?: string): AppError {
 export async function resetPassword(req: Request, res: Response, next: NextFunction) {
   try {
     const { token, token_hash, code, access_token, password, currentPassword } = req.body;
-    // Brevo path (preferred): our own single-use token — also accept it when
+    // Email-link path (preferred): our own single-use token — also accept it when
     // an older client posts it as token_hash.
-    const brevoToken = token ?? (token_hash && authService.isBrevoTokenFormat(token_hash) ? token_hash : null);
-    if (brevoToken) {
+    const emailToken = token ?? (token_hash && authService.isEmailTokenFormat(token_hash) ? token_hash : null);
+    if (emailToken) {
       try {
-        const result = await authService.resetPasswordWithToken(brevoToken, password, currentPassword || undefined);
+        const result = await authService.resetPasswordWithToken(emailToken, password, currentPassword || undefined);
         if (result.session) {
           setSessionCookies(res, result.session);
         }
@@ -569,7 +569,7 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
         // A legacy Supabase token_hash can coincidentally also be 64-hex: when
         // the credential arrived via token_hash and our table doesn't know it,
         // fall through to the Supabase path below instead of 401ing a valid
-        // legacy link. Credentials via `token` are Brevo-only — rethrow.
+        // legacy link. Credentials via `token` are email-link-only — rethrow.
         if (token || !(err instanceof AppError) || err.statusCode !== 401) throw err;
       }
     }
@@ -646,17 +646,17 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
   }
 }
 
-// Email verification: Brevo path (preferred) consumes our single-use token
+// Email verification: Email-link path (preferred) consumes our single-use token
 // from /verify-email?token=... — confirms the Supabase user and best-effort
 // mints session cookies. Legacy Supabase credentials (token_hash / ?code=)
 // fall through to the verifyOtp / exchangeCodeForSession path below.
 export async function verifyEmail(req: Request, res: Response, next: NextFunction) {
   try {
     const { token, token_hash, code } = req.body;
-    const brevoToken = token ?? (token_hash && authService.isBrevoTokenFormat(token_hash) ? token_hash : null);
-    if (brevoToken) {
+    const emailToken = token ?? (token_hash && authService.isEmailTokenFormat(token_hash) ? token_hash : null);
+    if (emailToken) {
       try {
-        const { profile, session } = await authService.verifyEmailToken(brevoToken);
+        const { profile, session } = await authService.verifyEmailToken(emailToken);
         if (session) {
           setSessionCookies(res, session);
         }

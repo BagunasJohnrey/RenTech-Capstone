@@ -9,16 +9,15 @@ import PaymentQrManager from './PaymentQrManager';
 
 const INTEGRATIONS = [
   { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Primary AI for outfit suggestions & business insights.', icon: Sparkles, iconClass: 'bg-purple-50 text-purple-600' },
-  { key: 'groq', name: 'Groq AI', desc: 'Low-latency AI fallback (tier 2) for stylist & reports.', icon: Sparkles, iconClass: 'bg-violet-50 text-violet-600' },
-  { key: 'openrouter', name: 'OpenRouter AI', desc: 'Free-model AI fallback (tier 3) for stylist & reports.', icon: Sparkles, iconClass: 'bg-fuchsia-50 text-fuchsia-600' },
-  { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Automatic return reminders & booking confirmations. Off pauses autos only — manual staff sends still work.', icon: MessageSquare, iconClass: 'bg-blue-50 text-blue-600' },
-  { key: 'brevo', name: 'Brevo Email', desc: 'Booking/pickup/return & reminder emails. Off pauses those — verification + password-reset emails still send.', icon: Mail, iconClass: 'bg-rose-50 text-[#bf4a53]' },
+  { key: 'groq', name: 'Groq AI', desc: 'Backup AI for the stylist & reports when Gemini is down.', icon: Sparkles, iconClass: 'bg-violet-50 text-violet-600' },
+  { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Booking confirmations, due & overdue reminders.', icon: MessageSquare, iconClass: 'bg-blue-50 text-blue-600' },
+  { key: 'resend', name: 'Resend Email', desc: 'Booking, pickup, return & reminder emails.', icon: Mail, iconClass: 'bg-rose-50 text-[#bf4a53]' },
 ];
 
 // Card groups render in this order (badge count still uses INTEGRATIONS).
 const GROUPS = [
-  { title: 'Automatic Messaging', sub: 'Global switches — pausing stops automatic sends', keys: ['semaphore', 'brevo'] },
-  { title: 'AI Providers', sub: 'Stylist suggestions & business reports', keys: ['gemini', 'groq', 'openrouter'] },
+  { title: 'Automatic Messaging', sub: 'Global switches — off pauses automatic sends only', keys: ['semaphore', 'resend'] },
+  { title: 'AI Providers', sub: 'Stylist suggestions & business reports', keys: ['gemini', 'groq'] },
 ];
 const INTEGRATION_BY_KEY = Object.fromEntries(INTEGRATIONS.map((i) => [i.key, i]));
 
@@ -76,23 +75,24 @@ function StatusPill({ status, coldLoading }) {
   );
 }
 
-// Connection-only row (AI + payments): icon, text, probe line, pill.
+// Connection-only card (AI providers): name + pill on top, description and
+// probe line below — stacks cleanly in the 3-across desktop grid.
 function ConnectionCard({ name, desc, icon: Icon, iconClass, status, coldLoading }) {
   return (
-    <div className="flex items-center justify-between gap-3 p-4 rounded-2xl bg-gray-50/70 border border-gray-100">
-      <div className="flex items-center gap-3 min-w-0">
-        <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconClass}`}>
-          <Icon size={18} />
-        </span>
-        <div className="min-w-0">
-          <p className="font-bold text-sm text-gray-900">{name}</p>
-          <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-          {coldLoading && !status
-            ? <p className="text-[11px] text-gray-400 mt-1">Checking…</p>
-            : <StatusLine status={status} />}
+    <div className="p-4 rounded-2xl bg-gray-50/70 border border-gray-100 min-w-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconClass}`}>
+            <Icon size={18} />
+          </span>
+          <p className="font-bold text-sm text-gray-900 min-w-0">{name}</p>
         </div>
+        <StatusPill status={status} coldLoading={coldLoading} />
       </div>
-      <StatusPill status={status} coldLoading={coldLoading} />
+      <p className="text-xs text-gray-500 mt-2.5">{desc}</p>
+      {coldLoading && !status
+        ? <p className="text-[11px] text-gray-400 mt-1">Checking…</p>
+        : <StatusLine status={status} />}
     </div>
   );
 }
@@ -113,7 +113,7 @@ function MessagingCard({ name, desc, icon: Icon, iconClass, status, coldLoading,
           </div>
         </div>
         <span className="inline-flex items-center gap-2 shrink-0" title={switchOn ? 'Automatic sending is on' : 'Automatic sending is paused globally'}>
-          <span className={`text-[10px] font-extrabold uppercase tracking-wide ${switchOn ? 'text-emerald-600' : 'text-gray-400'}`}>
+          <span className={`hidden sm:inline text-[10px] font-extrabold uppercase tracking-wide ${switchOn ? 'text-emerald-600' : 'text-gray-400'}`}>
             {switchOn ? 'On' : 'Off'}
           </span>
           <Toggle on={switchOn} onClick={onToggle} label={toggleLabel} />
@@ -223,6 +223,9 @@ export default function IntegrationsTab() {
   // Prefer the server's probe time (survives its 60s cache); fall back to
   // when this client last received a response.
   const probeAt = integrations?.checkedAt ?? checkedAt;
+  const liveLabel = integrations
+    ? `${INTEGRATIONS.filter(({ key }) => integrations?.[key]?.configured && integrations?.[key]?.reachable && integrations?.[key]?.enabled !== false).length} of ${INTEGRATIONS.length} live`
+    : null;
   const statusLabel = integrations
     ? (integrationsLoading ? `Refreshing… · Status ${formatCheckedAgo(probeAt)}` : `Status ${formatCheckedAgo(probeAt)}`)
     : null;
@@ -232,15 +235,13 @@ export default function IntegrationsTab() {
       icon={ShieldCheck}
       iconClass="bg-emerald-50 text-emerald-600"
       title="System Integrations"
-      subtitle="Static QR payment setup, global messaging switches, and live status for AI, SMS and email"
+      subtitle="QR payments, messaging switches and live service status"
       storageKey="settings-integrations-open"
-      badge={
-        integrations ? (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
-            {INTEGRATIONS.filter(({ key }) => integrations?.[key]?.configured && integrations?.[key]?.reachable && integrations?.[key]?.enabled !== false).length} of {INTEGRATIONS.length} live
-          </span>
-        ) : null
-      }
+      badge={liveLabel ? (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-[#bf4a53]/10 text-[#bf4a53] text-[11px] font-bold tabular-nums">
+          {liveLabel}
+        </span>
+      ) : null}
       headerAction={
         <div className="flex items-center gap-2">
           {statusLabel && (
@@ -251,40 +252,34 @@ export default function IntegrationsTab() {
           <button
             onClick={() => loadIntegrations(true)}
             disabled={integrationsLoading}
-            className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-4 py-2.5 min-h-[44px] rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
+            aria-label="Refresh status"
+            className="shrink-0 flex items-center justify-center gap-1.5 text-xs font-bold px-4 py-2.5 min-h-[44px] rounded-full bg-gray-900 text-white hover:bg-gray-700 transition-colors disabled:opacity-50"
           >
-            <RefreshCw size={13} className={integrationsLoading ? 'animate-spin' : ''} />
-            {integrationsLoading ? (integrations ? 'Refreshing…' : 'Checking…') : 'Refresh'}
+            <RefreshCw size={14} className={integrationsLoading ? 'animate-spin' : ''} />
+            <span>{integrationsLoading ? (integrations ? 'Refreshing…' : 'Checking…') : 'Refresh'}</span>
           </button>
         </div>
       }
     >
       {statusLabel && (
-        <p className="lg:hidden text-[11px] font-semibold text-gray-400 tabular-nums -mt-1">{statusLabel}</p>
+        <div className="lg:hidden flex flex-wrap items-center gap-x-2 gap-y-1 -mt-1 mb-4">
+          {statusLabel && <span className="text-[11px] font-semibold text-gray-400 tabular-nums">{statusLabel}</span>}
+        </div>
       )}
       <div className="space-y-5">
-        <div className="flex items-start justify-between gap-3 p-4 rounded-2xl bg-white border border-[#bf4a53]/20">
-          <div className="min-w-0">
-            <p className="font-bold text-sm text-gray-900">Static QR payments</p>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Customers pay by scanning your QR and uploading a screenshot for staff review.
-            </p>
-          </div>
-          <span className="shrink-0 text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 bg-emerald-50 rounded-full px-2.5 py-1">Active</span>
-        </div>
         <PaymentQrManager />
         {GROUPS.map((group) => (
           <section key={group.title} aria-label={group.title}>
-            <div className="flex items-baseline justify-between gap-2 mb-2 px-1">
+            <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-0.5 sm:gap-2 mb-2 px-1">
               <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest shrink-0">{group.title}</h4>
-              <p className="text-[11px] text-gray-400 truncate">{group.sub}</p>
+              <p className="text-[11px] text-gray-400 sm:truncate">{group.sub}</p>
             </div>
-            <div className="grid gap-3 xl:grid-cols-2">
+            <div className={`grid gap-3 lg:grid-cols-2 ${group.keys.length === 3 ? 'xl:grid-cols-3' : ''}`}>
               {group.keys.map((key) => {
                 const { name, desc, icon, iconClass } = INTEGRATION_BY_KEY[key];
                 const status = integrations?.[key];
                 const cold = integrationsLoading && !integrations;
-                if (key === 'semaphore' || key === 'brevo') {
+                if (key === 'semaphore' || key === 'resend') {
                   const isSms = key === 'semaphore';
                   return (
                     <MessagingCard

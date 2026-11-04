@@ -3,9 +3,9 @@ import type { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler.js';
 import { createAuditLog } from '../utils/audit.js';
 import { sendSms, applyTemplate, smsShortName, smsItemName, finalizeSms } from './semaphore.service.js';
-import { sendDueReminderEmail, sendOverdueEmail } from './brevo.service.js';
+import { sendDueReminderEmail, sendOverdueEmail } from './resend.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
-import { getBusinessRules, isSmsEnabled, getReminderWindow, reminderWindowFrom, numberRule, getNumberRules } from './settings.service.js';
+import { getBusinessRules, isSmsEnabled, reminderWindowFrom, numberRule, getNumberRules } from './settings.service.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import {
   manilaDayStart, manilaNextDayStart, manilaDaysPastDue, isReminderQuietHours, formatManilaDate,
@@ -80,19 +80,21 @@ export async function sendManualSms(params: {
   return sentSms;
 }
 
-// Overdue notification policy:
-//  - On the day a rental goes overdue we text the customer ONCE (overdueSmsSent
-//    once-guard). If the send fails the flag stays false so the NEXT scheduler
-//    tick retries — but once it succeeds we never double-send.
-//  - Reminder EMAILS have their own once-guards (overdueEmailSent /
-//    overdueEscalationEmailSent / dueReminderEmailSent), flipped on send
-//    independently of the SMS outcome. Gating email on the SMS flag meant any
-//    transaction with a failing SMS (invalid phone, SMS outage) re-sent its
-//    Brevo email every 60s tick indefinitely.
-//  - After overdue_escalation_days (default 3) still-overdue rentals get ONE
-//    escalation text (overdueEscalationSent once-guard).
-//  - Customers with no phone are marked sent immediately (nothing to send) so
-//    the scheduler doesn't retry every minute; staff still get the in-app alert.
+// Overdue notification policy (admin-configurable — Settings → Notifications):
+//  - The day after the due date a rental flips to Overdue, staff get an
+//    in-app alert, and the customer gets the first overdue SMS + email.
+//  - Each channel then repeats every `overdue_{sms,email}_interval_days`
+//    store-calendar days, up to `overdue_{sms,email}_max_count` notices.
+//    Bookkeeping is per channel: overdueSmsCount/LastAt and
+//    overdueEmailCount/LastAt. A count only moves on a real send, so a failed
+//    SMS retries next tick while a delivered email never re-sends early
+//    (coupling the two once caused a every-60s duplicate email flood).
+//  - From `overdue_escalation_days` on, the wording asks the customer to call.
+//  - From `overdue_manual_call_days` on, ALL automatic SMS/email stop and
+//    staff/admin get ONE "please call" prompt (manualCallPromptedAt); the
+//    rental shows in Tasks → Needs a call until someone marks it called.
+//  - Quiet hours hold customer messages (counts untouched); the status flip
+//    and staff alerts still happen overnight.
 // Message text carries the outstanding rental balance (ASCII "PHP 1,250")
 // but NEVER per-day late-fee/penalty rates or the ₱ glyph (non-GSM-7).
 
@@ -104,42 +106,119 @@ export function formatPhpAmount(n: number | null | undefined): string {
   return Number(n || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 });
 }
 
-// Scheduler bookkeeping (once-guards / retry markers) is invisible to staff,
-// so it must not move Transaction.updatedAt: the staff freshness poll
+// Scheduler bookkeeping (counts / retry markers) is invisible to staff, so it
+// must not move Transaction.updatedAt: the staff freshness poll
 // (GET /dashboard/version = max updatedAt) would otherwise show "New data
 // available" every time a reminder fired, with nothing new on screen.
 // Explicitly writing the row's current updatedAt overrides Prisma's
-// @updatedAt bump. Real changes (e.g. the status flip to Overdue) still bump.
-async function markScheduled(tx: { id: string; updatedAt: Date }, data: Prisma.TransactionUpdateInput) {
+// @updatedAt bump. Real changes (status flip, manual-call prompt) still bump.
+async function markScheduled(tx: { id: string; updatedAt?: Date }, data: Prisma.TransactionUpdateInput) {
   await prisma.transaction.update({ where: { id: tx.id }, data: { ...data, updatedAt: tx.updatedAt } });
 }
 
 const OVERDUE_TEMPLATE_FALLBACK = 'Hi {customer}, your {item} is overdue ({days} day(s)). Balance: PHP {balance}. Thank you! Automated message - do not reply.';
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Whole store-calendar days between two instants (0 = same Manila day).
+function manilaDaysBetween(from: Date, to: Date): number {
+  return Math.round((manilaDayStart(to).getTime() - manilaDayStart(from).getTime()) / DAY_MS);
+}
+
+export interface OverdueSchedule {
+  smsInterval: number;
+  smsMax: number;
+  emailInterval: number;
+  emailMax: number;
+  escalationDays: number;
+  manualCallDays: number;
+}
+
+export function overdueScheduleFrom(rules: Record<string, string | undefined>): OverdueSchedule {
+  return {
+    smsInterval: numberRule(rules, 'overdue_sms_interval_days'),
+    smsMax: numberRule(rules, 'overdue_sms_max_count'),
+    emailInterval: numberRule(rules, 'overdue_email_interval_days'),
+    emailMax: numberRule(rules, 'overdue_email_max_count'),
+    escalationDays: numberRule(rules, 'overdue_escalation_days'),
+    manualCallDays: numberRule(rules, 'overdue_manual_call_days'),
+  };
+}
+
+// Is the next notice on this channel due? `count`/`lastAt` come from the
+// row; rows written before the counters existed fall back to the old
+// once-guards (sent + escalation flags) with the row's updatedAt as "last".
+export function channelNoticeDue(
+  count: number,
+  lastAt: Date | null,
+  interval: number,
+  max: number,
+  now: Date,
+): boolean {
+  if (count >= max) return false;
+  if (count === 0 || !lastAt) return true;
+  return manilaDaysBetween(lastAt, now) >= interval;
+}
+
+type OverdueRow = {
+  id: string;
+  status: string;
+  dueDate: Date;
+  updatedAt?: Date;
+  balance: number;
+  overdueSmsSent?: boolean;
+  overdueSmsRetried?: boolean;
+  overdueEscalationSent?: boolean;
+  overdueEmailSent?: boolean;
+  overdueEscalationEmailSent?: boolean;
+  overdueSmsCount?: number | null;
+  overdueSmsLastAt?: Date | null;
+  overdueEmailCount?: number | null;
+  overdueEmailLastAt?: Date | null;
+  manualCallPromptedAt?: Date | null;
+  customer: { id: string; name: string; email?: string | null; phone?: string | null; notifyPrefs?: unknown };
+  item: { id: number; name: string };
+};
+
+function channelState(tx: OverdueRow, channel: 'sms' | 'email', now: Date) {
+  const count = channel === 'sms' ? tx.overdueSmsCount : tx.overdueEmailCount;
+  const lastAt = channel === 'sms' ? tx.overdueSmsLastAt : tx.overdueEmailLastAt;
+  const legacy = channel === 'sms'
+    ? Number(!!tx.overdueSmsSent) + Number(!!tx.overdueEscalationSent)
+    : Number(!!tx.overdueEmailSent) + Number(!!tx.overdueEscalationEmailSent);
+  const n = Math.max(Number(count) || 0, legacy);
+  // A legacy-flagged row with no timestamp counts as "just sent": the next
+  // repeat waits a full interval instead of firing immediately.
+  return { count: n, lastAt: lastAt ?? (n > 0 ? tx.updatedAt ?? now : null) };
+}
 
 export async function autoNotifyOverdue(now: Date = new Date()) {
   // Overdue = the due DATE has passed on the store calendar. Comparing against
   // `now` flagged rentals "overdue (1 day)" at 08:00 on their own due date
   // (dates are stored as UTC midnight) — alongside the due-today reminder.
-  const overdueTxs = await prisma.transaction.findMany({
+  // Rentals already handed to staff for a manual call are done here.
+  const overdueTxs = (await prisma.transaction.findMany({
     where: {
       status: { in: ['Active', 'Overdue'] },
       dueDate: { lt: manilaDayStart(now) },
-      overdueSmsSent: false,
+      manualCallPromptedAt: null,
     },
     include: {
       customer: { select: { id: true, name: true, email: true, phone: true, notifyPrefs: true } },
       item: { select: { id: true, name: true } },
     },
-  });
+  })) as unknown as OverdueRow[];
 
   if (overdueTxs.length === 0) return [];
 
+  let rules: Record<string, string> = {};
+  try { rules = await getBusinessRules(); } catch { /* defaults */ }
+  const schedule = overdueScheduleFrom(rules);
+  const quiet = isReminderQuietHours(now, reminderWindowFrom(rules));
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'late_return' } });
   const smsGloballyOn = await isSmsEnabled().catch(() => true);
-  const quiet = isReminderQuietHours(now, await getReminderWindow());
 
   const results: { transactionId: string; customerName: string; message: string; status: string }[] = [];
-  let statusFlipped = false;
+  let dashboardChanged = false;
 
   for (const tx of overdueTxs) {
     const daysOverdue = Math.max(1, manilaDaysPastDue(tx.dueDate, now));
@@ -147,16 +226,18 @@ export async function autoNotifyOverdue(now: Date = new Date()) {
     // Always flip to Overdue status even if SMS fails (status ≠ delivery flag),
     // but skip the no-op write: Prisma bumps updatedAt, which the staff
     // freshness poll would report as a change on every retry tick.
+    let flipped = false;
     if (tx.status !== 'Overdue') {
-      const flipped = await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
-      // Carry the bumped timestamp so the flag writes below don't rewind it.
-      if (flipped?.updatedAt) tx.updatedAt = flipped.updatedAt;
-      statusFlipped = true;
+      const updated = await prisma.transaction.update({ where: { id: tx.id }, data: { status: 'Overdue' } });
+      // Carry the bumped timestamp so the bookkeeping writes don't rewind it.
+      if (updated?.updatedAt) tx.updatedAt = updated.updatedAt;
+      flipped = true;
+      dashboardChanged = true;
     }
 
-    // Overnight the status flip + staff alert still happen, but the customer
-    // SMS/email wait for the morning (their once-guards stay false).
-    if (quiet) {
+    // Staff alert once per rental (notifyStaffMembers dedupes by tx + type);
+    // only attempted on the first pass so later ticks skip the dedupe query.
+    if (flipped || !tx.overdueSmsSent) {
       try {
         await notifyStaffMembers({
           transactionId: tx.id,
@@ -165,178 +246,135 @@ export async function autoNotifyOverdue(now: Date = new Date()) {
           message: `"${tx.item.name}" rented by ${tx.customer.name} is now ${daysOverdue} day(s) overdue.`,
         });
       } catch { /* notification is non-critical */ }
+    }
+
+    // Manual-call cutoff: stop automatic reminders, prompt staff ONCE.
+    if (daysOverdue >= schedule.manualCallDays) {
+      try {
+        const phone = tx.customer.phone ? ` at ${tx.customer.phone}` : '';
+        await notifyStaffMembers({
+          transactionId: tx.id,
+          type: 'overdue_manual_call',
+          title: 'Call customer',
+          message: `${tx.customer.name} is ${daysOverdue} days overdue with "${tx.item.name}". Automatic reminders have stopped — please call${phone}.`,
+        });
+        // A real staff-visible change (Needs a call list) — let updatedAt move.
+        await prisma.transaction.update({ where: { id: tx.id }, data: { manualCallPromptedAt: now } });
+        dashboardChanged = true;
+      } catch { /* retry next tick */ }
+      results.push({ transactionId: tx.id, customerName: tx.customer.name, message: '', status: 'manual_call' });
       continue;
     }
 
+    // Overnight the status flip + staff alerts still happen, but customer
+    // SMS/email wait for the send window (counts untouched).
+    if (quiet) continue;
+
     // Respect customer opt-out (notifyPrefs.lateReturn === false → skip SMS,
     // still notify staff). A null/undefined pref means "on" (default).
-    // The global kill-switch ANDs on top: SMS OFF skips the text but the
-    // status flip, email path, and staff alert below still run.
-    const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
+    // The global kill-switch ANDs on top.
+    const prefs = tx.customer.notifyPrefs as Record<string, boolean> | null | undefined;
     const wantsSms = smsGloballyOn && (!prefs || prefs.lateReturn !== false);
-    // Email follows the same late-alert opt-out plus the master email switch.
     const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
+    const escalated = daysOverdue >= schedule.escalationDays;
 
-    // Overdue email (Brevo, best-effort) — sent alongside the SMS path so the
-    // customer gets the notice on both channels unless opted out. It carries
-    // its OWN once-guard (overdueEmailSent): the SMS flag must stay false on
-    // SMS failure so the text retries, but a delivered email must never
-    // re-send — coupling the two caused a every-60s Brevo duplicate flood.
-    if (tx.customer.email && wantsEmail && !tx.overdueEmailSent) {
+    // ---- Email channel ----
+    const email = channelState(tx, 'email', now);
+    if (tx.customer.email && wantsEmail
+        && channelNoticeDue(email.count, email.lastAt, schedule.emailInterval, schedule.emailMax, now)) {
       try {
         const emailResult = await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
         if (emailResult) {
-          await markScheduled(tx, { overdueEmailSent: true });
+          await markScheduled(tx, {
+            overdueEmailCount: email.count + 1,
+            overdueEmailLastAt: now,
+            overdueEmailSent: true,
+            ...(escalated ? { overdueEscalationEmailSent: true } : {}),
+          });
         }
-        // Null (disabled/failed send) leaves the flag false: nothing was
+        // Null (disabled/failed send) leaves the count alone: nothing was
         // delivered, so retrying next tick is harmless.
       } catch { /* email is non-critical */ }
     }
 
-    if (!tx.customer.phone || !wantsSms) {
-      // Nothing to send (no phone or opted out) — flag as done so we don't retry.
-      await markScheduled(tx, { overdueSmsSent: true });
-      results.push({ transactionId: tx.id, customerName: tx.customer.name, message: '', status: 'skipped' });
-    } else {
-      let message = template?.content ?? OVERDUE_TEMPLATE_FALLBACK;
-      message = finalizeSms(applyTemplate(message, {
-        customer: smsShortName(tx.customer.name),
-        item: smsItemName(tx.item.name),
-        date: formatManilaDate(tx.dueDate),
-        days: String(daysOverdue),
-        balance: formatPhpAmount(tx.balance),
-      }));
+    // ---- SMS channel ----
+    const sms = channelState(tx, 'sms', now);
+    if (!channelNoticeDue(sms.count, sms.lastAt, schedule.smsInterval, schedule.smsMax, now)) continue;
 
-      try {
-        const smsResult = await sendSms(tx.customer.phone, message);
-        await prisma.sentSms.create({
-          data: {
-            profileId: tx.customer.id,
-            transactionId: tx.id,
-            templateId: template?.id ?? null,
-            message,
-            status: smsResult.messageId ? 'sent' : 'queued',
-          },
-        });
-        // Mark SENT — once-guard. On success the scheduler won't retry.
+    if (!tx.customer.phone || !wantsSms) {
+      // Nothing to send (no phone / opted out / SMS off). Mark the first
+      // notice handled once so it's reported once, not every tick.
+      if (!tx.overdueSmsSent) {
         await markScheduled(tx, { overdueSmsSent: true });
-        results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: smsResult.messageId ? 'sent' : 'queued' });
-      } catch {
-        // Send failed: leave overdueSmsSent FALSE so the next tick retries,
-        // but record that a retry has been attempted (overdueSmsRetried) for
-        // observability. The once-guard only flips on actual success.
-        // Only write the flag once — rewriting it on every failed tick bumps
-        // updatedAt and makes the freshness poll fire with nothing changed.
-        if (!tx.overdueSmsRetried) {
-          await markScheduled(tx, { overdueSmsRetried: true });
-        }
-        results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: 'failed' });
+        results.push({ transactionId: tx.id, customerName: tx.customer.name, message: '', status: 'skipped' });
       }
+      continue;
     }
 
-    // Staff alert (independent of customer SMS delivery) — once per transaction.
+    const message = escalated
+      ? finalizeSms(`Hi ${smsShortName(tx.customer.name)}, ${smsItemName(tx.item.name)} is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Please call us. Thank you!`)
+      : finalizeSms(applyTemplate(template?.content ?? OVERDUE_TEMPLATE_FALLBACK, {
+          customer: smsShortName(tx.customer.name),
+          item: smsItemName(tx.item.name),
+          date: formatManilaDate(tx.dueDate),
+          days: String(daysOverdue),
+          balance: formatPhpAmount(tx.balance),
+        }));
+
     try {
-      await notifyStaffMembers({
-        transactionId: tx.id,
-        type: 'overdue',
-        title: 'Overdue Return',
-        message: `"${tx.item.name}" rented by ${tx.customer.name} is now ${daysOverdue} day(s) overdue.`,
+      const smsResult = await sendSms(tx.customer.phone, message);
+      await prisma.sentSms.create({
+        data: {
+          profileId: tx.customer.id,
+          transactionId: tx.id,
+          templateId: escalated ? null : template?.id ?? null,
+          message,
+          status: smsResult.messageId ? 'sent' : 'queued',
+        },
       });
-    } catch { /* notification is non-critical */ }
+      await markScheduled(tx, {
+        overdueSmsCount: sms.count + 1,
+        overdueSmsLastAt: now,
+        overdueSmsSent: true,
+        ...(escalated ? { overdueEscalationSent: true } : {}),
+      });
+      dashboardChanged = true;
+      results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: smsResult.messageId ? 'sent' : 'queued' });
+    } catch {
+      // Send failed: the count stays put so the next tick retries. Record the
+      // retry once (observability) — rewriting it every failed tick would
+      // churn the row for nothing.
+      if (!tx.overdueSmsRetried) {
+        await markScheduled(tx, { overdueSmsRetried: true });
+      }
+      results.push({ transactionId: tx.id, customerName: tx.customer.name, message, status: 'failed' });
+    }
   }
 
-  // Overdue flags change dashboard KPIs — refresh cached dashboard data.
-  // A 'failed' send changes nothing the dashboards show and retries every
+  // A failed send changes nothing the dashboards show and retries every
   // tick, so it must NOT clear the cache (that re-ran the whole dashboard
   // warmer every minute for as long as one bad number kept failing).
-  if (statusFlipped || results.some((r) => r.status !== 'failed')) clearDataCache();
+  if (dashboardChanged || results.some((r) => r.status === 'skipped')) clearDataCache();
 
   return results;
 }
 
-// Day-N escalation: rentals still overdue after `overdue_escalation_days` get a
-// single follow-up text. Guarded by overdueEscalationSent so it fires once.
-export async function notifyOverdue3Days(now: Date = new Date()) {
-  // One rules read covers both the send window and the escalation day.
-  let rules: Record<string, string> = {};
-  try { rules = await getBusinessRules(); } catch { /* keep defaults */ }
-  if (isReminderQuietHours(now, reminderWindowFrom(rules))) return [];
-  const escalationDays = numberRule(rules, 'overdue_escalation_days');
-
-  const txs = await prisma.transaction.findMany({
-    where: {
-      status: { in: ['Active', 'Overdue'] },
-      overdueEscalationSent: false,
-      // At least `escalationDays` store-calendar days past the due date.
-      dueDate: { lt: new Date(manilaDayStart(now).getTime() - (escalationDays - 1) * 24 * 60 * 60 * 1000) },
-    },
-    include: {
-      customer: { select: { id: true, name: true, email: true, phone: true, notifyPrefs: true } },
-      item: { select: { id: true, name: true } },
-    },
-  });
-
-  if (txs.length === 0) return [];
-
-  // Global kill-switch ANDs on top of the per-account opt-out (same shape
-  // as autoNotifyOverdue: status/email/staff-alert paths still run).
-  const smsGloballyOn = await isSmsEnabled().catch(() => true);
-  const results: { transactionId: string; customerName: string; sent: boolean }[] = [];
-
-  for (const tx of txs) {
-    const daysOverdue = Math.max(escalationDays, manilaDaysPastDue(tx.dueDate, now));
-    const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
-    const wantsSms = smsGloballyOn && (!prefs || prefs.lateReturn !== false);
-    const wantsEmail = !prefs || (prefs.email !== false && prefs.lateReturn !== false);
-
-    // Escalation email (Brevo, best-effort) alongside the SMS path. Own
-    // once-guard (overdueEscalationEmailSent) — see autoNotifyOverdue: the SMS
-    // flag staying false for retry must not drag the email along with it.
-    if (tx.customer.email && wantsEmail && !tx.overdueEscalationEmailSent) {
-      try {
-        const emailResult = await sendOverdueEmail(tx.customer.email, tx.customer.name, tx.item.name, daysOverdue);
-        if (emailResult) {
-          await markScheduled(tx, { overdueEscalationEmailSent: true });
-        }
-      } catch { /* email is non-critical */ }
-    }
-
-    let sent = false;
-    if (tx.customer.phone && wantsSms) {
-      const message = finalizeSms(`Hi ${smsShortName(tx.customer.name)}, ${smsItemName(tx.item.name)} is ${daysOverdue} day(s) overdue. Balance: PHP ${formatPhpAmount(tx.balance)}. Please call us. Thank you!`);
-      try {
-        const smsResult = await sendSms(tx.customer.phone, message);
-        await prisma.sentSms.create({
-          data: { profileId: tx.customer.id, transactionId: tx.id, message, status: smsResult.messageId ? 'sent' : 'queued' },
-        });
-        sent = true;
-      } catch {
-        // failed: leave flag false to retry next tick
-      }
-    }
-
-    if (sent || !tx.customer.phone || !wantsSms) {
-      await markScheduled(tx, { overdueEscalationSent: true });
-      results.push({ transactionId: tx.id, customerName: tx.customer.name, sent });
-    }
-  }
-
-  // Escalation runs against Active rows too — a status flip to Overdue
-  // changes dashboard KPIs, so refresh cached dashboard data.
-  if (results.length > 0) clearDataCache();
-
-  return results;
-}
-
+// Due reminder: `due_reminder_lead_days` before the due date (0 = on the day).
+// One SMS + one email per rental, each with its own once-guard.
 export async function notifyDueToday(now: Date = new Date()) {
-  if (isReminderQuietHours(now, await getReminderWindow())) return [];
+  let rules: Record<string, string> = {};
+  try { rules = await getBusinessRules(); } catch { /* defaults */ }
+  if (isReminderQuietHours(now, reminderWindowFrom(rules))) return [];
+  const leadDays = numberRule(rules, 'due_reminder_lead_days');
   const startOfToday = manilaDayStart(now);
-  const endOfToday = manilaNextDayStart(now);
+  // Window: due today … due `leadDays` from today. A rental booked inside the
+  // lead window still gets its reminder (on the first eligible tick).
+  const windowEnd = new Date(manilaNextDayStart(now).getTime() + leadDays * DAY_MS);
 
-  const dueToday = await prisma.transaction.findMany({
+  const dueSoon = await prisma.transaction.findMany({
     where: {
       status: { in: ['Active', 'Overdue'] },
-      dueDate: { gte: startOfToday, lt: endOfToday },
+      dueDate: { gte: startOfToday, lt: windowEnd },
       dueReminderSent: false,
     },
     include: {
@@ -345,46 +383,40 @@ export async function notifyDueToday(now: Date = new Date()) {
     },
   });
 
-  if (dueToday.length === 0) return [];
+  if (dueSoon.length === 0) return [];
 
-  // Due-today reminder. Deliberately carries NO late-fee amount — reminder text
-  // must stay fee-free per the notification policy.
+  // Deliberately carries NO late-fee amount — reminder text stays fee-free.
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'due_reminder' } });
-  // Global kill-switch ANDs on top of the per-account opt-out.
   const smsGloballyOn = await isSmsEnabled().catch(() => true);
 
   const results: { transactionId: string; customerName: string; itemName: string; sent: boolean }[] = [];
-  for (const tx of dueToday) {
-    // Text the customer their due-today reminder (if they have a phone + opted in).
+  for (const tx of dueSoon) {
+    const daysUntilDue = Math.max(0, -manilaDaysPastDue(tx.dueDate, now));
+    const dueLabel = formatManilaDate(tx.dueDate);
     let sent = false;
     const prefs = (tx.customer as { notifyPrefs?: Record<string, boolean> | null }).notifyPrefs;
     const wantsSms = smsGloballyOn && (!prefs || prefs.reminder !== false);
     const wantsEmail = !prefs || (prefs.email !== false && prefs.reminder !== false);
 
-    // Due-today email (Brevo, best-effort) alongside the SMS path. Own
-    // once-guard (dueReminderEmailSent): an SMS failure leaves dueReminderSent
-    // false for retry, which must not re-send an already delivered email.
+    // Own once-guard (dueReminderEmailSent): an SMS failure leaves
+    // dueReminderSent false for retry, which must not re-send the email.
     if (tx.customer.email && wantsEmail && !tx.dueReminderEmailSent) {
       try {
-        const emailResult = await sendDueReminderEmail(
-          tx.customer.email,
-          tx.customer.name,
-          tx.item.name,
-          formatManilaDate(tx.dueDate),
-        );
+        const emailResult = await sendDueReminderEmail(tx.customer.email, tx.customer.name, tx.item.name, dueLabel, daysUntilDue);
         if (emailResult) {
           await markScheduled(tx, { dueReminderEmailSent: true });
         }
       } catch { /* email is non-critical */ }
     }
     if (tx.customer.phone && wantsSms) {
+      const when = daysUntilDue === 0 ? 'today' : daysUntilDue === 1 ? 'tomorrow' : `on ${dueLabel}`;
       const message = finalizeSms(template?.content
         ? applyTemplate(template.content, {
             customer: smsShortName(tx.customer.name),
             item: smsItemName(tx.item.name),
-            date: formatManilaDate(tx.dueDate),
+            date: dueLabel,
           })
-        : `Hi ${smsShortName(tx.customer.name)}, your ${smsItemName(tx.item.name)} rental is due today (${formatManilaDate(tx.dueDate)}). Thank you!`);
+        : `Hi ${smsShortName(tx.customer.name)}, your ${smsItemName(tx.item.name)} rental is due ${when} (${dueLabel}). Thank you!`);
 
       try {
         const smsResult = await sendSms(tx.customer.phone, message);
@@ -403,26 +435,54 @@ export async function notifyDueToday(now: Date = new Date()) {
         // leave dueReminderSent false so the next tick retries the SMS
       }
     } else {
-      // No phone on file: nothing to send, so don't keep retrying every minute.
+      // No phone / opted out: nothing to send, so don't keep retrying.
       await markScheduled(tx, { dueReminderSent: true });
     }
 
-    // Staff in-app alert (existing behavior).
+    // Staff in-app alert, worded for the actual day.
     try {
       await notifyStaffMembers({
         transactionId: tx.id,
         type: 'due_today',
-        title: 'Due Today',
-        message: `"${tx.item.name}" rented by ${tx.customer.name} is due today.`,
+        title: daysUntilDue === 0 ? 'Due Today' : 'Due Soon',
+        message: daysUntilDue === 0
+          ? `"${tx.item.name}" rented by ${tx.customer.name} is due today.`
+          : `"${tx.item.name}" rented by ${tx.customer.name} is due ${daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`} (${dueLabel}).`,
       });
     } catch { /* notification is non-critical */ }
 
     results.push({ transactionId: tx.id, customerName: tx.customer.name, itemName: tx.item.name, sent });
   }
-  // Flag flips + new notification rows move the data version — refresh
-  // cached dashboard data so the version fingerprint and lists agree.
   if (results.length > 0) clearDataCache();
   return results;
+}
+
+// Staff/admin record that they phoned an overdue customer (Tasks → Needs a
+// call). Clears the rental from the list; the note + caller are audited.
+export async function markManualCall(transactionId: string, performedById: string, note?: string) {
+  const tx = await prisma.transaction.findUnique({
+    where: { id: transactionId },
+    select: { id: true, status: true, manualCallPromptedAt: true, manualCalledAt: true },
+  });
+  if (!tx) throw new AppError(404, 'Transaction not found');
+  if (tx.status === 'Returned' || tx.status === 'Cancelled') {
+    throw new AppError(400, 'This rental is already closed');
+  }
+  const cleanNote = note?.trim() ? note.trim().slice(0, 500) : null;
+  const updated = await prisma.transaction.update({
+    where: { id: transactionId },
+    data: { manualCalledAt: new Date(), manualCalledById: performedById, manualCallNote: cleanNote },
+  });
+  try {
+    await createAuditLog({
+      action: 'transaction.manual_call', entity: 'transaction', entityId: transactionId,
+      performedById,
+      oldValue: { manualCalledAt: tx.manualCalledAt ?? null },
+      newValue: { manualCalledAt: updated.manualCalledAt, note: cleanNote },
+    });
+  } catch { /* audit is non-critical */ }
+  clearDataCache();
+  return updated;
 }
 
 // No-show detection: a Reserved transaction whose pickup (rentalDate) passed

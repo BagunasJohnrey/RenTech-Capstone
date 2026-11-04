@@ -43,6 +43,10 @@ export default function CollapsibleCard({
   });
 
   const open = controlledOpen ?? uncontrolled;
+  // Phones: the badge + action (Edit, Reset all, switches…) live at the top
+  // of the white body, so they only appear once the card is opened and never
+  // sit on the tinted header. sm+: they stay in the header as before.
+  const hasMobileBar = !!(badge || headerAction);
   const persist = (value) => {
     if (!storageKey) return;
     try { localStorage.setItem(storageKey, value ? '1' : '0'); } catch { /* private mode */ }
@@ -58,13 +62,15 @@ export default function CollapsibleCard({
 
   return (
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm overflow-hidden">
-      <div className="flex items-center gap-1 sm:gap-2 bg-gradient-to-r from-[#bf4a53]/10 via-rose-50 to-transparent">
+      {/* Phones: the header is just icon, title, description and chevron.
+          sm+: badge + action sit on the same row as before. */}
+      <div className="flex items-center gap-x-1 sm:gap-2 bg-gradient-to-r from-[#bf4a53]/10 via-rose-50 to-transparent">
         <button
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
           aria-controls={bodyId}
-          className="flex-1 flex items-center gap-3 pl-4 sm:pl-5 md:pl-8 pr-1 sm:pr-2 py-4 min-h-[72px] text-left hover:bg-[#bf4a53]/5 active:bg-[#bf4a53]/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/50"
+          className={`w-full sm:w-auto sm:flex-1 min-w-0 flex items-center gap-3 pl-4 sm:pl-5 md:pl-8 pr-4 sm:pr-2 py-4 min-h-[72px] text-left hover:bg-[#bf4a53]/5 active:bg-[#bf4a53]/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/50`}
         >
           {media ?? (
             <span className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm shrink-0 ${iconClass ?? 'bg-[#bf4a53] text-white shadow-red-500/20'}`}>
@@ -74,12 +80,12 @@ export default function CollapsibleCard({
           <span className="min-w-0 flex-1">
             <span className="block font-bold text-gray-900 text-[15px] md:text-base leading-tight">{title}</span>
             {subtitle && (
-              <span className="block text-xs text-gray-500 font-medium mt-0.5 line-clamp-2">
+              <span className="text-xs text-gray-500 font-medium mt-0.5 block sm:line-clamp-2">
                 {subtitle}
               </span>
             )}
           </span>
-          {badge && <span className="shrink-0 hidden min-[400px]:inline-flex">{badge}</span>}
+          {badge && <span className="shrink-0 hidden sm:inline-flex">{badge}</span>}
           <ChevronDown
             size={18}
             aria-hidden="true"
@@ -87,7 +93,7 @@ export default function CollapsibleCard({
           />
         </button>
         {headerAction && (
-          <div className="shrink-0 pr-4 sm:pr-5 md:pr-8 py-2">{headerAction}</div>
+          <div className="hidden sm:block shrink-0 py-2 pr-5 md:pr-8">{headerAction}</div>
         )}
       </div>
 
@@ -98,8 +104,18 @@ export default function CollapsibleCard({
           open ? '[grid-template-rows:1fr]' : '[grid-template-rows:0fr]'
         }`}
       >
-        <div className="overflow-hidden min-h-0">
-          <div className="px-4 sm:px-5 md:px-8 pb-5 md:pb-6 pt-4">{children}</div>
+        {/* Closed: invisible once the 300ms fold finishes, so hidden buttons
+            can't be tabbed to or read out. Opening shows them immediately. */}
+        <div className={`overflow-hidden min-h-0 ${open ? 'visible' : 'invisible [transition:visibility_0s_linear_300ms]'}`}>
+          <div className="px-4 sm:px-5 md:px-8 pb-5 md:pb-6 pt-4">
+            {hasMobileBar && (
+              <div className="sm:hidden flex items-center justify-between gap-3 mb-4">
+                {badge ? <span className="min-w-0">{badge}</span> : <span />}
+                {headerAction && <div className="shrink-0 ml-auto">{headerAction}</div>}
+              </div>
+            )}
+            {children}
+          </div>
         </div>
       </div>
     </div>

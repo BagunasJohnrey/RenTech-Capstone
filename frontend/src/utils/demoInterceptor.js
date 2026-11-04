@@ -85,6 +85,15 @@ const tx = (id, itemId, customerId, status, startOff, dueOff, fee, paid) => {
   };
 };
 
+// Business rules (GET/PUT /settings/rules) — mirrors the backend defaults.
+const demoRules = {
+  overdue_escalation_days: '3', data_retention_months: '12',
+  reminder_send_start_hour: '8', reminder_send_end_hour: '21',
+  due_reminder_lead_days: '0', overdue_manual_call_days: '10',
+  overdue_sms_interval_days: '2', overdue_sms_max_count: '3',
+  overdue_email_interval_days: '2', overdue_email_max_count: '3',
+};
+
 let transactions = [
   tx('11111111-1111-4111-8111-111111111111', 3, 'c-maria', 'Active', -2, 2, 2200, 1100),
   tx('22222222-2222-4222-8222-222222222222', 5, 'c-pedro', 'Overdue', -6, -1, 4000, 2000),
@@ -94,7 +103,16 @@ let transactions = [
   // Manual-QR booking for the demo customer: unpaid with a rejected proof, so
   // the My Rentals resume flow and the "Awaiting proof" queue tab are demo-able.
   tx('66666666-6666-4666-8666-666666666666', 4, 'demo-customer-profile', 'Reserved', 1, 4, 2000, 0),
+  // Long-overdue rental past the manual-call cutoff: automatic reminders have
+  // stopped and it sits in Tasks -> Needs a call.
+  tx('77777777-7777-4777-8777-777777777777', 2, 'c-pedro', 'Overdue', -15, -11, 3000, 1500),
 ];
+{
+  const longOverdue = transactions.find((t) => t.id === '77777777-7777-4777-8777-777777777777');
+  longOverdue.manualCallPromptedAt = new Date(Date.now() - 86400000).toISOString();
+  longOverdue.overdueSmsCount = 3;
+  longOverdue.overdueEmailCount = 3;
+}
 // One picked-up rental carries handover photo proof, so the demo exercises
 // the "Released" transaction state like the real app does.
 transactions.find((t) => t.itemId === 8).releasePhoto = 'demo/release.jpg';
@@ -103,6 +121,11 @@ transactions.find((t) => t.itemId === 8).releasePhoto = 'demo/release.jpg';
 // pending proof belongs to Maria's booking (4444); the rejected one belongs to
 // the demo customer's booking (6666), which the awaiting tab lists.
 const DEMO_QR_CODES = [{ id: 'demo-qr-1', label: 'GCash', accountName: 'Mylene S.', imagePath: '' }];
+// Settings → Integrations reads the QR list from the rules table.
+demoRules.manual_qr_codes = JSON.stringify([
+  { id: 'demo-qr-1', label: 'GCash', accountName: 'Mylene Gowns', imagePath: 'qrcodes/demo-gcash.webp' },
+  { id: 'demo-qr-2', label: 'Instapay', accountName: 'Mylene', imagePath: 'qrcodes/demo-instapay.webp' },
+]);
 const DEMO_PAYMENT_GATEWAY = 'manual';
 
 let paymentProofs = [
@@ -756,6 +779,14 @@ function route(method, path, body) {
     const t = transactions.find((x) => x.id === P(/^\/transactions\/([0-9a-f-]+)$/)[1]);
     return t ? { value: clone(t) } : { status: 404, error: 'Not found' };
   }
+  if (P(/^\/transactions\/([0-9a-f-]+)\/manual-call$/) && method === 'POST') {
+    const t = transactions.find((x) => x.id === P(/^\/transactions\/([0-9a-f-]+)\/manual-call$/)[1]);
+    if (!t) return { status: 404, error: 'Transaction not found' };
+    if (['Returned', 'Cancelled'].includes(t.status)) return { status: 400, error: 'This rental is already closed' };
+    t.manualCalledAt = new Date().toISOString();
+    t.manualCallNote = (body?.note ?? '').trim().slice(0, 500) || null;
+    return { value: clone(t) };
+  }
   if (path === '/transactions' && method === 'GET') {
     // Production `listTransactions` scopes Customer lists to their own rows
     // (`where.customerId = profileId`) and only then exposes each row's latest
@@ -844,10 +875,23 @@ function route(method, path, body) {
 
   // ---- Settings ----
   if (path === '/settings/flags') return { value: { features: {} } };
-  if (path === '/settings/rules') return { value: { minDownpaymentPct: 50, latePenaltyPerDay: 100, overdueEscalationDays: 3, dataRetentionMonths: 12 } };
+  if (path === '/settings/rules' && method === 'PUT') {
+    Object.assign(demoRules, Object.fromEntries(Object.entries(body ?? {}).map(([k, v]) => [k, String(v)])));
+    return { value: clone(demoRules) };
+  }
+  if (path === '/settings/rules') return { value: clone(demoRules) };
   if (P(/^\/settings\/rental-defaults/)) return { value: { defaultDays: 3, weekendSurge: false, rental_period_days: 3, return_days_after_event: 1, min_downpayment: 200, payment_gateway: DEMO_PAYMENT_GATEWAY, manual_qr_codes: clone(DEMO_QR_CODES), store_name: 'RenTech Boutique', store_contact: '0917 123 4567', store_address: 'Balayan, Batangas' } };
   if (path === '/settings/sms-templates') return { value: [] };
-  if (path === '/settings/integrations-status') return { value: { gemini: { configured: false }, groq: { configured: false }, openrouter: { configured: false }, semaphore: { configured: false } } };
+  if (path === '/settings/integrations-status') {
+    // Mirrors a typical live install: SMS, email and both AI providers up.
+    const ok = (latencyMs) => ({ configured: true, reachable: true, latencyMs, detail: 'Connected' });
+    return { value: {
+      gemini: ok(912), groq: ok(1333),
+      semaphore: { ...ok(267), enabled: demoRules.messaging_sms_enabled !== 'false' },
+      resend: { ...ok(461), detail: 'Connected (sending-only key)', enabled: demoRules.messaging_email_enabled !== 'false' },
+      checkedAt: new Date().toISOString(),
+    } };
+  }
   if (path === '/settings/backups' && method === 'GET') return { value: clone(demoBackups) };
   if (path === '/settings/backups' && method === 'POST') {
     const meta = { id: 'backup-demo-' + Date.now(), createdAt: new Date().toISOString(), createdBy: 'demo-admin-profile', totalRows: 48, tables: { profiles: 5, inventory_items: items.length, transactions: transactions.length }, storageFiles: items.length * 2, storageBytes: 3200000, storageIncomplete: false, sizeBytes: 20480, filename: 'backup-demo-' + Date.now() + '.json', uploaded: true, source: 'both' };

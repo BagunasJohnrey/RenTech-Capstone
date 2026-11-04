@@ -65,7 +65,6 @@ export default function GeneralTab() {
       if (rules.business_name) biz.name = rules.business_name;
       if (rules.business_address) biz.address = rules.business_address;
       if (rules.business_contact) biz.contact = rules.business_contact;
-      if (rules.business_tax_id) biz.taxId = rules.business_tax_id;
       setBusiness(biz);
       setLocalBusiness(biz);
       localStorage.setItem(LS_BUSINESS, JSON.stringify(biz));
@@ -113,7 +112,6 @@ export default function GeneralTab() {
       business_name: localBusiness.name,
       business_address: localBusiness.address,
       business_contact: localBusiness.contact,
-      business_tax_id: localBusiness.taxId,
     }, setBizMsg, 'Business profile saved!');
   };
 
@@ -179,7 +177,7 @@ export default function GeneralTab() {
         icon={Building2}
         iconClass="bg-amber-50 text-amber-600"
         title="Business Profile"
-        subtitle="Store details shown in receipts and the customer Inquiries & Contact card"
+        subtitle="Shown on booking receipts, Excel and AI report letterheads, and the customer Inquiries & Contact card"
         storageKey="settings-general-biz-open"
         open={bizOpen}
         onOpenChange={setBizOpen}
@@ -205,20 +203,14 @@ export default function GeneralTab() {
               <input type="text" value={localBusiness.address} onChange={e => setLocalBusiness({ ...localBusiness, address: e.target.value })}
                 className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Store Address" />
             </div>
-            <div>
-              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Tax ID (optional)</p>
-              <input type="text" value={localBusiness.taxId} onChange={e => setLocalBusiness({ ...localBusiness, taxId: e.target.value })}
-                className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200/80 text-sm font-medium focus:outline-none focus:bg-white focus:border-[#bf4a53]" placeholder="Tax ID (optional)" />
-            </div>
             {saveCancel(saveBusiness, () => { setEditBusiness(false); setLocalBusiness(business); })}
             {bizMsg && <p role="status" className={`text-xs font-bold ${msgTone(bizMsg)}`}>{bizMsg}</p>}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <InfoTile label="Store" value={business.name} />
             <InfoTile label="Address" value={business.address} />
             <InfoTile label="Store inquiry number" value={business.contact} />
-            <InfoTile label="Tax ID" value={business.taxId} />
           </div>
         )}
       </CollapsibleCard>
@@ -287,7 +279,7 @@ export default function GeneralTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
             <NumberField label="Overdue escalation after" value={localAutomation.escalationDays} min={1} max={30}
               onChange={(v) => setLocalAutomation({ ...localAutomation, escalationDays: v })}
-              suffix="days overdue" hint="Sends the one-time escalation SMS when a rental stays overdue this long." />
+              suffix="days overdue" hint="From this day, overdue SMS ask the customer to call the boutique. Repeat timing is in Notifications → Reminder Schedule." />
             <NumberField label="Keep history for" value={localAutomation.retentionMonths} min={3} max={60}
               onChange={(v) => setLocalAutomation({ ...localAutomation, retentionMonths: v })}
               suffix="months" hint="Old notifications, SMS, and audit logs older than this are purged nightly." />
@@ -305,7 +297,7 @@ export default function GeneralTab() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <InfoTile label="Overdue Escalation" value={`after ${automation.escalationDays} days overdue`} />
+            <InfoTile label="Call-us wording" value={`from day ${automation.escalationDays} overdue`} />
             <InfoTile label="History Retention" value={`${automation.retentionMonths} months`} />
             <InfoTile label="Reminder Hours" value={`${hourLabel(automation.sendStart)} – ${hourLabel(automation.sendEnd)}`} />
           </div>

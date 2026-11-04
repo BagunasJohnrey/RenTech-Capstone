@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle, Mail, XCircle } from 'lucide-react';
 import { api } from '../utils/api';
 
-// Email-verification landing page. Brevo links land here with our own
+// Email-verification landing page. Email links land here with our own
 // single-use ?token= (preferred). Legacy Supabase links carry either a
 // token_hash (custom template) or a ?code= (default template — Supabase's
 // /verify consumed the token and redirected with a code). Either lives in the
@@ -15,10 +15,10 @@ export default function VerifyEmailView() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
-  const brevoToken = searchParams.get('token') || hashParams.get('token');
+  const emailToken = searchParams.get('token') || hashParams.get('token');
   const tokenHash = searchParams.get('token_hash') || hashParams.get('token_hash');
   const code = searchParams.get('code') || hashParams.get('code');
-  const credential = brevoToken ? { token: brevoToken } : tokenHash ? { token_hash: tokenHash } : code ? { code } : null;
+  const credential = emailToken ? { token: emailToken } : tokenHash ? { token_hash: tokenHash } : code ? { code } : null;
   const [state, setState] = useState('verifying'); // verifying | success | error
   const [message, setMessage] = useState('');
 
@@ -38,7 +38,7 @@ export default function VerifyEmailView() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brevoToken, tokenHash, code]);
+  }, [emailToken, tokenHash, code]);
 
   return (
     <div className="min-h-screen bg-[#fafbfc] flex items-center justify-center p-4">

@@ -138,6 +138,24 @@ export async function createRental(req: AuthenticatedRequest, res: Response, nex
   }
 }
 
+// Staff call notes (Tasks → Needs a call) are internal — never shown to the
+// customer whose rental they describe. Works on one row, an array, or a
+// { data: [...] } page.
+const STAFF_ONLY_TX_FIELDS = ['manualCallNote', 'manualCalledById'] as const;
+function stripStaffOnly<T>(value: T): T {
+  const strip = (row: unknown) => {
+    if (!row || typeof row !== 'object') return row;
+    const copy = { ...(row as Record<string, unknown>) };
+    for (const k of STAFF_ONLY_TX_FIELDS) delete copy[k];
+    return copy;
+  };
+  if (Array.isArray(value)) return value.map(strip) as T;
+  if (value && typeof value === 'object' && Array.isArray((value as { data?: unknown }).data)) {
+    return { ...(value as object), data: (value as unknown as { data: unknown[] }).data.map(strip) } as T;
+  }
+  return strip(value) as T;
+}
+
 export async function getTransaction(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     const tx = await transactionService.getTransaction(String(req.params.id));
@@ -146,7 +164,7 @@ export async function getTransaction(req: AuthenticatedRequest, res: Response, n
       throw new AppError(403, 'You can only view your own transactions');
     }
 
-    res.json(tx);
+    res.json(req.user?.role === Role.Customer ? stripStaffOnly(tx) : tx);
   } catch (err) {
     next(err);
   }
@@ -201,7 +219,7 @@ export async function listTransactions(req: AuthenticatedRequest, res: Response,
       offset: clampOffset(req.query.offset),
     });
 
-    res.json(result);
+    res.json(req.user.role === Role.Customer ? stripStaffOnly(result) : result);
   } catch (err) {
     next(err);
   }
@@ -352,6 +370,25 @@ export async function recordPayment(req: AuthenticatedRequest, res: Response, ne
       req.body.notes,
     );
     res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Tasks → Needs a call: staff/admin record that they phoned a long-overdue
+// customer (automatic reminders stopped at overdue_manual_call_days).
+export const manualCallSchema = z.object({
+  body: z.object({
+    note: z.string().trim().max(500).optional(),
+  }),
+});
+
+export async function markManualCall(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) throw new AppError(401, 'Not authenticated');
+    const { markManualCall: mark } = await import('../services/sms.service.js');
+    const updated = await mark(String(req.params.id), req.user.id, req.body?.note);
+    res.json(updated);
   } catch (err) {
     next(err);
   }

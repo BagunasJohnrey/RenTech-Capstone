@@ -41,6 +41,18 @@ export const NUMERIC_RULES = {
   // Automatic customer SMS/email go out only between these Manila hours.
   reminder_send_start_hour: { def: 8, min: 0, max: 23 },
   reminder_send_end_hour: { def: 21, min: 1, max: 24 },
+  // ---- Reminder schedule (client feedback §3.2–3.4) ----
+  // Due reminder goes out this many days before the due date (0 = on the day).
+  due_reminder_lead_days: { def: 0, min: 0, max: 7 },
+  // Overdue notices: first one the day after the due date, then one every
+  // N days per channel, up to the max count per channel.
+  overdue_email_interval_days: { def: 2, min: 1, max: 14 },
+  overdue_email_max_count: { def: 3, min: 1, max: 30 },
+  overdue_sms_interval_days: { def: 2, min: 1, max: 14 },
+  overdue_sms_max_count: { def: 3, min: 1, max: 30 },
+  // From this many days overdue, automatic SMS + email stop and staff/admin
+  // are prompted (once) to phone the customer instead.
+  overdue_manual_call_days: { def: 10, min: 2, max: 60 },
 } as const;
 export type NumericRuleKey = keyof typeof NUMERIC_RULES;
 
@@ -81,7 +93,10 @@ export async function getReminderWindow(): Promise<ReminderWindow> {
 // inverted reminder window. Unknown keys pass through (text settings).
 export function assertValidRuleValues(data: Record<string, string>, current: Record<string, string> = {}) {
   for (const [key, raw] of Object.entries(data)) {
-    const spec = (NUMERIC_RULES as Record<string, { min: number; max: number }>)[key];
+    if (/^email_type_[a-z_]+_enabled$/.test(key) && raw !== 'true' && raw !== 'false') {
+      throw new AppError(400, `${key} must be 'true' or 'false'`);
+    }
+    const spec =(NUMERIC_RULES as Record<string, { min: number; max: number }>)[key];
     if (!spec) continue;
     const n = Number(raw);
     if (String(raw).trim() === '' || !Number.isFinite(n)) {
@@ -204,10 +219,25 @@ export async function isSmsEnabled(): Promise<boolean> {
   return isRuleEnabled(SMS_ENABLED_KEY);
 }
 
-// Global Brevo email switch — gates lifecycle/order emails sent through
+// Global email switch — gates lifecycle/order emails sent through
 // sendBestEffort. Auth emails (verification/reset) bypass this on purpose.
 export async function isEmailEnabled(): Promise<boolean> {
   return isRuleEnabled(EMAIL_ENABLED_KEY);
+}
+
+// Per-type email toggles (Settings → Notifications). Absent key = ON. Read
+// through the 60s rules cache: these are checked on every lifecycle send.
+export const EMAIL_TYPES = ['booking', 'pickup', 'return', 'cancellation', 'payment', 'due_reminder', 'overdue'] as const;
+export type EmailType = (typeof EMAIL_TYPES)[number];
+export const emailTypeKey = (type: EmailType) => `email_type_${type}_enabled`;
+
+export async function isEmailTypeEnabled(type: EmailType): Promise<boolean> {
+  try {
+    const rules = await getBusinessRules();
+    return rules[emailTypeKey(type)] !== 'false';
+  } catch {
+    return true;
+  }
 }
 
 export async function updateBusinessRules(data: Record<string, string>) {

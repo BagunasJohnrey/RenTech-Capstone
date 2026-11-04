@@ -31,6 +31,8 @@ router.put('/:id/return', requireRole(Role.Admin, Role.Staff), validate(transact
 // SECURITY: staff/admin only. A customer may REQUEST a cancellation (with a
 // written explanation, via the messages inbox) but never performs one — a paid
 // Reserved booking must not be voidable unilaterally over the API.
+// Tasks → Needs a call: record that staff phoned a long-overdue customer.
+router.post('/:id/manual-call', requireRole(Role.Admin, Role.Staff), validate(transactionController.manualCallSchema), transactionController.markManualCall);
 router.put('/:id/cancel', requireRole(Role.Admin, Role.Staff), transactionController.cancelTransaction);
 router.patch('/:id', requireRole(Role.Admin, Role.Staff), validate(transactionController.updateTransactionSchema), transactionController.updateTransaction);
 router.delete('/:id', requireRole(Role.Admin), transactionController.deleteTransaction);

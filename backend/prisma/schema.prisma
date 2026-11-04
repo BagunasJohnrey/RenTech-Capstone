@@ -155,7 +155,19 @@ model Transaction {
   overdueEscalationSent Boolean     @default(false) @map("overdue_escalation_sent")
   overdueEmailSent          Boolean @default(false) @map("overdue_email_sent")
   overdueEscalationEmailSent Boolean @default(false) @map("overdue_escalation_email_sent")
-  damageReason    String?           @map("damage_reason")
+  // Repeat-reminder bookkeeping (admin-configurable interval + max count):
+  // how many overdue notices went out per channel and when the last one did.
+  overdueSmsCount      Int       @default(0) @map("overdue_sms_count")
+  overdueSmsLastAt     DateTime? @map("overdue_sms_last_at")
+  overdueEmailCount    Int       @default(0) @map("overdue_email_count")
+  overdueEmailLastAt   DateTime? @map("overdue_email_last_at")
+  // Past `overdue_manual_call_days` automatic reminders stop and staff are
+  // prompted (once) to phone the customer; "Mark as called" records the call.
+  manualCallPromptedAt DateTime? @map("manual_call_prompted_at")
+  manualCalledAt       DateTime? @map("manual_called_at")
+  manualCalledById     String?   @map("manual_called_by_id")
+  manualCallNote       String?   @map("manual_call_note")
+  damageReason   String?           @map("damage_reason")
   notes           String?
   // Garment alteration workflow: null = no alteration needed,
   // 'pending' = with tailor, 'ready' = fitted, customer may pick up.

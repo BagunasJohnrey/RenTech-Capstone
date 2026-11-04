@@ -313,6 +313,15 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
         dueReminderEmailSent: bool(r.dueReminderEmailSent),
         overdueEmailSent: bool(r.overdueEmailSent),
         overdueEscalationEmailSent: bool(r.overdueEscalationEmailSent),
+        // Repeat-reminder counters + manual-call record (Nov 2026).
+        overdueSmsCount: Math.max(0, Math.trunc(numOrNull(r.overdueSmsCount) ?? 0)),
+        overdueSmsLastAt: dateOrNull(r.overdueSmsLastAt),
+        overdueEmailCount: Math.max(0, Math.trunc(numOrNull(r.overdueEmailCount) ?? 0)),
+        overdueEmailLastAt: dateOrNull(r.overdueEmailLastAt),
+        manualCallPromptedAt: dateOrNull(r.manualCallPromptedAt),
+        manualCalledAt: dateOrNull(r.manualCalledAt),
+        manualCalledById: strOrNull(r.manualCalledById),
+        manualCallNote: strOrNull(r.manualCallNote),
         createdAt: dateOrNow(r.createdAt), updatedAt: dateOrNow(r.updatedAt),
       };
       // txNumber is autoincrement — never written (avoids sequence clashes).

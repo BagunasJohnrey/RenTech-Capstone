@@ -1,5 +1,23 @@
 import QRCode from 'qrcode';
 import { getBookingCode, txDownpayment, txBalance } from './receipt';
+import { api } from './api';
+
+const FALLBACK_STORE = { name: "Mylene's Boutique", address: 'Balayan, Batangas, Philippines', contact: '' };
+
+// Settings → General → Business Profile (public rental-defaults). Any failure
+// keeps the built-in letterhead so a receipt download never breaks.
+async function loadStoreProfile() {
+  try {
+    const d = await api.get('/settings/rental-defaults');
+    return {
+      name: d?.store_name?.trim() || FALLBACK_STORE.name,
+      address: d?.store_address?.trim() || FALLBACK_STORE.address,
+      contact: d?.store_contact?.trim() || '',
+    };
+  } catch {
+    return FALLBACK_STORE;
+  }
+}
 
 // Shared PNG booking-receipt renderer (system branding: Plus Jakarta Sans,
 // burgundy gradient letterhead, logo, RENTECH. wordmark). Drawn on canvas —
@@ -27,7 +45,7 @@ export async function downloadReceiptImage({
     img.onerror = () => { clearTimeout(timer); done(null); };
     img.src = src;
   });
-  const logo = await loadImage('/pwa-192x192.png');
+  const [logo, store] = await Promise.all([loadImage('/pwa-192x192.png'), loadStoreProfile()]);
   const code = getBookingCode(tx);
   // QR only when the feature flag is on: reuse a passed-in data URI when
   // ready, otherwise generate it so the saved image stays scannable.
@@ -130,13 +148,36 @@ export async function downloadReceiptImage({
   const tx0 = hx + (logo ? 80 : 0);
   ctx.textAlign = 'left';
   ctx.fillStyle = '#ffffff';
-  ctx.font = F(800, 27);
-  ctx.fillText("Mylene's Boutique", tx0, hy + 26);
+  // Left block must stop short of the right-aligned receipt meta (code +
+  // date). Measure the widest meta line instead of guessing.
+  const rxMeta = cardX + cardW - PAD;
+  ctx.font = F(800, 22, true);
+  const codeW = ctx.measureText(code).width;
+  ctx.font = F(800, 14);
+  const metaW = Math.max(codeW, ctx.measureText('BOOKING RECEIPT').width);
+  const leftMax = rxMeta - tx0 - metaW - 24;
+  const fitText = (text, max) => {
+    if (ctx.measureText(text).width <= max) return text;
+    let t = text;
+    while (t.length > 1 && ctx.measureText(`${t}...`).width > max) t = t.slice(0, -1);
+    return `${t.trimEnd()}...`;
+  };
+  // Store name: step the font down before ever cutting it short.
+  let nameSize = 27;
+  ctx.font = F(800, nameSize);
+  while (nameSize > 18 && ctx.measureText(store.name).width > leftMax) {
+    nameSize -= 1;
+    ctx.font = F(800, nameSize);
+  }
+  ctx.fillText(fitText(store.name, leftMax), tx0, hy + 26);
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = F(500, 16);
-  ctx.fillText('Rental Attire & Formal Wear', tx0, hy + 50);
+  ctx.fillText(fitText('Rental Attire & Formal Wear', leftMax), tx0, hy + 50);
   ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.fillText('Balayan, Batangas, Philippines', tx0, hy + 70);
+  // Below the date line the meta column is empty, so these get more room.
+  const lowerMax = rxMeta - tx0;
+  ctx.fillText(fitText(store.address, leftMax), tx0, hy + 72);
+  if (store.contact) ctx.fillText(fitText(`Inquiries: ${store.contact}`, lowerMax), tx0, hy + 94);
   // Receipt meta, right-aligned
   ctx.textAlign = 'right';
   const rx = cardX + cardW - PAD;

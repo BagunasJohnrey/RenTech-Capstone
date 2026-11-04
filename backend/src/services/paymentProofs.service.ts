@@ -5,7 +5,7 @@ import { applyPaymentToTransaction } from './payments.ledger.js';
 import { createNotification } from './notifications.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
-import { sendProofRejectedEmail, isSendableEmail } from './brevo.service.js';
+import { sendProofRejectedEmail, isSendableEmail } from './resend.service.js';
 
 export const MAX_PROOF_BYTES = 5 * 1024 * 1024;
 

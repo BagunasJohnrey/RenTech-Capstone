@@ -7,9 +7,9 @@ import { errorHandler } from '../src/middleware/errorHandler.js';
 import {
   isSendableEmail,
   sendEmail,
-  checkBrevoHealth,
-} from '../src/services/brevo.service.js';
-import { isBrevoTokenFormat } from '../src/services/auth.service.js';
+  checkResendHealth,
+} from '../src/services/resend.service.js';
+import { isEmailTokenFormat } from '../src/services/auth.service.js';
 import {
   verificationEmail,
   passwordResetEmail,
@@ -22,20 +22,20 @@ import {
   overdueEmail,
 } from '../src/templates/emailTemplates.js';
 
-describe('brevo token format', () => {
+describe('email token format', () => {
   it('accepts 64-char hex tokens', () => {
-    expect(isBrevoTokenFormat('a'.repeat(64))).toBe(true);
-    expect(isBrevoTokenFormat('A1'.repeat(32))).toBe(true);
+    expect(isEmailTokenFormat('a'.repeat(64))).toBe(true);
+    expect(isEmailTokenFormat('A1'.repeat(32))).toBe(true);
   });
 
   it('rejects legacy credential shapes', () => {
-    expect(isBrevoTokenFormat('valid-hash')).toBe(false);
-    expect(isBrevoTokenFormat('')).toBe(false);
-    expect(isBrevoTokenFormat('short')).toBe(false);
+    expect(isEmailTokenFormat('valid-hash')).toBe(false);
+    expect(isEmailTokenFormat('')).toBe(false);
+    expect(isEmailTokenFormat('short')).toBe(false);
   });
 });
 
-describe('brevo recipient guard', () => {
+describe('resend recipient guard', () => {
   it('accepts normal emails', () => {
     expect(isSendableEmail('customer@example.com')).toBe(true);
   });
@@ -48,7 +48,7 @@ describe('brevo recipient guard', () => {
   });
 });
 
-describe('brevo sendEmail (simulated — no BREVO_API_KEY in tests)', () => {
+describe('resend sendEmail (simulated — no RESEND_API_KEY in tests)', () => {
   it('simulates delivery without hitting the network', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
@@ -73,9 +73,9 @@ describe('brevo sendEmail (simulated — no BREVO_API_KEY in tests)', () => {
   });
 });
 
-describe('brevo health probe', () => {
+describe('resend health probe', () => {
   it('reports simulated dev mode without a key', async () => {
-    const health = await checkBrevoHealth();
+    const health = await checkResendHealth();
     expect(health.configured).toBe(false);
     expect(health.simulated).toBe(true);
   });
@@ -184,7 +184,7 @@ describe('email templates (branded, fee-policy aware)', () => {
 describe('global email kill-switch (messaging_email_enabled)', () => {
   it('lifecycle emails are skipped when OFF (no network call)', async () => {
     const { prisma } = await import('../src/config/database.js');
-    const { sendBookingConfirmationEmail } = await import('../src/services/brevo.service.js');
+    const { sendBookingConfirmationEmail } = await import('../src/services/resend.service.js');
     prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_email_enabled', value: 'false' });
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
@@ -207,8 +207,8 @@ describe('global email kill-switch (messaging_email_enabled)', () => {
   });
 
   it('lifecycle emails still send when ON', async () => {
-    const { sendBookingConfirmationEmail } = await import('../src/services/brevo.service.js');
-    // setup.ts default: no rule row -> ON; blank BREVO_API_KEY -> simulated.
+    const { sendBookingConfirmationEmail } = await import('../src/services/resend.service.js');
+    // setup.ts default: no rule row -> ON; blank RESEND_API_KEY -> simulated.
     const result = await sendBookingConfirmationEmail('customer@example.com', {
       customerName: 'Maria',
       itemName: 'Red Gown',
@@ -225,7 +225,7 @@ describe('global email kill-switch (messaging_email_enabled)', () => {
 
   it('auth emails bypass the kill-switch (verification still sends when OFF)', async () => {
     const { prisma } = await import('../src/config/database.js');
-    const { sendVerificationEmail } = await import('../src/services/brevo.service.js');
+    const { sendVerificationEmail } = await import('../src/services/resend.service.js');
     prisma.businessRule.findUnique.mockResolvedValueOnce({ key: 'messaging_email_enabled', value: 'false' });
     const result = await sendVerificationEmail(
       'customer@example.com',
@@ -236,14 +236,14 @@ describe('global email kill-switch (messaging_email_enabled)', () => {
   });
 });
 
-describe('GET /api/settings/integrations-status (brevo row)', () => {
+describe('GET /api/settings/integrations-status (resend row)', () => {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
   app.use('/api', routes);
   app.use(errorHandler);
 
-  it('exposes brevo alongside the other providers (admin, MFA-verified)', async () => {
+  it('exposes resend alongside the other providers (admin, MFA-verified)', async () => {
     const res = await request(app)
       .get('/api/settings/integrations-status')
       .set('Authorization', 'Bearer admin-token');
@@ -251,9 +251,9 @@ describe('GET /api/settings/integrations-status (brevo row)', () => {
     // Admin MFA gate: the setup.ts admin token carries aal:2 in app_metadata,
     // so requireMfaAdmin passes without the rt_mfa_verified marker.
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('brevo');
-    expect(res.body.brevo.configured).toBe(false);
-    expect(res.body.brevo.simulated).toBe(true);
+    expect(res.body).toHaveProperty('resend');
+    expect(res.body.resend.configured).toBe(false);
+    expect(res.body.resend.simulated).toBe(true);
     expect(res.body).toHaveProperty('semaphore');
     expect(res.body).not.toHaveProperty('paymongo');
     expect(res.body).not.toHaveProperty('maya');
@@ -266,7 +266,7 @@ describe('GET /api/settings/integrations-status (brevo row)', () => {
 
     expect(res.status).toBe(200);
     // No rule rows in the mock DB -> both default ON.
-    expect(res.body.brevo.enabled).toBe(true);
+    expect(res.body.resend.enabled).toBe(true);
     expect(res.body.semaphore.enabled).toBe(true);
   });
 
@@ -282,6 +282,50 @@ describe('GET /api/settings/integrations-status (brevo row)', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.semaphore.enabled).toBe(true);
-    expect(res.body.brevo.enabled).toBe(false);
+    expect(res.body.resend.enabled).toBe(false);
+  });
+});
+
+describe('emails use the Business Profile (Settings → General)', () => {
+  it('header, footer and plain-text sign-off show the saved store details', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const { clearBusinessRulesCache } = await import('../src/services/settings.service.js');
+    const { refreshEmailStore } = await import('../src/services/resend.service.js');
+    const { cancellationEmail, setEmailStore } = await import('../src/templates/emailTemplates.js');
+    clearBusinessRulesCache();
+    prisma.businessRule.findMany.mockResolvedValueOnce([
+      { key: 'business_name', value: 'Mylene Boutique' },
+      { key: 'business_address', value: 'Poblacion, Balayan' },
+      { key: 'business_contact', value: '09973342134' },
+    ]);
+    try {
+      await refreshEmailStore();
+      const built = cancellationEmail('Maria', 'Red Gown');
+      expect(built.html).toContain('Mylene Boutique');
+      expect(built.html).toContain('Poblacion, Balayan');
+      expect(built.html).toContain('09973342134');
+      expect(built.text).toContain('Mylene Boutique · Poblacion, Balayan · 09973342134');
+      expect(built.text).not.toContain('RenTech · Balayan, Batangas');
+    } finally {
+      setEmailStore(null);
+      clearBusinessRulesCache();
+    }
+  });
+
+  it('falls back to the built-in identity when nothing is saved', async () => {
+    const { setEmailStore, storeSignoff, cancellationEmail } = await import('../src/templates/emailTemplates.js');
+    setEmailStore(null);
+    expect(storeSignoff()).toBe("Mylene's Boutique · Balayan, Batangas");
+    expect(cancellationEmail('Maria', 'Red Gown').html).toContain("Mylene's Boutique");
+  });
+
+  it('escapes store details in HTML', async () => {
+    const { setEmailStore, storeSignoffHtml } = await import('../src/templates/emailTemplates.js');
+    setEmailStore({ name: 'A <b>&</b> B', address: 'X', contact: '' });
+    try {
+      expect(storeSignoffHtml()).toBe('A &lt;b&gt;&amp;&lt;/b&gt; B · X');
+    } finally {
+      setEmailStore(null);
+    }
   });
 });

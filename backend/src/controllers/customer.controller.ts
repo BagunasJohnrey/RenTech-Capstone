@@ -7,7 +7,7 @@ import * as transactionService from '../services/transactions.service.js';
 import * as customerService from '../services/customer.service.js';
 import * as storageService from '../services/storage.service.js';
 import { MAX_PROOF_BYTES } from '../services/paymentProofs.service.js';
-import { sendEmail, isSendableEmail } from '../services/brevo.service.js';
+import { sendEmail, isSendableEmail } from '../services/resend.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';

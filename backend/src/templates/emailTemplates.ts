@@ -1,4 +1,4 @@
-// Branded transactional email templates for Brevo delivery.
+// Branded transactional email templates (sent via Resend).
 //
 // Design mirrors the RenTech app theme (see frontend/src/index.css +
 // component classes):
@@ -19,7 +19,8 @@
 //     value, hairline dividers, optional #bf4a53 total row.
 //   - Booking code: mono, letterspaced, rounded-full tinted chip (app style).
 //   - Callouts (expiry / ignore notices): gray-50 rounded boxes.
-//   - Footer: "Mylene's Boutique" + "RenTech · Balayan, Batangas".
+//   - Footer: store name + address (+ inquiry number) from Settings →
+//     General → Business Profile (see setEmailStore).
 //
 // All markup uses INLINE CSS only (Gmail/Outlook/Apple Mail strip <style>).
 // Each builder returns { subject, html, text } — text is the plain-text part.
@@ -33,6 +34,36 @@ const FAINT = '#9ca3af';
 const PAGE_BG = '#fafbfc';
 const HAIRLINE = '#eef0f2';
 const SOFT_BG = '#f9fafb';
+
+// Store identity for headers, footers and plain-text sign-offs. The email
+// service (resend.service.ts) refreshes it from Settings → General →
+// Business Profile right before building each email; these defaults cover a
+// fresh install or an unreadable settings table.
+export interface EmailStore { name: string; address: string; contact: string }
+export const DEFAULT_EMAIL_STORE: EmailStore = { name: "Mylene's Boutique", address: 'Balayan, Batangas', contact: '' };
+let store: EmailStore = { ...DEFAULT_EMAIL_STORE };
+
+export function setEmailStore(next: Partial<EmailStore> | null | undefined) {
+  store = {
+    name: next?.name?.trim() || DEFAULT_EMAIL_STORE.name,
+    address: next?.address?.trim() || DEFAULT_EMAIL_STORE.address,
+    contact: next?.contact?.trim() || '',
+  };
+}
+
+export function getEmailStore(): EmailStore {
+  return store;
+}
+
+/** Plain-text sign-off line, e.g. "Mylene's Boutique · Balayan, Batangas · 0917 123 4567". */
+export function storeSignoff(): string {
+  return [store.name, store.address, store.contact].filter(Boolean).join(' · ');
+}
+
+/** HTML-escaped sign-off for hand-written email bodies. */
+export function storeSignoffHtml(): string {
+  return esc(storeSignoff());
+}
 
 function esc(s: string): string {
   return String(s ?? '')
@@ -63,7 +94,7 @@ function shell({ eyebrow, heading, bodyHtml, preheader = '' }: ShellOpts): strin
     // Brand header — maroon gradient, wordmark + tagline only.
     `<tr><td bgcolor="#a63f47" style="background:linear-gradient(135deg,#8e323a 0%,#a63f47 50%,#bf4a53 100%);background-color:#a63f47;padding:32px 36px 28px;">` +
     `<p style="margin:0;color:#ffffff;font-size:23px;font-weight:800;letter-spacing:-0.02em;line-height:1.2;font-family:${FONT};">RenTech</p>` +
-    `<p style="margin:5px 0 0;color:rgba(255,255,255,0.78);font-size:12.5px;font-family:${FONT};">Mylene&apos;s Boutique &middot; Rental made elegant.</p>` +
+    `<p style="margin:5px 0 0;color:rgba(255,255,255,0.78);font-size:12.5px;font-family:${FONT};">${esc(store.name)} &middot; Rental made elegant.</p>` +
     `</td></tr>` +
     // Body — eyebrow label, heading, content.
     `<tr><td style="padding:34px 36px 30px;">` +
@@ -73,8 +104,9 @@ function shell({ eyebrow, heading, bodyHtml, preheader = '' }: ShellOpts): strin
     `</td></tr>` +
     // Footer.
     `<tr><td style="background-color:${SOFT_BG};border-top:1px solid ${HAIRLINE};padding:22px 36px 24px;text-align:center;">` +
-    `<p style="margin:0;font-size:13px;font-weight:800;color:${INK};font-family:${FONT};">Mylene&apos;s Boutique</p>` +
-    `<p style="margin:5px 0 0;font-size:12px;color:${FAINT};font-family:${FONT};">RenTech &middot; Balayan, Batangas &middot; Rental made elegant.</p>` +
+    `<p style="margin:0;font-size:13px;font-weight:800;color:${INK};font-family:${FONT};">${esc(store.name)}</p>` +
+    `<p style="margin:5px 0 0;font-size:12px;color:${FAINT};font-family:${FONT};">${esc(store.address)}${store.contact ? ` &middot; ${esc(store.contact)}` : ''}</p>` +
+    `<p style="margin:3px 0 0;font-size:11px;color:${FAINT};font-family:${FONT};">Powered by RenTech &middot; Rental made elegant.</p>` +
     `</td></tr>` +
     `</table>` +
     `<p style="font-size:11px;color:#c3c7cd;text-align:center;margin:14px 0 0;font-family:${FONT};">You&apos;re receiving this because you have a RenTech account or booking.</p>` +
@@ -161,7 +193,7 @@ export function verificationEmail(name: string, verifyUrl: string): BuiltEmail {
   return {
     subject: 'Verify your RenTech email address',
     html,
-    text: `Welcome to RenTech, ${safeName}!\n\nVerify your email to start browsing our collection:\n${verifyUrl}\n\nThis link expires in 24 hours. Didn't create an account? You can safely ignore this email.\n\nRenTech · Balayan, Batangas`,
+    text: `Welcome to RenTech, ${safeName}!\n\nVerify your email to start browsing our collection:\n${verifyUrl}\n\nThis link expires in 24 hours. Didn't create an account? You can safely ignore this email.\n\n${storeSignoff()}`,
   };
 }
 
@@ -184,7 +216,7 @@ export function passwordResetEmail(name: string, resetUrl: string): BuiltEmail {
   return {
     subject: 'Reset your RenTech password',
     html,
-    text: `Hi ${safeName},\n\nWe received a request to reset your password. Choose a new one here:\n${resetUrl}\n\nThis link expires in 1 hour. Didn't request this? You can safely ignore this email.\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${safeName},\n\nWe received a request to reset your password. Choose a new one here:\n${resetUrl}\n\nThis link expires in 1 hour. Didn't request this? You can safely ignore this email.\n\n${storeSignoff()}`,
   };
 }
 
@@ -243,8 +275,8 @@ export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
       : `Booking confirmed: ${d.itemName}`,
     html,
     text: pending
-      ? `Hi ${d.customerName},\n\nWe received your booking for "${d.itemName}".\nYour downpayment screenshot is under review. We'll email you once it's verified.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment under review: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nRenTech · Balayan, Batangas`
-      : `Hi ${d.customerName},\n\nYour rental of "${d.itemName}" is confirmed.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nShow this email at the boutique when you pick up. Thank you!\n\nRenTech · Balayan, Batangas`,
+      ? `Hi ${d.customerName},\n\nWe received your booking for "${d.itemName}".\nYour downpayment screenshot is under review. We'll email you once it's verified.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment under review: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\n${storeSignoff()}`
+      : `Hi ${d.customerName},\n\nYour rental of "${d.itemName}" is confirmed.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nShow this email at the boutique when you pick up. Thank you!\n\n${storeSignoff()}`,
   };
 }
 
@@ -262,7 +294,7 @@ export function pickupEmail(customerName: string, itemName: string, dueDate: str
   return {
     subject: `Picked up: ${itemName} — due ${dueDate}`,
     html,
-    text: `Hi ${customerName},\n\nYou picked up "${itemName}". Please return it by ${dueDate}.\nNeed more time? Contact the boutique before your due date.\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${customerName},\n\nYou picked up "${itemName}". Please return it by ${dueDate}.\nNeed more time? Contact the boutique before your due date.\n\n${storeSignoff()}`,
   };
 }
 
@@ -291,7 +323,7 @@ export function returnEmail(
   return {
     subject: `Thanks for returning ${itemName}!`,
     html,
-    text: `Hi ${customerName},\n\n"${itemName}" has been returned${extra > 0 ? ` with additional charges of ${peso(extra)}` : ''}. Thank you — we hope you loved wearing it!\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${customerName},\n\n"${itemName}" has been returned${extra > 0 ? ` with additional charges of ${peso(extra)}` : ''}. Thank you — we hope you loved wearing it!\n\n${storeSignoff()}`,
   };
 }
 
@@ -308,7 +340,7 @@ export function cancellationEmail(customerName: string, itemName: string): Built
   return {
     subject: `Booking cancelled: ${itemName}`,
     html,
-    text: `Hi ${customerName},\n\nYour booking for "${itemName}" has been cancelled and the item is back in the collection.\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${customerName},\n\nYour booking for "${itemName}" has been cancelled and the item is back in the collection.\n\n${storeSignoff()}`,
   };
 }
 
@@ -330,24 +362,30 @@ export function proofRejectedEmail(customerName: string, itemName: string, reaso
   return {
     subject: `Payment proof needs attention: ${itemName}`,
     html,
-    text: `Hi ${safeName},\n\nWe couldn't verify your payment proof for "${itemName}".\nReason: ${reason}\n\nPlease upload a new proof from My Rentals. Pickup stays on hold until the downpayment is verified.\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${safeName},\n\nWe couldn't verify your payment proof for "${itemName}".\nReason: ${reason}\n\nPlease upload a new proof from My Rentals. Pickup stays on hold until the downpayment is verified.\n\n${storeSignoff()}`,
   };
 }
 
 // ---- Due-today reminder ----
-export function dueReminderEmail(customerName: string, itemName: string, dueDate: string): BuiltEmail {
+export function dueReminderEmail(customerName: string, itemName: string, dueDate: string, daysUntilDue = 0): BuiltEmail {
+  // Lead-time reminders (admin sets "N days before due") say when, not "today".
+  const when = daysUntilDue <= 0 ? 'today' : daysUntilDue === 1 ? 'tomorrow' : `in ${daysUntilDue} days`;
   const html = shell({
     eyebrow: 'Gentle reminder',
     heading: `Friendly reminder, ${customerName}`,
-    preheader: `Your rental of ${itemName} is due today`,
+    preheader: `Your rental of ${itemName} is due ${when}`,
     bodyHtml:
-      para(`Your rental of \u201C${itemName}\u201D is due today (${dueDate}). See you at the boutique!`) +
+      para(`Your rental of “${itemName}” is due ${when} (${dueDate}). See you at the boutique!`) +
       detailsTable([['Item', itemName], ['Due', dueDate]]),
   });
   return {
-    subject: `Due today: ${itemName}`,
+    subject: daysUntilDue <= 0 ? `Due today: ${itemName}` : `Due ${when}: ${itemName}`,
     html,
-    text: `Hi ${customerName},\n\nA reminder that your rental of "${itemName}" is due today (${dueDate}). See you at the boutique!\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${customerName},
+
+A reminder that your rental of "${itemName}" is due ${when} (${dueDate}). See you at the boutique!
+
+${storeSignoff()}`,
   };
 }
 
@@ -365,7 +403,7 @@ export function overdueEmail(customerName: string, itemName: string, daysOverdue
   return {
     subject: `Overdue: please return ${itemName}`,
     html,
-    text: `Hi ${customerName},\n\nYour rental of "${itemName}" is now ${daysOverdue} day(s) overdue. Please return it as soon as possible or contact the boutique.\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${customerName},\n\nYour rental of "${itemName}" is now ${daysOverdue} day(s) overdue. Please return it as soon as possible or contact the boutique.\n\n${storeSignoff()}`,
   };
 }
 
@@ -383,6 +421,6 @@ export function staffWelcomeEmail(name: string, oneTimePassword: string): BuiltE
   return {
     subject: 'Your RenTech staff account is ready',
     html,
-    text: `Hi ${name},\n\nAn admin created a staff account for you. Your one-time password is: ${oneTimePassword}\n\nSign in with it once — you will be asked to choose your own password right away. Keep it private.\n\nRenTech · Balayan, Batangas`,
+    text: `Hi ${name},\n\nAn admin created a staff account for you. Your one-time password is: ${oneTimePassword}\n\nSign in with it once — you will be asked to choose your own password right away. Keep it private.\n\n${storeSignoff()}`,
   };
 }

@@ -29,13 +29,6 @@ function chipIcon(label) {
 function shortModelName(provider, model) {
   if (provider === 'gemini') return 'Gemini';
   if (provider === 'groq') return 'Groq';
-  if (provider === 'openrouter' && model) {
-    const slug = String(model).split('/').pop()?.replace(':free', '') || 'AI';
-    return slug
-      .split('-')
-      .map((w, i) => (i === 0 ? w[0]?.toUpperCase() + w.slice(1) : w))
-      .join(' ');
-  }
   return 'AI';
 }
 

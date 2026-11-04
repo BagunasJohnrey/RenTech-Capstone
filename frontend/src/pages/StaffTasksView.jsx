@@ -12,6 +12,7 @@ import SmsLogPanel from '../components/SmsLogPanel';
 import PaymentProofsQueue from '../components/PaymentProofsQueue';
 import PaymentProofReviewModal from '../components/PaymentProofReviewModal';
 import AwaitingProofModal from '../components/AwaitingProofModal';
+import NeedsCallCard from '../components/NeedsCallCard';
 import { usePaymentProofs } from '../hooks/usePaymentProofs';
 import { isReleased } from '../hooks/useTransactions';
 import { peso } from '../utils/receipt';
@@ -437,6 +438,9 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
         </div>
 
 
+
+        {/* Long-overdue rentals where automatic reminders stopped — staff call. */}
+        <NeedsCallCard transactions={queueTxs} onCalled={onRetryDigest} onOpen={onNavigateDetail} />
 
         {/* Payments to verify — manual-QR proofs + unpaid manual checkouts.
             Always visible at the top of the queues; "All clear" is a real state. */}

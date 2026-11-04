@@ -6,6 +6,7 @@ import SettingRow from './SettingRow';
 import Toggle from './Toggle';
 import { SkeletonList } from '../Skeleton';
 import { LS_NOTIF, DEFAULT_NOTIF, loadJSON } from './constants';
+import ReminderScheduleCard from './ReminderScheduleCard';
 
 const TEMPLATE_KEYS = ['booking_confirmation', 'due_reminder', 'late_return'];
 
@@ -180,6 +181,9 @@ export default function NotificationsTab({ profile }) {
 
   return (
     <>
+      {/* Store-wide reminder schedule + per-type email switches (admin) */}
+      <ReminderScheduleCard />
+
       {/* Notification Preferences — this account only */}
       <CollapsibleCard
         icon={Bell}
@@ -194,7 +198,7 @@ export default function NotificationsTab({ profile }) {
             { key: 'booking', label: 'Booking Confirmation', desc: 'SMS you receive when one of your rentals is created.', icon: Bell, colors: 'bg-red-50 text-[#bf4a53]' },
             { key: 'reminder', label: 'Due Reminder', desc: 'Reminders you receive before your due date.', icon: Clock, colors: 'bg-amber-50 text-amber-600' },
             { key: 'lateReturn', label: 'Late Return Alert', desc: 'Overdue alerts you receive for your rentals.', icon: AlertTriangle, colors: 'bg-orange-50 text-orange-600' },
-            { key: 'email', label: 'Brevo Emails', desc: 'Emails sent to you alongside SMS.', icon: Mail, colors: 'bg-blue-50 text-blue-600' },
+            { key: 'email', label: 'Emails', desc: 'Emails sent to you alongside SMS.', icon: Mail, colors: 'bg-blue-50 text-blue-600' },
           ].map(({ key, label, desc, icon: Icon, colors }) => (
             <div
               key={key}

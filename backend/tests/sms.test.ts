@@ -213,21 +213,20 @@ describe('SMS scheduler service (Phase 2.4)', () => {
     expect((global.fetch as any).mock.calls.length).toBe(0); // no provider call
   });
 
-  it('notifyOverdue3Days: 2-days-overdue tx does NOT escalate; 3-days does', async () => {
+  it('from overdue_escalation_days the SMS asks the customer to call', async () => {
     const { prisma } = await import('../src/config/database.js');
     const three = { ...baseTx, id: 'tx-3d', dueDate: new Date(Date.now() - 3 * 86400000) };
     prisma.transaction.findMany.mockResolvedValueOnce([three]);
-    prisma.businessRule.findMany.mockResolvedValue([]);
     const svc = await reload();
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([{ message_id: 'x' }]) });
-    const out = await svc.notifyOverdue3Days();
-    expect(out.length).toBe(1);
+    const out = await svc.autoNotifyOverdue();
+    expect(out[0].message).toContain('Please call us');
     const escCall = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.overdueEscalationSent === true);
-    expect(escCall).toBeTruthy();
+    expect(escCall?.[0].data.overdueSmsCount).toBe(1);
   });
 });
 
-describe('Reminder emails are decoupled from SMS delivery (no Brevo duplicates)', () => {
+describe('Reminder emails are decoupled from SMS delivery (no email duplicates)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -241,7 +240,7 @@ describe('Reminder emails are decoupled from SMS delivery (no Brevo duplicates)'
   }
 
   // Prisma is mocked (see setup.ts): observe email behavior through the
-  // transaction.update payloads rather than the network (Brevo sends are
+  // transaction.update payloads rather than the network (Resend sends are
   // simulated in tests and never touch fetch).
   async function flagUpdates(flag: string) {
     const { prisma } = await import('../src/config/database.js');
@@ -307,28 +306,180 @@ describe('Reminder emails are decoupled from SMS delivery (no Brevo duplicates)'
     expect(await flagUpdates('dueReminderEmailSent')).toHaveLength(0);
   });
 
-  it('escalation: SMS failure still marks overdueEscalationEmailSent, no re-email next tick', async () => {
+  it('a later email waits for the interval, then repeats', async () => {
     const { prisma } = await import('../src/config/database.js');
-    const escTx = {
-      id: 'tx-esc-email', status: 'Overdue',
-      dueDate: new Date(Date.now() - 4 * 86400000),
-      rentalDate: new Date(Date.now() - 7 * 86400000),
-      balance: 1500, overdueEscalationSent: false, overdueEscalationEmailSent: false,
-      customer: emailedCustomer, item: { id: 1, name: 'Gown' },
+    const tx = {
+      id: 'tx-repeat', status: 'Overdue',
+      dueDate: new Date(Date.now() - 3 * 86400000),
+      balance: 0, overdueSmsSent: true, overdueEmailSent: true,
+      overdueSmsCount: 3, overdueEmailCount: 1, overdueEmailLastAt: new Date(Date.now() - 86400000),
+      customer: { ...emailedCustomer, phone: null }, item: { id: 1, name: 'Gown' },
     };
-    prisma.transaction.findMany.mockResolvedValueOnce([escTx]);
-    prisma.businessRule.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValueOnce([tx]);
     const svc = await reload();
-    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
-    await svc.notifyOverdue3Days();
-    expect(await flagUpdates('overdueEscalationEmailSent')).toHaveLength(1);
+    await svc.autoNotifyOverdue();
+    expect(await flagUpdates('overdueEmailCount')).toHaveLength(0); // 1 day < 2-day interval
 
     vi.clearAllMocks();
-    prisma.transaction.findMany.mockResolvedValueOnce([{ ...escTx, overdueEscalationEmailSent: true }]);
-    prisma.businessRule.findMany.mockResolvedValue([]);
-    global.fetch = vi.fn().mockRejectedValue(new Error('sms gateway down'));
-    await svc.notifyOverdue3Days();
-    expect(await flagUpdates('overdueEscalationEmailSent')).toHaveLength(0);
+    prisma.transaction.findMany.mockResolvedValueOnce([{ ...tx, overdueEmailLastAt: new Date(Date.now() - 2 * 86400000) }]);
+    await svc.autoNotifyOverdue();
+    const calls = await flagUpdates('overdueEmailCount');
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].data.overdueEmailCount).toBe(2);
+  });
+});
+
+describe('Configurable overdue schedule + manual-call cutoff (client feedback 3.2-3.4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const customer = { id: 'customer-id-111', name: 'Customer User', email: 'customer@example.com', phone: '09171234567', notifyPrefs: null };
+  const okSms = () => vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([{ message_id: 'm1' }]) });
+  const rules = (map: Record<string, string>) => Object.entries(map).map(([key, value]) => ({ key, value }));
+
+  it('channelNoticeDue honours count, max and the Manila-day interval', async () => {
+    const { channelNoticeDue } = await import('../src/services/sms.service.js');
+    const now = new Date();
+    expect(channelNoticeDue(0, null, 2, 3, now)).toBe(true);
+    expect(channelNoticeDue(1, new Date(now.getTime() - 86400000), 2, 3, now)).toBe(false);
+    expect(channelNoticeDue(1, new Date(now.getTime() - 2 * 86400000), 2, 3, now)).toBe(true);
+    expect(channelNoticeDue(3, new Date(now.getTime() - 9 * 86400000), 2, 3, now)).toBe(false);
+  });
+
+  it('admin SMS interval of 1 day texts again the next day', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findMany.mockResolvedValueOnce(rules({ overdue_sms_interval_days: '1' }));
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-daily', status: 'Overdue', dueDate: new Date(Date.now() - 2 * 86400000), balance: 0,
+      overdueSmsSent: true, overdueSmsCount: 1, overdueSmsLastAt: new Date(Date.now() - 86400000),
+      overdueEmailCount: 3, customer, item: { id: 1, name: 'Gown' },
+    }]);
+    const svc = await import('../src/services/sms.service.js');
+    global.fetch = okSms();
+    const out = await svc.autoNotifyOverdue();
+    expect(out[0].status).toBe('sent');
+    const call = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.overdueSmsCount === 2);
+    expect(call).toBeTruthy();
+  });
+
+  it('stops once the max count is reached', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-max', status: 'Overdue', dueDate: new Date(Date.now() - 8 * 86400000), balance: 0,
+      overdueSmsSent: true, overdueSmsCount: 3, overdueSmsLastAt: new Date(Date.now() - 5 * 86400000),
+      overdueEmailCount: 3, overdueEmailLastAt: new Date(Date.now() - 5 * 86400000),
+      customer, item: { id: 1, name: 'Gown' },
+    }]);
+    const svc = await import('../src/services/sms.service.js');
+    global.fetch = okSms();
+    const out = await svc.autoNotifyOverdue();
+    expect(out).toEqual([]);
+    expect((global.fetch as any).mock.calls.length).toBe(0);
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
+  });
+
+  it('at overdue_manual_call_days: no SMS/email, staff prompted once to call', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-call', status: 'Overdue', dueDate: new Date(Date.now() - 10 * 86400000), balance: 500,
+      overdueSmsSent: true, overdueSmsCount: 1, overdueSmsLastAt: new Date(Date.now() - 8 * 86400000),
+      overdueEmailCount: 1, overdueEmailLastAt: new Date(Date.now() - 8 * 86400000),
+      customer, item: { id: 1, name: 'Gown' },
+    }]);
+    prisma.profile.findMany.mockResolvedValueOnce([{ id: 'staff-1' }]);
+    const svc = await import('../src/services/sms.service.js');
+    global.fetch = okSms();
+    const out = await svc.autoNotifyOverdue();
+    expect(out[0].status).toBe('manual_call');
+    expect((global.fetch as any).mock.calls.length).toBe(0); // no SMS
+    expect(prisma.transaction.update.mock.calls.some((c: any) => c[0]?.data?.overdueEmailCount)).toBe(false); // no email
+    const prompt = prisma.transaction.update.mock.calls.find((c: any) => c[0]?.data?.manualCallPromptedAt);
+    expect(prompt).toBeTruthy();
+    const notif = prisma.notification.createMany.mock.calls.flatMap((c: any) => c[0].data);
+    expect(notif.some((n: any) => n.type === 'overdue_manual_call' && /call at 09171234567/.test(n.message))).toBe(true);
+  });
+
+  it('the overdue query skips rentals already handed to a manual call', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const svc = await import('../src/services/sms.service.js');
+    await svc.autoNotifyOverdue();
+    expect(prisma.transaction.findMany.mock.calls[0][0].where.manualCallPromptedAt).toBeNull();
+  });
+
+  it('due reminder lead time widens the window and says tomorrow', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findMany.mockResolvedValueOnce(rules({ due_reminder_lead_days: '1' }));
+    prisma.transaction.findMany.mockResolvedValueOnce([{
+      id: 'tx-lead', status: 'Active', dueDate: new Date(Date.now() + 86400000), balance: 0,
+      dueReminderSent: false, dueReminderEmailSent: true, customer, item: { id: 1, name: 'Gown' },
+    }]);
+    const svc = await import('../src/services/sms.service.js');
+    global.fetch = okSms();
+    const now = new Date();
+    const out = await svc.notifyDueToday(now);
+    expect(out[0].sent).toBe(true);
+    const where = prisma.transaction.findMany.mock.calls[0][0].where;
+    expect(where.dueDate.lt).toEqual(new Date(manilaNextDayStart(now).getTime() + 86400000));
+    const body = String((global.fetch as any).mock.calls[0][1].body);
+    expect(body).toContain('tomorrow');
+  });
+
+  it('per-type email toggle: overdue emails off skips only those', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.businessRule.findMany.mockResolvedValue(rules({ email_type_overdue_enabled: 'false' }));
+    try {
+      const { sendOverdueEmail, sendCancellationEmail } = await import('../src/services/resend.service.js');
+      expect(await sendOverdueEmail('customer@example.com', 'Maria', 'Gown', 2)).toBeNull();
+      expect(await sendCancellationEmail('customer@example.com', 'Maria', 'Gown')).not.toBeNull();
+    } finally {
+      prisma.businessRule.findMany.mockResolvedValue([]);
+    }
+  });
+
+  it('rejects a non-boolean email type toggle and out-of-range schedule values', async () => {
+    const { assertValidRuleValues } = await import('../src/services/settings.service.js');
+    expect(() => assertValidRuleValues({ email_type_overdue_enabled: 'maybe' })).toThrow();
+    expect(() => assertValidRuleValues({ overdue_manual_call_days: '1' })).toThrow();
+    expect(() => assertValidRuleValues({ overdue_sms_interval_days: '2', email_type_booking_enabled: 'false' })).not.toThrow();
+  });
+});
+
+describe('POST /api/transactions/:id/manual-call', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('staff can mark a customer as called (audited, note saved)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ id: 'tx-call', status: 'Overdue', manualCallPromptedAt: new Date(), manualCalledAt: null });
+    const res = await request(app)
+      .post('/api/transactions/tx-call/manual-call')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ note: 'Will return Friday' });
+    expect(res.status).toBe(200);
+    const data = prisma.transaction.update.mock.calls[0][0].data;
+    expect(data.manualCallNote).toBe('Will return Friday');
+    expect(data.manualCalledAt).toBeTruthy();
+    expect(prisma.auditLog.create).toHaveBeenCalled();
+  });
+
+  it('closed rentals are rejected', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.transaction.findUnique.mockResolvedValueOnce({ id: 'tx-done', status: 'Returned', manualCallPromptedAt: null, manualCalledAt: null });
+    const res = await request(app)
+      .post('/api/transactions/tx-done/manual-call')
+      .set('Authorization', 'Bearer staff-token')
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('customers cannot mark calls', async () => {
+    const res = await request(app)
+      .post('/api/transactions/tx-call/manual-call')
+      .set('Authorization', 'Bearer customer-token')
+      .send({});
+    expect(res.status).toBe(403);
   });
 });
 
@@ -595,12 +746,11 @@ describe('Store-calendar (Manila) due-date boundaries', () => {
     expect(prisma.notification.createMany).toHaveBeenCalled(); // staff still alerted
   });
 
-  it('overnight: due-today and escalation passes are held entirely', async () => {
+  it('overnight: the due-reminder pass is held entirely', async () => {
     const { prisma } = await import('../src/config/database.js');
     const svc = await import('../src/services/sms.service.js');
     const night = new Date('2026-10-29T17:00:00Z');
     expect(await svc.notifyDueToday(night)).toEqual([]);
-    expect(await svc.notifyOverdue3Days(night)).toEqual([]);
     expect(prisma.transaction.findMany).not.toHaveBeenCalled();
   });
 });

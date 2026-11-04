@@ -452,7 +452,7 @@ describe('CSRF Guard', () => {
   });
 });
 
-// Phase 2: password reset (Brevo delivery — always 200, no enumeration)
+// Phase 2: password reset (Resend delivery — always 200, no enumeration)
 describe('POST /api/auth/forgot-password', () => {
   it('should return 200 with generic message (no enumeration)', async () => {
     const res = await request(app)
@@ -526,19 +526,19 @@ describe('POST /api/auth/resend-verification', () => {
 });
 
 describe('POST /api/auth/reset-password', () => {
-  const BREVO_TOKEN = 'a'.repeat(64);
+  const EMAIL_TOKEN = 'a'.repeat(64);
 
-  it('should reset password with a Brevo token and mint session cookies', async () => {
+  it('should reset password with an email-link token and mint session cookies', async () => {
     const { prisma } = await import('../src/config/database.js');
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
-      id: 'etok-1', userId: 'profile-id-123', token: BREVO_TOKEN,
+      id: 'etok-1', userId: 'profile-id-123', token: EMAIL_TOKEN,
       type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
     } as never);
     const res = await request(app)
       .post('/api/auth/reset-password')
       .set('Origin', 'http://localhost:5173')
-      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+      .send({ token: EMAIL_TOKEN, password: 'newPassword123!' });
 
     expect(res.status).toBe(200);
     expect(res.body.message).toContain('reset');
@@ -554,31 +554,31 @@ describe('POST /api/auth/reset-password', () => {
     expect(res.headers['set-cookie'].some((c: string) => c.startsWith('rt_access='))).toBe(true);
   });
 
-  it('should reject a Brevo token that was already used', async () => {
+  it('should reject an email-link token that was already used', async () => {
     const { prisma } = await import('../src/config/database.js');
     vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
-      id: 'etok-used', userId: 'profile-id-123', token: BREVO_TOKEN,
+      id: 'etok-used', userId: 'profile-id-123', token: EMAIL_TOKEN,
       type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: new Date(),
     } as never);
     const res = await request(app)
       .post('/api/auth/reset-password')
       .set('Origin', 'http://localhost:5173')
-      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+      .send({ token: EMAIL_TOKEN, password: 'newPassword123!' });
 
     expect(res.status).toBe(401);
     expect(res.body.error).toContain('already been used');
   });
 
-  it('should reject an expired Brevo token', async () => {
+  it('should reject an expired email-link token', async () => {
     const { prisma } = await import('../src/config/database.js');
     vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
-      id: 'etok-old', userId: 'profile-id-123', token: BREVO_TOKEN,
+      id: 'etok-old', userId: 'profile-id-123', token: EMAIL_TOKEN,
       type: 'password_reset', expiresAt: new Date(Date.now() - 1000), usedAt: null,
     } as never);
     const res = await request(app)
       .post('/api/auth/reset-password')
       .set('Origin', 'http://localhost:5173')
-      .send({ token: BREVO_TOKEN, password: 'newPassword123!' });
+      .send({ token: EMAIL_TOKEN, password: 'newPassword123!' });
 
     expect(res.status).toBe(401);
     expect(res.body.error).toContain('expired');
@@ -670,17 +670,17 @@ describe('POST /api/auth/reset-password', () => {
     expect(res.body.error).toContain('expired');
   });
 
-  it('should accept a correct current password (Brevo path) and consume the link', async () => {
+  it('should accept a correct current password (email-link path) and consume the link', async () => {
     const { prisma } = await import('../src/config/database.js');
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
-      id: 'etok-ok', userId: 'profile-id-123', token: BREVO_TOKEN,
+      id: 'etok-ok', userId: 'profile-id-123', token: EMAIL_TOKEN,
       type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
     } as never);
     const res = await request(app)
       .post('/api/auth/reset-password')
       .set('Origin', 'http://localhost:5173')
-      .send({ token: BREVO_TOKEN, password: 'newPassword123!', currentPassword: 'oldPassword123!' });
+      .send({ token: EMAIL_TOKEN, password: 'newPassword123!', currentPassword: 'oldPassword123!' });
 
     expect(res.status).toBe(200);
     // Old password verified against Supabase before anything was written…
@@ -701,7 +701,7 @@ describe('POST /api/auth/reset-password', () => {
     const { prisma } = await import('../src/config/database.js');
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
-      id: 'etok-typo', userId: 'profile-id-123', token: BREVO_TOKEN,
+      id: 'etok-typo', userId: 'profile-id-123', token: EMAIL_TOKEN,
       type: 'password_reset', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
     } as never);
     vi.mocked(supabaseAdmin.auth.signInWithPassword).mockResolvedValueOnce({
@@ -710,7 +710,7 @@ describe('POST /api/auth/reset-password', () => {
     const res = await request(app)
       .post('/api/auth/reset-password')
       .set('Origin', 'http://localhost:5173')
-      .send({ token: BREVO_TOKEN, password: 'newPassword123!', currentPassword: 'wrongOld123!' });
+      .send({ token: EMAIL_TOKEN, password: 'newPassword123!', currentPassword: 'wrongOld123!' });
 
     expect(res.status).toBe(401);
     expect(res.body.error).toContain('Current password is incorrect');
@@ -756,19 +756,19 @@ describe('POST /api/auth/reset-password', () => {
 });
 
 describe('POST /api/auth/verify-email', () => {
-  const BREVO_TOKEN = 'b'.repeat(64);
+  const EMAIL_TOKEN = 'b'.repeat(64);
 
-  it('should confirm the email with a Brevo token', async () => {
+  it('should confirm the email with an email-link token', async () => {
     const { prisma } = await import('../src/config/database.js');
     const { supabaseAdmin } = await import('../src/config/supabase.js');
     vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce({
-      id: 'etok-v1', userId: 'profile-id-123', token: BREVO_TOKEN,
+      id: 'etok-v1', userId: 'profile-id-123', token: EMAIL_TOKEN,
       type: 'verification', expiresAt: new Date(Date.now() + 3600_000), usedAt: null,
     } as never);
     const res = await request(app)
       .post('/api/auth/verify-email')
       .set('Origin', 'http://localhost:5173')
-      .send({ token: BREVO_TOKEN });
+      .send({ token: EMAIL_TOKEN });
 
     expect(res.status).toBe(200);
     expect(res.body.message).toContain('verified');
@@ -781,7 +781,7 @@ describe('POST /api/auth/verify-email', () => {
     );
   });
 
-  it('should reject an unknown Brevo token', async () => {
+  it('should reject an unknown email-link token', async () => {
     const { prisma } = await import('../src/config/database.js');
     vi.mocked(prisma.emailToken.findUnique).mockResolvedValueOnce(null);
     const res = await request(app)
