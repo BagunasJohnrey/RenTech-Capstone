@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, Sparkles, ShoppingBag, ShieldCheck, Heart, MapPin, Mail } from 'lucide-react';
+import { Eye, EyeOff, CheckCircle, ArrowRight, ArrowLeft, ShieldCheck, Mail } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import Field from './ui/Field';
 import { api, API_ORIGIN } from '../utils/api';
 import TermsModal from './TermsModal';
+import AuthBrandPanel from './AuthBrandPanel';
 import {
   INPUT_LIMITS,
   sanitizeName,
@@ -63,7 +64,7 @@ function GoogleButton({ label, onClick, loading }) {
       type="button"
       onClick={onClick}
       disabled={loading}
-      className="w-full py-3 flex items-center justify-center gap-3 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
+      className="w-full py-3 short:py-2.5 flex items-center justify-center gap-3 bg-white border border-gray-300 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
     >
       {loading ? 'Redirecting...' : <><GoogleGlyph /> {label}</>}
     </button>
@@ -72,7 +73,7 @@ function GoogleButton({ label, onClick, loading }) {
 
 function Divider() {
   return (
-    <div className="flex items-center gap-3 my-5">
+    <div className="flex items-center gap-3 my-5 short:my-3">
       <div className="h-px flex-1 bg-gray-200" />
       <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">or</span>
       <div className="h-px flex-1 bg-gray-200" />
@@ -310,53 +311,20 @@ export default function Login({ onLogin, onVerifyMfa }) {
   };
 
   const inputClass =
-    'w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15 transition-all';
+    'w-full bg-white border border-gray-200 rounded-xl px-4 py-3 lg:py-2.5 short:py-2 text-sm font-medium text-gray-900 placeholder-gray-400 focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/15 transition-all';
 
   // Form field helpers are defined at module scope below.
 
   return (
-    <div className="min-h-screen flex bg-white overflow-x-hidden">
+    <div className="min-h-screen flex bg-white overflow-x-clip">
       {/* Brand panel */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-[#bf4a53] to-[#8f2a31] text-white p-10 lg:p-16 flex-col justify-between relative overflow-hidden">
-        <div className="absolute -top-24 -right-24 w-80 h-80 rounded-full bg-white/10 blur-2xl" />
-        <div className="absolute -bottom-32 -left-20 w-96 h-96 rounded-full bg-black/10 blur-3xl" />
-
-        <div className="relative flex items-center gap-3">
-          <img src="/logo-128.webp" alt="RENTECH" className="w-12 h-12 rounded-xl bg-white/15 p-1.5" />
-          <span className="text-xl font-extrabold tracking-tight">RenTech</span>
-        </div>
-
-        <div className="relative">
-          <h1 className="text-4xl font-extrabold leading-tight">Your perfect outfit, one tap away.</h1>
-          <p className="mt-4 text-white/80 text-base max-w-md">
-            Rent gowns, suits, barongs and more across Batangas. Sign in to manage bookings, get AI styling tips, and track your rentals.
-          </p>
-
-          <ul className="mt-8 space-y-4">
-            {[
-              { icon: ShoppingBag, text: 'Browse a curated collection of rentals' },
-              { icon: Sparkles, text: 'Get AI-powered styling recommendations' },
-              { icon: MapPin, text: 'Pickup & returns based in Balayan, Batangas' },
-              { icon: ShieldCheck, text: 'Secure bookings and account protection' },
-            ].map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-3 text-white/90">
-                <span className="w-9 h-9 rounded-lg bg-white/15 flex items-center justify-center shrink-0">
-                  <Icon size={18} />
-                </span>
-                <span className="text-sm font-medium">{text}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="relative flex items-center gap-2 text-white/70 text-xs">
-          <Heart size={14} /> Loved by renters across Batangas
-        </div>
-      </div>
+      <AuthBrandPanel subtitle={isSignup
+        ? 'Rent gowns, suits, barongs and more across Batangas. Create an account to book rentals, get AI styling tips, and track your orders.'
+        : 'Rent gowns, suits, barongs and more across Batangas. Sign in to manage bookings, get AI styling tips, and track your rentals.'} />
 
       {/* Form panel */}
-      <div className="w-full lg:w-1/2 min-h-screen flex flex-col items-center px-4 py-8 sm:px-6 sm:py-10 lg:px-12 lg:py-12 bg-[#fcfcfd]">
-        <div className="w-full max-w-md my-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 lg:rounded-none lg:shadow-none lg:border-0 lg:bg-transparent lg:p-0">
+      <div className="w-full lg:w-1/2 min-h-screen flex flex-col items-center px-4 py-8 sm:px-6 sm:py-10 lg:px-12 lg:py-6 short:py-4 bg-[#fcfcfd]">
+        <div className={`w-full ${isSignup ? 'max-w-md lg:max-w-xl' : 'max-w-md'} my-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-8 lg:rounded-none lg:shadow-none lg:border-0 lg:bg-transparent lg:p-0`}>
           {!isSignup ? (
             <>
 <div className="lg:hidden flex items-center justify-center mb-8">
@@ -531,9 +499,9 @@ export default function Login({ onLogin, onVerifyMfa }) {
               <div className="lg:hidden flex items-center justify-center mb-8">
                 <span className="text-2xl font-extrabold tracking-tight text-gray-950">RENTECH<span className="text-[#bf4a53]">.</span></span>
               </div>
-              <div className="mb-1">
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Create your account</h2>
-                <p className="text-gray-500 text-sm mt-1 mb-6">Join RenTech to start renting in minutes.</p>
+              <div className="mb-6 lg:mb-5 short:mb-3">
+                <h2 className="text-2xl sm:text-3xl short:text-2xl font-extrabold text-gray-900">Create your account</h2>
+                <p className="text-gray-500 text-sm mt-1 mb-6 lg:mb-4 short:mb-3">Join RenTech to start renting in minutes.</p>
                 {/* Labeled stepper */}
                 <div>
                   <div className="flex items-center gap-2 mb-2">
@@ -550,17 +518,19 @@ export default function Login({ onLogin, onVerifyMfa }) {
               </div>
 
               {signupStep === 1 && (
-                <div className="space-y-5">
+                <div className="space-y-5 lg:space-y-4 short:space-y-3">
                   <GoogleButton label="Sign up with Google" onClick={handleGoogle} loading={googleLoading} />
                   <Divider />
 
-                  <div className="space-y-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-4 lg:gap-y-3 short:gap-y-2">
+                    <div className="lg:col-span-2">
                     <Field label="Full Name" type="text" required value={signupData.name}
                       onChange={(e) => updateSignup('name', sanitizeName(e.target.value))} onBlur={() => markTouched('name')}
                       className={inputClass + ' ' + glowClass('name')} placeholder="Juan Dela Cruz" autoComplete="name"
                       maxLength={INPUT_LIMITS.NAME_MAX} showCount
                       valid={fieldState('name').valid}
                       error={touched.name && !fieldState('name').valid ? fieldState('name').error : undefined} />
+                    </div>
                     <Field label="Email" type="email" required value={signupData.email}
                       onChange={(e) => updateSignup('email', sanitizeEmail(e.target.value))} onBlur={() => markTouched('email')}
                       className={inputClass + ' ' + glowClass('email')} placeholder="you@example.com" autoComplete="email"
@@ -573,15 +543,17 @@ export default function Login({ onLogin, onVerifyMfa }) {
                       maxLength={INPUT_LIMITS.PHONE_LENGTH}
                       valid={fieldState('phone').valid}
                       error={touched.phone && !fieldState('phone').valid ? fieldState('phone').error : undefined} />
+                    <div className="lg:col-span-2">
                     <Field label="Address" type="text" required value={signupData.address}
                       onChange={(e) => updateSignup('address', sanitizeAddress(e.target.value))} onBlur={() => markTouched('address')}
                       className={inputClass + ' ' + glowClass('address')} placeholder="123 Rizal St, Balayan, Batangas" autoComplete="street-address"
                       maxLength={INPUT_LIMITS.ADDRESS_MAX}
                       valid={fieldState('address').valid}
                       error={touched.address && !fieldState('address').valid ? fieldState('address').error : undefined} />
+                    </div>
                   </div>
 
-                  <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100">
+                  <div className="bg-gray-50 rounded-2xl p-4 lg:p-3.5 short:p-3 border border-gray-100">
                     <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
                       Interested in renting? <span className="text-gray-400 font-normal normal-case">(optional)</span>
                     </label>
@@ -590,7 +562,9 @@ export default function Login({ onLogin, onVerifyMfa }) {
                         const active = signupData.preferences.includes(type);
                         return (
                           <button type="button" key={type} onClick={() => togglePreference(type)}
-                            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${active ? 'bg-[#bf4a53] text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}>
+                            aria-pressed={active}
+                            className={`inline-flex items-center gap-1 px-3.5 py-1.5 short:py-1 rounded-full text-xs font-semibold border transition-colors ${active ? 'bg-[#bf4a53] border-[#bf4a53] text-white' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'}`}>
+                            {active && <CheckCircle size={12} aria-hidden="true" />}
                             {type}
                           </button>
                         );
@@ -598,7 +572,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
                     </div>
                   </div>
 
-                  <label onClick={() => { if (!termsRead) setShowTerms(true); }} className={`flex items-start gap-2.5 cursor-pointer select-none rounded-xl border p-3.5 transition-colors ${acceptedTerms ? 'bg-emerald-50/60 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'}`}>
+                  <label onClick={() => { if (!termsRead) setShowTerms(true); }} className={`flex items-start gap-2.5 cursor-pointer select-none rounded-xl border p-3.5 lg:p-3 short:p-2.5 transition-colors ${acceptedTerms ? 'bg-emerald-50/60 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'}`}>
                     <input
                       type="checkbox"
                       checked={acceptedTerms}
@@ -632,7 +606,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
 
                   {error && <p className="text-red-500 text-xs font-semibold text-center">{error}</p>}
                   <button onClick={handleSignupNext}
-                    className="w-full py-3 bg-[#bf4a53] text-white font-bold text-sm rounded-xl hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20 flex items-center justify-center gap-2">
+                    className="w-full py-3 short:py-2.5 bg-[#bf4a53] text-white font-bold text-sm rounded-xl hover:bg-red-700 transition-colors shadow-sm shadow-red-500/20 flex items-center justify-center gap-2">
                     Next <ArrowRight size={16} />
                   </button>
                 </div>
@@ -726,7 +700,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
               )}
 
               {signupStep !== 3 && (
-                <p className="text-center text-gray-500 text-sm mt-6">
+                <p className="text-center text-gray-500 text-sm mt-6 lg:mt-4 short:mt-3">
                   Already have an account?{' '}
                   <button onClick={toggleMode} className="text-[#bf4a53] font-bold hover:underline">Sign In</button>
                 </p>

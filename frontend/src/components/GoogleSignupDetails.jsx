@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import RequiredMark from './ui/RequiredMark';
 import CharCount from './ui/CharCount';
-import { ArrowRight, Heart } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { api } from '../utils/api';
 import TermsModal from './TermsModal';
+import AuthBrandPanel from './AuthBrandPanel';
 import PhoneInput from './ui/PhoneInput';
 import {
   INPUT_LIMITS,
@@ -103,23 +104,7 @@ export default function GoogleSignupDetails({ email, onComplete, onCancel }) {
 
   return (
     <div className="min-h-screen flex bg-white">
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-[#bf4a53] to-[#8f2a31] text-white p-12 flex-col justify-between relative overflow-hidden">
-        <div className="absolute -top-24 -right-24 w-80 h-80 rounded-full bg-white/10 blur-2xl" />
-        <div className="absolute -bottom-32 -left-20 w-96 h-96 rounded-full bg-black/10 blur-3xl" />
-        <div className="relative flex items-center gap-3">
-          <img src="/logo-128.webp" alt="RENTECH" className="w-12 h-12 rounded-xl bg-white/15 p-1.5" />
-          <span className="text-xl font-extrabold tracking-tight">RenTech</span>
-        </div>
-        <div className="relative">
-          <h1 className="text-4xl font-extrabold leading-tight">Your perfect outfit, one tap away.</h1>
-          <p className="mt-4 text-white/80 text-base max-w-md">
-            Rent gowns, suits, barongs and more across Batangas. Finish setting up to manage bookings and get AI styling tips.
-          </p>
-        </div>
-        <div className="relative flex items-center gap-2 text-white/70 text-xs">
-          <Heart size={14} /> Loved by renters across Batangas
-        </div>
-      </div>
+      <AuthBrandPanel showFeatures={false} subtitle="Rent gowns, suits, barongs and more across Batangas. Finish setting up to manage bookings and get AI styling tips." />
 
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-10 bg-[#fcfcfd]">
         <div className="w-full max-w-md">
