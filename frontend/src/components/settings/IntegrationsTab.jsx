@@ -11,7 +11,7 @@ const INTEGRATIONS = [
   { key: 'gemini', name: 'Gemini AI Stylist', desc: 'Primary AI for outfit suggestions & business insights.', icon: Sparkles, iconClass: 'bg-purple-50 text-purple-600' },
   { key: 'groq', name: 'Groq AI', desc: 'Backup AI for the stylist & reports when Gemini is down.', icon: Sparkles, iconClass: 'bg-violet-50 text-violet-600' },
   { key: 'semaphore', name: 'Semaphore SMS Gateway', desc: 'Booking confirmations, due & overdue reminders.', icon: MessageSquare, iconClass: 'bg-blue-50 text-blue-600' },
-  { key: 'resend', name: 'Resend Email', desc: 'Booking, pickup, return & reminder emails.', icon: Mail, iconClass: 'bg-rose-50 text-[#bf4a53]' },
+  { key: 'resend', name: 'Brevo Email', desc: 'Booking, pickup, return & reminder emails.', icon: Mail, iconClass: 'bg-rose-50 text-[#bf4a53]' },
 ];
 
 // Card groups render in this order (badge count still uses INTEGRATIONS).
