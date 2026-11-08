@@ -5,6 +5,7 @@ import ManualQrPayment from './ManualQrPayment';
 import { api } from '../utils/api';
 import { downscaleToJpeg } from '../utils/file';
 import { submitProof } from '../services/payments';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 // Resume an abandoned/rejected manual payment from My Rentals. The booking
 // already exists; this only uploads a fresh proof.
@@ -16,6 +17,7 @@ export default function PaymentProofModal({ tx, onClose, onSubmitted, z = 'z-[20
   const [file, setFile] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  useEscapeClose(onClose, !submitting);
 
   useEffect(() => {
     let active = true;

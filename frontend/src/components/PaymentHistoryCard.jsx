@@ -8,6 +8,7 @@ import { paymentsService } from '../services/payments';
 import { api } from '../utils/api';
 import { peso } from '../utils/receipt';
 import { rowActivation, ROW_FOCUS } from '../utils/a11y';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 const STATUS_META = {
   pending: { label: 'Under review', cls: 'bg-amber-100 text-amber-700', Icon: Clock, box: 'border-amber-200 bg-amber-50 text-amber-800' },
@@ -46,6 +47,9 @@ export default function PaymentHistoryCard({ refreshKey = 0, onSubmitted }) {
   const [zoom, setZoom] = useState(false);
   const [uploadTx, setUploadTx] = useState(null);
   const [localKey, setLocalKey] = useState(0);
+  // Esc closes the proof sheet (the zoom viewer and upload sheet handle
+  // their own layer first).
+  useEscapeClose(() => { if (zoom) setZoom(false); else setSelected(null); }, !!selected && !uploadTx);
 
   useEffect(() => {
     let active = true;
