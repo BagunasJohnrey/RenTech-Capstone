@@ -47,13 +47,9 @@ backup/
 # Local one-off operational scripts (run manually, never deployed)
 backend/scripts/seed-boutique-photos.ts
 
-# Documentation and test artifacts (not for version control)
-docs/Csv Records/
-docs/Chapter 4/
-docs/Approval Documents/
-docs/Forecasting and Analytics/
-docs/Payments Storage and Operations/
-docs/Testing Documents/
+# Documentation folder (not for version control)
+docs/
 
-# Large screenshot sources for documentation (embedded copies live in the Chapter 4 docx)
-docs/System Presentation/screenshots/
+# Demo/log files
+demo.log
+*.log
