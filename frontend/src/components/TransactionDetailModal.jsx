@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import RequiredMark from './ui/RequiredMark';
-import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, Maximize2, MapPin, UserCheck, PackageCheck, History, QrCode, AlertTriangle, Clock, Upload, CheckCircle2 } from 'lucide-react';
+import { X, Receipt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, Maximize2, MapPin, UserCheck, PackageCheck, History, QrCode, AlertTriangle, Clock, Upload, CheckCircle2 } from 'lucide-react';
 import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
 import { normalizeTx, invalidateTxCache, getTxAudits, preloadTxPhotos, peekFullTx, peekTxAudits } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
@@ -14,6 +14,7 @@ import { TX_STATUS_PILLS } from '../utils/statusColors';
 import { api } from '../utils/api';
 import ManualQrPanel from './ManualQrPanel';
 import PhotoViewer from './PhotoViewer';
+import ItemPhotoThumb from './ItemPhotoThumb';
 import PaymentProofModal from './PaymentProofModal';
 import { paymentsService } from '../services/payments';
 
@@ -230,12 +231,15 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   };
   // Full-screen condition photo (index into conditionPhotos), or null.
   const [photoView, setPhotoView] = useState(null);
+  // Full-screen catalog photo of the rented item.
+  const [itemPhotoOpen, setItemPhotoOpen] = useState(false);
   // Esc dismisses the topmost layer first (photo, then pay form, then sheet).
   const handleEscape = useCallback(() => {
-    if (photoView != null) setPhotoView(null);
+    if (itemPhotoOpen) setItemPhotoOpen(false);
+    else if (photoView != null) setPhotoView(null);
     else if (showPayModal) closePayModal();
     else requestClose();
-  }, [photoView, showPayModal, closePayModal, requestClose]);
+  }, [itemPhotoOpen, photoView, showPayModal, closePayModal, requestClose]);
   useEscapeClose(handleEscape);
 
   // Fetch enrichment only when the transaction id changes — `transaction` is a
@@ -327,6 +331,13 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // The body gate above holds the skeleton until the timeline lands, so by
   // the time we render here the data is final — no loading branch needed.
   const showStaffAudit = isStaffView && (assistedName || releasedName || audits.length > 0);
+  // Item catalog photo: full record carries the item object, list rows the
+  // flattened `itemImage` — fall back to the incoming prop so it paints instantly.
+  const itemImg = (tx.item && typeof tx.item === 'object' ? tx.item.image : null)
+    || tx.itemImage
+    || (transaction?.item && typeof transaction.item === 'object' ? transaction.item.image : null)
+    || transaction?.itemImage
+    || null;
   const conditionPhotos = [
     (tx.releasePhoto || tx.conditionPhoto) && { image: tx.releasePhoto || tx.conditionPhoto, label: 'Release (Before)', alt: 'Item condition at release' },
     tx.returnPhoto && { image: tx.returnPhoto, label: 'Return (After)', alt: 'Item condition on return' },
@@ -538,9 +549,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             </div>
             <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0">
-                  <Shirt size={16} className="text-gray-500" />
-                </div>
+                <ItemPhotoThumb image={itemImg} name={itemLabel(tx.item)} onOpen={() => setItemPhotoOpen(true)} className="w-14 h-14" iconSize={18} />
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Item</p>
                   <p className="font-bold text-gray-900 truncate">{itemLabel(tx.item) || '—'}</p>
@@ -1011,6 +1020,10 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
       {photoView != null && conditionPhotos[photoView] && (
         <PhotoViewer photos={conditionPhotos} index={photoView} onIndexChange={setPhotoView} onClose={() => setPhotoView(null)} />
+      )}
+
+      {itemPhotoOpen && itemImg && (
+        <PhotoViewer photos={[{ image: itemImg, label: itemLabel(tx.item) || 'Item' }]} index={0} onIndexChange={() => {}} onClose={() => setItemPhotoOpen(false)} />
       )}
 
       {showProofUpload && (

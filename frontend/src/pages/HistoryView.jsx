@@ -15,6 +15,9 @@ import { isReleased } from '../hooks/useTransactions';
 import RowActionsMenu from '../components/RowActionsMenu';
 import BottomSheet from '../components/BottomSheet';
 import SmsResultModal from '../components/SmsResultModal';
+import ItemPhotoThumb from '../components/ItemPhotoThumb';
+import PhotoViewer from '../components/PhotoViewer';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import Pagination from '../components/ui/Pagination';
 import PageHeader from '../components/ui/PageHeader';
 import FilterChip from '../components/ui/FilterChip';
@@ -82,6 +85,10 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const [swapTx, setSwapTx] = useState(null);
   const [editRental, setEditRental] = useState(null);       // tx staff is editing (booking dates/notes + customer)
   const [smsModalTx, setSmsModalTx] = useState(null);
+  // Full-screen item photo opened from a row thumbnail ({ image, label }).
+  const [itemPhoto, setItemPhoto] = useState(null);
+  useEscapeClose(() => setItemPhoto(null), !!itemPhoto);
+  const txItemImage = (tx) => tx.itemImage || inventory?.find((i) => i.id === tx.itemId)?.image || null;
   const [smsMessage, setSmsMessage] = useState('');
   const [sendingSms, setSendingSms] = useState(false);
   const [smsResult, setSmsResult] = useState(null); // post-send outcome dialog
@@ -661,7 +668,13 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                       {role !== 'Customer' && (
                         <td className="px-6 py-4 text-gray-700 font-medium">{customerLabel(tx.customer) || '—'}</td>
                       )}
-                      <td className="px-6 py-4 text-gray-500">{tx.item || '—'}</td>
+                      <td className="px-6 py-4 text-gray-500">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <ItemPhotoThumb image={txItemImage(tx)} name={tx.item}
+                            onOpen={() => setItemPhoto({ image: txItemImage(tx), label: tx.item || 'Item' })} />
+                          <span className="min-w-0">{tx.item || '—'}</span>
+                        </div>
+                      </td>
                       <td className="px-6 py-4 text-gray-500 text-[13px]">{formatDate(tx.rentalDate || tx.date)}</td>
                       <td className="px-6 py-4">
                         {/* One pill only: the most urgent state wins
@@ -752,10 +765,14 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
                   </p>
                 )}
 
-                <p className="text-sm text-gray-700 min-w-0">
-                  <span className="text-gray-400 text-xs">Item:</span>{' '}
-                  <span className="font-medium break-words">{tx.item || '—'}</span>
-                </p>
+                <div className="flex items-center gap-3 min-w-0">
+                  <ItemPhotoThumb image={txItemImage(tx)} name={tx.item} className="w-12 h-12"
+                    onOpen={() => setItemPhoto({ image: txItemImage(tx), label: tx.item || 'Item' })} />
+                  <p className="text-sm text-gray-700 min-w-0">
+                    <span className="text-gray-400 text-xs">Item:</span>{' '}
+                    <span className="font-medium break-words">{tx.item || '—'}</span>
+                  </p>
+                </div>
 
                 <div className="flex justify-between items-center pt-2 border-t border-gray-100/60">
                   <p className="text-sm font-bold text-gray-900">
@@ -894,6 +911,9 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             setEditRental(null);
           }}
         />
+      )}
+      {itemPhoto && (
+        <PhotoViewer photos={[itemPhoto]} index={0} onIndexChange={() => {}} onClose={() => setItemPhoto(null)} />
       )}
     </>
   );
