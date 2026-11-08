@@ -47,22 +47,41 @@ const fullCache = new Map(); // id -> { promise, at }
 const auditCache = new Map(); // id -> { promise, at }
 const FULL_TTL = 30_000;
 
+// Last RESOLVED value per id, kept longer than the request cache so a
+// re-opened sheet paints instantly from memory (stale-while-revalidate: the
+// modal still refetches in the background and swaps in fresh data).
+const fullValues = new Map(); // id -> { value, at }
+const auditValues = new Map(); // id -> { value, at }
+const PEEK_TTL = 5 * 60_000;
+
 export function invalidateTxCache(id) {
-  if (id == null) { fullCache.clear(); auditCache.clear(); }
-  else { fullCache.delete(String(id)); auditCache.delete(String(id)); }
+  if (id == null) { fullCache.clear(); auditCache.clear(); fullValues.clear(); auditValues.clear(); }
+  else {
+    const k = String(id);
+    fullCache.delete(k); auditCache.delete(k); fullValues.delete(k); auditValues.delete(k);
+  }
 }
 
-function cachedFetch(cache, id, fetcher) {
+function cachedFetch(cache, id, fetcher, values) {
   const key = String(id);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < FULL_TTL) return hit.promise;
   const job = fetcher(id).then(
-    (v) => v,
+    (v) => { if (values) values.set(key, { value: v, at: Date.now() }); return v; },
     (err) => { cache.delete(key); throw err; }
   );
   cache.set(key, { promise: job, at: Date.now() });
   return job;
 }
+
+function peek(values, id) {
+  if (id == null) return null;
+  const hit = values.get(String(id));
+  return hit && Date.now() - hit.at < PEEK_TTL ? hit.value : null;
+}
+// Synchronous reads of an already-fetched record / timeline (or null).
+export const peekFullTx = (id) => peek(fullValues, id);
+export const peekTxAudits = (id) => peek(auditValues, id);
 
 // Staff/Admin only (the endpoint 403s customers).
 // The detail sheet shows the small previews (`thumbs/…`), so warm those.
@@ -74,11 +93,11 @@ export function preloadTxPhotos(tx) {
 }
 
 export function getTxAudits(id) {
-  return cachedFetch(auditCache, id, transactionsService.audits);
+  return cachedFetch(auditCache, id, transactionsService.audits, auditValues);
 }
 
 function cachedGet(id) {
-  return cachedFetch(fullCache, id, transactionsService.get);
+  return cachedFetch(fullCache, id, transactionsService.get, fullValues);
 }
 
 export function useTransactions() {

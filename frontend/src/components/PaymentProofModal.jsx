@@ -8,7 +8,7 @@ import { submitProof } from '../services/payments';
 
 // Resume an abandoned/rejected manual payment from My Rentals. The booking
 // already exists; this only uploads a fresh proof.
-export default function PaymentProofModal({ tx, onClose, onSubmitted }) {
+export default function PaymentProofModal({ tx, onClose, onSubmitted, z = 'z-[200]' }) {
   const [qrCodes, setQrCodes] = useState([]);
   const [storeContact, setStoreContact] = useState('');
   const [channel, setChannel] = useState('');
@@ -53,7 +53,7 @@ export default function PaymentProofModal({ tx, onClose, onSubmitted }) {
   };
 
   return (
-    <BottomSheet onClose={onClose} labelledby="dialog-title-payment-proof" z="z-[200]" maxWidth="sm:max-w-lg" panelWidth="md:w-[560px] lg:w-[min(920px,94vw)]">
+    <BottomSheet onClose={onClose} labelledby="dialog-title-payment-proof" z={z} maxWidth="sm:max-w-lg" panelWidth="md:w-[560px] lg:w-[min(920px,94vw)]">
       <div data-sheet-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain lg:flex lg:flex-col">
         <div className="flex items-center justify-between p-5 border-b border-gray-100/80">
           <div>

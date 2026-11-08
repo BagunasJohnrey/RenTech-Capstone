@@ -414,6 +414,22 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const safePage = Math.min(currentPage, Math.max(totalPages, 1));
   const startIdx = (safePage - 1) * itemsPerPage;
   const displayedTransactions = filteredTransactions.slice(startIdx, startIdx + itemsPerPage);
+  // Warm the rows on screen while the browser is idle so tapping one opens
+  // instantly from the shared cache (one small request per row, capped, and
+  // deduped by the cache's TTL). Hover / pointer-down warming still covers
+  // anything further down.
+  const visibleIdsKey = displayedTransactions.slice(0, 10).map((t) => t.id).join(',');
+  useEffect(() => {
+    if (!prefetchTx || !visibleIdsKey) return undefined;
+    const ids = visibleIdsKey.split(',');
+    const timers = [];
+    const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 300));
+    const cancelIdle = window.cancelIdleCallback || clearTimeout;
+    const handle = idle(() => {
+      ids.forEach((id, i) => timers.push(setTimeout(() => prefetchTx(id, warmOpts), i * 150)));
+    });
+    return () => { cancelIdle(handle); timers.forEach(clearTimeout); };
+  }, [visibleIdsKey, prefetchTx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearchChange = (e) => {
     setSearchQuery(e.target.value);

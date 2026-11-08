@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import RequiredMark from './ui/RequiredMark';
-import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, Maximize2, MapPin, UserCheck, PackageCheck, History, QrCode } from 'lucide-react';
+import { X, Receipt, Shirt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, Maximize2, MapPin, UserCheck, PackageCheck, History, QrCode, AlertTriangle, Clock, Upload, CheckCircle2 } from 'lucide-react';
 import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
-import { normalizeTx, invalidateTxCache, getTxAudits, preloadTxPhotos } from '../hooks/useTransactions';
+import { normalizeTx, invalidateTxCache, getTxAudits, preloadTxPhotos, peekFullTx, peekTxAudits } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import ItemImage from './ItemImage';
@@ -14,6 +14,8 @@ import { TX_STATUS_PILLS } from '../utils/statusColors';
 import { api } from '../utils/api';
 import ManualQrPanel from './ManualQrPanel';
 import PhotoViewer from './PhotoViewer';
+import PaymentProofModal from './PaymentProofModal';
+import { paymentsService } from '../services/payments';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -146,7 +148,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const flags = useFeatureFlags();
   // Freeze the page behind the sheet; the backdrop is tap-to-close only.
   const [qrSaveUrl, setQrSaveUrl] = useState(null);
-  const [tx, setTx] = useState(transaction);
+  // List record + any already-fetched full record = instant first paint.
+  const mergeFull = (base, full) => (full ? normalizeTx({ ...base, ...full }) : base);
+  const [tx, setTx] = useState(() => mergeFull(transaction, peekFullTx(transaction?.id)));
   const [showPayModal, setShowPayModal] = useState(false);
   const [payAmount, setPayAmount] = useState('');
   const [payNotes, setPayNotes] = useState('');
@@ -160,15 +164,28 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   const [manualChannel, setManualChannel] = useState('');
   // Gate the body on enrichment: everything appears at once when the full
   // record lands — never staged pop-ins. Header/footer use instant list data.
-  const [enriching, setEnriching] = useState(() => !!(transaction?.id && fetchFull));
+  const [enriching, setEnriching] = useState(() => !!(transaction?.id && fetchFull) && !peekFullTx(transaction?.id));
   // Staff audit timeline (who assisted / released / returned / edited).
   // Staff-only endpoint — customers get a 403, which we swallow silently.
   // Starts true so the body gate below holds the skeleton until the timeline
   // lands alongside the record — both fire in parallel on mount, and the
   // sheet appears once with everything instead of staged pop-ins.
   const isStaffView = role === 'Admin' || role === 'Staff';
-  const [audits, setAudits] = useState([]);
-  const [auditsLoading, setAuditsLoading] = useState(true);
+  const isCustomerView = role === 'Customer';
+  // Customer-only: this booking's QR payment proofs (newest first) so a
+  // rejected proof can be re-uploaded straight from the booking.
+  // The customer list record already carries the latest proof
+  // (`paymentProofs[0]`), so the banner renders with no extra request. Only a
+  // record without it (deep link) or a fresh re-upload triggers a fetch.
+  const listHasProofs = Array.isArray(transaction?.paymentProofs);
+  const [fetchedProofs, setFetchedProofs] = useState(null);
+  // Holds the body skeleton only when we must fetch, so "Downpayment not yet
+  // paid" never flashes before the real status.
+  const [proofsLoading, setProofsLoading] = useState(() => role === 'Customer' && !!transaction?.id && !listHasProofs);
+  const [proofsKey, setProofsKey] = useState(0);
+  const [showProofUpload, setShowProofUpload] = useState(false);
+  const [audits, setAudits] = useState(() => peekTxAudits(transaction?.id) || []);
+  const [auditsLoading, setAuditsLoading] = useState(() => !peekTxAudits(transaction?.id));
   // The shared BottomSheet owns drag-to-dismiss + enter/exit animations.
   // closingRef guards late fetch resolutions: a record landing mid-exit
   // would swap the content under the fade-out.
@@ -178,6 +195,20 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     closingRef.current = true;
     onClose();
   }, [onClose]);
+  useEffect(() => {
+    if (!isCustomerView || !transaction?.id) return undefined;
+    if (listHasProofs && proofsKey === 0) return undefined;
+    let active = true;
+    paymentsService.myProofs()
+      .then((d) => {
+        if (!active) return;
+        const list = Array.isArray(d?.proofs) ? d.proofs : [];
+        setFetchedProofs(list.filter((p) => p.transaction?.id === transaction.id));
+      })
+      .catch(() => {})
+      .finally(() => { if (active) setProofsLoading(false); });
+    return () => { active = false; };
+  }, [isCustomerView, transaction?.id, proofsKey, listHasProofs]);
   const closePayModal = useCallback(() => {
     if (payLoading) return;
     setShowPayModal(false);
@@ -213,7 +244,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // render + every fetch resolve) creates an infinite update loop, which is
   // what used to block the close button from ever un-mounting the modal.
   useEffect(() => {
-    setTx(transaction);
+    setTx(mergeFull(transaction, peekFullTx(transaction?.id)));
   }, [transaction?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Enrichment + audit timeline fire in PARALLEL on open; the body gate below
@@ -222,22 +253,26 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
   // the rest of the body. Audit fetch is best-effort: a 403 (non-staff) or a
   // network blip simply hides the section instead of blocking the sheet.
   useEffect(() => {
-    setAudits([]);
     let cancelled = false;
     const jobs = [];
+    // Already fetched recently? Paint it now and refresh silently below.
+    const cachedFull = peekFullTx(transaction?.id);
+    const cachedAudits = isStaffView ? peekTxAudits(transaction?.id) : null;
+    setAudits(cachedAudits || []);
     // Condition photos are the slowest part of the sheet (signing request +
     // full-size download), so start them NOW, alongside the record and the
     // timeline, instead of after the body renders and they scroll into view.
     preloadTxPhotos(transaction);
     if (transaction?.id && fetchFull) {
-      setEnriching(true);
+      if (cachedFull) setTx(mergeFull(transaction, cachedFull));
+      setEnriching(!cachedFull);
       jobs.push(
         // normalize the full record so customerProfile is always present —
         // otherwise the address flickers in from the list item then vanishes.
         fetchFull(transaction.id)
           .then((full) => {
             preloadTxPhotos(full);
-            if (!cancelled && !closingRef.current) setTx(normalizeTx(full));
+            if (!cancelled && !closingRef.current) setTx(mergeFull(transaction, full));
           })
           .catch(() => {})
           .finally(() => { if (!cancelled) setEnriching(false); })
@@ -246,7 +281,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       setEnriching(false);
     }
     if (isStaffView && transaction?.id) {
-      setAuditsLoading(true);
+      setAuditsLoading(!cachedAudits);
       jobs.push(
         getTxAudits(transaction.id)
           .then((logs) => { if (!cancelled) setAudits(Array.isArray(logs) ? logs : []); })
@@ -297,6 +332,13 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
     tx.returnPhoto && { image: tx.returnPhoto, label: 'Return (After)', alt: 'Item condition on return' },
   ].filter(Boolean);
   const rentalTotal = Number(tx.rentalFee ?? tx.amount ?? 0) || 0;
+  const myProofs = fetchedProofs ?? (Array.isArray(tx.paymentProofs) ? tx.paymentProofs : (transaction?.paymentProofs || []));
+  const latestProof = myProofs[0] || null;
+  const bookingOpen = !['Cancelled', 'Returned'].includes(tx.status);
+  const isManualBooking = tx.paymentPath === 'manual' || tx.gateway === 'manual';
+  const downpaymentUnpaid = Number(tx.totalPaid ?? 0) < Number(tx.downpayment ?? 0);
+  const canReuploadProof = isCustomerView && bookingOpen && downpaymentUnpaid
+    && (latestProof ? latestProof.status === 'rejected' : isManualBooking);
   const paidSoFar = Number(tx.totalPaid ?? 0) || 0;
   const paidPct = rentalTotal > 0 ? Math.min(100, Math.round((paidSoFar / rentalTotal) * 100)) : 0;
   const outstandingBalance = Math.max(0, tx.balance ?? 0);
@@ -425,7 +467,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
         </div>
 
         <div data-sheet-scroll className="p-5 sm:p-6 lg:p-8 space-y-6 flex-1 overflow-y-auto min-h-0 overscroll-contain">
-          {(enriching || (isStaffView && auditsLoading)) ? (
+          {(enriching || (isStaffView && auditsLoading) || (isCustomerView && proofsLoading)) ? (
             // Structural placeholder matching the body rhythm — swapped for
             // the real sections in one paint, no staged pop-ins. Staff view
             // holds until BOTH the record and the timeline land (they race in
@@ -613,6 +655,54 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
           </div>
           <div className="space-y-6 panel-col">
+          {/* Customer: QR payment-proof status + re-upload when rejected */}
+          {isCustomerView && (latestProof || canReuploadProof) && (
+            latestProof?.status === 'rejected' ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0"><AlertTriangle size={17} /></div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-red-700">Payment proof rejected</p>
+                    {latestProof.rejectionReason && (
+                      <p className="text-xs text-red-600 mt-0.5 break-words">Reason: <span className="font-semibold">{latestProof.rejectionReason}</span></p>
+                    )}
+                    <p className="text-[11px] text-red-500/80 mt-1">{canReuploadProof ? 'Upload a clear screenshot of your payment so staff can verify your booking.' : 'Contact the boutique if you need help with this booking.'}</p>
+                  </div>
+                </div>
+                {canReuploadProof && (
+                  <button type="button" onClick={() => setShowProofUpload(true)}
+                    className="mt-3 w-full py-2.5 rounded-xl bg-[#bf4a53] text-white text-sm font-bold hover:bg-[#a83f47] transition-colors flex items-center justify-center gap-2">
+                    <Upload size={15} /> Re-upload payment proof
+                  </button>
+                )}
+              </div>
+            ) : latestProof?.status === 'pending' ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><Clock size={17} /></div>
+                <div>
+                  <p className="text-sm font-bold text-amber-800">Payment under review</p>
+                  <p className="text-xs text-amber-700 mt-0.5">Staff are checking your {latestProof.amount ? `₱${Number(latestProof.amount).toLocaleString()} ` : ''}payment proof. You'll be notified once it's verified.</p>
+                </div>
+              </div>
+            ) : latestProof?.status === 'approved' ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0"><CheckCircle2 size={17} /></div>
+                <div>
+                  <p className="text-sm font-bold text-emerald-800">Payment verified</p>
+                  <p className="text-xs text-emerald-700 mt-0.5">Your downpayment proof was approved.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-sm font-bold text-gray-800">Downpayment not yet paid</p>
+                <p className="text-xs text-gray-500 mt-0.5">Pay through the boutique's QR and upload your screenshot to confirm this booking.</p>
+                <button type="button" onClick={() => setShowProofUpload(true)}
+                  className="mt-3 w-full py-2.5 rounded-xl bg-[#bf4a53] text-white text-sm font-bold hover:bg-[#a83f47] transition-colors flex items-center justify-center gap-2">
+                  <Upload size={15} /> Upload payment proof
+                </button>
+              </div>
+            )
+          )}
           {/* Payment Summary */}
           <div>
             <div className="flex items-center gap-1.5 text-gray-400 mb-3">
@@ -921,6 +1011,15 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
 
       {photoView != null && conditionPhotos[photoView] && (
         <PhotoViewer photos={conditionPhotos} index={photoView} onIndexChange={setPhotoView} onClose={() => setPhotoView(null)} />
+      )}
+
+      {showProofUpload && (
+        <PaymentProofModal
+          tx={tx}
+          z="z-[320]"
+          onClose={() => setShowProofUpload(false)}
+          onSubmitted={() => { setProofsKey((k) => k + 1); invalidateTxCache(tx.id); }}
+        />
       )}
     </>
   );

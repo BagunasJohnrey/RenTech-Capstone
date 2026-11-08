@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, Droplets, Tag, Copy, Check, CalendarClock, Sparkle, ScanLine } from 'lucide-react';
+import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, Droplets, Tag, Copy, Check, CalendarClock, Sparkle, ScanLine, Upload } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import PaymentProofModal from '../components/PaymentProofModal';
@@ -317,7 +317,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 // is customer-payload only — guard before indexing.
                 const proof = Array.isArray(tx.paymentProofs) ? tx.paymentProofs[0] : null;
                 const unpaidManual = !proof || proof.status === 'rejected';
-                const canResume = unpaidManual && (tx.paymentPath === 'manual' || tx.gateway === 'manual' || (!tx.gateway && tx.totalPaid < (tx.downpayment || 0)));
+                const canResume = !['Cancelled', 'Returned'].includes(tx.status) && unpaidManual && (proof?.status === 'rejected' || tx.paymentPath === 'manual' || tx.gateway === 'manual' || (!tx.gateway && tx.totalPaid < (tx.downpayment || 0)));
                 return (
                 <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
@@ -327,23 +327,29 @@ export default function DashboardView({ role, transactions, inventory, transacti
                     <p className="text-sm font-bold text-gray-900 truncate">{itemName(tx)}</p>
                     <p className="text-xs text-gray-500 truncate">Due {tx.dueDate ? new Date(tx.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</p>
                     {proof?.status === 'rejected' && proof.rejectionReason && (
-                      <p className="text-[11px] text-red-500 truncate">{proof.rejectionReason}</p>
-                    )}
-                    {canResume && (
-                      <button onClick={() => setProofModalTx(tx)} className="mt-1 text-xs font-semibold text-[#bf4a53] hover:underline">
-                        Upload payment proof
-                      </button>
+                      <p className="text-[11px] text-red-500 font-medium truncate mt-0.5">Reason: {proof.rejectionReason}</p>
                     )}
                   </div>
+                  {/* At most one pill per row: Overdue first, then "Payment
+                      under review", else the booking status. Rows that still
+                      need a proof show only the Upload / Re-upload button. */}
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
-                    {proof?.status === 'pending' ? (
+                    {tx.status === 'Overdue' ? (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
+                    ) : proof?.status === 'pending' ? (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Payment under review</span>
-                    ) : proof?.status === 'rejected' ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">Payment not verified</span>
-                    ) : canResume ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">Unpaid</span>
+                    ) : !canResume ? (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
                     ) : null}
+                    {canResume && (
+                      <button
+                        type="button"
+                        onClick={() => setProofModalTx(tx)}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[#bf4a53] hover:bg-[#a83f47] px-2.5 py-1 rounded-full transition-colors"
+                      >
+                        <Upload size={11} /> {proof?.status === 'rejected' ? 'Re-upload' : 'Upload proof'}
+                      </button>
+                    )}
                   </div>
                 </div>
                 );
@@ -353,7 +359,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
           </div>
         )}
 
-        <PaymentHistoryCard refreshKey={proofHistoryKey} />
+        <PaymentHistoryCard refreshKey={proofHistoryKey} onSubmitted={() => { refreshBookings(); setProofHistoryKey((k) => k + 1); }} />
 
         {/* End of results */}
         <p className="text-center text-xs text-gray-400 pt-4 pb-2">You've reached the end of your feed</p>
