@@ -14,12 +14,13 @@ import { emitDataChanged } from '../utils/dataEvents';
 //     state, so nobody's in-progress form is reset.
 //   - Own writes don't trip it: call `markFresh()` after every local
 //     mutation (the refetch those handlers already do brings us current).
-//   - Quiet while hidden: no polling when the tab isn't visible.
+//   - Keeps checking in background tabs (see `check`), so a tab you return
+//     to is already up to date.
 //   - Staff/Admin only: customers poll nothing (their data barely changes
 //     under them; History refetches on mount anyway).
 // 20s: the fingerprint is ~100 bytes, and changes now show up on their own
 // (no Refresh tap), so a shorter gap is worth it. Focus/visibility still
-// checks instantly; hidden tabs don't poll.
+// checks instantly; background tabs keep polling (browser-throttled).
 const POLL_MS = 20_000;
 
 // Comparison key: max updatedAt alone misses deletes and logbook imports
@@ -33,8 +34,12 @@ export function useDataVersion({ role, isLoggedIn, onStale }) {
   const onStaleRef = useRef(onStale);
   onStaleRef.current = onStale;
 
+  // Runs in background tabs too: a tab you're not looking at should already
+  // be current when you switch back (staff often keep Tasks open in one tab
+  // and release/return from another). Cheap — the server answers from its
+  // in-memory cache, which every write clears. Browsers throttle hidden-tab
+  // timers to about once a minute, so background checks are slower still.
   const check = useCallback(async () => {
-    if (document.hidden) return;
     try {
       const v = await api.get('/dashboard/version');
       const ver = versionKey(v);

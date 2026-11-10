@@ -234,7 +234,14 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
         });
       }
 
-      const balance = fee - downpayment;
+      // Balance is what is still OWED: fee minus money actually received.
+      // Only a counter-cash downpayment is received at booking time; a
+      // gateway / QR-proof / promised downpayment is credited later by the
+      // ledger (which recomputes the balance), so until then the whole fee
+      // is outstanding. (Was `fee - downpayment` for every booking, which
+      // showed an unpaid ₱200 downpayment as already deducted.)
+      const initialPaid = data.downpaymentCash && downpayment > 0 ? downpayment : 0;
+      const balance = fee - initialPaid;
 
       const created = await tx.transaction.create({
         data: {
@@ -253,7 +260,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           // A cash-collected downpayment is money in hand: totalPaid starts
           // there (the completed row below proves it). A promised/gateway
           // downpayment starts at 0 until the ledger credits it.
-          totalPaid: data.downpaymentCash && downpayment > 0 ? downpayment : 0,
+          totalPaid: initialPaid,
           balance,
           promoCodeId: promoCodeId ?? null,
           staffDiscountPct: staffDiscountPct ?? null,

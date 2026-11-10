@@ -48,6 +48,29 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   const [manualChannel, setManualChannel] = useState('');
   const [gatewayLoading, setGatewayLoading] = useState(false);
 
+  // The row that opened this sheet can be a stale list copy (e.g. a payment
+  // was just recorded in the detail sheet). Pull the live record on open and
+  // hold the payment controls until the real balance is known.
+  const [balanceLoading, setBalanceLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    api.get(`/transactions/${initialTx.id}`)
+      .then((fresh) => {
+        const f = fresh?.transaction ?? fresh;
+        if (!alive || !f) return;
+        setTx((prev) => ({
+          ...prev,
+          ...(f.balance != null ? { balance: f.balance } : {}),
+          ...(f.totalPaid != null ? { totalPaid: f.totalPaid } : {}),
+          ...(f.rentalFee != null ? { rentalFee: f.rentalFee } : {}),
+          ...(f.downpayment != null ? { downpayment: f.downpayment } : {}),
+        }));
+      })
+      .catch(() => { /* keep the row's numbers; backend still enforces ₱0 */ })
+      .finally(() => { if (alive) setBalanceLoading(false); });
+    return () => { alive = false; };
+  }, [initialTx.id]);
+
   const outstandingBalance = Math.max(0, tx.balance ?? 0);
   // Full payment is required before the item leaves the shop (backend
   // enforces this too) — an unpaid booking must clear the FULL outstanding
@@ -58,6 +81,8 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
     if (requiresPayment) {
       setPayAmount(String(outstandingBalance));
       setRecordPayment(true);
+    } else {
+      setRecordPayment(false);
     }
   }, [outstandingBalance]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -92,6 +117,37 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   };
 
 
+  // Cash collected at the counter, recorded straight away — no condition
+  // photo needed, so staff can take the money first and photograph after.
+  // Updates the local balance so the sheet flips to "Paid in full" and the
+  // footer becomes a plain Confirm Release (no double charge on retry).
+  const recordCash = async () => {
+    const amt = Number(payAmount);
+    if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return false; }
+    if (amt < outstandingBalance) { setPayError(`Collect the remaining ₱${outstandingBalance.toLocaleString()}`); return false; }
+    if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return false; }
+    try {
+      const res = await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: 'cash' });
+      setTx((prev) => ({
+        ...prev,
+        totalPaid: res?.totalPaid ?? (Number(prev.totalPaid ?? 0) + amt),
+        balance: res?.balance ?? Math.max(0, Number(prev.balance ?? 0) - amt),
+      }));
+      setRecordPayment(false);
+      setPaySuccess(true);
+      setPayError('');
+      return true;
+    } catch (payErr) {
+      setPayError(payErr?.message || 'Payment failed — release blocked until fully paid');
+      return false;
+    }
+  };
+  const handleCashRecord = async () => {
+    setPayError('');
+    setGatewayLoading(true);
+    try { await recordCash(); } finally { setGatewayLoading(false); }
+  };
+
   // Manual gateway: the customer pays the boutique's own QR, the staff member
   // verifies it in person and records the full outstanding as an instapay
   // payment through the same cash record path. Release stays gated on ₱0.
@@ -106,6 +162,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
         notes: `${manualChannelLabel} transfer — verified in person`,
       });
       setTx((prev) => ({ ...prev, totalPaid: res.totalPaid, balance: res.balance }));
+      setPaySuccess(true);
       // Balance is now ₱0 — drop the record-payment flag so the release
       // validation doesn't re-check the (stale) cash amount field.
       setRecordPayment(false);
@@ -121,7 +178,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
     if (requiresPayment) {
       const amt = Number(payAmount);
       if (!amt || amt <= 0) { setPayError('Enter a valid amount'); return; }
-      if (amt < outstandingBalance) { setPayError(`Full payment required — collect ₱${outstandingBalance.toLocaleString()}`); return; }
+      if (amt < outstandingBalance) { setPayError(`Collect the remaining ₱${outstandingBalance.toLocaleString()}`); return; }
       if (amt > outstandingBalance) { setPayError(`Maximum is ₱${outstandingBalance.toLocaleString()}`); return; }
     } else if (recordPayment) {
       const amt = Number(payAmount);
@@ -135,15 +192,10 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
       // Payment FIRST, release second: the backend rejects release on any
       // outstanding balance, so charging after would always 400. Cash posts
       // here; the static-QR transfer must already be recorded.
+      // recordCash updates the local balance, so if the photo upload or the
+      // release below fails, a retry goes straight to release — no 2nd charge.
       if (requiresPayment && payChannel === 'cash') {
-        const amt = Number(payAmount);
-        try {
-          await api.post(`/transactions/${tx.id}/payments`, { amount: amt, method: 'cash' });
-          setPaySuccess(true);
-        } catch (payErr) {
-          setPayError(payErr?.message || 'Payment failed — release blocked until fully paid');
-          return;
-        }
+        if (!(await recordCash())) return;
       }
       const base64 = (await downscaleToJpeg(photoFile)) || (await fileToBase64(photoFile));
       const { path } = await storageService.upload(
@@ -291,11 +343,21 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
               <div>
                 <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                  <Banknote size={14} className="text-[#bf4a53]" /> Full payment required before release
+                  <Banknote size={14} className="text-[#bf4a53]" /> Collect the remaining balance before release
                 </p>
                 <p className="text-[11px] text-gray-500 mt-0.5">
-                  Outstanding balance: <span className="font-bold text-[#bf4a53]">₱{outstandingBalance.toLocaleString()}</span> — collect it now, then release.
+                  Remaining balance: <span className="font-bold text-[#bf4a53]">{balanceLoading ? 'checking…' : `₱${outstandingBalance.toLocaleString()}`}</span>
                 </p>
+                {/* Breakdown so staff can see this is what's LEFT, not the whole fee. */}
+                {/* Only show the subtraction when it adds up exactly (promos or
+                    fees can make fee − paid ≠ balance); else just "already paid". */}
+                {Number(tx.totalPaid) > 0 && (
+                  <p className="text-[11px] text-gray-500 mt-0.5 tabular-nums">
+                    {Number(tx.rentalFee) - Number(tx.totalPaid) === outstandingBalance
+                      ? <>₱{Number(tx.rentalFee).toLocaleString()} rental fee − ₱{Number(tx.totalPaid).toLocaleString()} already paid</>
+                      : <>₱{Number(tx.totalPaid).toLocaleString()} already paid</>}
+                  </p>
+                )}
               </div>
               {/* Channel switch: cash vs the boutique's static QR */}
               <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-2xl" role="tablist" aria-label="Pickup payment channel">
@@ -321,7 +383,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
               {payChannel === 'cash' ? (
               <>
               <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Amount (full balance)<RequiredMark show={!String(payAmount ?? '').trim()} /></label>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Amount (remaining balance)<RequiredMark show={!String(payAmount ?? '').trim()} /></label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">₱</span>
                   <input
@@ -334,6 +396,18 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                   />
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={handleCashRecord}
+                disabled={balanceLoading || gatewayLoading || releasing || Number(payAmount) !== outstandingBalance}
+                className="w-full py-2.5 rounded-2xl font-bold text-xs bg-white border border-[#bf4a53]/30 text-[#bf4a53] hover:bg-[#bf4a53]/5 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Banknote size={14} />
+                {gatewayLoading ? 'Recording…' : `Record ₱${outstandingBalance.toLocaleString()} cash now`}
+              </button>
+              <p className="text-[10px] text-gray-500 leading-snug">
+                Or take the photo first and tap <span className="font-bold">Collect &amp; Release</span> to do both at once.
+              </p>
               </>
               ) : (
               <div className="space-y-3">
@@ -346,7 +420,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 <button
                   type="button"
                   onClick={handleManualRecord}
-                  disabled={gatewayLoading || manualQrCodes.length === 0}
+                  disabled={balanceLoading || gatewayLoading || manualQrCodes.length === 0}
                   className="w-full py-2.5 rounded-2xl font-bold text-xs bg-[#bf4a53] text-white hover:bg-[#a83d46] disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
                 >
                   <Banknote size={14} />
@@ -355,6 +429,17 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
               </div>
               )}
               {payError && <p className="text-[11px] text-red-500 font-medium">{payError}</p>}
+            </div>
+          )}
+
+          {paySuccess && !requiresPayment && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+              <p className="text-sm font-bold text-emerald-700 flex items-center gap-1.5">
+                <Banknote size={14} /> Paid in full
+              </p>
+              <p className="text-[11px] text-emerald-700/80 mt-0.5">
+                Payment recorded. {photoFile ? 'Confirm the release below.' : 'Take the condition photo, then confirm the release.'}
+              </p>
             </div>
           )}
 
@@ -374,10 +459,19 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 Cancel
               </Button>
               <Button variant="info" size="lg" onClick={handleRelease}
-                disabled={releasing || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance))}>
+                disabled={releasing || balanceLoading || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance))}>
                 {releasing ? 'Releasing...' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Record payment first' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
               </Button>
             </div>
+            {/* Say WHY the release button is disabled instead of leaving staff
+                guessing that payment can't be taken here. */}
+            {!releasing && !photoFile && (
+              <p className="text-[11px] text-gray-500 text-center mt-2">
+                {requiresPayment
+                  ? 'Take the condition photo to release — you can record the payment above now.'
+                  : 'Take the condition photo to release.'}
+              </p>
+            )}
           </div>
       </BottomSheet>
       {swapOpen && (

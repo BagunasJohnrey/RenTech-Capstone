@@ -113,6 +113,11 @@ describe('POST /api/bookings', () => {
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('id');
     expect(res.body.rentalFee).toBe(5000);
+    // The downpayment isn't received yet (proof under review) — nothing is
+    // deducted until the ledger credits it, so the whole fee is outstanding.
+    expect(prisma.transaction.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ downpayment: 2500, totalPaid: 0, balance: 5000 }),
+    }));
   });
 
   it('should reject when not authenticated', async () => {

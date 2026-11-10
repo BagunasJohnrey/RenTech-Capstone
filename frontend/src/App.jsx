@@ -17,6 +17,7 @@ import { api, API_ORIGIN } from './utils/api';
 import { todayYmd } from './utils/format';
 import { useToast } from './components/Toast';
 import { useDataVersion } from './hooks/useDataVersion';
+import { onDataChanged } from './utils/dataEvents';
 import { prefetchPaymentProofs } from './hooks/usePaymentProofs';
 
 import LoginPage from './pages/LoginPage';
@@ -827,8 +828,12 @@ export default function RentechApp() {
   const { serverVersion: dataVersion, markFresh, clearStale } = useDataVersion({
     role: viewRole,
     isLoggedIn,
-    onStale: () => { autoRefreshData(); },
+    // useDataVersion broadcasts `rentech:data-changed` on a version move;
+    // local writes made outside App's handlers (e.g. Record Payment inside
+    // the detail sheet) broadcast it too. One listener below covers both.
+    onStale: () => {},
   });
+  useEffect(() => onDataChanged(() => { autoRefreshData(); }));
   // Own mutations already merge locally — adopt the new version instead of
   // flagging ourselves stale. Every central mutation handler below calls
   // this on success (booking/return/cancel/release/swap/item writes).

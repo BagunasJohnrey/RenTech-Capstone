@@ -17,6 +17,7 @@ import PhotoViewer from './PhotoViewer';
 import ItemPhotoThumb from './ItemPhotoThumb';
 import PaymentProofModal from './PaymentProofModal';
 import { paymentsService } from '../services/payments';
+import { emitDataChanged } from '../utils/dataEvents';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -379,6 +380,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
       // Payments post outside the transactions hook — drop the cached full
       // record so the next open re-reads instead of serving stale totals.
       invalidateTxCache(tx.id);
+      // Lists / Tasks / Release sheets elsewhere hold their own copy of this
+      // booking — tell them to reload now instead of on the next 20s check.
+      emitDataChanged({ source: 'payment', id: tx.id });
       setTx(prev => ({
         ...prev,
         totalPaid: res.totalPaid,
@@ -413,6 +417,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
         notes: `${manualChannelLabel} transfer — verified in person`,
       });
       invalidateTxCache(tx.id);
+      // Lists / Tasks / Release sheets elsewhere hold their own copy of this
+      // booking — tell them to reload now instead of on the next 20s check.
+      emitDataChanged({ source: 'payment', id: tx.id });
       setTx(prev => ({
         ...prev,
         totalPaid: res.totalPaid,
@@ -737,7 +744,14 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
               )}
               <div className="divide-y divide-gray-100">
                 <DetailRow label="Rental Fee" value={fmtCurrency(tx.rentalFee ?? tx.amount)} />
-                <DetailRow label="Downpayment" value={fmtCurrency(tx.downpayment)} />
+                {/* The downpayment is the REQUIRED amount, not money received —
+                    say so when it hasn't actually been paid yet. */}
+                <DetailRow
+                  label={paidSoFar >= Number(tx.downpayment ?? 0) ? 'Downpayment' : 'Downpayment (required)'}
+                  value={paidSoFar > 0 || !(Number(tx.downpayment) > 0)
+                    ? fmtCurrency(tx.downpayment)
+                    : `${fmtCurrency(tx.downpayment)} · not received`}
+                />
                 <DetailRow label="Balance" value={fmtCurrency(outstandingBalance)} highlight />
                 {tx.latePenalty > 0 && <DetailRow label="Late Penalty" value={fmtCurrency(tx.latePenalty)} />}
                 {tx.damageFee > 0 && <DetailRow label="Damage Fee" value={fmtCurrency(tx.damageFee)} />}
