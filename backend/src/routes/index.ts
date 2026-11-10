@@ -7,6 +7,7 @@ import transactionRoutes from './transactions.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import { catalogRouter, bookingRouter, customerRouter } from './customer.routes.js';
 import aiRoutes from './ai.routes.js';
+import qrRoutes from './qr.routes.js';
 import paymentRoutes from './payments.routes.js';
 import smsRoutes from './sms.routes.js';
 import notificationRoutes from './notifications.routes.js';
@@ -68,6 +69,8 @@ router.get('/health', async (req, res) => {
   }
 });
 
+// Public booking-QR PNGs for emails (encodes the given code only; no lookup).
+router.use('/qr', qrRoutes);
 router.use('/auth', authRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/catalog', catalogRouter);

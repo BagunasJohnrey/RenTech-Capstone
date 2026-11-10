@@ -330,8 +330,8 @@ describe('emails use the Business Profile (Settings → General)', () => {
   });
 });
 
-describe('booking email QR is an inline attachment, not a data: URI', () => {
-  it('sends the QR as a cid: attachment Gmail can display', async () => {
+describe('booking email QR is a hosted image (Gmail-safe)', () => {
+  it('points the QR <img> at /api/qr/<code>.png on the site, never a data: URI', async () => {
     const { env } = await import('../src/config/env.js');
     const { sendBookingConfirmationEmail } = await import('../src/services/resend.service.js');
     const prevKey = env.RESEND_API_KEY;
@@ -344,16 +344,32 @@ describe('booking email QR is an inline attachment, not a data: URI', () => {
         rentalFee: 1500, downpayment: 750, balance: 750, bookingCode: 'RT-ABC12345',
         qrCodeDataUri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==',
       });
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
       const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-      expect(body.html).toContain('src="cid:booking-qr"');
+      expect(body.html).toContain(`src="${env.FRONTEND_URL.replace(/\/+$/, '')}/api/qr/RT-ABC12345.png"`);
       expect(body.html).not.toContain('data:image');
-      expect(body.attachments).toEqual([
-        { filename: 'booking-qr.png', content: 'iVBORw0KGgoAAAANSUhEUg==', content_id: 'booking-qr' },
-      ]);
+      expect(body.attachments).toBeUndefined();
     } finally {
       (env as any).RESEND_API_KEY = prevKey;
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('GET /api/qr/:code.png', () => {
+  const app = express();
+  app.use('/api', routes);
+
+  it('returns a cacheable PNG for a booking code, without auth', async () => {
+    const res = await request(app).get('/api/qr/RT-ABC12345.png');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['cache-control']).toContain('immutable');
+    expect(res.body.slice(0, 4).toString('hex')).toBe('89504e47');
+  });
+
+  it('404s anything that is not a booking code', async () => {
+    for (const path of ['/api/qr/hello.png', '/api/qr/RT-ABC12345', '/api/qr/RT-ZZZZZZZZ.png', '/api/qr/RT-ABC123456.png']) {
+      expect((await request(app).get(path)).status).toBe(404);
     }
   });
 });

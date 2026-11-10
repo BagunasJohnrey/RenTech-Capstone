@@ -189,22 +189,17 @@ export async function sendStaffWelcomeEmail(to: string, name: string, oneTimePas
 
 // ---- Order emails (best-effort — never block the rental flow) ----
 
-export const BOOKING_QR_CID = 'booking-qr';
-
 export async function sendBookingConfirmationEmail(to: string, details: BookingDetails) {
   await refreshEmailStore();
-  // Ship the QR as an inline attachment (cid:) instead of a data: URI, which
-  // Gmail and most email apps block — the QR used to show as a broken image.
-  const match = /^data:image\/png;base64,(.+)$/.exec(details.qrCodeDataUri ?? '');
-  if (!match) {
-    return sendBestEffort(to, bookingConfirmationEmail({ ...details, qrCodeDataUri: undefined }), 'booking');
-  }
-  const built = bookingConfirmationEmail({ ...details, qrCodeDataUri: `cid:${BOOKING_QR_CID}` });
-  return sendBestEffort(
-    to,
-    { ...built, attachments: [{ filename: 'booking-qr.png', content: match[1], contentId: BOOKING_QR_CID }] },
-    'booking',
-  );
+  // The QR is a normal https image served by GET /api/qr/<code>.png through
+  // the site's /api proxy. Gmail blocks data: URIs and doesn't reliably render
+  // cid: inline attachments; a hosted image works in Gmail and Outlook.
+  // (Outlook desktop may ask to "download pictures" first — the booking code
+  // is printed in the email too.)
+  const qrUrl = details.qrCodeDataUri && /^RT-[0-9A-F]{8}$/.test(details.bookingCode ?? '')
+    ? `${env.FRONTEND_URL.replace(/\/+$/, '')}/api/qr/${details.bookingCode}.png`
+    : undefined;
+  return sendBestEffort(to, bookingConfirmationEmail({ ...details, qrCodeDataUri: qrUrl }), 'booking');
 }
 
 export async function sendPickupEmail(to: string, customerName: string, itemName: string, dueDate: string) {
