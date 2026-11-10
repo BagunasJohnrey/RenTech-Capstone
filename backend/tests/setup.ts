@@ -411,6 +411,10 @@ vi.mock('../src/config/database.js', () => {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       delete: vi.fn().mockResolvedValue({ id: 'promo-deleted' }),
     },
+    promoClaim: {
+      findMany: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn().mockImplementation((args) => Promise.resolve({ id: 'claim-new', ...args.create })),
+    },
     smsTemplate: {
       findUnique: vi.fn().mockResolvedValue(null),
       findFirst: vi.fn().mockResolvedValue(null),

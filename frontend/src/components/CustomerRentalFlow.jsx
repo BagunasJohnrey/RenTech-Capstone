@@ -13,7 +13,7 @@ import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useButtonGuard } from '../hooks/useButtonGuard';
 import { SIZE_PRESETS } from '../utils/sizePresets';
 import { todayYmd, toLocalYmd } from '../utils/format';
-import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../utils/promoLabel';
+import { promoDiscountLabel, promoShortLabel, promoTermsLabel, promoExpiry } from '../utils/promoLabel';
 import { promoService } from '../services/promo';
 
 import { downscaleToJpeg } from '../utils/file';
@@ -214,22 +214,56 @@ export default function CustomerRentalFlow({
   const [promoApplied, setPromoApplied] = useState(null);
   const [promoError, setPromoError] = useState('');
   const [promoApplying, setPromoApplying] = useState(false);
-  // Offer picker options (active, unexpired, uses left, not exhausted).
+  // Shopee/Lazada-style vouchers: every usable voucher evaluated against THIS
+  // booking (eligible + savings, or a reason like "Spend ₱300 more"), and the
+  // best one auto-applied — the customer never has to hunt for a code.
   // Fetched once per payment-step visit; manual entry works regardless.
   const [availablePromos, setAvailablePromos] = useState([]);
   const [promosLoading, setPromosLoading] = useState(false);
-  // Vouchers stay collapsed until the customer taps "View all".
+  const [bestPromoCode, setBestPromoCode] = useState(null);
+  // true while the applied voucher is the auto-picked best one (not a change
+  // the customer made, so it never trips the "Discard changes?" guard).
+  const [promoAuto, setPromoAuto] = useState(false);
+  // Once the customer picks or removes a voucher, stop auto-applying.
+  const promoUserChoiceRef = useRef(false);
   const [showPromos, setShowPromos] = useState(false);
+  // A different item means different savings/eligibility — start the voucher
+  // over (and let the best one auto-apply again) instead of carrying a stale fee.
+  const promoItemRef = useRef(selectedItem?.id ?? null);
   useEffect(() => {
-    if (step !== 2) return;
+    const id = selectedItem?.id ?? null;
+    if (id === promoItemRef.current) return;
+    promoItemRef.current = id;
+    promoUserChoiceRef.current = false;
+    setPromoApplied(null);
+    setPromoCode('');
+    setPromoAuto(false);
+    setPromoError('');
+  }, [selectedItem?.id]);
+  useEffect(() => {
+    if (step !== 2 || !selectedItem) return;
     let active = true;
     setPromosLoading(true);
-    listPublicPromos()
-      .then((codes) => { if (active) setAvailablePromos(Array.isArray(codes) ? codes : []); })
-      .catch(() => { if (active) setAvailablePromos([]); })
+    eligiblePromos(effectiveItemPrice || 0, selectedItem.category)
+      .then((res) => {
+        if (!active) return;
+        const list = Array.isArray(res?.vouchers) ? res.vouchers : [];
+        setAvailablePromos(list);
+        setBestPromoCode(res?.bestCode ?? null);
+        const best = list.find((v) => v.code === res?.bestCode);
+        if (best && !promoUserChoiceRef.current) {
+          setPromoApplied((cur) => cur ?? {
+            code: best.code, discountPct: best.discountPct,
+            discountAmount: best.savings, finalFee: best.finalFee,
+          });
+          setPromoCode((cur) => cur || best.code);
+          setPromoAuto(true);
+        }
+      })
+      .catch(() => { if (active) { setAvailablePromos([]); setBestPromoCode(null); } })
       .finally(() => { if (active) setPromosLoading(false); });
     return () => { active = false; };
-  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [step, selectedItem?.id, effectiveItemPrice]); // eslint-disable-line react-hooks/exhaustive-deps
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -286,9 +320,9 @@ export default function CustomerRentalFlow({
     if ((selectedSize || '') !== (init.size || '')) return true;
     if (Object.keys(measurements || {}).some((k) => String(measurements[k] ?? '').trim() !== '')) return true;
     if (String(downpaymentAmount ?? '') !== String(init.downpayment ?? '')) return true;
-    if ((promoCode || '').trim() !== '' || promoApplied) return true;
+    if (!promoAuto && ((promoCode || '').trim() !== '' || promoApplied)) return true;
     return false;
-  }, [confirmedTx, selectedItem, customer, rentalDate, eventDate, selectedSize, measurements, downpaymentAmount, promoCode, promoApplied]);
+  }, [confirmedTx, selectedItem, customer, rentalDate, eventDate, selectedSize, measurements, downpaymentAmount, promoCode, promoApplied, promoAuto]);
   // Every exit goes through here: dirty → confirm dialog (sheet stays put,
   // no exit animation, so Keep Editing returns to the untouched form);
   // clean/committed → close. Step-back stays on handleBack (fields kept).
@@ -323,7 +357,7 @@ export default function CustomerRentalFlow({
   const stepBodyRef = useRef(null);
   useEffect(() => { stepBodyRef.current?.scrollTo?.(0, 0); }, [step]);
 
-  const { validate: validatePromo, listPublic: listPublicPromos } = usePromo();
+  const { validate: validatePromo, eligible: eligiblePromos } = usePromo();
 
   const clearFieldError = (field) => {
     setFieldErrors(prev => ({ ...prev, [field]: '' }));
@@ -481,22 +515,41 @@ export default function CustomerRentalFlow({
     paymentPath: 'manual',
   });
 
+  // Returns true when the code applied. A failed manual code keeps the
+  // voucher already applied (Shopee never drops your voucher on a typo).
   const handleApplyPromo = async (codeOverride) => {
     const raw = (codeOverride ?? promoCode).trim();
-    if (!raw) return;
+    if (!raw) return false;
+    promoUserChoiceRef.current = true;
     setPromoApplying(true);
     setPromoError('');
     try {
       const result = await validatePromo(raw, effectiveItemPrice || 0, selectedItem?.category);
       setPromoCode(result.code || raw);
       setPromoApplied(result);
+      setPromoAuto(false);
       setPromoError('');
+      return true;
     } catch (err) {
-      setPromoApplied(null);
       setPromoError(err.message || 'Invalid promo code');
+      return false;
+    } finally {
+      setPromoApplying(false);
     }
-    setPromoApplying(false);
   };
+  const handleRemovePromo = () => {
+    promoUserChoiceRef.current = true;
+    setPromoCode('');
+    setPromoApplied(null);
+    setPromoAuto(false);
+    setPromoError('');
+  };
+  const [manualCode, setManualCode] = useState('');
+  const eligibleCount = availablePromos.filter((v) => v.eligible).length;
+  // Cheapest unlock hint when nothing applies yet: "Spend ₱300 more for ₱200 off".
+  const nearestUnlock = availablePromos
+    .filter((v) => !v.eligible && v.shortfall != null)
+    .sort((a, b) => a.shortfall - b.shortfall)[0];
 
   const handleBack = () => {
     if (step > 1) setStep(s => s - 1);
@@ -1127,60 +1180,39 @@ export default function CustomerRentalFlow({
                       </div>
                     </div>
                   </div>
-                  {/* 2 — Voucher ticket: offers lead, manual entry follows (never
-                      shown on the receipt). Once applied only the summary line
-                      above + the applied ticket below remain. */}
-                  {!promoApplied ? (
-                    <div className="overflow-hidden rounded-2xl border border-red-100 bg-white shadow-sm">
-                      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-                        <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0">
-                          <Tag size={15} />
+                  {/* 2 — Voucher row (Shopee/Lazada): the best voucher is
+                      auto-applied; tapping opens the picker to switch, enter a
+                      code, or see what's locked and why. */}
+                  <button
+                    type="button"
+                    onClick={() => { setManualCode(''); setPromoError(''); setShowPromos(true); }}
+                    aria-haspopup="dialog"
+                    className={`w-full text-left overflow-hidden rounded-2xl border bg-white shadow-sm px-4 py-3.5 flex items-center gap-3 transition-colors hover:border-[#bf4a53]/40 ${promoApplied ? 'border-emerald-200' : 'border-red-100'}`}
+                  >
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${promoApplied ? 'bg-emerald-500 text-white' : 'bg-[#bf4a53]/10 text-[#bf4a53]'}`}>
+                      {promoApplied ? <Check size={16} strokeWidth={3} /> : <Tag size={15} />}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-extrabold text-gray-900">Vouchers</span>
+                      {promosLoading ? (
+                        <span className="block text-xs text-gray-400 font-medium">Finding the best voucher…</span>
+                      ) : promoApplied ? (
+                        <span className="block text-xs font-bold text-emerald-600 truncate">
+                          {promoApplied.code} applied{promoAuto && promoApplied.code === bestPromoCode ? ' · best deal' : ''}
                         </span>
-                        <p className="text-sm font-extrabold text-gray-900">Save with a voucher</p>
-                        {!promosLoading && availablePromos.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setShowPromos(true)}
-                            aria-haspopup="dialog"
-                            className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-extrabold text-[#bf4a53] bg-[#bf4a53]/10 hover:bg-[#bf4a53]/15 rounded-full px-3 py-1 whitespace-nowrap transition-colors"
-                          >
-                            View all ({availablePromos.length})
-                            <ChevronRight size={12} />
-                          </button>
-                        )}
-                      </div>
-                      <div className="px-4 pb-4">
-                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Enter a code</p>
-                        <div className="flex gap-2">
-                          <input type="text" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                            placeholder="Enter a code" maxLength={20} aria-label="Promo code"
-                            className="flex-1 min-w-0 px-4 py-3 bg-gray-50 rounded-xl border border-gray-200 text-sm font-bold uppercase placeholder:normal-case placeholder:font-medium placeholder:text-gray-400 focus:outline-none focus:border-[#bf4a53] focus:bg-white transition-colors" />
-                          <button onClick={() => handleApplyPromo()} disabled={!promoCode.trim() || promoApplying}
-                            className="px-6 py-3 bg-[#bf4a53] text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0">
-                            {promoApplying ? <Loader2 size={15} className="animate-spin" /> : 'Apply'}
-                          </button>
-                        </div>
-                        {promoError && <p className="text-xs text-red-500 font-medium mt-1.5">{promoError}</p>}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/60 px-4 py-3.5">
-                      <div className="flex items-center gap-3">
-                        <span className="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
-                          <Check size={16} strokeWidth={3} />
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-emerald-600">Voucher applied</p>
-                          <p className="text-sm font-extrabold text-gray-900 truncate">{promoApplied.code} <span className="font-semibold text-emerald-600">· {promoDiscountLabel(promoApplied)}</span></p>
-                          <p className="text-xs font-bold text-emerald-600">−₱{Number(promoApplied.discountAmount).toLocaleString()} saved</p>
-                        </div>
-                        <button onClick={() => { setPromoCode(''); setPromoApplied(null); }}
-                          className="text-[11px] font-extrabold text-gray-400 hover:text-red-500 border border-gray-200 hover:border-red-200 rounded-full px-3 py-1.5 transition-colors shrink-0">
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                      ) : eligibleCount > 0 ? (
+                        <span className="block text-xs font-bold text-[#bf4a53] truncate">{eligibleCount} voucher{eligibleCount === 1 ? '' : 's'} available</span>
+                      ) : nearestUnlock ? (
+                        <span className="block text-xs text-gray-500 font-medium truncate">Spend ₱{Number(nearestUnlock.shortfall).toLocaleString()} more for {promoDiscountLabel(nearestUnlock)}</span>
+                      ) : (
+                        <span className="block text-xs text-gray-400 font-medium truncate">Enter a voucher code</span>
+                      )}
+                    </span>
+                    {promoApplied && (
+                      <span className="text-sm font-extrabold text-emerald-600 tabular-nums shrink-0">−₱{Number(promoApplied.discountAmount).toLocaleString()}</span>
+                    )}
+                    <ChevronRight size={16} className="text-gray-300 shrink-0" />
+                  </button>
                   {/* 3 — Pay-now hero: the one number that matters at this step */}
                   <div className="overflow-hidden rounded-2xl bg-white border-2 border-[#bf4a53] shadow-[0_4px_14px_-10px_rgba(191,74,83,0.35)]">
                     <div className="px-5 pt-4 pb-3 flex items-end justify-between gap-3">
@@ -1369,8 +1401,84 @@ export default function CustomerRentalFlow({
     </div>
   );
 
-  // Voucher picker — its own stacked sheet, opened from "View all". No
-  // second blur: the flow sheet already blurs beneath.
+  // Voucher picker (Shopee/Lazada): code entry on top, then the vouchers that
+  // work for this booking (radio list, best deal tagged, biggest saving first),
+  // then the locked ones greyed out with the reason. Its own stacked sheet —
+  // no second blur: the flow sheet already blurs beneath.
+  const renderVoucher = (p) => {
+    const selected = promoApplied?.code === p.code;
+    const exp = promoExpiry(p);
+    const terms = promoTermsLabel(p);
+    return (
+      <button
+        key={p.code}
+        type="button"
+        disabled={!p.eligible || promoApplying}
+        aria-pressed={selected}
+        onClick={async () => {
+          if (selected) return;
+          if (await handleApplyPromo(p.code)) setShowPromos(false);
+        }}
+        className={`w-full flex items-stretch text-left rounded-xl border overflow-hidden transition-colors ${
+          !p.eligible
+            ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
+            : selected
+              ? 'border-[#bf4a53] bg-red-50/40 ring-1 ring-[#bf4a53]'
+              : 'border-gray-200 bg-white hover:border-[#bf4a53]/50 active:bg-red-50/50'
+        }`}
+      >
+        {/* Ticket stub */}
+        <span className={`w-[84px] shrink-0 border-r-2 border-dashed flex flex-col items-center justify-center py-3 px-1 ${
+          p.eligible ? 'bg-[#bf4a53] border-white/50 text-white' : 'bg-gray-200 border-white text-gray-500'
+        }`}>
+          <span className="text-[15px] font-extrabold tabular-nums leading-none">{promoShortLabel(p)}</span>
+          <span className="text-[9px] font-bold uppercase tracking-wide mt-1 opacity-80">off</span>
+        </span>
+        <span className={`flex-1 min-w-0 px-3 py-2.5 ${p.eligible ? '' : 'opacity-70'}`}>
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className="text-xs font-extrabold text-gray-900 font-mono tracking-wide truncate">{p.code}</span>
+            {p.eligible && p.code === bestPromoCode && (
+              <span className="text-[9px] font-extrabold uppercase tracking-wide text-white bg-amber-500 rounded px-1.5 py-0.5 shrink-0">Best deal</span>
+            )}
+            {p.claimed && (
+              <span className="text-[9px] font-extrabold uppercase tracking-wide text-[#bf4a53] border border-[#bf4a53]/40 rounded px-1.5 py-0.5 shrink-0">Claimed</span>
+            )}
+          </span>
+          <span className="block text-[11px] text-gray-600 font-semibold truncate mt-0.5">
+            {promoDiscountLabel(p)}{terms ? ` · ${terms}` : ''}
+          </span>
+          {p.usagePct != null && p.eligible && (
+            <span className="flex items-center gap-1.5 mt-1.5">
+              <span className="h-1 w-16 rounded-full bg-gray-200 overflow-hidden">
+                <span className="block h-full bg-[#bf4a53]" style={{ width: `${p.usagePct}%` }} />
+              </span>
+              <span className="text-[10px] font-bold text-gray-400">{p.usagePct}% used</span>
+            </span>
+          )}
+          <span className={`block text-[10px] font-bold mt-1 ${!p.eligible ? 'text-gray-500' : exp.urgent ? 'text-[#bf4a53]' : 'text-gray-400'}`}>
+            {p.eligible ? exp.label : p.reason}
+          </span>
+        </span>
+        <span className="self-center mx-3 shrink-0 flex flex-col items-end gap-1">
+          {p.eligible && (
+            promoApplying && !selected ? <Loader2 size={16} className="animate-spin text-[#bf4a53]" /> : (
+              <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selected ? 'border-[#bf4a53] bg-[#bf4a53]' : 'border-gray-300'}`}>
+                {selected && <Check size={11} strokeWidth={3.5} className="text-white" />}
+              </span>
+            )
+          )}
+          {p.eligible && p.savings != null && (
+            <span className="text-[10px] font-extrabold text-emerald-600 tabular-nums">Save ₱{Number(p.savings).toLocaleString()}</span>
+          )}
+        </span>
+      </button>
+    );
+  };
+  const usableVouchers = availablePromos.filter((v) => v.eligible);
+  const lockedVouchers = availablePromos.filter((v) => !v.eligible);
+  const applyManualCode = async () => {
+    if (manualCode.trim() && await handleApplyPromo(manualCode)) setShowPromos(false);
+  };
   const voucherModal = showPromos && (
     <BottomSheet onClose={() => setShowPromos(false)} labelledby="dialog-title-vouchers" z="z-[250]" maxWidth="sm:max-w-md" variant="dialog" backdropClass="bg-gray-900/50">
       <div className="shrink-0 flex items-center justify-between gap-3 px-5 pt-3 pb-3 border-b border-gray-100">
@@ -1379,8 +1487,8 @@ export default function CustomerRentalFlow({
             <Tag size={15} />
           </span>
           <div className="min-w-0">
-            <h3 id="dialog-title-vouchers" className="text-sm font-extrabold text-gray-900">Available vouchers</h3>
-            <p className="text-[11px] text-gray-400 font-medium">Tap a voucher to apply it</p>
+            <h3 id="dialog-title-vouchers" className="text-sm font-extrabold text-gray-900">Select a voucher</h3>
+            <p className="text-[11px] text-gray-400 font-medium">One voucher per booking</p>
           </div>
         </div>
         <button onClick={() => setShowPromos(false)} aria-label="Close vouchers"
@@ -1388,32 +1496,67 @@ export default function CustomerRentalFlow({
           <X size={18} />
         </button>
       </div>
-      <div data-sheet-scroll className="overflow-y-auto min-h-0 p-4">
-        <div className="rounded-xl border border-gray-200 overflow-hidden divide-y divide-dashed divide-gray-200">
-          {availablePromos.map((p) => (
-            <button
-              key={p.code}
-              type="button"
-              disabled={promoApplying}
-              onClick={async () => { await handleApplyPromo(p.code); setShowPromos(false); }}
-              className="w-full flex items-stretch text-left hover:bg-red-50/50 active:bg-red-50 transition-colors disabled:opacity-50"
-            >
-              <span className="w-[76px] shrink-0 bg-red-50/80 border-r border-dashed border-red-200 flex flex-col items-center justify-center py-3 px-1">
-                <span className="text-[13px] font-extrabold text-[#bf4a53] tabular-nums leading-none">{promoShortLabel(p)}</span>
-                <span className="text-[9px] font-bold text-[#bf4a53]/70 uppercase tracking-wide mt-1">off</span>
-              </span>
-              <span className="flex-1 min-w-0 px-3 py-3">
-                <span className="block text-xs font-extrabold text-gray-900 font-mono tracking-wide truncate">{p.code}</span>
-                {promoTermsLabel(p) && (
-                  <span className="block text-[10px] text-gray-400 font-medium truncate mt-0.5">{promoTermsLabel(p)}</span>
-                )}
-              </span>
-              <span className="self-center mr-3 text-[11px] font-extrabold text-[#bf4a53] border border-[#bf4a53]/30 rounded-full px-3.5 py-1.5 shrink-0">
-                {promoApplying ? <Loader2 size={12} className="animate-spin" /> : 'Apply'}
-              </span>
+      <div data-sheet-scroll className="overflow-y-auto min-h-0 p-4 space-y-4">
+        {/* Manual code entry */}
+        <div>
+          <div className="flex gap-2">
+            <input type="text" value={manualCode}
+              onChange={(e) => { setManualCode(e.target.value.toUpperCase()); setPromoError(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyManualCode(); }}
+              placeholder="Enter voucher code" maxLength={20} aria-label="Voucher code"
+              className="flex-1 min-w-0 px-4 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm font-bold uppercase placeholder:normal-case placeholder:font-medium placeholder:text-gray-400 focus:outline-none focus:border-[#bf4a53] focus:bg-white transition-colors" />
+            <button type="button" onClick={applyManualCode}
+              disabled={!manualCode.trim() || promoApplying}
+              className="px-5 py-2.5 bg-[#bf4a53] text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0">
+              Apply
             </button>
-          ))}
+          </div>
+          {promoError && <p className="text-xs text-red-500 font-medium mt-1.5">{promoError}</p>}
         </div>
+
+        {promosLoading ? (
+          <div className="space-y-2">
+            {[0, 1].map((i) => <div key={i} className="h-[72px] rounded-xl bg-gray-100 animate-pulse" />)}
+          </div>
+        ) : availablePromos.length === 0 ? (
+          <p className="text-center text-xs text-gray-400 font-medium py-6">No vouchers available right now.</p>
+        ) : (
+          <>
+            {usableVouchers.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[11px] font-extrabold text-gray-500 uppercase tracking-wide">Available for this booking</p>
+                {usableVouchers.map(renderVoucher)}
+              </div>
+            )}
+            {lockedVouchers.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[11px] font-extrabold text-gray-400 uppercase tracking-wide">Not available for this booking</p>
+                {lockedVouchers.map(renderVoucher)}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div className="shrink-0 border-t border-gray-100 px-4 py-3 flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          {promoApplied ? (
+            <p className="text-xs font-bold text-gray-700 truncate">
+              Saving <span className="text-emerald-600 tabular-nums">₱{Number(promoApplied.discountAmount).toLocaleString()}</span> with {promoApplied.code}
+            </p>
+          ) : (
+            <p className="text-xs font-medium text-gray-400">No voucher selected</p>
+          )}
+        </div>
+        {promoApplied && (
+          <button type="button" onClick={handleRemovePromo}
+            className="text-xs font-bold text-gray-500 hover:text-red-500 px-3 py-2 rounded-xl border border-gray-200 hover:border-red-200 transition-colors shrink-0">
+            Remove
+          </button>
+        )}
+        <button type="button" onClick={() => setShowPromos(false)}
+          className="text-xs font-bold text-white bg-[#bf4a53] hover:bg-red-700 px-5 py-2 rounded-xl transition-colors shrink-0">
+          OK
+        </button>
       </div>
     </BottomSheet>
   );

@@ -12,6 +12,7 @@ const discountFields = {
 };
 
 const promoExtras = {
+  maxDiscount: z.number().positive().max(1000000).nullish(),
   minSpend: z.number().min(0).max(1000000).nullish(),
   startsAt: z.string().nullish(),
   maxUsesPerCustomer: z.number().int().positive().nullish(),
@@ -50,6 +51,13 @@ export const validatePromoCodeSchema = z.object({
     // Optional context for the advisory checks (category scope); the
     // per-customer cap always runs against the caller's own account, and the
     // booking re-checks authoritatively with the real customer.
+    itemCategory: z.string().min(1).max(40).optional(),
+  }),
+});
+
+export const eligiblePromoCodesSchema = z.object({
+  body: z.object({
+    rentalFee: z.number().nonnegative().max(10000000),
     itemCategory: z.string().min(1).max(40).optional(),
   }),
 });
@@ -136,5 +144,34 @@ export async function listPublicPromoCodes(req: AuthenticatedRequest, res: Respo
   try {
     const codes = await promoCodesService.listPublicPromoCodes(req.user?.id);
     res.json(codes);
+  } catch (err) { next(err); }
+}
+
+// Checkout voucher picker: every usable voucher evaluated against this
+// booking (eligible + savings, or a reason) and the best one to auto-apply.
+export async function listEligiblePromoCodes(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    const result = await promoCodesService.listEligiblePromoCodes(
+      req.user?.id, req.body.rentalFee, req.body.itemCategory,
+    );
+    res.json(result);
+  } catch (err) { next(err); }
+}
+
+export const claimPromoCodeSchema = z.object({
+  body: z.object({ code: z.string().trim().min(1).max(50) }),
+});
+
+// "Claim" a voucher into the caller's My Vouchers wallet (idempotent).
+export async function claimPromoCode(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await promoCodesService.claimPromoCode(String(req.user?.id), req.body.code));
+  } catch (err) { next(err); }
+}
+
+// The caller's wallet: claimed vouchers with active/used/expired/upcoming status.
+export async function listMyVouchers(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await promoCodesService.listMyVouchers(String(req.user?.id)));
   } catch (err) { next(err); }
 }

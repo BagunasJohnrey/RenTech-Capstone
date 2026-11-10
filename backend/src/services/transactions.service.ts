@@ -569,7 +569,8 @@ async function listTransactionsUncached(where: Record<string, unknown>, take: nu
     where,
     include: {
       customer: { select: { id: true, name: true, phone: true, address: true } },
-      item: { select: { id: true, name: true, category: true } },
+      // image: storage path (short string) — rental rows show the outfit photo.
+      item: { select: { id: true, name: true, category: true, image: true } },
       ...(includeLatestProof
         ? {
             paymentProofs: {

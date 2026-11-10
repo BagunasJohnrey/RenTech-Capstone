@@ -7,7 +7,7 @@ import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
 import { useConfirm } from '../hooks/useConfirm';
 
 const EMPTY_FORM = {
-  code: '', discountType: 'pct', discountPct: 10, discountAmount: '',
+  code: '', discountType: 'pct', discountPct: 10, discountAmount: '', maxDiscount: '',
   minSpend: '', startsAt: '', maxUsesPerCustomer: '', firstBookingOnly: false,
   appliesToCategories: '', maxUses: '', expiresAt: '',
 };
@@ -55,6 +55,8 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
         code: form.code,
         discountPct: isAmount ? undefined : Number(form.discountPct),
         discountAmount: isAmount ? Number(form.discountAmount) : undefined,
+        // Shopee-style cap ("15% off, up to ₱500") — percent codes only.
+        maxDiscount: !isAmount && form.maxDiscount !== '' && form.maxDiscount != null ? Number(form.maxDiscount) : undefined,
         minSpend: form.minSpend === '' ? undefined : Number(form.minSpend),
         startsAt: form.startsAt || undefined,
         maxUsesPerCustomer: form.maxUsesPerCustomer === '' ? undefined : parseInt(form.maxUsesPerCustomer),
@@ -136,12 +138,22 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
               </div>
             </div>
             {form.discountType === 'pct' ? (
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount %<RequiredMark show={!String(form.discountPct ?? '').trim()} /></label>
-                <input type="number" min={1} max={100} value={form.discountPct}
-                  onChange={e => setForm({ ...form, discountPct: Math.min(100, Math.max(1, parseInt(e.target.value) || 1)) })}
-                  className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
-              </div>
+              <>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Discount %<RequiredMark show={!String(form.discountPct ?? '').trim()} /></label>
+                  <input type="number" min={1} max={100} value={form.discountPct}
+                    onChange={e => setForm({ ...form, discountPct: Math.min(100, Math.max(1, parseInt(e.target.value) || 1)) })}
+                    className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Max discount (₱)</label>
+                  <input type="number" min={1} value={form.maxDiscount ?? ''}
+                    onChange={e => setForm({ ...form, maxDiscount: e.target.value })}
+                    placeholder="No cap"
+                    className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+                  <p className="text-[10px] text-gray-400 mt-1">e.g. 15% off, up to ₱500</p>
+                </div>
+              </>
             ) : (
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Amount off (₱)<RequiredMark show={!String(form.discountAmount ?? '').trim()} /></label>

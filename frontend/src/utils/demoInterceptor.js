@@ -456,6 +456,36 @@ function bundle() {
 }
 
 // ─── Router ────────────────────────────────────────────────────────────────
+// Demo vouchers (Shopee-style picker). Mirrors promoCodes.service
+// listEligiblePromoCodes: eligible first by savings, then ineligible by shortfall.
+const DEMO_VOUCHERS = () => {
+  const inDays = (n) => new Date(Date.now() + n * 86_400_000).toISOString();
+  return [
+    { code: 'WELCOME200', discountPct: null, discountAmount: 200, minSpend: null, startsAt: null, expiresAt: inDays(2), appliesToCategories: [], firstBookingOnly: false, usagePct: 64 },
+    { code: 'GOWN15', discountPct: 15, discountAmount: null, maxDiscount: 400, minSpend: 2000, startsAt: null, expiresAt: inDays(20), appliesToCategories: ['Gown'], firstBookingOnly: false, usagePct: null },
+    { code: 'BIGDAY500', discountPct: null, discountAmount: 500, minSpend: 6000, startsAt: null, expiresAt: null, appliesToCategories: [], firstBookingOnly: false, usagePct: 30 },
+  ].map((v) => ({ ...v, claimed: demoClaimed.has(v.code) }));
+};
+const demoClaimed = new Set(['WELCOME200']);
+function demoEligible(fee, category) {
+  const vouchers = DEMO_VOUCHERS().map((c) => {
+    let reason = null; let shortfall = null;
+    const pct = Math.round(fee * (c.discountPct || 0)) / 100;
+    const savings = c.discountAmount != null ? Math.min(c.discountAmount, fee) : Math.min(pct, c.maxDiscount ?? Infinity);
+    if (c.appliesToCategories.length && category && !c.appliesToCategories.map((x) => x.toLowerCase()).includes(String(category).toLowerCase())) {
+      reason = `For ${c.appliesToCategories.join(', ')} only`;
+    } else if (c.minSpend != null && fee < c.minSpend) {
+      shortfall = c.minSpend - fee; reason = `Spend ₱${shortfall.toLocaleString()} more`;
+    }
+    const eligible = reason === null;
+    return { ...c, eligible, reason, shortfall, savings: eligible ? savings : null, finalFee: eligible ? Math.max(0, fee - savings) : null };
+  });
+  vouchers.sort((a, b) => (a.eligible !== b.eligible ? (a.eligible ? -1 : 1)
+    : a.eligible ? b.savings - a.savings : (a.shortfall ?? Infinity) - (b.shortfall ?? Infinity)));
+  const best = vouchers.find((v) => v.eligible && v.savings > 0);
+  return { vouchers, bestCode: best?.code ?? null };
+}
+
 // Returns { match, handle } where handle(body) produces the response.
 
 function route(method, path, body) {
@@ -929,8 +959,25 @@ function route(method, path, body) {
   // ---- SMS / promo / payments / AI / storage ----
   if (P(/^\/sms\/history/)) return { value: { messages: [] } };
   if (path === '/sms/send') return { value: { message: 'SMS sent (demo — not really)', id: 'demo-sms' } };
-  if (P(/^\/promo-codes\/public/)) return { value: [] };
-  if (P(/^\/promo-codes\/validate/)) return { status: 404, error: 'Promo code not found (demo)' };
+  if (P(/^\/promo-codes\/public/)) return { value: clone(DEMO_VOUCHERS()) };
+  if (P(/^\/promo-codes\/mine/)) {
+    return { value: DEMO_VOUCHERS().filter((v) => v.claimed).map((v) => ({ ...v, status: 'active', claimedAt: new Date().toISOString() })) };
+  }
+  if (P(/^\/promo-codes\/claim/) && method === 'POST') {
+    const code = String(body?.code ?? '').toUpperCase();
+    const v = DEMO_VOUCHERS().find((x) => x.code === code);
+    if (!v) return { status: 404, error: 'Voucher not found' };
+    demoClaimed.add(code);
+    return { value: { ...v, claimed: true } };
+  }
+  if (P(/^\/promo-codes\/eligible/)) return { value: demoEligible(Number(body?.rentalFee) || 0, body?.itemCategory) };
+  if (P(/^\/promo-codes\/validate/)) {
+    const code = String(body?.code ?? '').toUpperCase();
+    const v = demoEligible(Number(body?.rentalFee) || 0, body?.itemCategory).vouchers.find((x) => x.code === code);
+    if (!v) return { status: 404, error: 'Invalid promo code' };
+    if (!v.eligible) return { status: 400, error: v.reason };
+    return { value: { promoCodeId: 'demo-' + v.code, code: v.code, discountPct: v.discountPct, discountAmount: v.savings, finalFee: v.finalFee } };
+  }
   if (P(/^\/promo-codes/)) return { value: [] };
   if (P(/^\/payments\/proofs$/) && method === 'GET') {
     const pending = paymentProofs

@@ -60,6 +60,7 @@ model Profile {
   emailTokens    EmailToken[]
   importedRecords HistoricalRecord[] @relation("ImportedRecords")
   reviewedProofs PaymentProof[] @relation("ProofReviewer")
+  promoClaims    PromoClaim[]
 
   @@map("profiles")
 }
@@ -210,6 +211,9 @@ model PromoCode {
   // (1–100) or a fixed peso amount off.
   discountPct Float?   @map("discount_pct")
   discountAmount Float? @map("discount_amount")
+  // Shopee-style cap on percent vouchers: "15% off, up to ₱500". Ignored
+  // for fixed-amount codes. null = uncapped.
+  maxDiscount Float?   @map("max_discount")
   // Optional guards: minimum rental fee, start date, per-customer cap
   // (null = once, the historical behavior), first-timers only, and category
   // scoping (empty = all categories).
@@ -226,8 +230,26 @@ model PromoCode {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   transactions Transaction[]
+  claims       PromoClaim[]
 
   @@map("promo_codes")
+}
+
+// "My Vouchers" wallet: a customer claims a voucher once (Shopee/Lazada
+// "Claim"). Claiming never consumes a use — redemption is still the
+// Transaction.promoCodeId stamp + currentUses at booking time.
+model PromoClaim {
+  id          String   @id @default(uuid())
+  profileId   String   @map("profile_id")
+  promoCodeId String   @map("promo_code_id")
+  claimedAt   DateTime @default(now()) @map("claimed_at")
+
+  profile   Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, promoCodeId])
+  @@index([profileId])
+  @@map("promo_claims")
 }
 
 // Imported historical rental records (paper logbooks, pre-system walk-ins).

@@ -23,7 +23,13 @@ export async function listPublicPromoCodes(customerId?: string) {
   });
   const usable = codes.filter((c) => c.maxUses === null || c.currentUses < c.maxUses);
   let exhausted = new Set<string>();
+  let claimed = new Set<string>();
   if (customerId && usable.length > 0) {
+    const claims = await prisma.promoClaim.findMany({
+      where: { profileId: customerId, promoCodeId: { in: usable.map((c) => c.id) } },
+      select: { promoCodeId: true },
+    });
+    claimed = new Set(claims.map((c) => c.promoCodeId));
     const useCounts = await prisma.transaction.groupBy({
       by: ['promoCodeId'],
       where: { customerId, promoCodeId: { not: null } },
@@ -45,12 +51,73 @@ export async function listPublicPromoCodes(customerId?: string) {
       code: c.code,
       discountPct: c.discountPct,
       discountAmount: c.discountAmount,
+      maxDiscount: c.maxDiscount,
       minSpend: c.minSpend,
       startsAt: c.startsAt,
       expiresAt: c.expiresAt,
       appliesToCategories: c.appliesToCategories,
       firstBookingOnly: c.firstBookingOnly,
+      usagePct: usagePct(c),
+      claimed: claimed.has(c.id),
     }));
+}
+
+// Claim a voucher into the customer's "My Vouchers" wallet. Only vouchers
+// the public list would offer them can be claimed (active, started, not
+// expired, pool not exhausted, personal cap not reached). Idempotent:
+// claiming twice is a no-op. Claiming never consumes a use.
+export async function claimPromoCode(customerId: string, code: string) {
+  const wanted = String(code || '').trim().toUpperCase();
+  const offer = (await listPublicPromoCodes(customerId)).find((c) => c.code === wanted);
+  const promo = await prisma.promoCode.findUnique({ where: { code: wanted } });
+  if (!promo) throw new AppError(404, 'Voucher not found');
+  if (!offer) throw new AppError(400, 'This voucher can no longer be claimed');
+  await prisma.promoClaim.upsert({
+    where: { profileId_promoCodeId: { profileId: customerId, promoCodeId: promo.id } },
+    create: { profileId: customerId, promoCodeId: promo.id },
+    update: {},
+  });
+  return { ...offer, claimed: true };
+}
+
+// "My Vouchers" wallet: everything the customer claimed, each with a status —
+// usable now, already used up (personal cap reached), not started yet, or no
+// longer valid (expired / deactivated / pool exhausted). Newest claim first.
+export async function listMyVouchers(customerId: string) {
+  const claims = await prisma.promoClaim.findMany({
+    where: { profileId: customerId },
+    include: { promoCode: true },
+    orderBy: { claimedAt: 'desc' },
+  });
+  if (claims.length === 0) return [];
+  const useCounts = await prisma.transaction.groupBy({
+    by: ['promoCodeId'],
+    where: { customerId, promoCodeId: { in: claims.map((c) => c.promoCodeId) } },
+    _count: { promoCodeId: true },
+  });
+  const usedBy = new Map(useCounts.map((g) => [String(g.promoCodeId), g._count?.promoCodeId ?? 0]));
+  const now = new Date();
+  return claims.map(({ promoCode: c, claimedAt }) => {
+    const used = (usedBy.get(c.id) ?? 0) >= (c.maxUsesPerCustomer ?? 1);
+    const invalid = !c.isActive || (c.expiresAt != null && c.expiresAt <= now) ||
+      (c.maxUses != null && c.currentUses >= c.maxUses);
+    const notStarted = c.startsAt != null && c.startsAt > now;
+    return {
+      code: c.code,
+      discountPct: c.discountPct,
+      discountAmount: c.discountAmount,
+      maxDiscount: c.maxDiscount,
+      minSpend: c.minSpend,
+      startsAt: c.startsAt,
+      expiresAt: c.expiresAt,
+      appliesToCategories: c.appliesToCategories,
+      firstBookingOnly: c.firstBookingOnly,
+      usagePct: usagePct(c),
+      claimed: true,
+      claimedAt,
+      status: used ? 'used' : invalid ? 'expired' : notStarted ? 'upcoming' : 'active',
+    };
+  });
 }
 
 export async function getPromoCode(id: string) {
@@ -63,6 +130,7 @@ export async function createPromoCode(data: {
   code: string;
   discountPct?: number | null;
   discountAmount?: number | null;
+  maxDiscount?: number | null;
   minSpend?: number | null;
   startsAt?: string | null;
   maxUsesPerCustomer?: number | null;
@@ -80,6 +148,8 @@ export async function createPromoCode(data: {
       code: data.code.toUpperCase(),
       discountPct: data.discountPct ?? null,
       discountAmount: data.discountAmount ?? null,
+      // A cap only means something on a percent code.
+      maxDiscount: data.discountPct != null ? (data.maxDiscount ?? null) : null,
       minSpend: data.minSpend ?? null,
       startsAt: data.startsAt ? new Date(data.startsAt) : null,
       maxUsesPerCustomer: data.maxUsesPerCustomer ?? null,
@@ -95,6 +165,7 @@ export async function updatePromoCode(id: string, data: {
   code?: string;
   discountPct?: number | null;
   discountAmount?: number | null;
+  maxDiscount?: number | null;
   minSpend?: number | null;
   startsAt?: string | null;
   maxUsesPerCustomer?: number | null;
@@ -116,6 +187,9 @@ export async function updatePromoCode(id: string, data: {
       ...(data.code && { code: data.code.toUpperCase() }),
       ...(data.discountPct !== undefined && { discountPct: data.discountPct }),
       ...(data.discountAmount !== undefined && { discountAmount: data.discountAmount }),
+      ...(data.maxDiscount !== undefined && { maxDiscount: data.maxDiscount }),
+      // Switching a code to a fixed amount drops any leftover percent cap.
+      ...(nextAmt != null && { maxDiscount: null }),
       ...(data.minSpend !== undefined && { minSpend: data.minSpend }),
       ...(data.startsAt !== undefined && { startsAt: data.startsAt ? new Date(data.startsAt) : null }),
       ...(data.maxUsesPerCustomer !== undefined && { maxUsesPerCustomer: data.maxUsesPerCustomer }),
@@ -154,6 +228,89 @@ export async function deletePromoCode(id: string) {
   return { deleted: true };
 }
 
+// Peso discount a code gives on a fee: percent XOR fixed amount (legacy rows
+// are percent-only), never more than the fee itself. null = no discount set.
+// Percent codes honour the optional maxDiscount cap ("15% off, up to ₱500").
+export function computeDiscount(
+  promo: { discountPct: number | null; discountAmount: number | null; maxDiscount?: number | null },
+  rentalFee: number,
+): number | null {
+  if (promo.discountAmount != null && promo.discountAmount > 0) {
+    return Math.min(promo.discountAmount, rentalFee);
+  }
+  if (promo.discountPct != null && promo.discountPct > 0) {
+    let off = Math.round(rentalFee * (promo.discountPct / 100) * 100) / 100;
+    if (promo.maxDiscount != null && promo.maxDiscount > 0) off = Math.min(off, promo.maxDiscount);
+    return Math.min(rentalFee, off);
+  }
+  return null;
+}
+
+// Share of a capped code's global pool already used (0–100), or null when
+// uncapped. A percentage only — raw counts stay internal.
+function usagePct(c: { maxUses: number | null; currentUses: number }) {
+  if (c.maxUses == null || c.maxUses <= 0) return null;
+  return Math.min(100, Math.round((c.currentUses / c.maxUses) * 100));
+}
+
+// Shopee/Lazada-style checkout voucher list: every voucher this customer can
+// still use, each evaluated against THIS booking (fee + category). Eligible
+// ones carry their savings and come first (biggest saving, then soonest
+// expiry); the rest carry a human reason and, for min-spend misses, the
+// shortfall. `bestCode` is the one checkout auto-applies. Read-only — the
+// booking still re-runs checkPromo authoritatively inside its transaction.
+export async function listEligiblePromoCodes(
+  customerId: string | undefined,
+  rentalFee: number,
+  itemCategory?: string,
+) {
+  const usable = await listPublicPromoCodes(customerId);
+  if (usable.length === 0) return { vouchers: [], bestCode: null };
+
+  let hasPriorBookings = false;
+  if (customerId && usable.some((c) => c.firstBookingOnly)) {
+    const prior = await prisma.transaction.count({
+      where: { customerId, status: { not: 'Cancelled' } },
+    });
+    hasPriorBookings = prior > 0;
+  }
+
+  const vouchers = usable.map((c) => {
+    let reason: string | null = null;
+    let shortfall: number | null = null;
+    const savings = computeDiscount(c, rentalFee);
+    if (savings === null) {
+      reason = 'No discount set';
+    } else if (c.appliesToCategories.length > 0 && itemCategory &&
+        !c.appliesToCategories.map((x) => x.toLowerCase()).includes(itemCategory.toLowerCase())) {
+      reason = `For ${c.appliesToCategories.join(', ')} only`;
+    } else if (c.firstBookingOnly && hasPriorBookings) {
+      reason = 'First booking only';
+    } else if (c.minSpend != null && rentalFee < c.minSpend) {
+      shortfall = Math.round((c.minSpend - rentalFee) * 100) / 100;
+      reason = `Spend ₱${shortfall.toLocaleString()} more`;
+    }
+    const eligible = reason === null;
+    return {
+      ...c,
+      eligible,
+      reason,
+      shortfall,
+      savings: eligible ? savings : null,
+      finalFee: eligible ? Math.max(0, Math.round((rentalFee - (savings ?? 0)) * 100) / 100) : null,
+    };
+  });
+
+  const expiry = (v: { expiresAt: Date | null }) => (v.expiresAt ? new Date(v.expiresAt).getTime() : Infinity);
+  vouchers.sort((a, b) => {
+    if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+    if (a.eligible) return (b.savings ?? 0) - (a.savings ?? 0) || expiry(a) - expiry(b);
+    return (a.shortfall ?? Infinity) - (b.shortfall ?? Infinity) || expiry(a) - expiry(b);
+  });
+  const best = vouchers.find((v) => v.eligible && (v.savings ?? 0) > 0);
+  return { vouchers, bestCode: best?.code ?? null };
+}
+
 // Read-only promo check (never consumes a use). Used by the public /validate
 // endpoint and up-front in booking flows so probing codes can't drain maxUses
 // or corrupt currentUses.
@@ -189,15 +346,8 @@ export async function checkPromo(code: string, rentalFee: number, opts: CheckPro
     }
   }
 
-  // Percent XOR fixed amount (legacy rows are percent-only).
-  let discountAmount: number;
-  if (promo.discountAmount != null && promo.discountAmount > 0) {
-    discountAmount = Math.min(promo.discountAmount, rentalFee);
-  } else if (promo.discountPct != null && promo.discountPct > 0) {
-    discountAmount = Math.round(rentalFee * (promo.discountPct / 100) * 100) / 100;
-  } else {
-    throw new AppError(400, 'Promo code has no discount set');
-  }
+  const discountAmount = computeDiscount(promo, rentalFee);
+  if (discountAmount === null) throw new AppError(400, 'Promo code has no discount set');
 
   // Per-customer cap (default: once — the historical behavior).
   if (opts.customerId) {

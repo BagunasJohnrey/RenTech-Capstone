@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, Droplets, Tag, Copy, Check, CalendarClock, Sparkle, ScanLine, Upload } from 'lucide-react';
+import { Sparkles, ShoppingBag, Plus, Undo2, AlertTriangle, TrendingUp, Droplets, Tag, CalendarClock, Sparkle, ScanLine, Upload, Ticket, ChevronRight } from 'lucide-react';
 import ItemCard, { getSaleInfo } from '../components/ItemCard';
 import CleaningQueueModal from '../components/CleaningQueueModal';
 import PaymentProofModal from '../components/PaymentProofModal';
@@ -13,14 +13,18 @@ import { Skeleton, SkeletonList, FeaturedSkeleton } from '../components/Skeleton
 import { api } from '../utils/api';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { txPill } from '../utils/statusColors';
-import { promoService } from '../services/promo';
-import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
+import { promoService, VOUCHERS_CHANGED } from '../services/promo';
+import VoucherTicket from '../components/VoucherTicket';
+import MyVouchersSheet from '../components/MyVouchers';
+import ItemImage from '../components/ItemImage';
 import { sortByCategory } from '../utils/categorySort';
 import { tabPath } from '../utils/routing';
 import { todayYmd } from '../utils/format';
 import PageHeader from '../components/ui/PageHeader';
 import StatCard from '../components/StatCard';
 import { rowActivation, ROW_FOCUS } from '../utils/a11y';
+import PhotoViewer from '../components/PhotoViewer';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export default function DashboardView({ role, transactions, inventory, transactionsLoading, inventoryLoading, customerInfo, onOpenNewRental, onNavigate, onOpenChatbot, onOpenScanner, onCustomerBook, onNavigateDetail }) {
   const navigate = useNavigate();
@@ -62,26 +66,24 @@ export default function DashboardView({ role, transactions, inventory, transacti
   // Live promo codes for the customer "Promotions & Offers" section.
   const [promos, setPromos] = useState([]);
   const [promosLoading, setPromosLoading] = useState(role === 'Customer');
-  const [copiedCode, setCopiedCode] = useState(null);
+  const [showMyVouchers, setShowMyVouchers] = useState(false);
+  // Full-size view of a rental's item photo ({ image, label } or null).
+  const [rentalPhoto, setRentalPhoto] = useState(null);
+  useEscapeClose(() => setRentalPhoto(null), !!rentalPhoto);
   useEffect(() => {
     if (role !== 'Customer') return;
     let active = true;
-    promoService.listPublic()
+    const load = () => promoService.listPublic()
       .then((d) => { if (active && Array.isArray(d)) setPromos(d); })
       .catch(() => {})
       .finally(() => { if (active) setPromosLoading(false); });
-    return () => { active = false; };
+    load();
+    // A claim anywhere (wallet sheet, settings) flips Claim → Use now here.
+    window.addEventListener(VOUCHERS_CHANGED, load);
+    return () => { active = false; window.removeEventListener(VOUCHERS_CHANGED, load); };
   }, [role]);
 
-  const copyCode = async (code) => {
-    try {
-      await navigator.clipboard.writeText(code);
-    } catch {
-      // clipboard API may be unavailable (http); fall through silently
-    }
-    setCopiedCode(code);
-    setTimeout(() => setCopiedCode((c) => (c === code ? null : c)), 1600);
-  };
+
   // If the server KPIs/today-digest never resolve (e.g. API unreachable), stop
   // holding the skeleton after a few seconds and fall back to client-derived
   // numbers instead of blocking the dashboard forever.
@@ -110,12 +112,27 @@ export default function DashboardView({ role, transactions, inventory, transacti
       prefs.some((p) => (i.category || '').toLowerCase().includes(p.toLowerCase()))
     );
     const recommended = sortByCategory(prefs.length > 0 && preferred.length > 0 ? preferred : available).slice(0, 4);
-    const myRentals = (transactions || [])
-      .filter((tx) => tx.status === 'Active' || tx.status === 'Overdue' || tx.status === 'Reserved')
+    // One "My Rentals" list (was two overlapping sections: Upcoming Pickups +
+    // Your Rentals showed the same bookings twice). Ordered by what needs the
+    // customer first: overdue → next pickup → next return. Each row shows the
+    // ONE date that matters for its stage (pickup for Reserved, return for
+    // Active/Overdue).
+    const RENTAL_RANK = { Overdue: 0, Reserved: 1, Active: 2 };
+    const nextDate = (tx) => new Date((tx.status === 'Reserved' ? tx.rentalDate : tx.dueDate) || 0).getTime();
+    const openRentals = (transactions || [])
+      .filter((tx) => tx.status in RENTAL_RANK)
+      .sort((a, b) => RENTAL_RANK[a.status] - RENTAL_RANK[b.status] || nextDate(a) - nextDate(b));
+    const myRentals = openRentals
       .slice(0, 3)
       // Prefer the fresh server row when the proof overlay has one (payment
       // proofs just submitted/changed server-side since the parent load).
       .map((tx) => (txOverlay ? txOverlay.get(tx.id) ?? tx : tx));
+    const shortDay = (d) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const rentalWhen = (tx) => {
+      if (tx.status === 'Reserved') return tx.rentalDate ? `Pickup ${shortDay(tx.rentalDate)}` : 'Pickup date pending';
+      if (tx.status === 'Overdue') return tx.dueDate ? `Was due ${shortDay(tx.dueDate)} — please return` : 'Overdue — please return';
+      return tx.dueDate ? `Return by ${shortDay(tx.dueDate)}` : 'With you now';
+    };
     const onSale = available
       .filter((i) => getSaleInfo(i).active)
       .slice(0, 4);
@@ -125,13 +142,6 @@ export default function DashboardView({ role, transactions, inventory, transacti
     const newArrivals = sortByCategory([...available]
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     ).slice(0, 4);
-
-    // Upcoming rentals (Reserved/Active with a future pickup) so the customer
-    // sees at a glance what to pick up and when.
-    const upcoming = (transactions || [])
-      .filter((tx) => (tx.status === 'Reserved' || tx.status === 'Active') && tx.rentalDate)
-      .sort((a, b) => new Date(a.rentalDate) - new Date(b.rentalDate))
-      .slice(0, 3);
 
     // Customer Home — hero ALWAYS renders; only data sections skeleton.
     // (No full-page skeleton: the greeting + stylist CTA must never be
@@ -159,6 +169,81 @@ export default function DashboardView({ role, transactions, inventory, transacti
           </button>
         </div>
 
+        {/* My Rentals — header stays; rows skeleton while loading */}
+        {(customerLoading || myRentals.length > 0) && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2">
+                <CalendarClock size={15} className="text-[#bf4a53]" /> My Rentals
+              </h3>
+              <button onClick={() => onNavigate('History')} className="text-xs font-semibold text-[#bf4a53] hover:underline">
+                View All{openRentals.length > 3 ? ` (${openRentals.length})` : ''}
+              </button>
+            </div>
+            {customerLoading ? (
+              <SkeletonList count={3} />
+            ) : (
+            <div className="space-y-3">
+              {myRentals.map((tx) => {
+                // Payment-proof state for manual QR checkouts. `paymentProofs`
+                // is customer-payload only — guard before indexing.
+                const proof = Array.isArray(tx.paymentProofs) ? tx.paymentProofs[0] : null;
+                const unpaidManual = !proof || proof.status === 'rejected';
+                const canResume = !['Cancelled', 'Returned'].includes(tx.status) && unpaidManual && (proof?.status === 'rejected' || tx.paymentPath === 'manual' || tx.gateway === 'manual' || (!tx.gateway && tx.totalPaid < (tx.downpayment || 0)));
+                return (
+                <div key={tx.id} className="bg-white rounded-2xl p-3 border border-gray-100/80 shadow-sm flex items-center gap-3">
+                  {/* Item photo (thumb, full-image fallback) — the outfit at a glance */}
+                  {tx.itemImage ? (
+                    <button
+                      type="button"
+                      onClick={() => setRentalPhoto({ image: tx.itemImage, label: itemName(tx) })}
+                      aria-label={`View photo of ${itemName(tx)}`}
+                      title="View photo"
+                      className="w-14 h-[70px] rounded-xl overflow-hidden bg-red-50 border border-red-100 shrink-0 hover:ring-2 hover:ring-[#bf4a53]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53] transition"
+                    >
+                      <ItemImage thumb image={tx.itemImage} alt={itemName(tx)} className="w-full h-full object-cover" />
+                    </button>
+                  ) : (
+                    <div className="w-14 h-[70px] rounded-xl bg-red-50 border border-red-100 shrink-0 flex items-center justify-center">
+                      <ShoppingBag size={18} className="text-[#bf4a53]" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-gray-900 truncate">{itemName(tx)}</p>
+                    <p className={`text-xs truncate ${tx.status === 'Overdue' ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>{rentalWhen(tx)}</p>
+                    {proof?.status === 'rejected' && proof.rejectionReason && (
+                      <p className="text-[11px] text-red-500 font-medium truncate mt-0.5">Reason: {proof.rejectionReason}</p>
+                    )}
+                  </div>
+                  {/* At most one pill per row: Overdue first, then "Payment
+                      under review", else the booking status. Rows that still
+                      need a proof show only the Upload / Re-upload button. */}
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    {tx.status === 'Overdue' ? (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
+                    ) : proof?.status === 'pending' ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Payment under review</span>
+                    ) : !canResume ? (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
+                    ) : null}
+                    {canResume && (
+                      <button
+                        type="button"
+                        onClick={() => setProofModalTx(tx)}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[#bf4a53] hover:bg-[#a83f47] px-2.5 py-1 rounded-full transition-colors"
+                      >
+                        <Upload size={11} /> {proof?.status === 'rejected' ? 'Re-upload' : 'Upload proof'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+            )}
+          </div>
+        )}
+
         {/* Promotions & Offers — real promo codes (admin-created) + sale items */}
         {(promosLoading || promos.length > 0 || onSale.length > 0) && (
           <div>
@@ -167,9 +252,47 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                   <Tag size={18} className="text-[#bf4a53]" /> Promotions & Offers
                 </h3>
-                <p className="text-xs text-gray-500">Discounts you can use on your next booking</p>
+                <p className="text-xs text-gray-500">Claim vouchers — your best one is applied at checkout</p>
               </div>
             </div>
+
+            {/* My Vouchers wallet entry — a banner, not a text link, so the
+                wallet is obvious at a glance (Shopee/Lazada "My Vouchers"). */}
+            {(() => {
+              const claimedCount = promos.filter((p) => p.claimed).length;
+              const toClaim = promos.length - claimedCount;
+              return (
+                <button
+                  type="button"
+                  onClick={() => setShowMyVouchers(true)}
+                  aria-label={`My Vouchers: ${claimedCount} ready to use${toClaim > 0 ? `, ${toClaim} to claim` : ''}`}
+                  className="w-full mb-4 flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#bf4a53] to-[#d9665f] text-white px-4 py-3.5 shadow-md shadow-red-500/20 hover:brightness-105 active:scale-[0.99] transition text-left"
+                >
+                  <span className="relative w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                    <Ticket size={22} />
+                    {claimedCount > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-white text-[#bf4a53] text-[11px] font-extrabold flex items-center justify-center shadow">
+                        {claimedCount}
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-base font-extrabold leading-tight">My Vouchers</span>
+                    <span className="block text-xs text-white/85 font-medium truncate">
+                      {promosLoading
+                        ? 'Loading your vouchers…'
+                        : [
+                            claimedCount > 0 ? `${claimedCount} ready to use` : 'No vouchers yet',
+                            toClaim > 0 ? `${toClaim} to claim` : '',
+                          ].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                  <span className="inline-flex items-center gap-0.5 text-xs font-bold bg-white/20 rounded-full pl-3 pr-2 py-1 shrink-0">
+                    View <ChevronRight size={14} />
+                  </span>
+                </button>
+              );
+            })()}
 
             {/* Promo codes — skeleton placeholders so the section renders on
                 first paint instead of popping in after the fetch resolves */}
@@ -184,29 +307,14 @@ export default function DashboardView({ role, transactions, inventory, transacti
               </div>
             ) : (
               promos.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
                   {promos.map((p) => (
-                    <div key={p.code} className="relative overflow-hidden rounded-2xl border-2 border-dashed border-[#bf4a53]/30 bg-gradient-to-br from-red-50 to-orange-50 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-xl font-extrabold text-[#bf4a53]">{promoDiscountLabel(p).toUpperCase()}</p>
-                          <p className="text-[11px] text-gray-500 font-medium">
-                            {[
-                              promoTermsLabel(p),
-                              p.expiresAt ? `until ${new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : '',
-                            ].filter(Boolean).join(' · ') || 'No expiry'}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => copyCode(p.code)}
-                          className="flex items-center gap-1.5 bg-white border border-[#bf4a53]/30 text-gray-900 px-3 py-2 rounded-xl font-mono font-bold text-sm hover:bg-[#bf4a53] hover:text-white transition-colors shrink-0"
-                          title="Copy code"
-                        >
-                          {copiedCode === p.code ? <Check size={14} /> : <Copy size={14} />}
-                          {p.code}
-                        </button>
-                      </div>
-                    </div>
+                    <VoucherTicket
+                      key={p.code}
+                      voucher={p}
+                      onClaim={(v) => promoService.claim(v.code)}
+                      onUse={() => onNavigate('Catalog')}
+                    />
                   ))}
                 </div>
               )
@@ -219,37 +327,6 @@ export default function DashboardView({ role, transactions, inventory, transacti
                   <ItemCard key={item.id} item={item} role={role} onBook={() => onCustomerBook(item)} />
                 ))}
               </div>
-            )}
-          </div>
-        )}
-
-        {/* Upcoming — header stays; skeleton rows while loading; hidden on
-            a genuinely quiet account (same as before). */}
-        {(customerLoading || upcoming.length > 0) && (
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2">
-                <CalendarClock size={15} className="text-[#bf4a53]" /> Upcoming Pickups
-              </h3>
-              <button onClick={() => onNavigate('History')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
-            </div>
-            {customerLoading ? (
-              <SkeletonList count={3} />
-            ) : (
-            <div className="space-y-3">
-              {upcoming.map((tx) => (
-                <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
-                    <ShoppingBag size={16} className="text-[#bf4a53]" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 truncate">{itemName(tx)}</p>
-                    <p className="text-xs text-gray-500 truncate">Pickup {new Date(tx.rentalDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
-                  </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
-                </div>
-              ))}
-            </div>
             )}
           </div>
         )}
@@ -301,68 +378,18 @@ export default function DashboardView({ role, transactions, inventory, transacti
           </div>
         )}
 
-        {/* Your Rentals — header stays; rows skeleton while loading */}
-        {(customerLoading || myRentals.length > 0) && (
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Your Rentals</h3>
-              <button onClick={() => onNavigate('History')} className="text-xs font-semibold text-[#bf4a53] hover:underline">View All</button>
-            </div>
-            {customerLoading ? (
-              <SkeletonList count={3} />
-            ) : (
-            <div className="space-y-3">
-              {myRentals.map((tx) => {
-                // Payment-proof state for manual QR checkouts. `paymentProofs`
-                // is customer-payload only — guard before indexing.
-                const proof = Array.isArray(tx.paymentProofs) ? tx.paymentProofs[0] : null;
-                const unpaidManual = !proof || proof.status === 'rejected';
-                const canResume = !['Cancelled', 'Returned'].includes(tx.status) && unpaidManual && (proof?.status === 'rejected' || tx.paymentPath === 'manual' || tx.gateway === 'manual' || (!tx.gateway && tx.totalPaid < (tx.downpayment || 0)));
-                return (
-                <div key={tx.id} className="bg-white rounded-2xl p-4 border border-gray-100/80 shadow-sm flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
-                    <ShoppingBag size={16} className="text-[#bf4a53]" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 truncate">{itemName(tx)}</p>
-                    <p className="text-xs text-gray-500 truncate">Due {tx.dueDate ? new Date(tx.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</p>
-                    {proof?.status === 'rejected' && proof.rejectionReason && (
-                      <p className="text-[11px] text-red-500 font-medium truncate mt-0.5">Reason: {proof.rejectionReason}</p>
-                    )}
-                  </div>
-                  {/* At most one pill per row: Overdue first, then "Payment
-                      under review", else the booking status. Rows that still
-                      need a proof show only the Upload / Re-upload button. */}
-                  <div className="flex flex-col items-end gap-1.5 shrink-0">
-                    {tx.status === 'Overdue' ? (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
-                    ) : proof?.status === 'pending' ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Payment under review</span>
-                    ) : !canResume ? (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${txPill(tx.status).bg} ${txPill(tx.status).text}`}>{tx.status}</span>
-                    ) : null}
-                    {canResume && (
-                      <button
-                        type="button"
-                        onClick={() => setProofModalTx(tx)}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-white bg-[#bf4a53] hover:bg-[#a83f47] px-2.5 py-1 rounded-full transition-colors"
-                      >
-                        <Upload size={11} /> {proof?.status === 'rejected' ? 'Re-upload' : 'Upload proof'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-                );
-              })}
-            </div>
-            )}
-          </div>
-        )}
-
         <PaymentHistoryCard refreshKey={proofHistoryKey} onSubmitted={() => { refreshBookings(); setProofHistoryKey((k) => k + 1); }} />
 
         {/* End of results */}
         <p className="text-center text-xs text-gray-400 pt-4 pb-2">You've reached the end of your feed</p>
+
+        {rentalPhoto && (
+          <PhotoViewer photos={[rentalPhoto]} index={0} onIndexChange={() => {}} onClose={() => setRentalPhoto(null)} />
+        )}
+
+        {showMyVouchers && (
+          <MyVouchersSheet onClose={() => setShowMyVouchers(false)} onUse={() => onNavigate('Catalog')} />
+        )}
 
         {proofModalTx && (
           <PaymentProofModal

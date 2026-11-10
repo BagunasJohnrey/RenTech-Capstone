@@ -5,5 +5,6 @@ export function usePromo() {
   const validate = useCallback((code, rentalFee, itemCategory) => promoService.validate({ code, rentalFee, itemCategory }), []);
   const list = useCallback(() => promoService.list(), []);
   const listPublic = useCallback(() => promoService.listPublic(), []);
-  return { validate, list, listPublic };
+  const eligible = useCallback((rentalFee, itemCategory) => promoService.eligible({ rentalFee, itemCategory }), []);
+  return { validate, list, listPublic, eligible };
 }

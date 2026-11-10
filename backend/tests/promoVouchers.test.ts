@@ -67,6 +67,8 @@ async function mockDb() {
   prisma.promoCode.findUnique.mockResolvedValue(null);
   prisma.transaction.count.mockResolvedValue(0);
   prisma.transaction.findFirst.mockResolvedValue(null);
+  prisma.promoClaim.findMany.mockResolvedValue([]);
+  prisma.promoClaim.upsert.mockClear();
   // The consume guard references prisma.promoCode.fields (real-client API);
   // mirror it on the mock so consume paths can run under test.
   (prisma.promoCode as any).fields = { maxUses: 'maxUses' };
@@ -435,5 +437,168 @@ describe('PUT /api/transactions/:id/swap-item — promo carry-over', () => {
     expect(prisma.promoCode.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ currentUses: expect.objectContaining({ decrement: 1 }) }) })
     );
+  });
+});
+
+describe('POST /api/promo-codes/eligible — checkout voucher picker', () => {
+  it('ranks eligible vouchers by savings, explains the rest, and picks the best', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findMany.mockResolvedValue([
+      promoRow({ id: 'p1', code: 'TEN', discountPct: 10 }),                        // ₱500
+      promoRow({ id: 'p2', code: 'FLAT800', discountPct: null, discountAmount: 800 }), // ₱800
+      promoRow({ id: 'p3', code: 'BIGSPEND', minSpend: 8000 }),                     // short ₱3,000
+      promoRow({ id: 'p4', code: 'SUITS', appliesToCategories: ['Suit'] }),
+      promoRow({ id: 'p5', code: 'CAPPED', maxUses: 10, currentUses: 7 }),          // ₱500, 70% used
+    ]);
+    prisma.transaction.groupBy.mockResolvedValue([]);
+
+    const res = await request(app)
+      .post('/api/promo-codes/eligible')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ rentalFee: 5000, itemCategory: 'Gown' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.bestCode).toBe('FLAT800');
+    const byCode = Object.fromEntries(res.body.vouchers.map((v: any) => [v.code, v]));
+    expect(res.body.vouchers.map((v: any) => v.code).slice(0, 3)).toEqual(['FLAT800', 'TEN', 'CAPPED']);
+    expect(byCode.FLAT800).toMatchObject({ eligible: true, savings: 800, finalFee: 4200 });
+    expect(byCode.BIGSPEND).toMatchObject({ eligible: false, shortfall: 3000, savings: null });
+    expect(byCode.BIGSPEND.reason).toMatch(/Spend ₱3,000 more/);
+    expect(byCode.SUITS).toMatchObject({ eligible: false, reason: 'For Suit only' });
+    expect(byCode.CAPPED.usagePct).toBe(70);
+    // Ineligible ones sort after every eligible one.
+    expect(res.body.vouchers.slice(-2).map((v: any) => v.eligible)).toEqual([false, false]);
+  });
+
+  it('marks first-booking vouchers ineligible for returning customers', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findMany.mockResolvedValue([promoRow({ code: 'WELCOME', firstBookingOnly: true })]);
+    prisma.transaction.groupBy.mockResolvedValue([]);
+    prisma.transaction.count.mockResolvedValue(2);
+
+    const res = await request(app)
+      .post('/api/promo-codes/eligible')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ rentalFee: 5000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.bestCode).toBeNull();
+    expect(res.body.vouchers[0]).toMatchObject({ code: 'WELCOME', eligible: false, reason: 'First booking only' });
+  });
+
+  it('returns an empty list when there are no live vouchers', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findMany.mockResolvedValue([]);
+    const res = await request(app)
+      .post('/api/promo-codes/eligible')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ rentalFee: 1000 });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ vouchers: [], bestCode: null });
+  });
+});
+
+describe('percent voucher cap ("up to ₱X")', () => {
+  it('caps a percent discount at maxDiscount', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findUnique.mockResolvedValue(promoRow({ discountPct: 20, maxDiscount: 500 }));
+    const r = await checkPromo('SAVE10', 5000); // 20% = 1,000 → capped 500
+    expect(r.discountAmount).toBe(500);
+    expect(r.finalFee).toBe(4500);
+  });
+
+  it('leaves discounts under the cap untouched', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findUnique.mockResolvedValue(promoRow({ discountPct: 20, maxDiscount: 500 }));
+    const r = await checkPromo('SAVE10', 2000); // 20% = 400 < 500
+    expect(r.discountAmount).toBe(400);
+  });
+
+  it('ranks capped vouchers by their real (capped) saving in the picker', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findMany.mockResolvedValue([
+      promoRow({ id: 'a', code: 'BIGPCT', discountPct: 30, maxDiscount: 300 }), // 30% of 5,000 = 1,500 → 300
+      promoRow({ id: 'b', code: 'FLAT400', discountPct: null, discountAmount: 400 }),
+    ]);
+    prisma.transaction.groupBy.mockResolvedValue([]);
+    const res = await request(app)
+      .post('/api/promo-codes/eligible')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ rentalFee: 5000 });
+    expect(res.body.bestCode).toBe('FLAT400');
+    expect(res.body.vouchers.find((v: any) => v.code === 'BIGPCT').savings).toBe(300);
+  });
+
+  it('admin can set a cap on create; a fixed-amount code never stores one', async () => {
+    const { prisma } = await mockDb();
+    await request(app).post('/api/promo-codes').set('Authorization', 'Bearer admin-token')
+      .send({ code: 'CAPPED', discountPct: 15, maxDiscount: 500 });
+    expect(prisma.promoCode.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ maxDiscount: 500 }) }),
+    );
+    await request(app).post('/api/promo-codes').set('Authorization', 'Bearer admin-token')
+      .send({ code: 'FLATCAP', discountAmount: 200, maxDiscount: 500 });
+    expect(prisma.promoCode.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ maxDiscount: null }) }),
+    );
+  });
+});
+
+describe('My Vouchers wallet (claim)', () => {
+  it('claims a live voucher idempotently and marks it claimed in the public list', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findMany.mockResolvedValue([promoRow({ id: 'promo-1', code: 'SAVE10' })]);
+    prisma.promoCode.findUnique.mockResolvedValue(promoRow({ id: 'promo-1', code: 'SAVE10' }));
+    prisma.transaction.groupBy.mockResolvedValue([]);
+
+    const res = await request(app).post('/api/promo-codes/claim')
+      .set('Authorization', 'Bearer customer-token').send({ code: 'save10' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ code: 'SAVE10', claimed: true });
+    expect(prisma.promoClaim.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ promoCodeId: 'promo-1' }),
+      update: {},
+    }));
+
+    prisma.promoClaim.findMany.mockResolvedValue([{ promoCodeId: 'promo-1' }]);
+    const pub = await request(app).get('/api/promo-codes/public').set('Authorization', 'Bearer customer-token');
+    expect(pub.body[0]).toMatchObject({ code: 'SAVE10', claimed: true });
+  });
+
+  it('refuses to claim an expired or unknown voucher', async () => {
+    const { prisma } = await mockDb();
+    prisma.promoCode.findMany.mockResolvedValue([]); // not offered any more
+    prisma.promoCode.findUnique.mockResolvedValue(promoRow({ code: 'OLD' }));
+    const gone = await request(app).post('/api/promo-codes/claim')
+      .set('Authorization', 'Bearer customer-token').send({ code: 'OLD' });
+    expect(gone.status).toBe(400);
+
+    prisma.promoCode.findUnique.mockResolvedValue(null);
+    const missing = await request(app).post('/api/promo-codes/claim')
+      .set('Authorization', 'Bearer customer-token').send({ code: 'NOPE' });
+    expect(missing.status).toBe(404);
+    expect(prisma.promoClaim.upsert).not.toHaveBeenCalled();
+  });
+
+  it('is customer-only', async () => {
+    await mockDb();
+    const res = await request(app).post('/api/promo-codes/claim')
+      .set('Authorization', 'Bearer admin-token').send({ code: 'SAVE10' });
+    expect(res.status).toBe(403);
+  });
+
+  it('lists claimed vouchers with active / used / expired status', async () => {
+    const { prisma } = await mockDb();
+    const past = new Date(Date.now() - 86_400_000);
+    prisma.promoClaim.findMany.mockResolvedValue([
+      { claimedAt: new Date(), promoCodeId: 'a', promoCode: promoRow({ id: 'a', code: 'LIVE' }) },
+      { claimedAt: new Date(), promoCodeId: 'b', promoCode: promoRow({ id: 'b', code: 'SPENT' }) },
+      { claimedAt: new Date(), promoCodeId: 'c', promoCode: promoRow({ id: 'c', code: 'GONE', expiresAt: past }) },
+    ]);
+    prisma.transaction.groupBy.mockResolvedValue([{ promoCodeId: 'b', _count: { promoCodeId: 1 } }]);
+    const res = await request(app).get('/api/promo-codes/mine').set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(200);
+    expect(Object.fromEntries(res.body.map((v: any) => [v.code, v.status])))
+      .toEqual({ LIVE: 'active', SPENT: 'used', GONE: 'expired' });
   });
 });

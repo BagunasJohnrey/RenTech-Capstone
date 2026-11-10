@@ -68,6 +68,7 @@ function models(): Record<string, Model> {
     notification: p.notification ?? {},
     sentSms: p.sentSms ?? {},
     auditLog: p.auditLog ?? {},
+    promoClaim: p.promoClaim ?? {},
   };
 }
 
@@ -216,9 +217,14 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
       const id = str(r.id);
       const code = str(r.code);
       const discountPct = numOrNull(r.discountPct);
-      if (!id || !code || discountPct === null) throw new Error('missing id/code/discountPct');
+      const discountAmount = numOrNull(r.discountAmount);
+      if (!id || !code || (discountPct === null && discountAmount === null)) throw new Error('missing id/code/discount');
       const data: Row = {
-        code, discountPct,
+        code, discountPct, discountAmount,
+        maxDiscount: numOrNull(r.maxDiscount), minSpend: numOrNull(r.minSpend),
+        startsAt: dateOrNull(r.startsAt), maxUsesPerCustomer: numOrNull(r.maxUsesPerCustomer),
+        firstBookingOnly: bool(r.firstBookingOnly),
+        appliesToCategories: Array.isArray(r.appliesToCategories) ? r.appliesToCategories.map(String) : [],
         maxUses: numOrNull(r.maxUses), currentUses: numOrNull(r.currentUses) ?? 0,
         expiresAt: dateOrNull(r.expiresAt), isActive: typeof r.isActive === 'boolean' ? r.isActive : true,
         createdAt: dateOrNow(r.createdAt), updatedAt: dateOrNow(r.updatedAt),
@@ -388,6 +394,26 @@ export async function restoreBackup(payload: unknown, performedById: string | nu
       bump(restored, 'payment_proofs');
     } catch {
       bump(skipped, 'payment_proofs');
+    }
+  }
+
+  // Voucher wallet claims (after profiles + promo codes exist).
+  for (const r of tables.promo_claims ?? []) {
+    try {
+      const id = str(r.id);
+      const profileId = str(r.profileId);
+      const promoCodeId = str(r.promoCodeId);
+      if (!id || !profileId || !promoCodeId) throw new Error('missing claim fields');
+      const [owner, promo] = await Promise.all([
+        m.profile.findUnique?.({ where: { id: profileId } }),
+        m.promoCode.findUnique?.({ where: { id: promoCodeId } }),
+      ]);
+      if (!owner || !promo) throw new Error('missing profile/promo');
+      const data: Row = { profileId, promoCodeId, claimedAt: dateOrNow(r.claimedAt) };
+      await upsertById(m.promoClaim, id, data, data);
+      bump(restored, 'promo_claims');
+    } catch {
+      bump(skipped, 'promo_claims');
     }
   }
 

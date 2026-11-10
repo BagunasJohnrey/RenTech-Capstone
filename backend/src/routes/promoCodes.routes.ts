@@ -12,11 +12,15 @@ router.use(authMiddleware);
 router.get('/', requireRole(Role.Admin, Role.Staff), promoCodesController.listPromoCodes);
 // Register /public BEFORE /:id so it isn't swallowed by the id param.
 router.get('/public', requireRole(Role.Admin, Role.Staff, Role.Customer), promoCodesController.listPublicPromoCodes);
+// /mine + /claim registered BEFORE /:id so they aren't swallowed by the id param.
+router.get('/mine', requireRole(Role.Customer), promoCodesController.listMyVouchers);
+router.post('/claim', requireRole(Role.Customer), validate(promoCodesController.claimPromoCodeSchema), promoCodesController.claimPromoCode);
 router.get('/:id', requireRole(Role.Admin, Role.Staff), promoCodesController.getPromoCode);
 router.post('/', requireRole(Role.Admin), validate(promoCodesController.createPromoCodeSchema), promoCodesController.createPromoCode);
 router.put('/:id', requireRole(Role.Admin), validate(promoCodesController.updatePromoCodeSchema), promoCodesController.updatePromoCode);
 router.delete('/:id', requireRole(Role.Admin), promoCodesController.deletePromoCode);
 
+router.post('/eligible', requireRole(Role.Admin, Role.Staff, Role.Customer), validate(promoCodesController.eligiblePromoCodesSchema), promoCodesController.listEligiblePromoCodes);
 router.post('/validate', requireRole(Role.Admin, Role.Staff, Role.Customer), validate(promoCodesController.validatePromoCodeSchema), promoCodesController.validatePromoCode);
 
 export default router;

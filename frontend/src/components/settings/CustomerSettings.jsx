@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
-import { Ruler, Bell, Tag, Sparkles, NotebookPen, Check, RotateCcw, Save, Mail, BellRing, TriangleAlert, Copy, CalendarClock } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Ruler, Bell, Ticket, Sparkles, NotebookPen, Check, RotateCcw, Save, Mail, BellRing, TriangleAlert } from 'lucide-react';
 import { api } from '../../utils/api';
-import { promoService } from '../../services/promo';
-import { promoDiscountLabel, promoShortLabel, promoTermsLabel } from '../../utils/promoLabel';
+import { MyVouchersPanel } from '../MyVouchers';
+import { tabPath } from '../../utils/routing';
 import { SIZE_PRESETS } from '../../utils/sizePresets';
 import Toggle from './Toggle';
 import StoreContactCard from './StoreContactCard';
@@ -10,7 +11,7 @@ import CollapsibleCard from './CollapsibleCard';
 import { LS_SIZES, LS_NOTIF, DEFAULT_NOTIF, loadJSON } from './constants';
 
 // Customer-only settings: preferred sizes (device-local), measurement/style
-// notes (profile-backed), notification opt-outs, and discoverable promo codes.
+// notes (profile-backed), notification opt-outs, and the My Vouchers wallet.
 export default function CustomerSettings({ profile, customerInfo, onUpdateCustomer }) {
   const [prefSizes, setPrefSizes] = useState(() => loadJSON(LS_SIZES, []));
   const [sizesMsg, setSizesMsg] = useState('');
@@ -22,17 +23,7 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
       : loadJSON(LS_NOTIF, DEFAULT_NOTIF));
   const [notifMsg, setNotifMsg] = useState('');
   const [notifError, setNotifError] = useState('');
-  const [myPromos, setMyPromos] = useState([]);
-  const [copiedCode, setCopiedCode] = useState('');
-
-  // Load active promo codes for customers to discover available discounts.
-  useEffect(() => {
-    let active = true;
-    promoService.listPublic()
-      .then((d) => { if (active && Array.isArray(d)) setMyPromos(d); })
-      .catch(() => {});
-    return () => { active = false; };
-  }, []);
+  const navigate = useNavigate();
 
   const toggleSize = (size) => {
     setPrefSizes((prev) => {
@@ -74,15 +65,7 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
     setTimeout(() => setNotifMsg(''), 2000);
   };
 
-  const copyPromo = async (code) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopiedCode(code);
-      setTimeout(() => setCopiedCode(''), 2000);
-    } catch {
-      // clipboard unavailable — code text remains selectable
-    }
-  };
+
 
   const NOTIF_ROWS = [
     { key: 'email', label: 'Emails', desc: 'Booking, pickup, return and reminder emails.', icon: Mail, channel: 'Email' },
@@ -256,77 +239,15 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
         </div>
       </CollapsibleCard>
 
-      {/* My Offers — collapsible; stacks on mobile, ticket grid + redeem strip on desktop */}
-      {myPromos.length > 0 && (
-        <CollapsibleCard
-          icon={Tag}
-          title="My Offers"
-          subtitle="Discount codes you can use at checkout"
-          storageKey="settings-offers-open"
-        >
-          {/* Full-width long tickets on every screen; content spreads out on desktop */}
-          <div className="grid gap-2.5">
-            {myPromos.map((p) => (
-              <div key={p.code} className="flex items-stretch rounded-2xl border border-[#bf4a53]/20 bg-red-50/60 overflow-hidden min-w-0">
-                {/* Discount stub — larger on desktop */}
-                <div className="flex flex-col items-center justify-center px-3 sm:px-4 md:px-7 py-3.5 md:py-5 bg-[#bf4a53] text-white shrink-0 min-w-[4rem] md:min-w-[7rem]">
-                  <span className="text-base sm:text-lg md:text-2xl font-extrabold leading-none tabular-nums">{promoShortLabel(p)}</span>
-                  <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider opacity-80 mt-1">off</span>
-                </div>
-                {/* Perforation */}
-                <div className="w-0 border-l-2 border-dashed border-[#bf4a53]/25 my-2 md:my-3 shrink-0" aria-hidden="true" />
-                {/* Code + meta — stacked on mobile, spread left/right on desktop */}
-                <div className="flex-1 min-w-0 px-3.5 py-3 md:px-6 md:py-4 md:flex md:items-center md:gap-6">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm md:text-lg font-extrabold text-gray-900 font-mono tracking-wide select-all">{p.code}</p>
-                    <p className="text-xs md:text-sm text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
-                      {promoDiscountLabel(p)} rental
-                      {promoTermsLabel(p) && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white border border-gray-200 text-[10px] md:text-[11px] font-bold text-gray-500">
-                          {promoTermsLabel(p)}
-                        </span>
-                      )}
-                      {p.expiresAt && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white border border-gray-200 text-[10px] md:text-[11px] font-bold text-gray-500">
-                          <CalendarClock size={10} />
-                          until {new Date(p.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => copyPromo(p.code)}
-                    className="mt-2.5 md:mt-0 inline-flex items-center gap-1.5 px-4 py-1.5 md:px-6 md:py-2.5 min-h-[32px] md:min-h-[44px] bg-white border border-gray-200 rounded-full text-[10px] md:text-xs font-bold text-gray-600 hover:border-[#bf4a53]/50 hover:text-[#bf4a53] hover:bg-white transition-all shrink-0"
-                    aria-label={`Copy code ${p.code}`}
-                  >
-                    {copiedCode === p.code ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
-                    {copiedCode === p.code ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-          {/* Mobile hint */}
-          <p className="text-[11px] text-gray-400 mt-3 md:hidden">Tap Copy, then paste the code at checkout to get the discount.</p>
-          {/* Desktop: how-to-redeem strip fills the wide card */}
-          <div className="hidden md:grid md:grid-cols-3 gap-2.5 mt-4 pt-4 border-t border-gray-100">
-            {[
-              { n: '1', t: 'Copy a code', d: 'Use the Copy button on any offer above.' },
-              { n: '2', t: 'Rent an item', d: 'Pick an available piece and start checkout.' },
-              { n: '3', t: 'Paste at checkout', d: 'Enter the code to apply the discount.' },
-            ].map(({ n, t, d }) => (
-              <div key={n} className="flex items-start gap-2.5 p-3 bg-[#fafafa] rounded-2xl border border-gray-100">
-                <span aria-hidden="true" className="shrink-0 w-6 h-6 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center">{n}</span>
-                <span className="min-w-0">
-                  <span className="block text-xs font-extrabold text-gray-900">{t}</span>
-                  <span className="block text-[11px] text-gray-500 mt-0.5 leading-relaxed">{d}</span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </CollapsibleCard>
-      )}
+      {/* My Vouchers — Shopee-style wallet: Active / Used / Expired + claimable */}
+      <CollapsibleCard
+        icon={Ticket}
+        title="My Vouchers"
+        subtitle="Claim vouchers — your best one is applied at checkout"
+        storageKey="settings-offers-open"
+      >
+        <MyVouchersPanel onUse={() => navigate(tabPath('Customer', 'Catalog'))} />
+      </CollapsibleCard>
     </>
   );
 }
