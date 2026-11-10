@@ -70,11 +70,17 @@ export function isSendableEmail(email?: string | null): boolean {
   return true;
 }
 
+// Inline image (CID) attachment: referenced from the HTML as
+// `<img src="cid:<contentId>">`. Gmail, Outlook and most webmail strip
+// `data:` image URIs, so embedded images must travel as attachments.
+export type EmailAttachment = { filename: string; content: string /* base64 */; contentId?: string };
+
 export async function sendEmail(params: {
   to: string;
   subject: string;
   html: string;
   text?: string;
+  attachments?: EmailAttachment[];
 }): Promise<SendResult> {
   const to = params.to.trim();
   if (!isSendableEmail(to)) {
@@ -106,6 +112,15 @@ export async function sendEmail(params: {
         subject: params.subject,
         html: params.html,
         text: params.text,
+        ...(params.attachments?.length
+          ? {
+              attachments: params.attachments.map((a) => ({
+                filename: a.filename,
+                content: a.content,
+                ...(a.contentId ? { content_id: a.contentId } : {}),
+              })),
+            }
+          : {}),
       }),
     });
   } catch (err) {
@@ -134,7 +149,7 @@ export async function sendEmail(params: {
 /** Order/lifecycle emails: best-effort — log + swallow so email never blocks a booking. */
 async function sendBestEffort(
   to: string,
-  built: { subject: string; html: string; text: string },
+  built: { subject: string; html: string; text: string; attachments?: EmailAttachment[] },
   type?: EmailType,
 ): Promise<SendResult | null> {
   if (!isSendableEmail(to)) return null;
@@ -174,9 +189,22 @@ export async function sendStaffWelcomeEmail(to: string, name: string, oneTimePas
 
 // ---- Order emails (best-effort — never block the rental flow) ----
 
+export const BOOKING_QR_CID = 'booking-qr';
+
 export async function sendBookingConfirmationEmail(to: string, details: BookingDetails) {
   await refreshEmailStore();
-  return sendBestEffort(to, bookingConfirmationEmail(details), 'booking');
+  // Ship the QR as an inline attachment (cid:) instead of a data: URI, which
+  // Gmail and most email apps block — the QR used to show as a broken image.
+  const match = /^data:image\/png;base64,(.+)$/.exec(details.qrCodeDataUri ?? '');
+  if (!match) {
+    return sendBestEffort(to, bookingConfirmationEmail({ ...details, qrCodeDataUri: undefined }), 'booking');
+  }
+  const built = bookingConfirmationEmail({ ...details, qrCodeDataUri: `cid:${BOOKING_QR_CID}` });
+  return sendBestEffort(
+    to,
+    { ...built, attachments: [{ filename: 'booking-qr.png', content: match[1], contentId: BOOKING_QR_CID }] },
+    'booking',
+  );
 }
 
 export async function sendPickupEmail(to: string, customerName: string, itemName: string, dueDate: string) {

@@ -2,6 +2,7 @@ import { prisma } from '../config/database.js';
 import * as storageService from './storage.service.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { applyPaymentToTransaction } from './payments.ledger.js';
+import { sendPaymentReceivedSms } from './sms.service.js';
 import { createNotification } from './notifications.service.js';
 import { createAuditLog } from '../utils/audit.js';
 import { clearDataCache, cacheOrCompute } from '../utils/ttlCache.js';
@@ -270,6 +271,9 @@ export async function approveProof(proofId: string, reviewerId: string, amountOv
     title: 'Payment verified',
     message: `We verified your payment of ₱${amount.toLocaleString()} for ${tx.item?.name ?? 'your booking'}. Your booking is confirmed.`,
   });
+
+  // Optional "payment received" text (off unless the admin enables it).
+  if (!credit.duplicate) await sendPaymentReceivedSms(tx.id, amount);
 
   await createAuditLog({
     action: 'payment_proof.approve',

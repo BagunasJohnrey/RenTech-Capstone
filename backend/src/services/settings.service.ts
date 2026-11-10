@@ -93,7 +93,7 @@ export async function getReminderWindow(): Promise<ReminderWindow> {
 // inverted reminder window. Unknown keys pass through (text settings).
 export function assertValidRuleValues(data: Record<string, string>, current: Record<string, string> = {}) {
   for (const [key, raw] of Object.entries(data)) {
-    if (/^email_type_[a-z_]+_enabled$/.test(key) && raw !== 'true' && raw !== 'false') {
+    if (/^(email|sms)_type_[a-z_]+_enabled$/.test(key) && raw !== 'true' && raw !== 'false') {
       throw new AppError(400, `${key} must be 'true' or 'false'`);
     }
     const spec =(NUMERIC_RULES as Record<string, { min: number; max: number }>)[key];
@@ -237,6 +237,37 @@ export async function isEmailTypeEnabled(type: EmailType): Promise<boolean> {
     return rules[emailTypeKey(type)] !== 'false';
   } catch {
     return true;
+  }
+}
+
+// Per-type automatic customer SMS toggles (Settings → Notifications →
+// Customer SMS). They AND with the global `messaging_sms_enabled` switch and
+// the customer's own notifyPrefs. Manual staff sends are never gated.
+// Absent key = the type's default: existing texts default ON (no behaviour
+// change on upgrade); the new payment-received text defaults OFF because
+// every SMS costs money — an admin opts in.
+export const SMS_TYPES = ['booking', 'payment', 'due_reminder', 'overdue'] as const;
+export type SmsType = (typeof SMS_TYPES)[number];
+export const SMS_TYPE_DEFAULTS: Record<SmsType, boolean> = {
+  booking: true,
+  payment: false,
+  due_reminder: true,
+  overdue: true,
+};
+export const smsTypeKey = (type: SmsType) => `sms_type_${type}_enabled`;
+
+export function smsTypeEnabledFrom(rules: Record<string, string>, type: SmsType): boolean {
+  const raw = rules[smsTypeKey(type)];
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return SMS_TYPE_DEFAULTS[type];
+}
+
+export async function isSmsTypeEnabled(type: SmsType): Promise<boolean> {
+  try {
+    return smsTypeEnabledFrom(await getBusinessRules(), type);
+  } catch {
+    return SMS_TYPE_DEFAULTS[type];
   }
 }
 

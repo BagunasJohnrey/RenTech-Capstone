@@ -7,6 +7,7 @@ import Toggle from './Toggle';
 import { SkeletonList } from '../Skeleton';
 import { LS_NOTIF, DEFAULT_NOTIF, loadJSON } from './constants';
 import ReminderScheduleCard from './ReminderScheduleCard';
+import SmsTypesCard from './SmsTypesCard';
 
 const TEMPLATE_KEYS = ['booking_confirmation', 'due_reminder', 'late_return'];
 
@@ -183,6 +184,9 @@ export default function NotificationsTab({ profile }) {
     <>
       {/* Store-wide reminder schedule + per-type email switches (admin) */}
       <ReminderScheduleCard />
+
+      {/* Per-type automatic customer SMS switches (admin) */}
+      <SmsTypesCard />
 
       {/* Notification Preferences — this account only */}
       <CollapsibleCard

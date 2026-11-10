@@ -5,11 +5,52 @@ import { createAuditLog } from '../utils/audit.js';
 import { sendSms, applyTemplate, smsShortName, smsItemName, finalizeSms } from './semaphore.service.js';
 import { sendDueReminderEmail, sendOverdueEmail } from './resend.service.js';
 import { notifyStaffMembers } from './notifications.service.js';
-import { getBusinessRules, isSmsEnabled, reminderWindowFrom, numberRule, getNumberRules } from './settings.service.js';
+import { getBusinessRules, isSmsEnabled, isSmsTypeEnabled, smsTypeEnabledFrom, reminderWindowFrom, numberRule, getNumberRules } from './settings.service.js';
 import { clearDataCache } from '../utils/ttlCache.js';
 import {
   manilaDayStart, manilaNextDayStart, manilaDaysPastDue, isReminderQuietHours, formatManilaDate,
 } from '../utils/manilaDay.js';
+
+// "We received your payment" text after staff record a counter payment or
+// approve a QR payment proof. Off by default (SMS_TYPE_DEFAULTS.payment) —
+// admins switch it on in Settings → Notifications → Customer SMS. Best-effort:
+// never throws, never blocks the payment that triggered it. Honors the global
+// SMS switch and the customer's notifyPrefs.payment opt-out.
+export async function sendPaymentReceivedSms(transactionId: string, amount: number): Promise<void> {
+  try {
+    if (!(await isSmsEnabled().catch(() => true))) return;
+    if (!(await isSmsTypeEnabled('payment'))) return;
+    const tx = await prisma.transaction.findUnique({
+      where: { id: transactionId },
+      select: {
+        id: true, customerId: true, balance: true,
+        item: { select: { name: true } },
+        customer: { select: { name: true, phone: true, notifyPrefs: true } },
+      },
+    });
+    if (!tx?.customer?.phone) return;
+    const prefs = tx.customer.notifyPrefs as Record<string, boolean> | null | undefined;
+    if (prefs && prefs.payment === false) return;
+    const balance = Math.max(0, Number(tx.balance) || 0);
+    // Plain ASCII "PHP" (₱ is non-GSM-7 and would double the segment cost).
+    const message = finalizeSms(
+      `Hi ${smsShortName(tx.customer.name)}, we received your payment of PHP ${formatPhpAmount(amount)} for ${smsItemName(tx.item.name)}. ` +
+      (balance > 0 ? `Balance: PHP ${formatPhpAmount(balance)}. ` : 'Fully paid. ') +
+      'Thank you!'
+    );
+    const result = await sendSms(tx.customer.phone, message);
+    await prisma.sentSms.create({
+      data: {
+        profileId: tx.customerId,
+        transactionId: tx.id,
+        message,
+        status: result?.messageId ? 'sent' : 'queued',
+      },
+    });
+  } catch (err) {
+    console.error('[sms] payment-received text skipped:', (err as Error)?.message);
+  }
+}
 
 export async function sendManualSms(params: {
   profileId: string;
@@ -215,7 +256,8 @@ export async function autoNotifyOverdue(now: Date = new Date()) {
   const schedule = overdueScheduleFrom(rules);
   const quiet = isReminderQuietHours(now, reminderWindowFrom(rules));
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'late_return' } });
-  const smsGloballyOn = await isSmsEnabled().catch(() => true);
+  // Global switch AND the per-type "Overdue notices" toggle.
+  const smsGloballyOn = (await isSmsEnabled().catch(() => true)) && smsTypeEnabledFrom(rules, 'overdue');
 
   const results: { transactionId: string; customerName: string; message: string; status: string }[] = [];
   let dashboardChanged = false;
@@ -387,7 +429,8 @@ export async function notifyDueToday(now: Date = new Date()) {
 
   // Deliberately carries NO late-fee amount — reminder text stays fee-free.
   const template = await prisma.smsTemplate.findFirst({ where: { name: 'due_reminder' } });
-  const smsGloballyOn = await isSmsEnabled().catch(() => true);
+  // Global switch AND the per-type "Due reminder" toggle.
+  const smsGloballyOn = (await isSmsEnabled().catch(() => true)) && (await isSmsTypeEnabled('due_reminder'));
 
   const results: { transactionId: string; customerName: string; itemName: string; sent: boolean }[] = [];
   for (const tx of dueSoon) {

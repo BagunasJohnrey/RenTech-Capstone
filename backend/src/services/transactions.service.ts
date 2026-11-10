@@ -12,7 +12,8 @@ import { sendBookingConfirmationEmail, sendPickupEmail, sendReturnEmail, sendCan
 import { storeSignoff, storeSignoffHtml } from '../templates/emailTemplates.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { verifyDiscountPin } from './auth.service.js';
-import { getBusinessRules, getFeatureFlags, isSmsEnabled, getNumberRules } from './settings.service.js';
+import { getBusinessRules, getFeatureFlags, isSmsEnabled, isSmsTypeEnabled, getNumberRules } from './settings.service.js';
+import { sendPaymentReceivedSms } from './sms.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 import { manilaDayStart, manilaNextDayStart, manilaDaysPastDue, formatManilaDate } from '../utils/manilaDay.js';
 
@@ -182,6 +183,12 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   // transaction is created as Reserved (and the item held as Reserved) until
   // staff release/pick it up, at which point it becomes Active/Rented.
   const isFuture = start.getTime() >= manilaNextDayStart().getTime();
+  // Online bookings (no staff on the request) are ALWAYS a hold until staff
+  // release the item at pickup — even with a same-day pickup the garment is
+  // still in the shop. Only a staff counter booking for today starts Active
+  // (the item is handed over at the desk). Previously a same-day online
+  // booking went straight to Active/"Currently rented", which hid Release.
+  const startsAsHold = isFuture || !processedById;
 
   // Only currently-active rentals/reservations block a new booking. Returned
   // transactions are no longer shown — the item is in Cleaning status instead.
@@ -254,7 +261,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           itemId: data.itemId,
           rentalDate: start,
           dueDate: end,
-          status: isFuture ? TransactionStatus.Reserved : TransactionStatus.Active,
+          status: startsAsHold ? TransactionStatus.Reserved : TransactionStatus.Active,
           rentalFee: fee,
           downpayment,
           // A cash-collected downpayment is money in hand: totalPaid starts
@@ -330,7 +337,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
 
       await tx.inventoryItem.update({
         where: { id: data.itemId },
-        data: { status: isFuture ? ItemStatus.Reserved : ItemStatus.Rented },
+        data: { status: startsAsHold ? ItemStatus.Reserved : ItemStatus.Rented },
       });
 
       return created;
@@ -411,7 +418,8 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
     const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
     // Global kill-switch ANDs on top of the per-account opt-out (manual staff
     // sends bypass this on purpose — only automatic texts are gated).
-    const smsGloballyOn = await isSmsEnabled().catch(() => true);
+    // Global switch AND the per-type "Booking received" toggle.
+    const smsGloballyOn = (await isSmsEnabled().catch(() => true)) && (await isSmsTypeEnabled('booking'));
     const wantsBookingSms = smsGloballyOn && (!prefs || prefs.booking !== false);
     if (customerProfile?.phone && wantsBookingSms) {
       const template = proofPending ? null : await prisma.smsTemplate.findFirst({ where: { name: 'booking_confirmation' } });
@@ -1444,6 +1452,9 @@ export async function recordPayment(
   });
 
   clearDataCache();
+
+  // Optional "payment received" text (off unless the admin enables it).
+  await sendPaymentReceivedSms(transactionId, amount);
 
   return { payment, totalPaid: newTotalPaid, balance: newBalance };
 }

@@ -120,6 +120,29 @@ describe('POST /api/bookings', () => {
     }));
   });
 
+  it('a same-day online booking is still a Reserved hold (staff release it)', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
+    prisma.transaction.findFirst.mockResolvedValueOnce(null);
+    // Manila "today" — the server compares pickup against Manila day bounds.
+    const todayManila = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Authorization', 'Bearer customer-token')
+      .send({ itemId: 1, rentalDate: todayManila, dueDate: DUE, downpayment: 2500, ...PROOF });
+
+    expect(res.status).toBe(201);
+    expect(prisma.transaction.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'Reserved' }),
+    }));
+    expect(prisma.inventoryItem.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: 'Reserved' },
+    }));
+  });
+
   it('should reject when not authenticated', async () => {
     const res = await request(app)
       .post('/api/bookings')

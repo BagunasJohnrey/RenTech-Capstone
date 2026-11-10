@@ -329,3 +329,31 @@ describe('emails use the Business Profile (Settings → General)', () => {
     }
   });
 });
+
+describe('booking email QR is an inline attachment, not a data: URI', () => {
+  it('sends the QR as a cid: attachment Gmail can display', async () => {
+    const { env } = await import('../src/config/env.js');
+    const { sendBookingConfirmationEmail } = await import('../src/services/resend.service.js');
+    const prevKey = env.RESEND_API_KEY;
+    (env as any).RESEND_API_KEY = 're_test_key';
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'em_1' }) });
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      await sendBookingConfirmationEmail('customer@example.com', {
+        customerName: 'Maria', itemName: 'Red Gown', pickupDate: '01/10/2026', dueDate: '01/13/2026',
+        rentalFee: 1500, downpayment: 750, balance: 750, bookingCode: 'RT-ABC12345',
+        qrCodeDataUri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==',
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+      expect(body.html).toContain('src="cid:booking-qr"');
+      expect(body.html).not.toContain('data:image');
+      expect(body.attachments).toEqual([
+        { filename: 'booking-qr.png', content: 'iVBORw0KGgoAAAANSUhEUg==', content_id: 'booking-qr' },
+      ]);
+    } finally {
+      (env as any).RESEND_API_KEY = prevKey;
+      vi.unstubAllGlobals();
+    }
+  });
+});

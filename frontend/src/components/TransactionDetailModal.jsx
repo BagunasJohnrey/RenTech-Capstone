@@ -18,6 +18,7 @@ import ItemPhotoThumb from './ItemPhotoThumb';
 import PaymentProofModal from './PaymentProofModal';
 import { paymentsService } from '../services/payments';
 import { emitDataChanged } from '../utils/dataEvents';
+import { qrPaymentUnresolved } from '../utils/txDisplayStatus';
 
 const fmtDate = (d) => {
   if (!d) return null;
@@ -896,7 +897,14 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
           {/* Desktop (lg+): one row — notice on the left, compact buttons on
               the right. Below lg: stacked full-width, as before. */}
           <div className="space-y-2 lg:space-y-0 lg:flex lg:items-center lg:justify-end lg:gap-3">
-            {(role === 'Admin' || role === 'Staff') && ['Active', 'Overdue'].includes(tx.status) && isReturnBlockedByBalance && (
+            {/* QR proof still unverified: say exactly what unlocks the booking
+                (approval credits the downpayment and brings back Release). */}
+            {(role === 'Admin' || role === 'Staff') && ['Reserved', 'Active', 'Overdue'].includes(tx.status) && qrPaymentUnresolved(tx) && (
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3 text-xs font-semibold text-blue-800 lg:flex-1">
+                Waiting on the ₱{Number(tx.downpayment || 0).toLocaleString()} QR payment proof — approve it in Tasks → Payments to verify. Approving credits the downpayment and unlocks Release.
+              </div>
+            )}
+            {(role === 'Admin' || role === 'Staff') && ['Active', 'Overdue'].includes(tx.status) && isReturnBlockedByBalance && !qrPaymentUnresolved(tx) && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-xs font-semibold text-amber-800 lg:flex-1">
                 Settle the ₱{outstandingBalance.toLocaleString()} balance first — return is locked until fully paid.
               </div>
