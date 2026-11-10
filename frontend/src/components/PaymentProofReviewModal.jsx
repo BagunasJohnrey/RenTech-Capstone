@@ -77,7 +77,7 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
       try {
         const res = await approveProof(proof.id, amount);
         toastSuccess(`Payment of ${peso(res?.proof?.amount ?? amount)} verified`);
-        onDone();
+        onDone('approved');
       } catch (err) {
         setError(err?.message || 'Failed to approve this proof.');
       }
@@ -92,7 +92,7 @@ export default function PaymentProofReviewModal({ proof, onClose, onDone }) {
       try {
         await rejectProof(proof.id, text);
         toastSuccess('Proof rejected — the customer can submit a new one');
-        onDone();
+        onDone('rejected');
       } catch (err) {
         setError(err?.message || 'Failed to reject this proof.');
       }

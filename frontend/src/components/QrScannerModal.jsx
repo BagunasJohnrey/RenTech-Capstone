@@ -4,12 +4,16 @@ import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { api } from '../utils/api';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { qrPaymentUnresolved } from '../utils/txDisplayStatus';
+import { listProofs } from '../services/payments';
 
 // Camera QR scanner for staff. Before the camera opens, the staff member picks
 // which process they're running — RELEASE (customer pickup) or RETURN — then
 // scans the booking QR (`RT-XXXXXXXX`). Fetches the transaction via
 // GET /transactions/scan/:code (staff only) and calls onFound(tx, action).
-export default function QrScannerModal({ onFound, onClose, title = 'Scan booking QR' }) {
+// `onReviewProof(proof, tx)`: jump straight to verifying a pending QR payment
+// proof when a Release scan hits an unverified booking. `onOpenPayments()`:
+// go to the Payments-to-verify queue (no proof uploaded yet).
+export default function QrScannerModal({ onFound, onClose, onReviewProof, onOpenPayments, title = 'Scan booking QR' }) {
   useEscapeClose(onClose);
   const regionId = useRef(`qr-reader-${Math.random().toString(36).slice(2, 9)}`);
   const scannerRef = useRef(null);
@@ -33,10 +37,10 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
   // notice + recovery buttons stay until staff retries.
   const [streamDown, setStreamDown] = useState(false);
   const videoEl = () => document.getElementById(regionId.current)?.querySelector('video');
-  const fail = (title, message, switchTo = null) => {
+  const fail = (title, message, switchTo = null, extra = null) => {
     lookingUpRef.current = false;
     setLookingUp(false);
-    setLookupError(switchTo ? { title, message, switchTo } : { title, message });
+    setLookupError({ title, message, ...(switchTo ? { switchTo } : {}), ...(extra || {}) });
     stop();
     setStreamDown(true);
   };
@@ -116,10 +120,29 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
       // downpayment). Collecting it again at the counter would double-charge.
       if (action === 'release' && qrPaymentUnresolved(tx)) {
         const dp = Number(tx?.downpayment || 0);
-        fail(
-          'Payment not verified yet',
-          `The customer’s ${dp > 0 ? `₱${dp.toLocaleString()} ` : ''}QR downpayment hasn’t been verified. Approve their payment proof in Tasks → Payments to verify, then scan again.`
-        );
+        const amount = dp > 0 ? `₱${dp.toLocaleString()} ` : '';
+        // Find this booking's proof waiting for review so staff can verify it
+        // right here instead of hunting for it in Tasks.
+        let pendingProof = null;
+        try {
+          const queue = await listProofs();
+          pendingProof = (queue?.pending || []).find((p) => p.transaction?.id === tx.id) || null;
+        } catch { /* fall back to the queue link */ }
+        if (pendingProof) {
+          fail(
+            'Payment not verified yet',
+            `The customer sent a ${amount}QR payment proof that hasn’t been reviewed. Verify it now — once approved you can release the item.`,
+            null,
+            { reviewProof: pendingProof, tx }
+          );
+        } else {
+          fail(
+            'Payment not verified yet',
+            `The customer’s ${amount}QR downpayment hasn’t been verified and no proof is waiting for review (not uploaded yet, or it was rejected). Ask them to send their payment screenshot.`,
+            null,
+            { openPayments: true }
+          );
+        }
         return;
       }
       // Don't await stop() before handing off — stopping the stream can take
@@ -372,6 +395,24 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
                     >
                       <RotateCcw size={13} /> Retry scan
                     </button>
+                    {lookupError.reviewProof && onReviewProof && (
+                      <button
+                        type="button"
+                        onClick={() => onReviewProof(lookupError.reviewProof, lookupError.tx)}
+                        className="inline-flex items-center justify-center px-3.5 py-2.5 min-h-[44px] rounded-xl bg-gray-900 text-white text-xs font-bold hover:bg-gray-700 active:scale-[0.99] transition-all"
+                      >
+                        Review payment
+                      </button>
+                    )}
+                    {lookupError.openPayments && onOpenPayments && (
+                      <button
+                        type="button"
+                        onClick={onOpenPayments}
+                        className="inline-flex items-center justify-center px-3.5 py-2.5 min-h-[44px] rounded-xl bg-gray-900 text-white text-xs font-bold hover:bg-gray-700 active:scale-[0.99] transition-all"
+                      >
+                        Open Payments to verify
+                      </button>
+                    )}
                     {lookupError.switchTo && (
                       <button
                         type="button"

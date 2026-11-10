@@ -17,7 +17,7 @@ import { api, API_ORIGIN } from './utils/api';
 import { todayYmd } from './utils/format';
 import { useToast } from './components/Toast';
 import { useDataVersion } from './hooks/useDataVersion';
-import { onDataChanged } from './utils/dataEvents';
+import { onDataChanged, emitDataChanged } from './utils/dataEvents';
 import { prefetchPaymentProofs } from './hooks/usePaymentProofs';
 
 import LoginPage from './pages/LoginPage';
@@ -85,6 +85,7 @@ if (typeof window !== 'undefined' && isAuthed()) {
 // Modal/large components that drag heavy deps (qrcode, html5-qrcode,
 // react-markdown) into the boot bundle — deferred until opened.
 const CustomerRentalFlow = lazy(() => import('./components/CustomerRentalFlow'));
+const PaymentProofReviewModal = lazy(() => import('./components/PaymentProofReviewModal'));
 const ChatbotModal = lazy(() => import('./components/ChatbotModal'));
 const QrScannerModal = lazy(() => import('./components/QrScannerModal'));
 const TransactionDetailModal = lazy(() => import('./components/TransactionDetailModal'));
@@ -341,6 +342,7 @@ export default function RentechApp() {
   const [showScanner, setShowScanner] = useState(false);
   const [scannedTx, setScannedTx] = useState(null);
   const [scannedAction, setScannedAction] = useState(null); // 'release' | 'return'
+  const [scannedProof, setScannedProof] = useState(null); // { proof, tx } — verify-from-scan
 
   // Ctrl+K keyboard shortcut for global search
   useEffect(() => {
@@ -1350,10 +1352,35 @@ export default function RentechApp() {
           <Suspense fallback={null}>
             <QrScannerModal
               onClose={() => setShowScanner(false)}
+              onReviewProof={(proof, tx) => {
+                setShowScanner(false);
+                setScannedProof({ proof, tx });
+              }}
+              onOpenPayments={() => { setShowScanner(false); goTab('Tasks'); }}
               onFound={(tx, action) => {
                 setShowScanner(false);
                 setScannedAction(action);
                 setScannedTx(normalizeTx(tx));
+              }}
+            />
+          </Suspense>
+        )}
+
+        {/* Scan hit an unverified QR payment → verify it here; approving it
+            continues straight into the release sheet for that booking. */}
+        {scannedProof && (
+          <Suspense fallback={null}>
+            <PaymentProofReviewModal
+              proof={scannedProof.proof}
+              onClose={() => setScannedProof(null)}
+              onDone={(decision) => {
+                const tx = scannedProof.tx;
+                setScannedProof(null);
+                emitDataChanged({ source: 'proof-review' });
+                if (decision === 'approved' && tx) {
+                  setScannedAction('release');
+                  setScannedTx(normalizeTx(tx));
+                }
               }}
             />
           </Suspense>
