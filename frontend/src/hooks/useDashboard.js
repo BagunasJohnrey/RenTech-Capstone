@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../utils/api';
+import { onDataChanged } from '../utils/dataEvents';
 
 // SWR-style cache: the initial render always seeds from the last-known server
 // data (up to 10 min old), so tab switches / remounts paint numbers instantly
@@ -51,7 +52,8 @@ export function useTodayTasks(role, { withStatus = false } = {}) {
     };
     fetchRef.current = fetchDigest;
     const id = poll(fetchDigest);
-    return () => { active = false; fetchRef.current = null; clearInterval(id); };
+    const off = onDataChanged(fetchDigest);
+    return () => { active = false; fetchRef.current = null; clearInterval(id); off(); };
   }, [role]);
 
   const retry = useCallback(() => {
@@ -88,7 +90,8 @@ export function useKpis(role) {
         .catch(() => {});
     };
     const id = poll(fetchKpis);
-    return () => { active = false; clearInterval(id); };
+    const off = onDataChanged(fetchKpis);
+    return () => { active = false; clearInterval(id); off(); };
   }, [role]);
 
   return data;

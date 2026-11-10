@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { onDataChanged } from '../utils/dataEvents';
 import { listProofs } from '../services/payments';
 
 // Manual-QR review queue: same SWR discipline as useDashboard.js (instant paint
@@ -63,7 +64,9 @@ export function usePaymentProofs(enabled) {
     if (!enabled) return;
     if (!cache.has(KEY) || Date.now() - fetchedAt.current > POLL_MS) refresh();
     const t = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
-    return () => clearInterval(t);
+    // Data moved on the server: refetch now instead of waiting for the poll.
+    const off = onDataChanged(() => refresh());
+    return () => { clearInterval(t); off(); };
   }, [enabled, refresh]);
 
   return { data, loading, error, refresh };

@@ -1,21 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../utils/api';
+import { emitDataChanged } from '../utils/dataEvents';
 
 // Cross-device freshness: polls the tiny GET /dashboard/version fingerprint
 // (~100 bytes: max updatedAt + row counts) and reports when it MOVES, so the
 // app refetches heavy lists only on real change — not on a timer.
 //
 // Design rules:
-//   - NEVER silent-swap: when the version moves we set `stale=true` and the
-//     caller shows a "New data available → Refresh" affordance. Mid-work
-//     staff are never yanked.
+//   - Auto-refresh: when the version moves we call `onStale` (App re-pulls
+//     the lists silently, in place — no skeleton, no Refresh button) and
+//     broadcast `rentech:data-changed` so self-fetching widgets (today
+//     digest, KPIs, proof queue) refetch too. Open modals keep their own
+//     state, so nobody's in-progress form is reset.
 //   - Own writes don't trip it: call `markFresh()` after every local
 //     mutation (the refetch those handlers already do brings us current).
 //   - Quiet while hidden: no polling when the tab isn't visible.
 //   - Staff/Admin only: customers poll nothing (their data barely changes
 //     under them; History refetches on mount anyway).
-// 30s (was 15s): halves version polls; focus/visibility still checks instantly.
-const POLL_MS = 30_000;
+// 20s: the fingerprint is ~100 bytes, and changes now show up on their own
+// (no Refresh tap), so a shorter gap is worth it. Focus/visibility still
+// checks instantly; hidden tabs don't poll.
+const POLL_MS = 20_000;
 
 // Comparison key: max updatedAt alone misses deletes and logbook imports
 // (no row's updatedAt moves), so the row counts are folded in.
@@ -43,6 +48,7 @@ export function useDataVersion({ role, isLoggedIn, onStale }) {
         knownRef.current = ver;
         setStale(true);
         onStaleRef.current?.(v);
+        emitDataChanged(v);
       }
     } catch {
       // Offline / transient — stay quiet, retry next tick.

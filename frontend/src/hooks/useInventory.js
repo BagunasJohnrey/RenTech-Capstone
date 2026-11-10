@@ -10,18 +10,20 @@ export function useInventory() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // `{ silent: true }` = background refresh: keep showing current rows
+  // (no skeleton flash) and leave the last-good list in place on failure.
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    if (!silent) setError(null);
     try {
       const data = await inventoryService.list();
       setInventory((data ?? []).map(normalize));
       return data;
     } catch (err) {
-      setError(err);
+      if (!silent) setError(err);
       throw err;
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 

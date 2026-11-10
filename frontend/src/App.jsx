@@ -5,7 +5,7 @@ import { isDemoMode } from './utils/demoMode';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, SIGN_IN_PATH, GUEST_COLLECTION_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
   LayoutGrid, ShoppingBag, Clock, Sparkles, Settings, User,
-  ClipboardList, AlertTriangle, Tag, RefreshCw
+  ClipboardList, AlertTriangle, Tag
 } from 'lucide-react';
 
 import { useAuth } from './hooks/useAuth';
@@ -387,6 +387,26 @@ export default function RentechApp() {
       }
     }
   }, [profile, syncFromProfile, role, navigate]);
+
+  // Customers have no version fingerprint (staff-only endpoint). Refresh
+  // their own bookings only when they come BACK to the tab/app — no timer,
+  // so an idle open tab costs the database nothing. `focus` and
+  // `visibilitychange` both fire on return, so collapse them (5s guard).
+  useEffect(() => {
+    if (!isLoggedIn || role !== 'Customer') return;
+    let lastAt = Date.now();
+    const onReturn = () => {
+      if (document.hidden || Date.now() - lastAt < 5_000) return;
+      lastAt = Date.now();
+      loadTransactions({ silent: true }).catch(() => {});
+    };
+    window.addEventListener('focus', onReturn);
+    document.addEventListener('visibilitychange', onReturn);
+    return () => {
+      window.removeEventListener('focus', onReturn);
+      document.removeEventListener('visibilitychange', onReturn);
+    };
+  }, [isLoggedIn, role, loadTransactions]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -787,24 +807,27 @@ export default function RentechApp() {
 
   const currentNav = navItems[viewRole || 'Admin'];
 
-  // Cross-device freshness (staff/admin): poll the tiny version fingerprint;
-  // when it moves, offer Refresh — never silent-swap mid-work. Refreshing
-  // re-pulls inventory + transactions + digest-driven sections.
-  const [refreshing, setRefreshing] = useState(false);
-  const handleRefreshData = async () => {
-    setRefreshing(true);
+  // Another device / the scheduler changed data: re-pull the lists silently
+  // (rows update in place, no skeleton). Widgets with their own fetches
+  // listen for the same signal (utils/dataEvents).
+  const autoRefreshingRef = useRef(false);
+  const autoRefreshData = async () => {
+    if (autoRefreshingRef.current) return;
+    autoRefreshingRef.current = true;
     try {
-      await Promise.all([loadInventory().catch(() => {}), loadTransactions().catch(() => {})]);
-      clearStale();
-      toastSuccess('Data refreshed');
+      await Promise.all([
+        loadInventory({ silent: true }).catch(() => {}),
+        loadTransactions({ silent: true }).catch(() => {}),
+      ]);
     } finally {
-      setRefreshing(false);
+      autoRefreshingRef.current = false;
+      clearStale();
     }
   };
-  const { stale: dataStale, serverVersion: dataVersion, markFresh, clearStale } = useDataVersion({
+  const { serverVersion: dataVersion, markFresh, clearStale } = useDataVersion({
     role: viewRole,
     isLoggedIn,
-    onStale: () => {},
+    onStale: () => { autoRefreshData(); },
   });
   // Own mutations already merge locally — adopt the new version instead of
   // flagging ourselves stale. Every central mutation handler below calls
@@ -1365,39 +1388,12 @@ export default function RentechApp() {
     </>
   );
 
-  // Non-destructive freshness banner: another device changed data.
-  // Tapping Refresh re-pulls lists; dismissing keeps working on the snapshot.
-  const staleBanner = (dataStale && (viewRole === 'Staff' || viewRole === 'Admin')) ? (
-    <div className="mb-4 flex items-center gap-3 bg-blue-50/80 border border-blue-200/60 rounded-2xl px-4 py-3 animate-in fade-in slide-in-from-top-2">
-      <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
-        <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
-      </span>
-      <p className="flex-1 min-w-0 text-[13px] font-semibold text-gray-800">
-        New updates from the boutique — refresh to see the latest.
-      </p>
-      <button
-        onClick={handleRefreshData}
-        disabled={refreshing}
-        className="shrink-0 px-4 py-2 rounded-full text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
-      >
-        {refreshing ? 'Refreshing…' : 'Refresh'}
-      </button>
-      <button
-        onClick={clearStale}
-        aria-label="Dismiss refresh notice"
-        className="shrink-0 p-1.5 text-gray-400 hover:text-gray-600 hover:bg-blue-100 rounded-full transition-colors"
-      >
-        ✕
-      </button>
-    </div>
-  ) : null;
 
   return (
     <AppLayout
       viewRole={viewRole}
       activeTab={activeTab}
       setActiveTab={goTab}
-      staleBanner={staleBanner}
       navItems={currentNav}
       onRequestLogout={() => setShowLogoutModal(true)}
       customerInfo={customerInfo}
