@@ -360,7 +360,7 @@ describe('staff bookings: promo codes + PIN-verified counter discount', () => {
     const res = await request(app)
       .post('/api/bookings')
       .set('Authorization', 'Bearer customer-token')
-      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, paymentProof: { data: Buffer.from('fake-image').toString('base64'), contentType: 'image/jpeg' } });
+      .send({ itemId: 1, rentalDate: PICKUP, dueDate: DUE, downpayment: 1000, paymentProof: { data: Buffer.from('fake-image').toString('base64'), contentType: 'image/jpeg', reference: 'REF-123456' } });
 
     expect(res.status).toBe(201);
     expect(res.body.rentalFee).toBe(5000);

@@ -94,9 +94,10 @@ export default function ManualQrPayment({
       <div className={`space-y-4 ${s('panel-col')}`}>
       <div>
         <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">
-          Transaction or reference number <span className="font-medium normal-case">(optional)</span>
+          Transaction or reference number<RequiredMark show={reference.trim().length < 4} />
         </label>
-        <input type="text" value={reference} maxLength={40} disabled={disabled}
+        <input type="text" value={reference} maxLength={40} disabled={disabled} required
+          aria-required="true" inputMode="text" autoComplete="off"
           onChange={(e) => onReferenceChange(e.target.value)}
           placeholder="e.g. 000123456789"
           className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 placeholder-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors" />

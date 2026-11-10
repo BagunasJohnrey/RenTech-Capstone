@@ -547,6 +547,10 @@ export default function CustomerRentalFlow({
             setConfirmError('Payment QR not yet set up — please contact the boutique.');
             return;
           }
+          if (proofReference.trim().length < 4) {
+            setConfirmError('Please enter the transaction or reference number from your payment app.');
+            return;
+          }
           if (!proofFile) {
             setConfirmError('Please upload your payment screenshot before submitting.');
             return;
@@ -567,7 +571,7 @@ export default function CustomerRentalFlow({
               paymentProof: {
                 data,
                 contentType: 'image/jpeg',
-                reference: proofReference.trim() || undefined,
+                reference: proofReference.trim(),
                 channel: proofChannel || undefined,
               },
             });

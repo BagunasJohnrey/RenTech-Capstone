@@ -605,6 +605,9 @@ function route(method, path, body) {
       if (!body.paymentProof?.data) {
         return { status: 400, error: 'A payment screenshot is required to book with manual QR payment' };
       }
+      if ((body.paymentProof.reference ?? '').trim().length < 4) {
+        return { status: 400, error: 'Enter the transaction or reference number from your payment app' };
+      }
       created.paymentPath = 'manual';
       created.totalPaid = 0;
       created.balance = created.rentalFee;
@@ -643,6 +646,9 @@ function route(method, path, body) {
     if (t.status === 'Cancelled') return { status: 400, error: 'This booking was cancelled (demo)' };
     if ((t.downpayment ?? 0) > 0 && (t.totalPaid ?? 0) >= t.downpayment) {
       return { status: 400, error: 'The downpayment is already settled for this booking (demo)' };
+    }
+    if ((body.reference ?? '').trim().length < 4) {
+      return { status: 400, error: 'Enter the transaction or reference number from your payment app' };
     }
     if (paymentProofs.some((p) => p.transactionId === txId && p.status === 'pending')) {
       return { status: 409, error: 'A payment proof is already under review (demo)' };

@@ -24,6 +24,8 @@
 
 :root { font-family: 'Plus Jakarta Sans', sans-serif; }
 html, body { font-family: 'Plus Jakarta Sans', sans-serif; }
+/* No double-tap zoom on mobile (pinch is blocked in main.jsx). */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 *::-webkit-scrollbar { display: none; }
 * { -ms-overflow-style: none; scrollbar-width: none; }

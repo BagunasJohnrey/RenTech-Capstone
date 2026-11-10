@@ -227,9 +227,13 @@ const FaqItem = ({ question, answer }) => {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="px-5 md:px-6 pb-5 md:pb-6 text-gray-600 text-sm md:text-base font-medium leading-relaxed"
+            className="overflow-hidden"
           >
-            {answer}
+            {/* Padding lives on an inner wrapper so the height animation
+                doesn't clip it while opening/closing. */}
+            <div className="px-5 md:px-6 pt-3 md:pt-4 pb-5 md:pb-6 text-gray-600 text-sm md:text-base font-medium leading-relaxed">
+              {answer}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

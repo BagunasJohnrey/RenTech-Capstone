@@ -214,6 +214,17 @@ describe('POST /api/bookings/:id/payment-proof', () => {
     }));
   });
 
+  it('400s a proof without a transaction/reference number', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    for (const reference of [undefined, '', '   ', 'ab']) {
+      const res = await request(app).post('/api/bookings/tx-1/payment-proof')
+        .set('Authorization', 'Bearer customer-token')
+        .send({ ...proofBody, reference });
+      expect(res.status).toBe(400);
+    }
+    expect(prisma.paymentProof.create).not.toHaveBeenCalled();
+  });
+
   it('403s another customer\'s booking', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({ ...manualTx, customerId: 'someone-else' });

@@ -7,6 +7,19 @@ import CookieConsent from './components/CookieConsent'
 import RentechApp from './App'
 import './index.css'
 
+// No zooming on phones. The viewport meta (maximum-scale=1, user-scalable=no)
+// covers Android and stops iOS's input-focus zoom, but iOS Safari ignores
+// user-scalable=no for pinch gestures, so block those here too. Double-tap
+// zoom is turned off with `touch-action: manipulation` in index.css.
+if (typeof document !== 'undefined') {
+  const block = (e) => e.preventDefault();
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((t) =>
+    document.addEventListener(t, block, { passive: false }));
+  document.addEventListener('touchmove', (e) => {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  }, { passive: false });
+}
+
 // PWA service-worker lifecycle:
 //   DEV  - never register. If a preview/production build previously ran on
 //          this origin, force-unregister so the dev tab always serves live

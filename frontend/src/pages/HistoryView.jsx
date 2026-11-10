@@ -368,14 +368,25 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
       return true;
     });
 
+  // When only a handful of rows are urgent, Priority would leave staff
+  // staring at 1–2 rows while other open bookings sit one tap away. Below
+  // this many urgent rows, Priority also lists every still-open rental
+  // (anything not Returned/Cancelled); urgent rows still sort first.
+  const PRIORITY_FILL_THRESHOLD = 5;
+  const isOpenTx = (tx) => tx.status !== 'Returned' && tx.status !== 'Cancelled';
+  let urgentCount = 0;
   const statusCounts = { Priority: 0 };
   for (const tx of searchDateFiltered) {
     if (tx.status) statusCounts[tx.status] = (statusCounts[tx.status] || 0) + 1;
-    if (displayStatus(tx).priority) statusCounts.Priority += 1;
+    if (displayStatus(tx).priority) urgentCount += 1;
   }
+  const priorityExpanded = urgentCount < PRIORITY_FILL_THRESHOLD;
+  const inPriorityView = (tx) =>
+    displayStatus(tx).priority || (priorityExpanded && isOpenTx(tx));
+  statusCounts.Priority = searchDateFiltered.filter(inPriorityView).length;
   const filteredTransactions = searchDateFiltered
     .filter((tx) => {
-      if (activeStatusFilter === 'Priority') return displayStatus(tx).priority;
+      if (activeStatusFilter === 'Priority') return inPriorityView(tx);
       if (activeStatusFilter !== 'All') {
         return tx.status === activeStatusFilter;
       }
@@ -514,9 +525,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         {isStaff && (activeStatusFilter === 'Priority' || activeStatusFilter === 'All') && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 px-1">
             <span>
-              {activeStatusFilter === 'Priority'
-                ? 'Showing priority only: overdue, payment pending, due or pickup today, alterations.'
-                : 'Showing all transactions.'}
+              {activeStatusFilter !== 'Priority'
+                ? 'Showing all transactions.'
+                : priorityExpanded
+                  ? `${urgentCount === 0 ? 'Nothing urgent' : `${urgentCount} urgent`} — also showing all open rentals (reserved, active). Urgent ones are listed first.`
+                  : 'Showing priority only: overdue, payment pending, due or pickup today, alterations.'}
             </span>
             <button
               onClick={() => { setActiveStatusFilter(activeStatusFilter === 'Priority' ? 'All' : 'Priority'); setCurrentPage(1); }}

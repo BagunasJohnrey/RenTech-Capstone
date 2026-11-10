@@ -34,7 +34,7 @@ const DUE = futureDate(5);
 const PROOF = {
   paymentProof: {
     data: Buffer.from('fake-image').toString('base64'),
-    contentType: 'image/jpeg',
+    contentType: 'image/jpeg', reference: 'REF-123456',
   },
 };
 

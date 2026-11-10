@@ -9,7 +9,7 @@ export const submitProofSchema = z.object({
     // ~7.1M chars ≈ 5MB decoded; the exact byte cap is enforced on the buffer.
     data: z.string().min(1).max(7_100_000),
     contentType: z.enum(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']),
-    reference: z.string().max(40).optional(),
+    reference: z.string().trim().min(4, 'Enter the transaction or reference number from your payment app').max(40),
     channel: z.string().max(40).optional(),
   }),
 });
