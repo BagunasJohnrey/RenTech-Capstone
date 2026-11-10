@@ -3,6 +3,7 @@ import { X, Loader2, Camera, AlertTriangle, Keyboard, Package, Undo2, ArrowLeft,
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { api } from '../utils/api';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { qrPaymentUnresolved } from '../utils/txDisplayStatus';
 
 // Camera QR scanner for staff. Before the camera opens, the staff member picks
 // which process they're running — RELEASE (customer pickup) or RETURN — then
@@ -108,6 +109,17 @@ export default function QrScannerModal({ onFound, onClose, title = 'Scan booking
       if (gateError) {
         const other = action === 'return' ? 'release' : 'return';
         fail('Wrong process for this booking', gateError, other);
+        return;
+      }
+      // Payment gate: a QR-paid booking can't be released until staff have
+      // verified the customer's payment proof (approval credits the
+      // downpayment). Collecting it again at the counter would double-charge.
+      if (action === 'release' && qrPaymentUnresolved(tx)) {
+        const dp = Number(tx?.downpayment || 0);
+        fail(
+          'Payment not verified yet',
+          `The customer’s ${dp > 0 ? `₱${dp.toLocaleString()} ` : ''}QR downpayment hasn’t been verified. Approve their payment proof in Tasks → Payments to verify, then scan again.`
+        );
         return;
       }
       // Don't await stop() before handing off — stopping the stream can take

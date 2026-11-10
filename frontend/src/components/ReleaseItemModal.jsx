@@ -12,6 +12,7 @@ import { useButtonGuard } from '../hooks/useButtonGuard';
 import { useToast } from './Toast';
 import SwapItemModal from './SwapItemModal';
 import ManualQrPanel from './ManualQrPanel';
+import { qrPaymentUnresolved } from '../utils/txDisplayStatus';
 import Button from './ui/Button';
 
 export default function ReleaseItemModal({ transaction: initialTx, onClose, onReleased, onSwapItem }) {
@@ -64,6 +65,9 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
           ...(f.totalPaid != null ? { totalPaid: f.totalPaid } : {}),
           ...(f.rentalFee != null ? { rentalFee: f.rentalFee } : {}),
           ...(f.downpayment != null ? { downpayment: f.downpayment } : {}),
+          ...(f.paymentPath !== undefined ? { paymentPath: f.paymentPath } : {}),
+          ...(f.gateway !== undefined ? { gateway: f.gateway } : {}),
+          ...(f.status ? { status: f.status } : {}),
         }));
       })
       .catch(() => { /* keep the row's numbers; backend still enforces ₱0 */ })
@@ -76,6 +80,10 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   // enforces this too) — an unpaid booking must clear the FULL outstanding
   // here, then release. Paid bookings skip this block.
   const requiresPayment = outstandingBalance > 0;
+  // QR-paid booking whose proof isn't approved yet: nothing may be collected
+  // or released here (the transfer is already under review — collecting it
+  // at the counter would double-charge). The backend refuses too.
+  const paymentUnverified = qrPaymentUnresolved(tx);
 
   useEffect(() => {
     if (requiresPayment) {
@@ -174,6 +182,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   };
 
   const handleRelease = () => {
+    if (paymentUnverified) { setError("Verify the customer's QR payment proof first."); return; }
     if (!photoFile) { setError('Please capture the pre-rental condition photo'); return; }
     if (requiresPayment) {
       const amt = Number(payAmount);
@@ -339,7 +348,19 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
             </label>
           </div>
 
-          {requiresPayment && (
+          {paymentUnverified && !balanceLoading && (
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+              <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
+                <QrCode size={14} /> Payment not verified yet
+              </p>
+              <p className="text-[11px] text-blue-800 mt-0.5 leading-snug">
+                The customer's ₱{Number(tx.downpayment || 0).toLocaleString()} QR downpayment is still waiting for review.
+                Approve their payment proof in Tasks → Payments to verify — then you can collect the rest and release.
+              </p>
+            </div>
+          )}
+
+          {requiresPayment && !paymentUnverified && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
               <div>
                 <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
@@ -459,13 +480,13 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 Cancel
               </Button>
               <Button variant="info" size="lg" onClick={handleRelease}
-                disabled={releasing || balanceLoading || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance))}>
-                {releasing ? 'Releasing...' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Record payment first' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
+                disabled={releasing || balanceLoading || paymentUnverified || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance))}>
+                {releasing ? 'Releasing...' : paymentUnverified ? 'Verify payment first' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Record payment first' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
               </Button>
             </div>
             {/* Say WHY the release button is disabled instead of leaving staff
                 guessing that payment can't be taken here. */}
-            {!releasing && !photoFile && (
+            {!releasing && !photoFile && !paymentUnverified && (
               <p className="text-[11px] text-gray-500 text-center mt-2">
                 {requiresPayment
                   ? 'Take the condition photo to release — you can record the payment above now.'
