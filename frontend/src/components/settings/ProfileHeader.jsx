@@ -14,14 +14,19 @@ import {
   validatePhone,
   formatPhoneDisplay,
   validateName,
+  validateAddress,
   PHONE_ERROR,
   sanitizeAddress,
+  phoneLocalDigits,
 } from '../../utils/inputLimits';
 
 export default function ProfileHeader({ role, profile, customerInfo, onUpdateCustomer, onProfileUpdated }) {
   const [editCustomer, setEditCustomer] = useState(false);
   const [localCustomer, setLocalCustomer] = useState(customerInfo || { name: '', contact: '', address: '', preferences: [], styleNotes: '' });
   const [saveMessage, setSaveMessage] = useState('');
+  // Inline field errors for the customer edit form. Set on Save, then
+  // re-checked as the customer types so a fixed field clears its message.
+  const [customerErrors, setCustomerErrors] = useState({});
 
   const [editStaff, setEditStaff] = useState(false);
   const [staffDraft, setStaffDraft] = useState({ name: '', phone: '' });
@@ -101,11 +106,38 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
     }
   };
 
+  // Phone and address stay optional: only a non-empty value is validated.
+  const customerFieldError = (field, value) => {
+    if (field === 'name') {
+      const r = validateName(value);
+      return r === true ? '' : r;
+    }
+    if (field === 'contact') {
+      return value && validatePhone(value) !== true ? PHONE_ERROR : '';
+    }
+    if (field === 'address') {
+      if (!(value || '').trim()) return '';
+      const r = validateAddress(value);
+      return r === true ? '' : r;
+    }
+    return '';
+  };
+
+  const updateCustomerField = (field, value) => {
+    setLocalCustomer((prev) => ({ ...prev, [field]: value }));
+    if (customerErrors[field]) {
+      setCustomerErrors((prev) => ({ ...prev, [field]: customerFieldError(field, value) }));
+    }
+  };
+
   const handleSaveCustomer = () => {
-    const nm = (localCustomer.name || '').trim();
-    if (nm.length < INPUT_LIMITS.NAME_MIN || /\d/.test(nm) || nm.length > INPUT_LIMITS.NAME_MAX) return;
-    if (localCustomer.contact && validatePhone(localCustomer.contact) !== true) return;
-    if ((localCustomer.address || '').trim().length > INPUT_LIMITS.ADDRESS_MAX) return;
+    const errors = {
+      name: customerFieldError('name', localCustomer.name),
+      contact: customerFieldError('contact', localCustomer.contact),
+      address: customerFieldError('address', localCustomer.address),
+    };
+    setCustomerErrors(errors);
+    if (errors.name || errors.contact || errors.address) return;
     onUpdateCustomer(localCustomer);
     setEditCustomer(false);
     setSaveMessage('Profile updated!');
@@ -161,6 +193,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
   const handleStartEdit = () => {
     if (role === 'Customer') {
       setLocalCustomer({ ...customerInfo, preferences: customerInfo?.preferences || [] });
+      setCustomerErrors({});
       setEditCustomer(true);
     } else {
       startStaffEdit();
@@ -169,6 +202,8 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
 
   const inputClass = 'w-full p-3 bg-[#fafafa] rounded-2xl border border-gray-200 text-sm focus:outline-none focus:border-[#bf4a53] focus:ring-4 focus:ring-[#bf4a53]/10 transition-all font-medium text-gray-800';
   const labelClass = 'text-[10px] font-bold text-gray-400 uppercase tracking-[0.08em] mb-1.5 block';
+  const errorRing = '!border-[#bf4a53] ring-4 ring-[#bf4a53]/10';
+  const errorText = 'mt-1.5 text-[#bf4a53] text-xs font-semibold';
 
   return (
     <div className="bg-white rounded-3xl shadow-[0_8px_40px_-8px_rgba(0,0,0,0.1)] overflow-hidden">
@@ -291,17 +326,22 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className={labelClass}>Full Name<RequiredMark show={validateName(localCustomer.name) !== true} /></label>
-                    <input type="text" value={localCustomer.name} onChange={(e) => setLocalCustomer({ ...localCustomer, name: sanitizeName(e.target.value) })} className={inputClass} placeholder="Full Name" maxLength={INPUT_LIMITS.NAME_MAX} />
+                    <input type="text" value={localCustomer.name} onChange={(e) => updateCustomerField('name', sanitizeName(e.target.value))} className={`${inputClass} ${customerErrors.name ? errorRing : ''}`} placeholder="Full Name" maxLength={INPUT_LIMITS.NAME_MAX} aria-invalid={!!customerErrors.name} aria-describedby={customerErrors.name ? 'cust-name-error' : undefined} />
                     <CharCount value={localCustomer.name} max={INPUT_LIMITS.NAME_MAX} />
+                    {customerErrors.name && <p id="cust-name-error" role="alert" className={errorText}>{customerErrors.name}</p>}
                   </div>
                   <div>
                     <label className={labelClass}>Contact Number</label>
-                    <PhoneInput value={localCustomer.contact} onChange={(e) => setLocalCustomer({ ...localCustomer, contact: sanitizePhone(e.target.value) })} className={inputClass} aria-label="Contact number" />
+                    <PhoneInput value={localCustomer.contact} onChange={(e) => updateCustomerField('contact', sanitizePhone(e.target.value))} className={`${inputClass} ${customerErrors.contact ? errorRing : ''}`} aria-label="Contact number" aria-invalid={!!customerErrors.contact} aria-describedby={customerErrors.contact ? 'cust-phone-error' : undefined} />
+                    {/* PhoneInput already shows a live hint when the number doesn't start
+                        with 9; skip ours then so the field never shows two messages. */}
+                    {customerErrors.contact && !(phoneLocalDigits(localCustomer.contact) && !phoneLocalDigits(localCustomer.contact).startsWith('9')) && <p id="cust-phone-error" role="alert" className={errorText}>{customerErrors.contact}</p>}
                   </div>
                 </div>
                 <div>
                   <label className={labelClass}>Address</label>
-                  <input type="text" value={localCustomer.address} onChange={(e) => setLocalCustomer({ ...localCustomer, address: sanitizeAddress(e.target.value) })} className={inputClass} placeholder="Full Address" maxLength={INPUT_LIMITS.ADDRESS_MAX} />
+                  <input type="text" value={localCustomer.address} onChange={(e) => updateCustomerField('address', sanitizeAddress(e.target.value))} className={`${inputClass} ${customerErrors.address ? errorRing : ''}`} placeholder="Full Address" maxLength={INPUT_LIMITS.ADDRESS_MAX} aria-invalid={!!customerErrors.address} aria-describedby={customerErrors.address ? 'cust-address-error' : undefined} />
+                  {customerErrors.address && <p id="cust-address-error" role="alert" className={errorText}>{customerErrors.address}</p>}
                 </div>
                 <div>
                   <label className={labelClass}>Interested In</label>
@@ -324,7 +364,7 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-1.5 pt-1">
-                  <button onClick={() => { setEditCustomer(false); setLocalCustomer(customerInfo); }}
+                  <button onClick={() => { setEditCustomer(false); setLocalCustomer(customerInfo); setCustomerErrors({}); }}
                     className="inline-flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 sm:gap-1.5 bg-white border-2 border-gray-200 rounded-full text-[11px] sm:text-xs font-bold text-gray-600 hover:bg-gray-50 transition-all">
                     <X size={11} /> Cancel
                   </button>
