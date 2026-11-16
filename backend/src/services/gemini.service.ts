@@ -846,7 +846,7 @@ export async function checkAiHealth() {
 }
 
 export async function generateReport(data: {
-  kpis: Record<string, number | { label: string; revenue: number }[]>;
+  kpis: Record<string, string | number | { label: string; revenue: number }[]>;
   insights?: Record<string, unknown> & {
     underperforming?: { id: number; name: string; category: string; rentals: number }[];
     topRented?: { id: number; name: string; category: string; rentals: number }[];
@@ -938,7 +938,7 @@ CONTENT RULES:
 
 SECTION GUIDANCE (use the supplied data):
 - Executive Summary: overall health (revenue direction, utilization, urgent risks) in a short paragraph.
-- Key Performance Indicators: headline KPI numbers (active rentals, overdue, returned, cancelled, damaged, monthly revenue, utilization rate, overdue rate).
+- Key Performance Indicators: headline KPI numbers (active rentals, overdue, returned, cancelled, damaged, monthly revenue, utilization rate, overdue rate). When totalRevenueInclLogbook is present, write "Total revenue: ₱<totalRevenueInclLogbook>" (it covers the period named in revenueScope, app payments + logbook records — say "this year" for a year scope, "all time" only when revenueScope is "all time") and on the next line "Collected in app: ₱<totalRevenue> · Logbook records: ₱<totalLogbookRevenue>". Also write "Revenue period: <revenueScope>".
 - Revenue Analysis: revenue by category and by month, plus top revenue-generating items.
 - Inventory & Utilization: total/available/in-use items, utilization rate, most-rented items, underperforming items. Write the category breakdown strictly as "Category: X total, Y rented" per category (e.g. "Gown: 21 total, 6 rented") using the categoryBreakdown numbers from the Data — never "total/21 rented/6" style fragments.
 - Operational Health: overdue returns and late rate, damaged items, cancellation rate — each as its own line.

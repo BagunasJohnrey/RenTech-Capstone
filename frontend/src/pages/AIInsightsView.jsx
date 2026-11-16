@@ -395,7 +395,11 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // longer timeout — the old 20s abort is what used to kill it mid-write).
   const handleGenerateReport = () => {
     setReportLoading(true);
-    api.post('/ai/generate-report', undefined, { timeout: 60000 })
+    // Overall tab → all-time totals; everything else → selected year.
+    const reportBody = timeRange === 'Overall'
+      ? { scope: 'overall' }
+      : { scope: 'yearly', year: appliedYear };
+    api.post('/ai/generate-report', reportBody, { timeout: 60000 })
       .then(r => {
         // Provider down / rate-limited / flagged / truncated → toast instead
         // of opening the modal on a one-line error stub.

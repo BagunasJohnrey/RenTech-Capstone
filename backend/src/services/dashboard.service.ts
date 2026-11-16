@@ -265,6 +265,32 @@ async function aggregateRevenueBetween(start: Date, end: Date) {
   return paymentSum._sum.amount || 0;
 }
 
+/**
+ * Revenue totals for the AI report: app payments + logbook records over
+ * either one calendar year (default) or all time. Overrides getKpis()'s
+ * all-time `totalRevenue` so the report states the window it covers.
+ */
+export async function getRevenueTotals(scope: 'yearly' | 'overall', year = new Date().getFullYear()) {
+  const start = scope === 'overall' ? new Date(0) : new Date(year, 0, 1);
+  const end = scope === 'overall' ? undefined : new Date(year + 1, 0, 1);
+  const [collected, logbook] = await Promise.all([
+    aggregateRevenueFrom(start, end),
+    (async () => {
+      try {
+        const where = end ? { eventDate: { gte: start, lt: end } } : {};
+        const agg = await prisma.historicalRecord.aggregate({ where, _sum: { price: true } });
+        return agg?._sum?.price ?? 0;
+      } catch { return 0; }
+    })(),
+  ]);
+  return {
+    revenueScope: scope === 'overall' ? 'all time' : `year ${year}`,
+    totalRevenue: collected,
+    totalLogbookRevenue: logbook,
+    totalRevenueInclLogbook: collected + logbook,
+  };
+}
+
 async function aggregateRevenueFrom(start: Date, end?: Date) {
   const where: any = { status: { in: COLLECTED_PAYMENT_STATUS }, createdAt: { gte: start } };
   if (end) where.createdAt.lt = end;

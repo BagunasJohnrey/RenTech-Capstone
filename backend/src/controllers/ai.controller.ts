@@ -81,7 +81,11 @@ export async function generateReport(req: AuthenticatedRequest, res: Response, n
       cleaning: optimization.cleaningPriority(analyticsItems, forecastCats).slice(0, 5),
     };
 
-    const result = await geminiService.generateReport({ kpis, insights, forecast, rules });
+    // Total-revenue window: yearly by default, all-time only when asked.
+    const scope = req.body?.scope === 'overall' ? 'overall' : 'yearly';
+    const year = Math.min(req.body?.year || new Date().getFullYear(), new Date().getFullYear());
+    const scoped = await dashboardService.getRevenueTotals(scope, year);
+    const result = await geminiService.generateReport({ kpis: { ...kpis, ...scoped }, insights, forecast, rules });
     // Best-effort history: complete, readable reports are saved so
     // the admin "last saved AI reports" list can reopen them. Error stubs
     // (rate-limited / flagged / truncated) are NOT saved — they'd pollute
@@ -143,7 +147,10 @@ export async function deleteReport(req: AuthenticatedRequest, res: Response, nex
 }
 
 export const reportSchema = z.object({
-  body: z.object({}).optional(),
+  body: z.object({
+    scope: z.enum(['yearly', 'overall']).optional(),
+    year: z.coerce.number().int().min(2000).max(2100).optional(),
+  }).optional(),
 });
 
 export const suggestPromosSchema = z.object({

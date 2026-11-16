@@ -93,7 +93,17 @@ function extractKpis(sections) {
     });
   }
   if (k.totalRevenue != null) {
-    tiles.push({ label: 'Total revenue', value: k.totalRevenue, format: 'money', sub: 'all time' });
+    const period = pick(kv, 'revenue period');
+    const inApp = money('collected in app');
+    const when = period
+      ? (/all time/i.test(period) ? 'all time' : period.replace(/^year\s*/i, ''))
+      : 'all time';
+    tiles.push({
+      label: 'Total revenue',
+      value: k.totalRevenue,
+      format: 'money',
+      sub: inApp != null ? `${when} · app + logbook` : when,
+    });
   }
 
   const status = [

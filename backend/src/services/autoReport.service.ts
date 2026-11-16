@@ -107,7 +107,8 @@ export async function runAutoReport(now = Date.now()): Promise<{
       cleaning: optimization.cleaningPriority(analyticsItems, forecastCats).slice(0, 5),
     };
 
-    const result = await geminiService.generateReport({ kpis, insights, forecast, rules });
+    const scoped = await dashboardService.getRevenueTotals('yearly');
+    const result = await geminiService.generateReport({ kpis: { ...kpis, ...scoped } as typeof kpis, insights, forecast, rules });
     // Only real AI output (`source === 'ai'`) is saved + notified. Fallback
     // stubs ("not configured") and error stubs (rate-limited / flagged /
     // truncated) must never file history rows or ping admins. No stamp on
