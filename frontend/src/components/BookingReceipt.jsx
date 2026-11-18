@@ -3,6 +3,7 @@ import { Download } from 'lucide-react';
 import BookingQR from './BookingQR';
 import { txRentalFee, txDownpayment, txBalance, getBookingCode, peso } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { rentalPeriod } from '../utils/format';
 
 // Shared booking receipt — used by the customer flow, the staff rental flow,
 // and (read-only) the transaction detail modal. A compact header, a detail
@@ -49,6 +50,7 @@ export default function BookingReceipt({ tx, qrPayload, showQR = true, title, pi
         <Row label="Pickup" value={pickupLabel} />
         <Row label="Event Date" value={eventLabel} />
         <Row label="Return By" value={dueLabel} className="text-amber-600 font-semibold" />
+        {(() => { const p = rentalPeriod(tx?.rentalDate || tx?.date, tx?.dueDate); return p ? <Row label="Rental Period" value={p.label} className="font-semibold" /> : null; })()}
         <Row label="Total" value={peso(fee)} className="font-semibold" />
         {promoDiscount > 0 && <Row label="Promo discount" value={`−${peso(promoDiscount)}`} className="text-emerald-600 font-semibold" />}
         <Row label="Balance (remaining)" value={peso(balance)} className="font-bold" />

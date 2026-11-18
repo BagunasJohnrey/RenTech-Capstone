@@ -16,7 +16,7 @@ import { promoDiscountLabel } from '../utils/promoLabel';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { downloadReceiptImage } from '../utils/receiptImage';
 import { useEscapeClose } from '../hooks/useEscapeClose';
-import { toLocalYmd, todayYmd } from '../utils/format';
+import { toLocalYmd, todayYmd, rentalPeriod } from '../utils/format';
 import {
   INPUT_LIMITS,
   sanitizeName,
@@ -236,7 +236,8 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   const saveWalkinReceipt = () => {
     const d = (v) => new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
     return downloadReceiptImage({
-      tx: createdTx,
+      // Dates fall back to the form so the Rental Period row always renders.
+      tx: { ...createdTx, rentalDate: createdTx?.rentalDate || customer.rentalDate, dueDate: createdTx?.dueDate || customer.returnDate },
       itemName: selectedItem?.name,
       customerName: customer.name,
       pickupLabel: d(customer.rentalDate),
@@ -1088,6 +1089,9 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                   <div className="flex justify-between"><span className="text-gray-500">Pickup</span><span className="font-semibold">{new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Event Date</span><span className="font-semibold">{new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Return By</span><span className="font-semibold">{new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}</span></div>
+                  {(() => { const p = rentalPeriod(customer.rentalDate, customer.returnDate); return p ? (
+                    <div className="flex justify-between"><span className="text-gray-500">Rental period</span><span className="font-semibold">{p.label}</span></div>
+                  ) : null; })()}
                   <div className="flex justify-between font-bold"><span>{selectedItem?.name}</span><span>₱{totals.baseRate.toLocaleString()}</span></div>
                   {totals.promoDiscount > 0 && (
                     <div className="flex justify-between text-emerald-600"><span>Voucher ({totals.promoCode})</span><span>-₱{totals.promoDiscount.toLocaleString()}</span></div>
@@ -1284,7 +1288,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
               )}
               <div className="print-area">
                 <BookingReceipt
-                  tx={createdTx}
+                  tx={{ ...createdTx, rentalDate: createdTx.rentalDate || customer.rentalDate, dueDate: createdTx.dueDate || customer.returnDate }}
                   pickupLabel={new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
                   eventLabel={new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
                   dueLabel={new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'})}
