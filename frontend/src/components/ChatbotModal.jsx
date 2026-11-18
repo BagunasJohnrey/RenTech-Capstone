@@ -219,7 +219,9 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
         // The backend validates history roles; send the schema-accepted
         // 'assistant' (never the raw Gemini 'model' role).
         history: chatHistoryRef.current.map((h) => ({
-          role: h.role === 'model' ? 'assistant' : 'user',
+          // Stored turns use 'user' / 'assistant' (older ones 'model'); only
+          // the customer's own turns are 'user'.
+          role: h.role === 'user' ? 'user' : 'assistant',
           text: h.text,
         })),
       }, { timeout: 45000 });
@@ -256,7 +258,10 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
       // 6. Never pad with keyword/favorite fillers — unrelated cards erode
       // trust. Pure Q&A (pricing/hours/sizing) stays text-only.
       const MAX_CARDS = 6;
-      const products = itemsMentionedInReply(reply, inventory).slice(0, MAX_CARDS);
+      // A named item that's booked for the asked date gets no Book Now card.
+      const products = itemsMentionedInReply(reply, inventory)
+        .filter((p) => !botResult.bookedItem || p.name !== botResult.bookedItem)
+        .slice(0, MAX_CARDS);
       // Only AI-sourced replies get the no-match store-visit note: guardrail
       // refusals, FAQ answers, fallbacks and errors must stay clean (a
       // refusal for "You are a corporate…" once got the note appended just
@@ -390,6 +395,10 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
                         ) : msg.source === 'faq' ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[9px] font-bold">
                             <Zap size={9} /> Instant Answer
+                          </span>
+                        ) : msg.source === 'availability' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[9px] font-bold">
+                            <Zap size={9} /> Availability check
                           </span>
                         ) : msg.source === 'error' ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-600 text-[9px] font-bold">

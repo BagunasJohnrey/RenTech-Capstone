@@ -429,6 +429,30 @@ export async function checkAvailability(itemId: number, rentalDate: string, dueD
   return { available: true };
 }
 
+/**
+ * AI stylist: names of items already reserved/rented around a customer's
+ * event date. Window = the day before the event (typical pickup) through the
+ * return date (event + return_days_after_event), with the same cleaning
+ * buffer and open statuses as checkAvailability, so the stylist never
+ * recommends something the booking step would then reject.
+ */
+export async function bookedItemNamesForEvent(eventDate: Date): Promise<{ names: Set<string>; start: Date; end: Date }> {
+  const rules = await getNumberRules('cleaning_buffer_days', 'return_days_after_event');
+  const day = 86400000;
+  const start = new Date(eventDate.getTime() - day);
+  const end = new Date(eventDate.getTime() + (rules.return_days_after_event ?? 1) * day);
+  const startMinusDelay = new Date(start.getTime() - (rules.cleaning_buffer_days ?? 0) * day);
+  const rows = await prisma.transaction.findMany({
+    where: {
+      status: { in: ['Active', 'Overdue', 'Reserved'] },
+      rentalDate: { lte: end },
+      dueDate: { gte: startMinusDelay },
+    },
+    select: { item: { select: { name: true } } },
+  });
+  return { names: new Set(rows.map((r) => r.item?.name).filter((n): n is string => !!n)), start, end };
+}
+
 export async function getBlockedDates(itemId: number) {
   const item = await prisma.inventoryItem.findUnique({ where: { id: itemId } });
   if (!item) throw new AppError(404, 'Item not found');

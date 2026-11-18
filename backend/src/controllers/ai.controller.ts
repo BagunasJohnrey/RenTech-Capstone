@@ -11,6 +11,9 @@ import * as autoPromoService from '../services/autoPromo.service.js';
 import type { CategoryProjection, AnalyticsItemShape } from '../services/optimization.service.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { extractEventDate, manilaToday, mentionedMonthOnly } from '../utils/stylistDates.js';
+
+const fmtDay = (d: Date) => d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' });
 
 // L5: the chat history is reflected into the AI prompt, so the shape must be
 // strictly controlled — only 'user'/'assistant' roles, bounded text length,
@@ -50,9 +53,9 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
         if (typeof raw === 'string' && raw.trim()) preferences = raw.split(',').map((p) => p.trim()).filter(Boolean);
       }
     } catch { /* preferences are a ranking hint only — never fail the chat */ }
-    const context = env.RAG_ENABLED
+    const context = { ...(env.RAG_ENABLED
       ? await retrieveStylistContext(message, { preferences })
-      : { items: (await inventoryService.listItems('Available')).slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; colors?: string[] | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 };
+      : { items: (await inventoryService.listItems('Available')).slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; colors?: string[] | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 }) };
     // Relevance retrieval only returns items whose names/colors match the
     // question, so "any sale items?" got zero sale stock and the stylist said
     // it had no sale info. Always append the ACTIVE sale items (Available,
@@ -66,15 +69,109 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
         .map((i) => ({ name: i.name, category: i.category, price: i.price, onSale: true, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] }));
       if (sale.length) context.items = [...context.items, ...sale] as typeof context.items;
     } catch { /* sale context is best-effort */ }
-    const result = await geminiService.chatWithAi(message, history, { items: context.items, policies: context.policies });
-    // The stylist picks from currently-Available stock; it does not check the
-    // customer's exact dates. Say so on every real reply (booking re-checks).
-    const AVAIL_NOTE = 'Availability for your exact dates is confirmed when you book.';
+    // Date-aware filtering: when the customer mentions an event date (in this
+    // message, else their most recent earlier message), drop items that are
+    // already booked around that date so the stylist only suggests pieces
+    // that are actually free.
+    let checkedDate: Date | null = null;
+    let removed = 0;
+    let bookedNames = new Set<string>();
+    let policies = context.policies;
+    // "available on dec?" names a month but no day: never fall back to an
+    // older date from the conversation — ask which day instead.
+    const monthOnly = mentionedMonthOnly(message);
+    try {
+      const userTexts = [message, ...[...(history ?? [])].reverse().filter((h: { role: string }) => h.role === 'user').map((h: { text: string }) => h.text)];
+      for (const t of (monthOnly ? [] : userTexts)) { checkedDate = extractEventDate(t); if (checkedDate) break; }
+      if (checkedDate && checkedDate >= manilaToday()) {
+        const { names } = await inventoryService.bookedItemNamesForEvent(checkedDate);
+        bookedNames = names;
+        const before = context.items.length;
+        context.items = context.items.filter((i: { name: string }) => !names.has(i.name)) as typeof context.items;
+        removed = before - context.items.length;
+        policies = [...policies, {
+          key: 'event_date_availability',
+          value: `The customer's event date is ${fmtDay(checkedDate)}. Every item in the inventory list was checked against existing bookings and is free for that date (pickup the day before, return the day after). Items already booked were removed — do not suggest anything not in the list.`,
+        }];
+      } else {
+        checkedDate = null;
+      }
+    } catch { checkedDate = null; /* date filtering is best-effort */ }
+
+    // Named-item check: "is the Navy Blue Sequin Gown free on Nov 21?" gets a
+    // direct yes/no (same rule as the booking step) plus free alternatives in
+    // the same category — answered here, so it works even if the AI is down.
+    try {
+      const { prisma } = await import('../config/database.js');
+      const all = await prisma.inventoryItem.findMany({
+        where: { status: { not: 'Deleted' } },
+        select: { name: true, category: true, status: true },
+      });
+      const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const msg = ` ${norm(message)} `;
+      let named = all
+        .filter((i) => i.name && norm(i.name).length >= 5 && msg.includes(` ${norm(i.name)} `))
+        .sort((a, b) => b.name.length - a.name.length)[0];
+      // Follow-up to "Which day…? I'll check X": the customer's next message
+      // ("december 20") only has the date, so carry the item over from the
+      // stylist's last question.
+      // Only when that question is the stylist's LATEST reply (the last
+      // history turn) — an older one must not hijack later questions like
+      // "Outfit for a Christmas party". Matched by text, not role: older chat
+      // clients sent every history turn as 'user'.
+      const lastTurn = (history ?? [])[(history ?? []).length - 1] as { text: string } | undefined;
+      const lastBot = lastTurn && /I'll check|I can check/.test(lastTurn.text) ? lastTurn : undefined;
+      const pendingItem = !named && checkedDate && lastBot && /I'll check|I can check/.test(lastBot.text)
+        ? all.filter((i) => i.name && ` ${norm(lastBot.text)} `.includes(` ${norm(i.name)} `))
+          .sort((a, b) => b.name.length - a.name.length)[0]
+        : undefined;
+      named = named ?? pendingItem;
+      const asksAvailability = /\b(free|available|availability|book(ed)?|reserved|taken|pwede|bakante|meron)\b/i.test(message);
+      if (named && (checkedDate || asksAvailability)) {
+        let reply: string;
+        let booked = false;
+        if (!checkedDate) {
+          reply = monthOnly
+            ? `Which day in ${monthOnly} is your event? Tell me the exact date (e.g. "${monthOnly.slice(0, 3)} 20") and I'll check **${named.name}**.`
+            : `I can check **${named.name}** for you. What's your event date? (e.g. "Dec 20")`;
+        } else {
+          const day = fmtDay(checkedDate);
+          const blockedStatus = named.status === 'OutOfService' ? 'out of service right now'
+            : named.status === 'Cleaning' ? 'being cleaned and not bookable yet' : null;
+          booked = !!blockedStatus || bookedNames.has(named.name);
+          const alts = all
+            .filter((i) => i.status === 'Available' && i.name !== named.name && !bookedNames.has(i.name))
+            .sort((a, b) => Number(b.category === named.category) - Number(a.category === named.category))
+            .slice(0, 3);
+          reply = booked
+            ? `❌ **${named.name}** is not available for ${day} — it's ${blockedStatus ?? 'already booked around that date'}.`
+            : `✅ **${named.name}** is free for ${day} (pickup the day before, return the day after). Tap **Book Now** to reserve it.`;
+          if (alts.length) {
+            reply += `\n\n${booked ? 'These are free on that date instead' : 'Other pieces free on that date'}:\n${alts.map((a) => `- ${a.name} (${a.category})`).join('\n')}`;
+          }
+          reply += `\n\n_Checked against bookings for ${day}. Final availability is confirmed when you book._`;
+        }
+        return res.json({
+          reply, source: 'availability', groundedIn: 0, retrieval: 'keyword',
+          ...(checkedDate ? { checkedDate: checkedDate.toISOString().slice(0, 10) } : {}),
+          checkedItem: named.name, ...(booked ? { bookedItem: named.name } : {}),
+        });
+      }
+    } catch { /* fall through to the stylist */ }
+    const result = await geminiService.chatWithAi(message, history, { items: context.items, policies });
+    // Every real reply says where availability stands: checked against
+    // bookings for the mentioned date, or confirmed at booking otherwise.
+    const AVAIL_NOTE = checkedDate
+      ? `Suggestions checked against bookings for ${fmtDay(checkedDate)}. Final availability is confirmed when you book.`
+      : 'Availability for your exact dates is confirmed when you book.';
     const reply = typeof result.reply === 'string' && result.reply
       && !['guardrail', 'error'].includes(result.source) && !result.reply.includes(AVAIL_NOTE)
       ? `${result.reply.trimEnd()}\n\n_${AVAIL_NOTE}_`
       : result.reply;
-    res.json({ ...result, reply, groundedIn: context.groundedIn, retrieval: context.retrieval });
+    res.json({
+      ...result, reply, groundedIn: context.groundedIn, retrieval: context.retrieval,
+      ...(checkedDate ? { checkedDate: checkedDate.toISOString().slice(0, 10), bookedExcluded: removed } : {}),
+    });
   } catch (err) {
     next(err);
   }
