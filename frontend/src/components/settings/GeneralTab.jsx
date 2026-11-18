@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import RequiredMark from '../ui/RequiredMark';
-import { Building2, DollarSign, Clock, ScanLine } from 'lucide-react';
+import { Building2, DollarSign, Clock, ScanLine, Download } from 'lucide-react';
 import { api } from '../../utils/api';
 import { useFeatureFlags } from '../../hooks/useFeatureFlags';
 import CollapsibleCard from './CollapsibleCard';
@@ -54,7 +54,8 @@ export default function GeneralTab() {
 
   // QR codes (scannable receipts + staff scanner) — admin toggle persisted as
   // a business rule and broadcast so every open screen updates instantly.
-  const { qr_codes: qrCodesOn, refreshFlags } = useFeatureFlags();
+  const { qr_codes: qrCodesOn, walkin_receipt_auto: walkinAutoOn, refreshFlags } = useFeatureFlags();
+  const [walkinMsg, setWalkinMsg] = useState('');
   const [qrMsg, setQrMsg] = useState('');
 
   // Load business rules from backend on mount
@@ -156,6 +157,19 @@ export default function GeneralTab() {
       setQrMsg('Could not update setting. Try again.');
     }
     setTimeout(() => setQrMsg(''), 2500);
+  };
+
+  const toggleWalkinAuto = async () => {
+    const next = !walkinAutoOn;
+    try {
+      await api.put('/settings/rules', { walkin_receipt_autodownload: String(next) });
+      if (refreshFlags) await refreshFlags();
+      window.dispatchEvent(new Event('rentech:flags-changed'));
+      setWalkinMsg(next ? 'Walk-in receipts will download automatically.' : 'Walk-in receipts download only when staff tap Save Receipt.');
+    } catch {
+      setWalkinMsg('Could not update setting. Try again.');
+    }
+    setTimeout(() => setWalkinMsg(''), 2500);
   };
 
   const editBtn = (onClick) => (
@@ -321,6 +335,25 @@ export default function GeneralTab() {
       >
         <p className="text-sm text-gray-500 leading-relaxed">When on, booking receipts show a QR code the customer can present at pickup — staff scan it from the Records or Dashboard to release or return the item.</p>
         {qrMsg && <p role="status" className={`text-xs font-bold ${msgTone(qrMsg)}`}>{qrMsg}</p>}
+      </CollapsibleCard>
+
+      {/* Walk-in receipt auto-download */}
+      <CollapsibleCard
+        icon={Download}
+        iconClass="bg-sky-50 text-sky-600"
+        title="Auto-download walk-in receipts"
+        subtitle="Save the receipt image as soon as a counter booking is created"
+        storageKey="settings-general-walkin-receipt-open"
+        defaultOpen={false}
+        badge={
+          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${walkinAutoOn ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>
+            {walkinAutoOn ? 'On' : 'Off'}
+          </span>
+        }
+        headerAction={<Toggle on={walkinAutoOn} onClick={toggleWalkinAuto} label="Auto-download walk-in receipts" />}
+      >
+        <p className="text-sm text-gray-500 leading-relaxed">When on, the receipt PNG downloads automatically on the shop device after staff finish a walk-in booking. When off, staff tap Save Receipt only when the customer wants one.</p>
+        {walkinMsg && <p role="status" className={`text-xs font-bold ${msgTone(walkinMsg)}`}>{walkinMsg}</p>}
       </CollapsibleCard>
     </>
   );

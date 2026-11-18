@@ -227,6 +227,8 @@ export interface BookingDetails {
   dueDate: string;
   /** Inclusive day count: return date - pickup date + 1. */
   rentalDays?: number;
+  /** Flat item price before any promo/staff discount (defaults to rentalFee). */
+  baseFee?: number;
   rentalFee: number;
   downpayment: number;
   balance: number;
@@ -243,9 +245,11 @@ function peso(n: number): string {
 // ---- Order confirmation (booking created) ----
 export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
   const pending = d.paymentPending === true;
+  const base = d.baseFee != null && d.baseFee > d.rentalFee ? d.baseFee : d.rentalFee;
+  const discount = Math.max(0, base - d.rentalFee);
   const periodText = d.rentalDays ? `\nRental period: ${d.rentalDays} day${d.rentalDays === 1 ? '' : 's'}` : '';
   const html = shell({
-    eyebrow: pending ? 'Booking received' : 'Order confirmation',
+    eyebrow: pending ? 'Booking submitted – Downpayment under review' : 'Booking confirmed',
     heading: pending
       ? `We received your booking, ${d.customerName}!`
       : `Your rental is confirmed, ${d.customerName}!`,
@@ -254,8 +258,8 @@ export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
       : `Your rental of ${d.itemName} is confirmed`,
     bodyHtml:
       (pending
-        ? para(`\u201C${d.itemName}\u201D is reserved for you. Our team is verifying your downpayment screenshot; we\u2019ll email you as soon as it\u2019s approved.`)
-        : para(`\u201C${d.itemName}\u201D is reserved for you. Please pick it up on ${d.pickupDate} and return it by ${d.dueDate}.`)) +
+        ? para(`Your rental booking for \u201C${d.itemName}\u201D has been received. Our team is verifying your downpayment screenshot; we\u2019ll email you as soon as it\u2019s approved.`)
+        : para(`Your rental booking for \u201C${d.itemName}\u201D has been confirmed. Please pick it up on ${d.pickupDate} and return it by ${d.dueDate}.`)) +
       (d.bookingCode ? codeChip(d.bookingCode) : '') +
       (d.qrCodeDataUri
         ? `<div style="text-align:center;margin:18px 0 4px;"><img src="${d.qrCodeDataUri}" alt="Booking QR Code" width="160" height="160" style="border-radius:12px;display:block;margin:0 auto;" /></div><p style="text-align:center;font-size:11px;color:${MUTED};margin:6px 0 18px;font-family:${FONT};">Scan to open this booking</p>`
@@ -265,9 +269,11 @@ export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
         ['Pickup', d.pickupDate],
         ...(d.rentalDays ? [['Rental period', `${d.rentalDays} day${d.rentalDays === 1 ? '' : 's'} (${d.pickupDate} – ${d.dueDate})`] as [string, string]] : []),
         ['Return by', d.dueDate],
-        ['Rental fee', peso(d.rentalFee)],
-        ['Downpayment', pending ? `${peso(d.downpayment)} (under review)` : peso(d.downpayment)],
-        ['Balance', peso(d.balance)],
+        ['Total rental (flat fee)', peso(base)],
+        ...(discount > 0 ? [['Promo discount', `−${peso(discount)}`] as [string, string]] : []),
+        [pending ? 'Downpayment (for verification)' : 'Downpayment paid', peso(d.downpayment)],
+        ['Balance due at pickup', peso(d.balance)],
+        ['Total', peso(d.rentalFee)],
       ], true) +
       para(pending
         ? 'No action needed right now. We will email you once the payment is verified; the item is released only after the balance is settled.'

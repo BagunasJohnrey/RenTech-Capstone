@@ -123,7 +123,7 @@ transactions.find((t) => t.itemId === 8).releasePhoto = 'demo/release.jpg';
 const DEMO_QR_CODES = [{ id: 'demo-qr-1', label: 'GCash', accountName: 'Mylene S.', imagePath: '' }];
 // Settings → Integrations reads the QR list from the rules table.
 demoRules.manual_qr_codes = JSON.stringify([
-  { id: 'demo-qr-1', label: 'GCash', accountName: 'Mylene Gowns', imagePath: 'qrcodes/demo-gcash.webp' },
+  { id: 'demo-qr-1', label: 'GCash', accountName: "Mylene's Boutique", imagePath: 'qrcodes/demo-gcash.webp' },
   { id: 'demo-qr-2', label: 'Instapay', accountName: 'Mylene', imagePath: 'qrcodes/demo-instapay.webp' },
 ]);
 const DEMO_PAYMENT_GATEWAY = 'manual';

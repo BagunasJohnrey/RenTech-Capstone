@@ -1,5 +1,6 @@
 import QRCode from 'qrcode';
-import { getBookingCode, txDownpayment, txBalance } from './receipt';
+import { getBookingCode, txDownpayment, txRentalFee } from './receipt';
+import { qrPaymentUnresolved } from './txDisplayStatus';
 import { api } from './api';
 import { rentalPeriod } from './format';
 
@@ -35,6 +36,8 @@ export async function downloadReceiptImage({
   dueLabel,
   showQr = true,
   qrDataUri = null,
+  paymentPending,
+  baseFee,
 }) {
   if (!tx) return;
   try { await document.fonts?.ready; } catch { /* fall back to Arial */ }
@@ -72,6 +75,19 @@ export async function downloadReceiptImage({
     ['Size', size || tx.size || '—', ''],
   ];
   if (notes) rows.push(['Notes', notes, '']);
+  // Money breakdown — same numbers as the checkout summary.
+  const pending = paymentPending ?? qrPaymentUnresolved(tx);
+  const total = txRentalFee(tx);
+  const base = Number(baseFee) > total ? Number(baseFee) : total;
+  const discount = Math.max(0, base - total);
+  const down = txDownpayment(tx);
+  const dueAtPickup = Math.max(0, total - Math.max(down, Number(tx.totalPaid || 0)));
+  const money = [
+    ['Total rental (flat fee)', peso(base), ''],
+    ...(discount > 0 ? [['Promo discount', `−${peso(discount)}`, 'green']] : []),
+    [pending ? 'Downpayment (for verification)' : 'Downpayment paid', peso(down), pending ? 'amber' : 'accent'],
+    ['Balance due at pickup', peso(dueAtPickup), ''],
+  ];
   const S = 2, W = 600, M = 24, PAD = 28, LH = 28;
   const cardX = M, cardW = W - M * 2;
   const cv = document.createElement('canvas');
@@ -101,7 +117,7 @@ export async function downloadReceiptImage({
   const labelW = 150, gap = 16, valW = cardW - PAD * 2 - labelW - gap;
   const measured = rows.map(([k, v, style]) => ({ k, style, lines: wrap(v, F(800, 19), valW) }));
   // Settle-at-pickup caption under the totals band (only when a balance remains).
-  const settleBal = Number(txBalance(tx)) || 0;
+  const settleBal = dueAtPickup;
   ctx.font = F(600, 14);
   const settleLines = settleBal > 0 ? wrap(`Please settle the remaining ${peso(settleBal)} at pickup — released only when fully paid.`, F(600, 14), cardW - PAD * 2) : [];
   const settleH = settleLines.length ? settleLines.length * 20 : 0;
@@ -110,7 +126,9 @@ export async function downloadReceiptImage({
   // Dark pickup-pass panel (QR plate + code + caption) replaces the old
   // centered-QR + pill + caption stack.
   const passH = 248;
-  const H = M + headerH + 30 + 64 + 30 + 24 + 30 + rowsH + 20 + 108 + settleH + 30 + passH + 30 + 60 + M;
+  const boxH = 24 + money.length * 34 + 16 + 40 + 12;
+  const titleExtra = pending ? 22 : 0;
+  const H = M + headerH + 30 + 64 + titleExtra + 30 + 24 + 30 + rowsH + 20 + boxH + settleH + 30 + passH + 30 + 60 + M;
   cv.width = W * S;
   cv.height = H * S;
   ctx.scale(S, S);
@@ -198,31 +216,48 @@ export async function downloadReceiptImage({
   const cy = y + 22;
   ctx.beginPath();
   ctx.arc(cardX + PAD + 26, cy, 26, 0, Math.PI * 2);
-  ctx.fillStyle = '#ecfdf5';
+  ctx.fillStyle = pending ? '#fffbeb' : '#ecfdf5';
   ctx.fill();
-  ctx.strokeStyle = '#10b981';
+  ctx.strokeStyle = pending ? '#f59e0b' : '#10b981';
   ctx.lineWidth = 5;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.beginPath();
-  ctx.moveTo(cardX + PAD + 14, cy + 1);
-  ctx.lineTo(cardX + PAD + 23, cy + 10);
-  ctx.lineTo(cardX + PAD + 39, cy - 9);
+  if (pending) {
+    // Clock face: under review
+    ctx.arc(cardX + PAD + 26, cy, 13, 0, Math.PI * 2);
+    ctx.moveTo(cardX + PAD + 26, cy - 7);
+    ctx.lineTo(cardX + PAD + 26, cy);
+    ctx.lineTo(cardX + PAD + 32, cy + 4);
+  } else {
+    ctx.moveTo(cardX + PAD + 14, cy + 1);
+    ctx.lineTo(cardX + PAD + 23, cy + 10);
+    ctx.lineTo(cardX + PAD + 39, cy - 9);
+  }
   ctx.stroke();
   ctx.textAlign = 'left';
   ctx.fillStyle = '#111827';
   ctx.font = F(800, 29);
-  ctx.fillText('Booking Confirmed!', cardX + PAD + 64, y + 24);
+  ctx.fillText(pending ? 'Booking Submitted' : 'Booking Confirmed', cardX + PAD + 64, y + 24);
   ctx.fillStyle = '#6b7280';
   ctx.font = F(500, 17);
-  ctx.fillText('Your reservation has been secured.', cardX + PAD + 64, y + 50);
-  y += 64 + 30;
+  if (pending) {
+    ctx.fillStyle = '#d97706';
+    ctx.font = F(700, 17);
+    ctx.fillText('Downpayment under review', cardX + PAD + 64, y + 50);
+    ctx.fillStyle = '#6b7280';
+    ctx.font = F(500, 15);
+    ctx.fillText('Your rental booking has been received.', cardX + PAD + 64, y + 72);
+  } else {
+    ctx.fillText('Your rental booking has been confirmed.', cardX + PAD + 64, y + 50);
+  }
+  y += 64 + titleExtra + 30;
   // Section label with burgundy rule
   ctx.fillStyle = '#bf4a53';
   ctx.fillRect(cardX + PAD, y, 4, 18);
   ctx.fillStyle = '#6b7280';
   ctx.font = F(800, 13);
-  ctx.fillText('R E S E R V A T I O N   D E T A I L S', cardX + PAD + 12, y + 14);
+  ctx.fillText('R E N T A L   D E T A I L S', cardX + PAD + 12, y + 14);
   y += 30;
   // Detail rows with hairline dividers (values wrap, never crop)
   for (const r of measured) {
@@ -241,21 +276,34 @@ export async function downloadReceiptImage({
   }
   y += 20;
   // Totals band
-  const boxH = 108;
   rr(cardX + PAD, y, cardW - PAD * 2, boxH, 16);
   ctx.fillStyle = '#fdf2f3';
   ctx.fill();
+  const lx = cardX + PAD + 18, vx = cardX + cardW - PAD - 18;
+  let my = y + 24;
+  for (const [k, v, st] of money) {
+    my += 22;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#6b7280';
+    ctx.font = F(600, 17);
+    ctx.fillText(k, lx, my);
+    ctx.textAlign = 'right';
+    ctx.font = F(800, 18);
+    ctx.fillStyle = st === 'green' ? '#059669' : st === 'amber' ? '#d97706' : st === 'accent' ? '#bf4a53' : '#111827';
+    ctx.fillText(v, vx, my);
+    my += 12;
+  }
+  my += 16;
+  ctx.fillStyle = '#f3d5d8';
+  ctx.fillRect(lx, my - 10, vx - lx, 1);
+  my += 22;
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#6b7280';
-  ctx.font = F(600, 18);
-  ctx.fillText('Paid now', cardX + PAD + 18, y + 40);
-  ctx.fillText('Due at pickup', cardX + PAD + 18, y + 76);
-  ctx.textAlign = 'right';
-  ctx.font = F(800, 21);
-  ctx.fillStyle = '#bf4a53';
-  ctx.fillText(peso(txDownpayment(tx)), cardX + cardW - PAD - 18, y + 40);
   ctx.fillStyle = '#111827';
-  ctx.fillText(peso(txBalance(tx)), cardX + cardW - PAD - 18, y + 76);
+  ctx.font = F(800, 19);
+  ctx.fillText('Total', lx, my);
+  ctx.textAlign = 'right';
+  ctx.font = F(800, 22);
+  ctx.fillText(peso(total), vx, my);
   y += boxH;
   if (settleLines.length) {
     y += 14;
@@ -299,7 +347,7 @@ export async function downloadReceiptImage({
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.font = F(800, 13);
-  ctx.fillText('P I C K U P   P A S S', tx0, y + 56);
+  ctx.fillText('P I C K U P   P A S S', px0, y + 56);
   ctx.fillStyle = '#ffffff';
   ctx.font = F(800, 30, true);
   ctx.fillText(code, px0, y + 96);

@@ -460,6 +460,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           dueDate: formatManilaDate(end),
           rentalDays: Math.round((manilaDayStart(end).getTime() - manilaDayStart(start).getTime()) / 86400000) + 1,
           rentalFee: fee,
+          baseFee,
           downpayment,
           balance: fee - downpayment,
           bookingCode: `RT-${String(transaction.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`,

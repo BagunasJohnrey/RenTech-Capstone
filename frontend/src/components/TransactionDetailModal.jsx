@@ -6,6 +6,7 @@ import { normalizeTx, invalidateTxCache, getTxAudits, preloadTxPhotos, peekFullT
 import { getBookingCode } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import ItemImage from './ItemImage';
+import { downloadReceiptImage } from '../utils/receiptImage';
 import BookingQR from './BookingQR';
 import { Skeleton } from './Skeleton';
 import { useEscapeClose } from '../hooks/useEscapeClose';
@@ -798,6 +799,24 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
             <div>
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs font-bold uppercase tracking-wide text-gray-400">Booking QR</p>
+                <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => downloadReceiptImage({
+                    tx,
+                    itemName: tx.item?.name,
+                    customerName: tx.customer?.name,
+                    pickupLabel: fmtDate(tx.rentalDate || tx.date),
+                    eventLabel: tx.eventDate ? fmtDate(tx.eventDate) : undefined,
+                    dueLabel: fmtDate(tx.dueDate),
+                    notes: tx.notes || null,
+                    showQr: true,
+                    qrDataUri: qrSaveUrl,
+                  })}
+                  className="inline-flex items-center gap-1 text-xs font-bold text-[#bf4a53] hover:underline"
+                  title="Download the booking receipt">
+                  <Receipt size={11} /> Receipt
+                </button>
                 {qrSaveUrl && (
                   <a
                     href={qrSaveUrl}
@@ -807,6 +826,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                     <Download size={11} /> Save QR
                   </a>
                 )}
+                </div>
               </div>
               <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 text-white shadow-md">
                 <div className="flex flex-col sm:flex-row items-stretch">

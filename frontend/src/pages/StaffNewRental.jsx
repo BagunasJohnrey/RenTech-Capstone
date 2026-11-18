@@ -230,6 +230,30 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
   // or the static QR transfer (verified in person, then recorded).
   const [payChannel, setPayChannel] = useState('cash');
   const flags = useFeatureFlags();
+  // Walk-in receipt PNG. Auto-downloads once per booking when the admin
+  // setting "Auto-download walk-in receipts" is on; the footer button
+  // re-saves on demand either way.
+  const saveWalkinReceipt = () => {
+    const d = (v) => new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+    return downloadReceiptImage({
+      tx: createdTx,
+      itemName: selectedItem?.name,
+      customerName: customer.name,
+      pickupLabel: d(customer.rentalDate),
+      eventLabel: d(customer.eventDate),
+      dueLabel: d(customer.returnDate),
+      notes: customer.notes || null,
+      showQr: flags.qr_codes,
+    });
+  };
+  const autoSavedTxId = useRef(null);
+  useEffect(() => {
+    if (step !== 4 || !createdTx?.id || !flags.flagsLoaded || !flags.walkin_receipt_auto) return;
+    if (autoSavedTxId.current === createdTx.id) return;
+    autoSavedTxId.current = createdTx.id;
+    saveWalkinReceipt();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, createdTx?.id, flags.flagsLoaded, flags.walkin_receipt_auto]);
   // Live availability check (same backend overlap logic as createRental) so
   // staff can't confirm dates that clash with an existing booking.
   const [availability, setAvailability] = useState({ checking: false, available: null, reason: '' });
@@ -1280,16 +1304,7 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
           {step === 4 ? (
             <>
               <button
-                onClick={() => downloadReceiptImage({
-                  tx: createdTx,
-                  itemName: selectedItem?.name,
-                  customerName: customer.name,
-                  pickupLabel: new Date(customer.rentalDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
-                  eventLabel: new Date(customer.eventDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
-                  dueLabel: new Date(customer.returnDate).toLocaleDateString('en-US',{month:'short',day:'2-digit',year:'numeric'}),
-                  notes: customer.notes || null,
-                  showQr: flags.qr_codes,
-                })}
+                onClick={saveWalkinReceipt}
                 className="flex-1 py-2.5 rounded-full font-bold text-sm border border-gray-200 bg-white hover:bg-gray-50 transition-colors flex items-center justify-center gap-2 no-print"
               >
                 <Download size={16} /> Save Receipt

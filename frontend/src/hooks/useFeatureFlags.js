@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../utils/api';
 
-const DEFAULTS = { qr_codes: true };
+const DEFAULTS = { qr_codes: true, walkin_receipt_auto: true };
+const fromServer = (data) => ({
+  ...DEFAULTS,
+  qr_codes: data?.qr_booking_codes !== false,
+  walkin_receipt_auto: data?.walkin_receipt_autodownload !== false,
+});
 
 // Feature flags (currently just `qr_booking_codes` from the backend). Fetched
 // once per session and cached on window so every component shares one value.
@@ -19,7 +24,7 @@ export function useFeatureFlags() {
   const refreshFlags = useCallback(async () => {
     try {
       const data = await api.get('/settings/flags');
-      const next = { ...DEFAULTS, qr_codes: data?.qr_booking_codes !== false };
+      const next = fromServer(data);
       window.__featureFlags = next;
       setFlags(next);
       return next;
@@ -31,7 +36,7 @@ export function useFeatureFlags() {
   useEffect(() => {
     let active = true;
     const apply = (data) => {
-      const next = { ...DEFAULTS, qr_codes: data?.qr_booking_codes !== false };
+      const next = fromServer(data);
       window.__featureFlags = next;
       if (active) {
         setFlags(next);

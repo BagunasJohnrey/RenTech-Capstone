@@ -20,7 +20,7 @@ import { downscaleToJpeg } from '../utils/file';
 import BookingQR from './BookingQR';
 import ManualQrPayment from './ManualQrPayment';
 import BottomSheet from './BottomSheet';
-import { getBookingCode, txDownpayment, txBalance } from '../utils/receipt';
+import { getBookingCode, txDownpayment, txRentalFee } from '../utils/receipt';
 import { downloadReceiptImage } from '../utils/receiptImage';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { api } from '../utils/api';
@@ -665,6 +665,8 @@ export default function CustomerRentalFlow({
   };
   // Downloads the confirmed booking as a PNG receipt image (shared renderer
   // in utils/receiptImage.js so staff downloads look identical).
+  const confirmedPending = !!confirmedTx && isManualGateway
+    && Number(confirmedTx.totalPaid || 0) < txDownpayment(confirmedTx);
   const handleSaveReceipt = async () => {
     if (!confirmedTx) return;
     await downloadReceiptImage({
@@ -677,6 +679,8 @@ export default function CustomerRentalFlow({
       notes: confirmedTx.notes || customer.notes || null,
       showQr: flags.qr_codes,
       qrDataUri: qrSaveUrl,
+      paymentPending: confirmedPending,
+      baseFee: effectiveItemPrice,
     });
   };
   const flags = useFeatureFlags();
@@ -1286,12 +1290,12 @@ export default function CustomerRentalFlow({
                   </div>
                 </div>
               )}
-              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-emerald-50 via-white to-white border border-emerald-100 px-5 py-6 text-center">
-                <div className="w-16 h-16 rounded-full bg-emerald-500 text-white flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-500/30">
-                  <CheckCircle2 size={32} />
+              <div className={`relative overflow-hidden rounded-3xl bg-gradient-to-br ${confirmedPending ? 'from-amber-50 border-amber-100' : 'from-emerald-50 border-emerald-100'} via-white to-white border px-5 py-6 text-center`}>
+                <div className={`w-16 h-16 rounded-full text-white flex items-center justify-center mx-auto mb-3 shadow-lg ${confirmedPending ? 'bg-amber-500 shadow-amber-500/30' : 'bg-emerald-500 shadow-emerald-500/30'}`}>
+                  {confirmedPending ? <Clock size={32} /> : <CheckCircle2 size={32} />}
                 </div>
-                <h3 className="text-xl font-extrabold text-gray-900 tracking-tight">Booking Confirmed!</h3>
-                <p className="text-gray-500 text-xs font-medium mt-1">{isManualGateway ? 'Your booking is waiting for payment verification.' : 'Your reservation has been secured.'}</p>
+                <h3 className="text-xl font-extrabold text-gray-900 tracking-tight">{confirmedPending ? 'Booking Submitted – Downpayment under review' : 'Booking Confirmed'}</h3>
+                <p className="text-gray-500 text-xs font-medium mt-1">{confirmedPending ? 'Your rental booking has been received.' : 'Your rental booking has been confirmed.'}</p>
                 <p className="inline-block mt-3 font-mono text-xs font-bold text-white bg-[#bf4a53] rounded-full px-4 py-1.5 tracking-wider shadow-sm">{bookingCode(confirmedTx)}</p>
               </div>
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-2.5 text-sm shadow-sm">
@@ -1325,21 +1329,31 @@ export default function CustomerRentalFlow({
                 {(confirmedTx.notes || customer.notes) && (
                   <div className="flex justify-between gap-4"><span className="text-gray-500 shrink-0">Notes</span><span className="text-right text-gray-700">{confirmedTx.notes || customer.notes}</span></div>
                 )}
-                <div className="border-t border-gray-100 pt-2.5 mt-2.5 flex justify-between"><span className="text-gray-500">Balance (remaining)</span><span className="font-bold">₱{txBalance(confirmedTx).toLocaleString()}</span></div>
-                <div className={`bg-white border-2 rounded-xl px-3.5 py-3.5 flex justify-between items-center shadow-sm ${isManualGateway ? 'border-amber-200' : 'border-[#bf4a53]'}`}>
-                  <span className="text-sm font-bold text-gray-900">
-                    {isManualGateway ? 'Downpayment' : 'Paid now'}{' '}
-                    <span className="font-medium text-gray-400">({isManualGateway ? 'under review' : 'downpayment'})</span>
-                  </span>
-                  <span className={`font-extrabold text-xl tabular-nums ${isManualGateway ? 'text-amber-600' : 'text-[#bf4a53]'}`}>₱{txDownpayment(confirmedTx).toLocaleString()}</span>
-                </div>
-                {txBalance(confirmedTx) > 0 && (
+                {(() => {
+                  const total = txRentalFee(confirmedTx);
+                  const base = Number(effectiveItemPrice) > total ? Number(effectiveItemPrice) : total;
+                  const disc = Math.max(0, base - total);
+                  const down = txDownpayment(confirmedTx);
+                  const dueAtPickup = Math.max(0, total - Math.max(down, Number(confirmedTx.totalPaid || 0)));
+                  return (
+                    <div className="border-t border-gray-100 pt-2.5 mt-2.5 space-y-1.5">
+                      <div className="flex justify-between"><span className="text-gray-500">Total rental (flat fee)</span><span className="tabular-nums">₱{base.toLocaleString()}</span></div>
+                      {disc > 0 && (
+                        <div className="flex justify-between"><span className="text-gray-500">Promo discount</span><span className="tabular-nums text-emerald-600">−₱{disc.toLocaleString()}</span></div>
+                      )}
+                      <div className="flex justify-between"><span className="text-gray-500">{confirmedPending ? 'Downpayment (for verification)' : 'Downpayment paid'}</span><span className={`font-bold tabular-nums ${confirmedPending ? 'text-amber-600' : 'text-[#bf4a53]'}`}>₱{down.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Balance due at pickup</span><span className="tabular-nums">₱{dueAtPickup.toLocaleString()}</span></div>
+                      <div className="flex justify-between border-t border-gray-100 pt-2 mt-1"><span className="font-bold text-gray-900">Total</span><span className="font-extrabold text-gray-900 tabular-nums">₱{total.toLocaleString()}</span></div>
+                    </div>
+                  );
+                })()}
+                {Math.max(0, txRentalFee(confirmedTx) - txDownpayment(confirmedTx)) > 0 && (
                   <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white px-4 py-3 text-left">
                     <span className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
                       <Wallet size={17} />
                     </span>
                     <div className="min-w-0">
-                      <p className="text-xs font-extrabold text-amber-800 tabular-nums">₱{txBalance(confirmedTx).toLocaleString()} due at pickup</p>
+                      <p className="text-xs font-extrabold text-amber-800 tabular-nums">₱{Math.max(0, txRentalFee(confirmedTx) - txDownpayment(confirmedTx)).toLocaleString()} due at pickup</p>
                       <p className="text-[11px] text-amber-700 leading-snug mt-0.5">Settle the rest when you pick up — the item is released only once fully paid.</p>
                     </div>
                   </div>

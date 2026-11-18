@@ -172,10 +172,17 @@ export default function ProfileHeader({ role, profile, customerInfo, onUpdateCus
     setStaffSaving(true);
     setStaffError('');
     try {
-      const updated = await api.put(`/auth/staff/${profile.id}`, {
-        name: staffDraft.name.trim(),
-        phone: staffDraft.phone.trim() || null,
-      });
+      // /auth/staff/:id only accepts Staff-role profiles (an Admin editing
+      // their own profile got "Staff account not found"); admins use /auth/me.
+      const updated = role === 'Admin'
+        ? await api.put('/auth/me', {
+          name: staffDraft.name.trim(),
+          ...(staffDraft.phone.trim() ? { phone: staffDraft.phone.trim() } : {}),
+        })
+        : await api.put(`/auth/staff/${profile.id}`, {
+          name: staffDraft.name.trim(),
+          phone: staffDraft.phone.trim() || null,
+        });
       setEditStaff(false);
       setStaffMsg('Profile updated!');
       setTimeout(() => setStaffMsg(''), 2500);

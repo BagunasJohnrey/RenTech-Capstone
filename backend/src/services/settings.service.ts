@@ -188,6 +188,7 @@ export async function getFeatureFlags() {
   const rules = await getBusinessRules();
   return {
     qr_booking_codes: rules.qr_booking_codes !== 'false',
+    walkin_receipt_autodownload: rules.walkin_receipt_autodownload !== 'false',
   };
 }
 
