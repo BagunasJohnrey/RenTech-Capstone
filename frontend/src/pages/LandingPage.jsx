@@ -79,7 +79,7 @@ const galleryItems = [
 ];
 
 const faqs = [
-  { q: "How does the online reservation work?", a: "You can browse our catalog, check date-specific availability, and secure your booking by paying a downpayment online. Physical pickup and return must be done at the boutique." },
+  { q: "How does online booking work?", a: "You can browse our catalog, check date-specific availability, and secure your booking by paying a downpayment online. Physical pickup and return must be done at the boutique." },
   { q: "Do you offer door-to-door delivery?", a: "No. Our system follows a strictly in-store fulfillment model. All fittings, item pickups, and returns must be conducted personally at Mylene's Boutique in Balayan." },
   { q: "Do you offer wedding gowns?", a: "Our current catalog strictly caters to social events such as proms, debuts, and pageants. We expressly exclude wedding-related rentals and bridal packages." },
   { q: "What happens if I return the item late or damaged?", a: "There are no late fees — just return on time so the next booking stays on schedule. Damage fees apply per our policy for damaged items. You will be notified via SMS regarding your return deadlines." }
@@ -394,7 +394,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
           </motion.div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-8">
             <FeatureCard icon={ShoppingBag} title="1. Browse & Check" description="Browse our digital catalog of gowns, suits, and costumes. Use our portal to check date-specific availability." />
-            <FeatureCard icon={CalendarDays} title="2. Book Online" description="Secure your reservation with an online downpayment via our secure gateway. We'll send you an SMS confirmation." />
+            <FeatureCard icon={CalendarDays} title="2. Book Online" description="Secure your rental with an online downpayment via our secure gateway. We'll send you an SMS confirmation." />
             <FeatureCard icon={ShieldCheck} title="3. In-Store Fulfillment" description="Visit Mylene's Boutique in Balayan for fitting, pickup, and return. We'll track condition history for quality assurance." />
           </div>
         </motion.section>
@@ -413,7 +413,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
               </div>
               <h3 className="text-2xl md:text-3xl font-bold text-gray-950 mb-3 md:mb-4">Balayan, Batangas</h3>
               <p className="text-gray-500 text-sm md:text-base font-medium max-w-md mx-auto lg:mx-0 mb-6 md:mb-8 leading-relaxed">
-                23 Years of Legacy. All online reservations are fulfilled directly at our local boutique. Come in for your personal fitting and item pickups.
+                23 Years of Legacy. All online rental bookings are fulfilled directly at our local boutique. Come in for your personal fitting and item pickups.
               </p>
               <a 
                 href="https://www.google.com/maps/place/Balayan,+Batangas" 
@@ -532,7 +532,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
 
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 mt-12 pt-6 md:pt-8 border-t border-gray-100 text-xs md:text-sm text-gray-500 font-medium">
             <p>© {new Date().getFullYear()} Mylene's Boutique. All rights reserved.</p>
-            <p>Online reservation &amp; rental portal — Balayan, Batangas</p>
+            <p>Online rental booking portal — Balayan, Batangas</p>
           </div>
         </footer>
       </div>

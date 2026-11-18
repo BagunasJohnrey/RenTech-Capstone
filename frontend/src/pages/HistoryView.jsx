@@ -468,7 +468,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
         <PageHeader
           title={role === 'Customer' ? 'Transactions' : 'Records'}
           subtitle={role === 'Customer'
-            ? 'Track your active and past reservations.'
+            ? 'Track your active and past rentals.'
             : 'Digital logbook of all rental transactions.'}
         />
 
