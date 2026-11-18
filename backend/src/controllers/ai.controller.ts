@@ -53,8 +53,28 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
     const context = env.RAG_ENABLED
       ? await retrieveStylistContext(message, { preferences })
       : { items: (await inventoryService.listItems('Available')).slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; colors?: string[] | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 };
+    // Relevance retrieval only returns items whose names/colors match the
+    // question, so "any sale items?" got zero sale stock and the stylist said
+    // it had no sale info. Always append the ACTIVE sale items (Available,
+    // onSale, not past saleEndsAt) so sale questions are answerable.
+    try {
+      const now = Date.now();
+      const have = new Set(context.items.map((i: { name: string }) => i.name));
+      const sale = (await inventoryService.listItems('Available') as Array<{ name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; saleEndsAt?: Date | string | null; colors?: string[] | null }>)
+        .filter((i) => i.onSale && (!i.saleEndsAt || new Date(i.saleEndsAt).getTime() > now) && !have.has(i.name))
+        .slice(0, 10)
+        .map((i) => ({ name: i.name, category: i.category, price: i.price, onSale: true, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] }));
+      if (sale.length) context.items = [...context.items, ...sale] as typeof context.items;
+    } catch { /* sale context is best-effort */ }
     const result = await geminiService.chatWithAi(message, history, { items: context.items, policies: context.policies });
-    res.json({ ...result, groundedIn: context.groundedIn, retrieval: context.retrieval });
+    // The stylist picks from currently-Available stock; it does not check the
+    // customer's exact dates. Say so on every real reply (booking re-checks).
+    const AVAIL_NOTE = 'Availability for your exact dates is confirmed when you book.';
+    const reply = typeof result.reply === 'string' && result.reply
+      && !['guardrail', 'error'].includes(result.source) && !result.reply.includes(AVAIL_NOTE)
+      ? `${result.reply.trimEnd()}\n\n_${AVAIL_NOTE}_`
+      : result.reply;
+    res.json({ ...result, reply, groundedIn: context.groundedIn, retrieval: context.retrieval });
   } catch (err) {
     next(err);
   }

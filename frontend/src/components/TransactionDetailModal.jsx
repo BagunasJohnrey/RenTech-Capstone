@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import RequiredMark from './ui/RequiredMark';
 import { X, Receipt, Calendar, Ruler, FileText, CreditCard, Camera, Download, Banknote, Smartphone, Phone, Undo2, Maximize2, MapPin, UserCheck, PackageCheck, History, QrCode, AlertTriangle, Clock, Upload, CheckCircle2 } from 'lucide-react';
-import { customerLabel, customerPhone, customerTelLink, itemLabel } from '../utils/format';
+import { customerLabel, customerPhone, customerTelLink, itemLabel, rentalPeriod } from '../utils/format';
 import { normalizeTx, invalidateTxCache, getTxAudits, preloadTxPhotos, peekFullTx, peekTxAudits } from '../hooks/useTransactions';
 import { getBookingCode } from '../utils/receipt';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
@@ -659,6 +659,13 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                   <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Due / Return By</p>
                   <p className={`text-sm font-bold ${status === 'Overdue' ? 'text-red-600' : 'text-gray-900'}`}>{fmtDate(tx.dueDate || tx.returnDate) || '—'}</p>
                 </li>
+                {(() => { const p = rentalPeriod(tx.rentalDate || tx.date, tx.dueDate); return p ? (
+                  <li className="relative pl-7">
+                    <span className="absolute left-0 top-1 w-[11px] h-[11px] rounded-full bg-gray-300 ring-4 ring-gray-100" />
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Rental Period</p>
+                    <p className="text-sm font-bold text-gray-900">{p.label}</p>
+                  </li>
+                ) : null; })()}
                 {tx.returnDate && ['Returned'].includes(status) && (
                   <li className="relative pl-7">
                     <span className="absolute left-0 top-1 w-[11px] h-[11px] rounded-full bg-emerald-500 ring-4 ring-emerald-100" />

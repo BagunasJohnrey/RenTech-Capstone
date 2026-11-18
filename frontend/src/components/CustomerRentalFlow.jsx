@@ -12,7 +12,7 @@ import Field from './ui/Field';
 import { useEscapeClose } from '../hooks/useEscapeClose';
 import { useButtonGuard } from '../hooks/useButtonGuard';
 import { SIZE_PRESETS } from '../utils/sizePresets';
-import { todayYmd, toLocalYmd } from '../utils/format';
+import { todayYmd, toLocalYmd, rentalPeriod } from '../utils/format';
 import { promoDiscountLabel, promoShortLabel, promoTermsLabel, promoExpiry } from '../utils/promoLabel';
 import { promoService } from '../services/promo';
 
@@ -147,6 +147,7 @@ export default function CustomerRentalFlow({
     d.setDate(d.getDate() + rentalDefaults.return_days_after_event);
     return toLocalYmd(d);
   }, [eventDate, rentalDefaults.return_days_after_event]);
+  const period = useMemo(() => rentalPeriod(rentalDate, dueDate), [rentalDate, dueDate]);
   const [customer, setCustomer] = useState({
     name: customerInfo?.name || '',
     contact: customerInfo?.contact || '',
@@ -999,6 +1000,11 @@ export default function CustomerRentalFlow({
                     bookedRanges={bookedRanges}
                     returnDays={rentalDefaults.return_days_after_event}
                     hideSummary
+                    footer={period ? (
+                      <p className="text-[11px] text-gray-700 font-semibold">
+                        Rental period: {period.label} · Return by {period.returnLabel}
+                      </p>
+                    ) : null}
                     onChange={(p, e) => {
                       setRentalDate(p);
                       setEventDate(e);
@@ -1039,6 +1045,9 @@ export default function CustomerRentalFlow({
                     <Calendar size={16} /> {availability.reason || 'Not available for the selected dates.'}
                   </div>
                 )}
+                <p className="text-[11px] text-gray-500 font-medium mt-1 ml-1">
+                  Pick up before your event. Return the day after your event.
+                </p>
                 {(fieldErrors.rentalDate || fieldErrors.eventDate) && (
                   <p role="alert" className="text-[11px] text-red-500 font-medium mt-1 ml-1">{fieldErrors.rentalDate || fieldErrors.eventDate}</p>
                 )}
@@ -1156,8 +1165,26 @@ export default function CustomerRentalFlow({
                   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4">
                     <p className="text-[11px] font-extrabold text-gray-400 uppercase tracking-[0.12em]">Booking summary</p>
                     <div className="mt-2.5 flex flex-col gap-1.5">
+                      {selectedItem?.name && (
+                        <div className="flex items-start justify-between gap-3 text-sm">
+                          <span className="text-gray-500 font-medium">Item</span>
+                          <span className="text-right font-semibold text-gray-900 min-w-0 truncate">{selectedItem.name}</span>
+                        </div>
+                      )}
+                      {period && (
+                        <>
+                          <div className="flex items-start justify-between gap-3 text-sm">
+                            <span className="text-gray-500 font-medium">Rental period</span>
+                            <span className="text-right font-semibold text-gray-900">{period.label}</span>
+                          </div>
+                          <div className="flex items-start justify-between gap-3 text-sm">
+                            <span className="text-gray-500 font-medium">Return by</span>
+                            <span className="text-right font-semibold text-gray-900">{period.returnLabel}</span>
+                          </div>
+                        </>
+                      )}
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-sm text-gray-500 font-medium pt-1">Total rental</span>
+                        <span className="text-sm text-gray-500 font-medium pt-1">Total rental <span className="text-[11px] text-gray-400">(flat fee)</span></span>
                         <span className="text-right shrink-0">
                           <span className="block text-lg font-extrabold text-gray-900 tabular-nums leading-none">₱{finalFee.toLocaleString()}</span>
                           {promoApplied && (
@@ -1287,6 +1314,12 @@ export default function CustomerRentalFlow({
                   </div>
                 </div>
                 <div className="border-t border-gray-100" />
+                {period && (
+                  <>
+                    <div className="flex justify-between gap-4"><span className="text-gray-500">Rental period</span><span className="text-right">{period.label}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-gray-500">Return by</span><span className="text-right">{period.returnLabel}</span></div>
+                  </>
+                )}
                 <div className="flex justify-between"><span className="text-gray-500">Customer</span><span>{confirmedTx.customer?.name || customer.name}</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">Size</span><span>{confirmedTx.size}</span></div>
                 {(confirmedTx.notes || customer.notes) && (

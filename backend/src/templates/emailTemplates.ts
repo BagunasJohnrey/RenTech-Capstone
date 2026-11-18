@@ -225,6 +225,8 @@ export interface BookingDetails {
   itemName: string;
   pickupDate: string;
   dueDate: string;
+  /** Inclusive day count: return date - pickup date + 1. */
+  rentalDays?: number;
   rentalFee: number;
   downpayment: number;
   balance: number;
@@ -241,6 +243,7 @@ function peso(n: number): string {
 // ---- Order confirmation (booking created) ----
 export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
   const pending = d.paymentPending === true;
+  const periodText = d.rentalDays ? `\nRental period: ${d.rentalDays} day${d.rentalDays === 1 ? '' : 's'}` : '';
   const html = shell({
     eyebrow: pending ? 'Booking received' : 'Order confirmation',
     heading: pending
@@ -260,6 +263,7 @@ export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
       detailsTable([
         ['Item', d.itemName],
         ['Pickup', d.pickupDate],
+        ...(d.rentalDays ? [['Rental period', `${d.rentalDays} day${d.rentalDays === 1 ? '' : 's'} (${d.pickupDate} – ${d.dueDate})`] as [string, string]] : []),
         ['Return by', d.dueDate],
         ['Rental fee', peso(d.rentalFee)],
         ['Downpayment', pending ? `${peso(d.downpayment)} (under review)` : peso(d.downpayment)],
@@ -275,8 +279,8 @@ export function bookingConfirmationEmail(d: BookingDetails): BuiltEmail {
       : `Booking confirmed: ${d.itemName}`,
     html,
     text: pending
-      ? `Hi ${d.customerName},\n\nWe received your booking for "${d.itemName}".\nYour downpayment screenshot is under review. We'll email you once it's verified.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment under review: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\n${storeSignoff()}`
-      : `Hi ${d.customerName},\n\nYour rental of "${d.itemName}" is confirmed.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}\nRental fee: ${peso(d.rentalFee)}\nDownpayment: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nShow this email at the boutique when you pick up. Thank you!\n\n${storeSignoff()}`,
+      ? `Hi ${d.customerName},\n\nWe received your booking for "${d.itemName}".\nYour downpayment screenshot is under review. We'll email you once it's verified.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}${periodText}\nRental fee: ${peso(d.rentalFee)}\nDownpayment under review: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\n${storeSignoff()}`
+      : `Hi ${d.customerName},\n\nYour rental of "${d.itemName}" is confirmed.\nPickup: ${d.pickupDate}\nReturn by: ${d.dueDate}${periodText}\nRental fee: ${peso(d.rentalFee)}\nDownpayment: ${peso(d.downpayment)}\nBalance: ${peso(d.balance)}${d.bookingCode ? `\nBooking code: ${d.bookingCode}` : ''}\n\nShow this email at the boutique when you pick up. Thank you!\n\n${storeSignoff()}`,
   };
 }
 

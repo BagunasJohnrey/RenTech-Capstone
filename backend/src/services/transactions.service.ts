@@ -458,6 +458,7 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
           itemName: transaction.item.name,
           pickupDate: formatManilaDate(start),
           dueDate: formatManilaDate(end),
+          rentalDays: Math.round((manilaDayStart(end).getTime() - manilaDayStart(start).getTime()) / 86400000) + 1,
           rentalFee: fee,
           downpayment,
           balance: fee - downpayment,

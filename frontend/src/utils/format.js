@@ -5,6 +5,28 @@ export function toLocalYmd(d) {
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }
 
+// Rental period — ONE counting rule everywhere (checkout, receipt, details):
+// days = return date − pickup date + 1 (inclusive of both days).
+// Pickup Nov 20, return Nov 22 → 3 days. Returns null when dates are missing.
+export function rentalPeriod(pickup, returnBy) {
+  const a = toLocalYmd(pickup);
+  const b = toLocalYmd(returnBy);
+  if (!a || !b) return null;
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  const days = Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000) + 1;
+  if (days < 1) return null;
+  const short = (y, m, d) => new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const range = `${short(ay, am, ad)} – ${short(by, bm, bd)}`;
+  const returnLabel = new Date(by, bm - 1, bd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return {
+    days,
+    range,
+    returnLabel,
+    label: `${days} day${days === 1 ? '' : 's'} (${range})`,
+  };
+}
+
 // Today's date in local YYYY-MM-DD.
 export function todayYmd() {
   return toLocalYmd(new Date());

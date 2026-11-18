@@ -1,6 +1,7 @@
 import QRCode from 'qrcode';
 import { getBookingCode, txDownpayment, txBalance } from './receipt';
 import { api } from './api';
+import { rentalPeriod } from './format';
 
 const FALLBACK_STORE = { name: "Mylene's Boutique", address: 'Balayan, Batangas, Philippines', contact: '' };
 
@@ -60,11 +61,13 @@ export async function downloadReceiptImage({
   const peso = (n) => `₱${Number(n || 0).toLocaleString()}`;
   const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const F = (w, s, mono) => `${w} ${s}px ${mono ? '"Plus Jakarta Sans", monospace, Arial' : '"Plus Jakarta Sans", Arial, sans-serif'}`;
+  const period = rentalPeriod(tx.rentalDate || tx.date, tx.dueDate);
   const rows = [
     ['Item', itemName || tx.item?.name || '—', 'bold'],
     ['Pickup', pickupLabel || '—', ''],
     ['Event Date', eventLabel || '—', 'bold'],
     ['Return By', dueLabel || '—', 'accent'],
+    ...(period ? [['Rental Period', period.label, 'bold']] : []),
     ['Customer', customerName || tx.customer?.name || '—', 'bold'],
     ['Size', size || tx.size || '—', ''],
   ];

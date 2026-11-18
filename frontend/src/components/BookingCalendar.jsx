@@ -21,7 +21,7 @@ const inRange = (dateStr, start, end) => start && end && dateStr >= start && dat
  * unavailable (red) and lets staff pick a pickup date then an event date.
  * Booked ranges come from the item's active/overdue transactions.
  */
-export default function BookingCalendar({ pickup, event, onChange, bookedRanges = [], minDate, disabled = false, returnDays = 1, hideSummary = false }) {
+export default function BookingCalendar({ pickup, event, onChange, bookedRanges = [], minDate, disabled = false, returnDays = 1, hideSummary = false, footer = null }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const min = minDate || ymd(today);
@@ -211,6 +211,9 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
             </>
           )}
         </div>
+      )}
+      {footer && (
+        <div className="mt-3 pt-2.5 border-t border-gray-100 text-center">{footer}</div>
       )}
     </div>
   );
