@@ -933,8 +933,8 @@ CONTENT RULES:
 - Do NOT contradict yourself. If a category appears in revenue leaders or most-rented items, do not call it "underperforming".
 - "Underperforming" items are ONLY those listed in the underperforming array.
 - Lead each section with the key takeaway, then support it with the relevant numbers.
- - Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete, actionable action on its own line. These recommendations must be data-driven and directly reference the specific items and categories named below — NOT generic filler. For every name in the "Underperforming items" list, suggest a concrete promo (e.g. "run a [category]-themed promo week for [item]") or clearance/retire action. If a strongest revenue category is given, recommend prioritizing restock/featured placement for the "Top rented items" in that category. Each recommendation must mention an actual item name or category from the data.
- - The Pre-computed rules below were calculated deterministically from this same Data — treat each as FACT. Explain WHY each matters and rank it in Recommendations; do NOT contradict them (e.g. never deprioritize a RESTOCK category, never call a CLEARANCE item a demand leader). Every restock/clearance/cleaning rule listed MUST appear in Recommendations.
+ - Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete, actionable action on its own line. These recommendations must be data-driven and directly reference the specific items and categories named below — NOT generic filler. Give 5 to 8 recommendations in total, most important first. GROUP similar actions instead of writing one line per item: put all the "Underperforming items" and CLEARANCE items into one or two grouped lines (e.g. "Run a clearance promo for never-rented pieces: [item], [item] (Gown); [item] (Barong)"), and never list the same item in both a promo line and a sale line. Only recommend RESTOCKING a category that appears as a RESTOCK rule below; for "Top rented items" in any other category recommend featured placement and keeping them cleaned and ready, NOT restocking (name at most 3 of them). If there is no RESTOCK rule, say that current stock covers projected demand. Each recommendation must mention an actual item name or category from the data.
+ - The Pre-computed rules below were calculated deterministically from this same Data — treat each as FACT. Explain WHY each matters and rank it in Recommendations; do NOT contradict them (e.g. never deprioritize a RESTOCK category, never call a CLEARANCE item a demand leader). Every restock/clearance/cleaning rule listed MUST appear in Recommendations (a grouped line that names the item counts).
 
 SECTION GUIDANCE (use the supplied data):
 - Executive Summary: overall health (revenue direction, utilization, urgent risks) in a short paragraph.
@@ -950,7 +950,7 @@ KPIs: ${JSON.stringify(data.kpis)}
 ${data.insights ? `Insights: ${JSON.stringify(data.insights)}` : ''}
 ${data.forecast ? `Forecast: ${JSON.stringify(data.forecast)}` : ''}
 ${underperforming.length ? `Underperforming items (never rented, promote or clear): ${underperformingList}` : 'Underperforming items: none'}
-${topRented.length ? `Top rented items (demand leaders — prioritize restock): ${topList}` : ''}
+${topRented.length ? `Top rented items (demand leaders — feature them; restock only if a RESTOCK rule names their category): ${topList}` : ''}
 ${ruleLines.length ? `Pre-computed rules (deterministic facts from the same Data): ${ruleLines.join(' | ')}` : 'Pre-computed rules: none — stock covers projected demand and nothing is idle.'}
 ${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''}`;
 

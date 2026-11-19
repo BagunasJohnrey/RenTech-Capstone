@@ -53,7 +53,7 @@ function readAiCacheAt(key) {
 // auto-called on every page load: Gemini is slow + costs money.
 // Returns the raw { data, at } entry so callers can also show "Updated X ago".
 const AI_SUGGEST_TTL_MS = 24 * 60 * 60 * 1000;
-const AI_SUGGEST_KEY = 'rentech_ai_suggestions';
+const AI_SUGGEST_KEY = 'rentech_ai_suggestions_v2'; // v2: grouped, max 8
 const aiSuggestCache = new Map();
 
 function readAiSuggestCache() {
@@ -452,7 +452,8 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
               : 'AI generation is temporarily unavailable. Showing static insights — try again in a few minutes.');
         return;
       }
-      const suggestions = extractRecommendations(r.report || r);
+      // Panel shows the top actions only; the full list lives in the report.
+      const suggestions = extractRecommendations(r.report || r).slice(0, 8);
       if (suggestions.length === 0) {
         toastError('AI report came back in an unexpected format — showing static insights.');
         setAiSuggestions(null);
