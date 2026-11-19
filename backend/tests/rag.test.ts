@@ -7,6 +7,7 @@ import {
   retrieveStylistContext,
   retrievePromoContext,
   retrievePolicies,
+  CORE_POLICY_KEYS,
   scoreItem,
   targetCategoriesFor,
   clearEmbedCache,
@@ -177,6 +178,33 @@ describe('rag.service: policies + promo context', () => {
     const policies = await retrievePolicies('how long is the rental period?');
     expect(policies.length).toBeLessThanOrEqual(3);
     expect(policies[0].key).toBe('rental_period_days');
+  });
+
+  it('always includes core rules (downpayment, rental period) when asked', async () => {
+    const prisma = await mockPrisma();
+    prisma.businessRule.findMany.mockResolvedValue([
+      { key: 'rental_period_days', value: '3' },
+      { key: 'min_downpayment', value: '200' },
+      { key: 'late_return', value: 'Please return on time' },
+      { key: 'qr_booking_codes', value: 'true' },
+    ]);
+
+    const policies = await retrievePolicies('kasalan ninong lalake barong', 3, { always: CORE_POLICY_KEYS });
+    expect(policies.map(p => p.key)).toEqual(expect.arrayContaining(['min_downpayment', 'rental_period_days']));
+    expect(policies.filter(p => p.key === 'min_downpayment')).toHaveLength(1);
+  });
+
+  it('never sends the retired late-penalty rule to the stylist', async () => {
+    const prisma = await mockPrisma();
+    prisma.businessRule.findMany.mockResolvedValue([
+      { key: 'late_penalty_per_day', value: '500' },
+      { key: 'min_downpayment', value: '200' },
+      { key: 'rental_period_days', value: '3' },
+    ]);
+
+    const policies = await retrievePolicies('what if I return it late?', 3, { always: CORE_POLICY_KEYS });
+    expect(policies.map(p => p.key)).not.toContain('late_penalty_per_day');
+    expect(policies.map(p => p.key)).toContain('min_downpayment');
   });
 
   it('promo context puts dead stock first and caps at 20', async () => {

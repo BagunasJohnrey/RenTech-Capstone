@@ -261,10 +261,25 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 
 const POLICY_BOOST_KEYS = ['rental_period', 'downpayment', 'min_downpayment', 'late', 'return', 'damage', 'cancel'];
 
-export async function retrievePolicies(query: string, k = 3): Promise<PolicyChunk[]> {
+// Rules the stylist must ALWAYS see, whatever the customer typed. Without
+// them a styling question ("kasalan ninong barong") retrieved no payment
+// rule, and the model filled the gap with an invented downpayment (₱500,
+// 30%, ₱1,000). Values come live from BusinessRule, so an admin change in
+// Settings reaches the stylist on the very next message.
+export const CORE_POLICY_KEYS = ['min_downpayment', 'rental_period_days'];
+
+// Rules kept in the database for old records but no longer in force. Late
+// fees were removed in Sept 2026 (fees.ts always charges 0), so the leftover
+// late_penalty_per_day row must never reach the stylist as a "store policy",
+// or the model could quote a ₱500/day late fee that the system never charges.
+export const RETIRED_POLICY_KEYS = ['late_penalty_per_day'];
+
+export async function retrievePolicies(query: string, k = 3, opts: { always?: string[] } = {}): Promise<PolicyChunk[]> {
   try {
-    const rules = await prisma.businessRule.findMany();
-    if (!Array.isArray(rules) || rules.length === 0) return [];
+    const all = await prisma.businessRule.findMany();
+    if (!Array.isArray(all) || all.length === 0) return [];
+    const rules = all.filter((r) => !RETIRED_POLICY_KEYS.includes(r.key));
+    if (rules.length === 0) return [];
     const words = normalizeQuery(query);
     const lower = (query || '').toLowerCase();
     const scored = rules.map((r) => {
@@ -276,7 +291,12 @@ export async function retrievePolicies(query: string, k = 3): Promise<PolicyChun
     });
     scored.sort((a, b) => b.score - a.score);
     const ranked = scored.some((s) => s.score > 0) ? scored.filter((s) => s.score > 0) : scored;
-    return ranked.slice(0, k).map((s) => ({ key: s.rule.key, value: s.rule.value }));
+    const top = ranked.slice(0, k).map((s) => ({ key: s.rule.key, value: s.rule.value }));
+    for (const key of opts.always ?? []) {
+      const rule = rules.find((r) => r.key === key);
+      if (rule && !top.some((t) => t.key === key)) top.push({ key: rule.key, value: rule.value });
+    }
+    return top;
   } catch {
     return [];
   }
@@ -304,7 +324,7 @@ export async function retrieveStylistContext(query: string, opts: RetrieveOpts =
   try {
     const [available, policies] = await Promise.all([
       inventoryService.listItems('Available'),
-      retrievePolicies(query, 3),
+      retrievePolicies(query, 3, { always: CORE_POLICY_KEYS }),
     ]);
     if (!Array.isArray(available) || available.length === 0) return { ...empty, policies };
 
