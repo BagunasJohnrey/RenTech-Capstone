@@ -873,6 +873,37 @@ export async function generateReport(data: {
     .map(i => `${i.name} (${i.category})`)
     .join(', ');
   const topList = topRented.map(i => `${i.name} (${i.category})`).join(', ');
+  // One merged, de-duplicated clearance list (never-rented + CLEARANCE rule
+  // items) built here, so the grouped recommendation can't drop an item.
+  const clearanceNames = new Map<string, string>();
+  for (const i of underperforming) clearanceNames.set(i.name, `${i.name} (${i.category})`);
+  for (const c of data.rules?.clearance || []) clearanceNames.set(c.name, `${c.name} (${c.category})`);
+  const clearanceList = [...clearanceNames.values()];
+
+  // Month-by-month forecast comparisons, worked out here so the model never
+  // has to guess what "decline" is measured against (a December above
+  // November but below last December used to come out as "December declines").
+  const fc = (data.forecast || {}) as {
+    projections?: { label: string; value: number | null; lastYear?: number | null }[];
+    current?: { label?: string; projected?: number | null } | null;
+  };
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  const forecastLines: string[] = [];
+  let prevLabel = fc.current?.label ?? null;
+  let prevValue = typeof fc.current?.projected === 'number' ? fc.current.projected : null;
+  for (const p of fc.projections || []) {
+    if (typeof p.value !== 'number') continue;
+    const parts = [`${p.label}: ${r1(p.value)}`];
+    if (prevValue != null && prevLabel) {
+      parts.push(`${p.value > prevValue ? 'higher' : p.value < prevValue ? 'lower' : 'the same as'} than ${prevLabel} (${r1(prevValue)})`.replace('the same as than', 'the same as'));
+    }
+    if (typeof p.lastYear === 'number') {
+      parts.push(`${p.value > p.lastYear ? 'higher' : p.value < p.lastYear ? 'lower' : 'same'} than the same month last year (${p.lastYear})`);
+    }
+    forecastLines.push(parts.join(', '));
+    prevLabel = p.label;
+    prevValue = p.value;
+  }
   const strongestCategory = Object.entries(revenueByCategory)
     .sort((a, b) => (b[1] as number) - (a[1] as number))[0]?.[0];
 
@@ -933,16 +964,21 @@ CONTENT RULES:
 - Do NOT contradict yourself. If a category appears in revenue leaders or most-rented items, do not call it "underperforming".
 - "Underperforming" items are ONLY those listed in the underperforming array.
 - Lead each section with the key takeaway, then support it with the relevant numbers.
- - Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete, actionable action on its own line. These recommendations must be data-driven and directly reference the specific items and categories named below — NOT generic filler. Give 5 to 8 recommendations in total, most important first. GROUP similar actions instead of writing one line per item: put all the "Underperforming items" and CLEARANCE items into one or two grouped lines (e.g. "Run a clearance promo for never-rented pieces: [item], [item] (Gown); [item] (Barong)"), and never list the same item in both a promo line and a sale line. Only recommend RESTOCKING a category that appears as a RESTOCK rule below; for "Top rented items" in any other category recommend featured placement and keeping them cleaned and ready, NOT restocking (name at most 3 of them). If there is no RESTOCK rule, say that current stock covers projected demand. Each recommendation must mention an actual item name or category from the data.
+ - Recommendations: number them sequentially starting at 1 (1., 2., 3., ...) with no gaps, each a concrete, actionable action on its own line. These recommendations must be data-driven and directly reference the specific items and categories named below — NOT generic filler. Give 5 to 8 recommendations in total, most important first. GROUP similar actions instead of writing one line per item: put all the "Underperforming items" and CLEARANCE items into one or two grouped lines (e.g. "Run a clearance promo for never-rented pieces: [item], [item] (Gown); [item] (Barong)"), and never list the same item in both a promo line and a sale line. A grouped clearance line must name EVERY item from the "Underperforming items" list AND every CLEARANCE rule item (merge the two lists, each item once), and if it states a count, the count must equal the number of items named. Only recommend RESTOCKING a category that appears as a RESTOCK rule below; for "Top rented items" in any other category recommend featured placement and keeping them cleaned and ready, NOT restocking (name at most 3 of them). If there is no RESTOCK rule, say no restock is needed right now because no category meets the restock rule (projected demand above free pieces AND either rising demand or 80%+ of pieces out) — never claim projected demand is below inventory or that stock covers demand. Each recommendation must mention an actual item name or category from the data.
  - The Pre-computed rules below were calculated deterministically from this same Data — treat each as FACT. Explain WHY each matters and rank it in Recommendations; do NOT contradict them (e.g. never deprioritize a RESTOCK category, never call a CLEARANCE item a demand leader). Every restock/clearance/cleaning rule listed MUST appear in Recommendations (a grouped line that names the item counts).
 
 SECTION GUIDANCE (use the supplied data):
 - Executive Summary: overall health (revenue direction, utilization, urgent risks) in a short paragraph.
+- ITEMS IN USE RIGHT NOW: the ONLY source is inUseItems (and availableItems / utilizationRate) in the KPIs. The "rented" numbers in categoryBreakdown count pieces rented AT LEAST ONCE in the period — never add them up, and never describe them as currently rented, in use or out.
 - Key Performance Indicators: headline KPI numbers (active rentals, overdue, returned, cancelled, damaged, monthly revenue, utilization rate, overdue rate). When totalRevenueInclLogbook is present, write "Total revenue: ₱<totalRevenueInclLogbook>" (it covers the period named in revenueScope, app payments + logbook records — say "this year" for a year scope, "all time" only when revenueScope is "all time") and on the next line "Collected in app: ₱<totalRevenue> · Logbook records: ₱<totalLogbookRevenue>". Also write "Revenue period: <revenueScope>".
-- Revenue Analysis: revenue by category and by month, plus top revenue-generating items.
-- Inventory & Utilization: total/available/in-use items, utilization rate, most-rented items, underperforming items. Write the category breakdown strictly as "Category: X total, Y rented" per category (e.g. "Gown: 21 total, 6 rented") using the categoryBreakdown numbers from the Data — never "total/21 rented/6" style fragments.
+- Revenue Analysis: revenue by category and by month ONLY (do not list items here — the most-rented items belong in Inventory & Utilization). The Data has NO per-item revenue: never call items "top revenue-generating", and never write sentences about figures that are missing or not listed — just leave them out.
+- Inventory & Utilization: total/available/in-use items, utilization rate, most-rented items, underperforming items. Write the category breakdown strictly as "Category: X total, Y rented" per category (e.g. "Gown: 21 total, 6 rented") using the categoryBreakdown numbers from the Data — never "total/21 rented/6" style fragments. These mean "rented at least once this period"; say so if you mention them in a sentence.
 - Operational Health: overdue returns and late rate, damaged items, cancellation rate — each as its own line.
  - Demand Forecast: projected rental-volume trend from the forecast (SMA/period values, the projections array, and per-category projections only).
+- TREND MEANING: a "down"/"up" trend compares the last 3 complete months with the 3 before them — it describes RECENT demand, not the coming months. Never say a specific upcoming month will decline or rise unless its projection is lower/higher than the month before it in the projections. Describe the coming months from their projected numbers (e.g. December higher, January lower), and the trend as "recent demand has eased".
+- Months with no in-app payments are NOT months without sales when logbook records exist: say "in-app payments start in <first month>; earlier months are covered by the logbook records" — never "no sales data" for those months.
+- Never mention the internal "latest" or "average" fields of the per-category forecast (e.g. no "from latest 4"); just give each category's projection and trend.
+- If demand is projected down, do not list every category as "especially" affected. Name at most the two largest categories, and note that the forecast already blends in the same month last year, so part of the change is the normal seasonal pattern.
 - Recommendations: the prioritized action list.
 
 Data:
@@ -950,8 +986,10 @@ KPIs: ${JSON.stringify(data.kpis)}
 ${data.insights ? `Insights: ${JSON.stringify(data.insights)}` : ''}
 ${data.forecast ? `Forecast: ${JSON.stringify(data.forecast)}` : ''}
 ${underperforming.length ? `Underperforming items (never rented, promote or clear): ${underperformingList}` : 'Underperforming items: none'}
+${forecastLines.length ? `FORECAST COMPARISONS (pre-computed — use these, do not re-derive): ${forecastLines.join(' | ')}. Every time you say a month rises, increases, declines or drops, state what it is compared with ("than November" or "than last year"). Never call a month a decline when it is higher than the month before it, unless you explicitly say "lower than last year". Write the comparison words in normal lowercase (sentences still start with a capital letter).` : ''}
+${clearanceList.length ? `CLEARANCE LIST for the grouped clearance recommendation (already merged, exactly ${clearanceList.length} items — name all ${clearanceList.length}, and if you state a count it must be ${clearanceList.length}): ${clearanceList.join(', ')}` : ''}
 ${topRented.length ? `Top rented items (demand leaders — feature them; restock only if a RESTOCK rule names their category): ${topList}` : ''}
-${ruleLines.length ? `Pre-computed rules (deterministic facts from the same Data): ${ruleLines.join(' | ')}` : 'Pre-computed rules: none — stock covers projected demand and nothing is idle.'}
+${ruleLines.length ? `Pre-computed rules (deterministic facts from the same Data): ${ruleLines.join(' | ')}` : 'Pre-computed rules: none — no category meets the restock rule and nothing is idle.'}
 ${strongestCategory ? `Strongest category by revenue: ${strongestCategory}` : ''}`;
 
   // Runs a provider call, then the anti-hallucination amount-guard and the

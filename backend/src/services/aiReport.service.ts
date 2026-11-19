@@ -28,6 +28,10 @@ export interface AiReportMeta {
 
 export interface AiReportFull extends AiReportMeta {
   report: string;
+  // Deterministic figures behind the report (see reportFacts.service.ts).
+  // Absent on reports saved before facts existed — the UI falls back to
+  // reading figures out of the text for those.
+  facts?: unknown;
 }
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9-_]*$/;
@@ -151,6 +155,7 @@ async function readFullReport(dir: string, id: string): Promise<AiReportFull | n
 
 export async function saveAiReport(input: {
   report: string;
+  facts?: unknown;
   source?: string;
   provider?: string | null;
   model?: string | null;
@@ -166,7 +171,7 @@ export async function saveAiReport(input: {
   if (latest && latest.hash === hash) {
     const full = await readFullReport(dir, latest.id);
     if (full) {
-      const { report: _omit, ...meta } = full;
+      const { report: _omit, facts: _f, ...meta } = full;
       return { ...meta, skipped: true };
     }
   }
@@ -182,16 +187,17 @@ export async function saveAiReport(input: {
     excerpt: excerptOf(input.report),
     length: String(input.report || '').length,
     report: String(input.report || ''),
+    ...(input.facts ? { facts: input.facts } : {}),
     uploaded: false,
     origin: 'local',
   };
   await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(full, null, 2), 'utf8');
   await pruneReports(dir);
-  const { report: _omit, ...meta } = full;
+  const { report: _omit, facts: _facts, ...meta } = full;
   // Cloud copy (the one that survives ephemeral disks). Best-effort — a
   // storage blip leaves uploaded:false, never fails the save. The final
   // flags are written back to both copies so list/detail stay accurate.
-  meta.uploaded = await uploadReportToCloud(meta, full.report);
+  meta.uploaded = await uploadReportToCloud(meta, full.report, full.facts);
   if (meta.uploaded) meta.origin = 'both';
   const finalFull = { ...full, uploaded: meta.uploaded, origin: meta.origin };
   await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(finalFull, null, 2), 'utf8').catch(() => {});
@@ -219,7 +225,9 @@ async function readReport(dir: string, filename: string, withBody: boolean): Pro
       origin: 'local',
     };
     if (!meta.createdAt) return null;
-    return withBody ? { ...meta, report: String((parsed as AiReportFull).report ?? '') } : meta;
+    return withBody
+      ? { ...meta, report: String((parsed as AiReportFull).report ?? ''), ...(parsed.facts ? { facts: parsed.facts } : {}) }
+      : meta;
   } catch {
     return null;
   }
@@ -297,6 +305,7 @@ function toFull(id: string, parsed: Partial<AiReportFull>): AiReportFull {
     excerpt: String(parsed.excerpt ?? excerptOf(String(parsed.report))),
     length: Number(parsed.length ?? String(parsed.report).length) || 0,
     report: String(parsed.report),
+    ...(parsed.facts ? { facts: parsed.facts } : {}),
     uploaded: Boolean((parsed as Partial<AiReportMeta>).uploaded),
     origin: (parsed as Partial<AiReportMeta>).origin === 'cloud' ? 'cloud'
       : (parsed as Partial<AiReportMeta>).origin === 'both' ? 'both' : 'local',
@@ -319,9 +328,9 @@ export async function uploadExistingReport(id: string): Promise<AiReportMeta> {
     if (err instanceof AppError) throw err;
     throw new AppError(404, 'No local copy to upload');
   }
-  const { report, ...meta } = full;
+  const { report, facts, ...meta } = full;
   if (meta.uploaded) return { ...meta, origin: 'both' as const };
-  const ok = await uploadReportToCloud(meta, report);
+  const ok = await uploadReportToCloud(meta, report, facts);
   if (!ok) throw new AppError(502, 'Cloud upload failed — check the server logs and try again');
   const finalFull = { ...full, uploaded: true, origin: 'both' as const };
   await fs.writeFile(path.join(getReportsDir(), `${id}.json`), JSON.stringify(finalFull, null, 2), 'utf8').catch(() => {});
@@ -341,11 +350,11 @@ async function pruneReports(dir: string): Promise<void> {
 
 // Uploads one report (full + meta sidecar) to the private bucket. Returns
 // whether the cloud copy landed — never throws.
-async function uploadReportToCloud(meta: AiReportMeta, reportBody: string): Promise<boolean> {
+async function uploadReportToCloud(meta: AiReportMeta, reportBody: string, facts?: unknown): Promise<boolean> {
   const api = cloudApi();
   if (!api?.upload) return false;
   try {
-    const full = JSON.stringify({ ...meta, report: reportBody, uploaded: true, origin: 'both' });
+    const full = JSON.stringify({ ...meta, report: reportBody, ...(facts ? { facts } : {}), uploaded: true, origin: 'both' });
     const sidecar = JSON.stringify({ ...meta, uploaded: true, origin: 'both' });
     const deadline = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 30000));
     const run = (async () => {

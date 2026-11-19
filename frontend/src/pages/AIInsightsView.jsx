@@ -88,6 +88,8 @@ function writeAiSuggestCache(data) {
 export default function AIInsightsView({ analyticsData, role, onViewItemTransactions, onNavigateTab, cleaningItems = [], onBulkClean, dataVersion = null }) {
   const [showReportModal, setShowReportModal] = useState(false);
   const [aiReport, setAiReport] = useState(null);
+  const [aiReportFacts, setAiReportFacts] = useState(null);
+  const [aiReportAt, setAiReportAt] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const { error: toastError, info: toastInfo } = useToast();
   // Last saved AI reports (server history, admin-only) — reopenable from here
@@ -111,7 +113,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     if (openingReportId) return;
     setOpeningReportId(id);
     api.get(`/ai/reports/${id}`)
-      .then((r) => { setAiReport(r?.report || ''); setShowReportModal(true); })
+      .then((r) => { setAiReport(r?.report || ''); setAiReportFacts(r?.facts || null); setAiReportAt(r?.createdAt || null); setShowReportModal(true); })
       .catch(() => toastError('Could not open that report.'))
       .finally(() => setOpeningReportId(null));
   };
@@ -413,7 +415,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
                 : 'AI generation is temporarily unavailable. Try again in a few minutes.');
           return;
         }
-        setAiReport(r.report || r); setShowReportModal(true); loadRecentReports();
+        setAiReport(r.report || r); setAiReportFacts(r?.facts || null); setAiReportAt(r?.createdAt || null); setShowReportModal(true); loadRecentReports();
         // Identical content to the latest saved report → the server reused
         // that entry instead of stacking a duplicate row.
         if (r?.deduped) toastInfo('Report unchanged since the last one — showing the existing entry.');
@@ -902,7 +904,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
         />
       </div>
 
-      {showReportModal && <AIReportModal geminiReport={aiReport} onClose={() => { setShowReportModal(false); setAiReport(null); }} />}
+      {showReportModal && <AIReportModal geminiReport={aiReport} facts={aiReportFacts} createdAt={aiReportAt} onClose={() => { setShowReportModal(false); setAiReport(null); setAiReportFacts(null); setAiReportAt(null); }} />}
       {saleTarget && (
         <SaleModal itemId={saleTarget.id} onClose={() => setSaleTarget(null)} />
       )}

@@ -14,20 +14,30 @@ const TAGLINE = 'Rental Attire & Formal Wear';
 const ADDRESS = 'Balayan, Batangas, Philippines';
 const ACCENT = '#bf4a53';
 
-export default function AIReportModal({ geminiReport, onClose }) {
+export default function AIReportModal({ geminiReport, facts, createdAt, onClose }) {
   const sections = geminiReport ? parseReportSections(geminiReport) : [];
-  // Charts are read back out of the report's own (server-validated) figures.
-  const visuals = extractReportVisuals(sections);
+  // Tiles, charts and tables come from the server's exact figures (`facts`)
+  // when the report has them; older saved reports fall back to the text.
+  const visuals = extractReportVisuals(sections, facts);
   // Per section: charts, then a table of the figures, then the explanation.
   const layout = sections.map((s) => layoutSection(s, visuals));
-  const generatedDate = new Date().toLocaleDateString('en-PH', {
+  // Date + ref come from when the report was generated (Manila time), so a
+  // reopened report keeps its own date and every report gets a unique ref
+  // (MB-RPT-YYYYMMDD-HHMM). Falls back to now when no timestamp is known.
+  const stampDate = createdAt && !Number.isNaN(new Date(createdAt).getTime()) ? new Date(createdAt) : new Date();
+  const generatedDate = stampDate.toLocaleDateString('en-PH', {
+    timeZone: 'Asia/Manila',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
-  const docRef = `MB-RPT-${new Date().getFullYear()}-${String(
-    new Date().getMonth() + 1
-  ).padStart(2, '0')}`;
+  const mnl = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(stampDate).map((p) => [p.type, p.value])
+  );
+  const docRef = `MB-RPT-${mnl.year}${mnl.month}${mnl.day}-${mnl.hour}${mnl.minute}`;
 
   const [downloading, setDownloading] = useState(false);
   // Letterhead: business profile from Settings (same source as the Excel

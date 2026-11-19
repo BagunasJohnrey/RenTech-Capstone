@@ -110,14 +110,17 @@ function BarList({ title, note, rows, format = (v) => v, extra }) {
 }
 
 // Rented vs total units per category: the full track is the stock, the fill is rented.
-function CategoryFill({ rows }) {
+// `live`: the fill is pieces in use right now (sums to the "In use" figure),
+// not pieces rented at least once in the period.
+function CategoryFill({ rows, live }) {
   const max = Math.max(...rows.map((r) => r.total), 1);
+  const word = live ? 'in use now' : 'rented';
   return (
     <div>
-      <ChartTitle note="filled = rented, track = total units">Units rented by category</ChartTitle>
+      <ChartTitle note={`filled = ${word}, track = total units`}>{live ? 'Units in use by category' : 'Units rented by category'}</ChartTitle>
       <div className="space-y-1.5">
         {rows.map((r) => (
-          <div key={r.label} className="grid grid-cols-[minmax(0,7.5rem)_1fr_auto] sm:grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-2" title={`${r.label}: ${r.rented} of ${r.total} rented`}>
+          <div key={r.label} className="grid grid-cols-[minmax(0,7.5rem)_1fr_auto] sm:grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-2" title={`${r.label}: ${r.rented} of ${r.total} ${word}`}>
             <span className="text-[11px] text-gray-600 truncate">{r.label}</span>
             <div className="h-2.5 rounded-r bg-gray-100" style={{ width: `${(r.total / max) * 100}%` }}>
               <div className="h-full rounded-r" style={{ width: `${r.total ? Math.min(100, (r.rented / r.total) * 100) : 0}%`, backgroundColor: ACCENT }} />
@@ -164,7 +167,7 @@ export default function ReportVisuals({ visuals }) {
       />
     );
   }
-  if (categoryBreakdown?.length) blocks.push(<CategoryFill key="cat" rows={categoryBreakdown} />);
+  if (categoryBreakdown?.length) blocks.push(<CategoryFill key="cat" rows={categoryBreakdown} live={!!visuals.breakdownLive} />);
   if (topItems?.length) {
     blocks.push(<BarList key="top" title="Most-rented items" note="rentals" rows={topItems} />);
   }

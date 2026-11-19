@@ -153,6 +153,19 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     } catch { return null; }
   })();
 
+  // Logbook rows inside the Revenue Trend window, so the 6-month chart can
+  // show paper-era months (before the in-app handover) instead of ₱0 bars.
+  // Returned per month as a separate `logbook` figure — `revenue` stays
+  // collected-payments only. Enrichment only: a failure leaves logbook at 0.
+  const trendLogbookPromise = (async () => {
+    try {
+      return await prisma.historicalRecord.findMany({
+        where: { eventDate: { gte: trendStart, lt: trendEnd } },
+        select: { price: true, eventDate: true },
+      });
+    } catch { return []; }
+  })();
+
   const prevRevenuePromise = (() => {
     if (filter?.start) {
       const end = filter.end || new Date();
@@ -160,10 +173,12 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
       const prevStart = new Date(filter.start.getTime() - rangeMs);
       return aggregateRevenueFrom(prevStart, filter.start);
     }
-    const prevStart = new Date();
-    prevStart.setMonth(prevStart.getMonth() - 1);
-    prevStart.setDate(1);
-    return aggregateRevenueBetween(prevStart, new Date(prevStart.getFullYear(), prevStart.getMonth() + 1, 1));
+    // Midnight on the 1st of last month. (The old setMonth/setDate kept the
+    // current time of day, so payments made early on the 1st were dropped and
+    // the KPI disagreed with the per-month revenue list.)
+    const today = new Date();
+    const prevStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    return aggregateRevenueBetween(prevStart, new Date(today.getFullYear(), today.getMonth(), 1));
   })();
 
   // Previous-window logbook (mirrors prevRevenue) so the Revenue card's
@@ -181,7 +196,7 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     } catch { return null; /* enrichment only */ }
   })();
 
-  const [totalRevenue, prevRevenue, trendPayments, logbookAgg, prevLogbookAgg] = await Promise.all([
+  const [totalRevenue, prevRevenue, trendPayments, logbookAgg, prevLogbookAgg, trendLogbook] = await Promise.all([
     // All-time collected across every period (drives the AI Insights Overall
     // tab). Kept separate from monthlyRevenue so the dashboards that consume
     // getKpis() unfiltered keep their current-month figure.
@@ -196,6 +211,7 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
     }),
     logbookPromise,
     prevLogbookPromise,
+    trendLogbookPromise,
   ]);
 
   const allTransactions = activeRentals + overdueReturns + returnedCount + cancelledCount;
@@ -217,7 +233,11 @@ async function getKpisUncached(filter?: { start?: Date; end?: Date }) {
         (p) => p.createdAt.getFullYear() === d.getFullYear() && p.createdAt.getMonth() === d.getMonth()
       )
       .reduce((sum, p) => sum + p.amount, 0);
-    revenueTrend.push({ label, revenue });
+    const inBucket = (t: Date) => t.getFullYear() === d.getFullYear() && t.getMonth() === d.getMonth();
+    const logbook = (trendLogbook ?? [])
+      .filter((r) => r.eventDate && inBucket(new Date(r.eventDate)))
+      .reduce((sum, r) => sum + (r.price || 0), 0);
+    revenueTrend.push({ label, revenue, logbook });
   }
 
   const logbookRevenue = logbookAgg?._sum?.price ?? 0;

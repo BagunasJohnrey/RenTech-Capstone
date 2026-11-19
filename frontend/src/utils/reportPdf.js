@@ -261,7 +261,10 @@ function buildDoc(bodySize, sections, meta) {
     }
     if (v.categoryBreakdown?.length) {
       const max = Math.max(...v.categoryBreakdown.map((r) => r.total), 1);
-      drawBars('Units rented by category', 'filled = rented, track = total units', v.categoryBreakdown.map((r) => ({
+      drawBars(
+        v.breakdownLive ? 'Units in use by category' : 'Units rented by category',
+        v.breakdownLive ? 'filled = in use now, track = total units' : 'filled = rented, track = total units',
+        v.categoryBreakdown.map((r) => ({
         label: r.label,
         track: r.total / max,
         frac: r.total ? Math.min(1, r.rented / r.total) : 0,

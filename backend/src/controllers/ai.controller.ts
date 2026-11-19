@@ -6,6 +6,7 @@ import * as inventoryService from '../services/inventory.service.js';
 import { getInventoryAnalytics } from '../services/inventoryAnalytics.service.js';
 import * as optimization from '../services/optimization.service.js';
 import * as aiReportService from '../services/aiReport.service.js';
+import { buildReportFacts } from '../services/reportFacts.service.js';
 import * as aiPromoSuggestionService from '../services/aiPromoSuggestion.service.js';
 import * as autoPromoService from '../services/autoPromo.service.js';
 import type { CategoryProjection, AnalyticsItemShape } from '../services/optimization.service.js';
@@ -203,6 +204,14 @@ export async function generateReport(req: AuthenticatedRequest, res: Response, n
     const year = Math.min(req.body?.year || new Date().getFullYear(), new Date().getFullYear());
     const scoped = await dashboardService.getRevenueTotals(scope, year);
     const result = await geminiService.generateReport({ kpis: { ...kpis, ...scoped }, insights, forecast, rules });
+    // Exact figures for the report's tiles, charts and tables (same data the
+    // model was given) — the UI draws from these, not from the AI's wording.
+    const facts = buildReportFacts({
+      kpis: { ...kpis, ...scoped } as unknown as Record<string, unknown>,
+      insights: insights as unknown as Record<string, unknown>,
+      forecast: forecast as unknown as Record<string, unknown>,
+      analyticsItems,
+    });
     // Best-effort history: complete, readable reports are saved so
     // the admin "last saved AI reports" list can reopen them. Error stubs
     // (rate-limited / flagged / truncated) are NOT saved — they'd pollute
@@ -217,13 +226,14 @@ export async function generateReport(req: AuthenticatedRequest, res: Response, n
           provider: (result as { provider?: string }).provider ?? null,
           model: (result as { model?: string }).model ?? null,
           createdBy: req.user?.id ?? null,
+          facts,
         });
-        return res.json({ ...result, reportId: saved.id, ...(saved.skipped ? { deduped: true } : {}) });
+        return res.json({ ...result, facts, reportId: saved.id, createdAt: saved.createdAt, ...(saved.skipped ? { deduped: true } : {}) });
       } catch {
         // fall through — return the report without history
       }
     }
-    res.json(result);
+    res.json(result && typeof result === 'object' ? { ...result, facts } : result);
   } catch (err) {
     next(err);
   }

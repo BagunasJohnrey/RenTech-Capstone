@@ -87,6 +87,8 @@ export default function DataBackupsTab() {
   const [uploadingReportId, setUploadingReportId] = useState(null);
   const [deletingReportId, setDeletingReportId] = useState(null);
   const [openReport, setOpenReport] = useState(null);
+  const [openReportFacts, setOpenReportFacts] = useState(null);
+  const [openReportAt, setOpenReportAt] = useState(null);
   const [openingId, setOpeningId] = useState(null);
 
   const loadBackups = useCallback(async () => {
@@ -199,8 +201,11 @@ export default function DataBackupsTab() {
     try {
       const full = await aiService.getReport(r.id);
       setOpenReport(full?.report || '');
+      setOpenReportFacts(full?.facts || null);
+      setOpenReportAt(full?.createdAt || r.createdAt || null);
     } catch {
       setOpenReport(r.excerpt || 'Could not load this report.');
+      setOpenReportFacts(null);
     } finally {
       setOpeningId(null);
     }
@@ -630,7 +635,7 @@ export default function DataBackupsTab() {
       </CollapsibleCard>
 
       {openReport !== null && (
-        <AIReportModal geminiReport={openReport} onClose={() => setOpenReport(null)} />
+        <AIReportModal geminiReport={openReport} facts={openReportFacts} createdAt={openReportAt} onClose={() => { setOpenReport(null); setOpenReportFacts(null); setOpenReportAt(null); }} />
       )}
     </>
   );

@@ -113,12 +113,21 @@ export function extractRecommendations(report) {
   const idx = lines.findIndex(isHeader);
   if (idx !== -1) {
     const recs = lines.slice(idx + 1).map(strip).filter((l) => l.length > 10 && !isMeta(l));
-    if (recs.length) return recs;
+    if (recs.length) return recs.map(tidyRec);
   }
 
   const numbered = lines
     .filter((l) => /^\d{1,2}[.)]\s+\S/.test(l))
     .map(strip)
     .filter((l) => l.length > 10);
-  return numbered;
+  return numbered.map(tidyRec);
+}
+
+// Same house style as the report: capital first letter, "17 %" -> "17%",
+// plain hyphens (some models emit non-breaking ones).
+function tidyRec(l) {
+  return String(l)
+    .replace(/\u2011/g, '-')
+    .replace(/(\d)\s+%/g, '$1%')
+    .replace(/^([a-z])/, (c) => c.toUpperCase());
 }

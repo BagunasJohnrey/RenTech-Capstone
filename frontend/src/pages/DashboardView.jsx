@@ -735,8 +735,15 @@ export default function DashboardView({ role, transactions, inventory, transacti
   // as the Monthly Revenue card). The old client-side sum of booked rental
   // fees disagreed with the card (fees ≠ money collected) — e.g. Oct spiking
   // on unpaid bookings while the card showed Sept's real collections.
+  // Each bar = collected in app + imported logbook for that month (the paper
+  // records cover the months before the in-app handover). `collected` and
+  // `logbook` stay separate for the hover text so every peso is traceable.
   const revByMonth = Array.isArray(k.revenueTrend) && k.revenueTrend.length > 0
-    ? k.revenueTrend
+    ? k.revenueTrend.map((m) => {
+        const collected = m.revenue || 0;
+        const logbook = m.logbook || 0;
+        return { label: m.label, revenue: collected + logbook, collected, logbook };
+      })
     : (() => {
         const fallback = [];
         for (let i = 5; i >= 0; i--) {
@@ -803,7 +810,10 @@ export default function DashboardView({ role, transactions, inventory, transacti
           {/* Revenue Trend (6 months) — header stays, bars skeleton */}
           <div className="bg-white rounded-2xl border border-gray-100/80 shadow-sm p-4 sm:p-5 xl:p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Revenue Trend</h3>
+              <div>
+                <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Revenue Trend</h3>
+                <p className="text-[11px] text-gray-400 font-medium mt-0.5">In-app payments + logbook records</p>
+              </div>
               {adminLoading
                 ? <Skeleton className="h-6 w-36 rounded-full" />
                 : <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">₱{revenueToday.toLocaleString()} collected today</span>}
@@ -824,7 +834,7 @@ export default function DashboardView({ role, transactions, inventory, transacti
                 const pct = (m.revenue / visualCap) * 100;
                 const pinned = idx === chartActive || idx === chartMaxIdx;
                 return (
-                  <button type="button" key={`${m.label}-${idx}`} title={capped ? `₱${m.revenue.toLocaleString()} (bar truncated — outlier month)` : `₱${m.revenue.toLocaleString()}`}
+                  <button type="button" key={`${m.label}-${idx}`} title={`₱${m.revenue.toLocaleString()}${m.logbook ? ` (₱${(m.collected || 0).toLocaleString()} in app + ₱${m.logbook.toLocaleString()} logbook)` : ''}${capped ? ' (bar truncated — outlier month)' : ''}`}
                     onClick={() => setChartPick(idx)}
                     aria-pressed={idx === chartActive}
                     aria-label={`${m.label}: ₱${m.revenue.toLocaleString()}${idx === chartMaxIdx ? ', highest month' : ''}`}

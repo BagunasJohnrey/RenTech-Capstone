@@ -5,6 +5,7 @@ import * as optimization from './optimization.service.js';
 import type { CategoryProjection, AnalyticsItemShape } from './optimization.service.js';
 import * as geminiService from './gemini.service.js';
 import * as aiReportService from './aiReport.service.js';
+import { buildReportFacts } from './reportFacts.service.js';
 
 // Weekly automatic AI business report. Same generation path as the manual
 // POST /api/ai/generate-report (real KPIs/insights/forecast/analytics +
@@ -126,6 +127,12 @@ export async function runAutoReport(now = Date.now()): Promise<{
       provider: (result as { provider?: string }).provider ?? null,
       model: (result as { model?: string }).model ?? null,
       createdBy: null,
+      facts: buildReportFacts({
+        kpis: { ...kpis, ...scoped } as unknown as Record<string, unknown>,
+        insights: insights as unknown as Record<string, unknown>,
+        forecast: forecast as unknown as Record<string, unknown>,
+        analyticsItems,
+      }),
     });
 
     const admins = await db.profile?.findMany?.({ where: { role: 'Admin' }, select: { id: true } }) ?? [];
