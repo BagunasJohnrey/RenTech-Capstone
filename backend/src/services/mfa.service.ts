@@ -197,8 +197,11 @@ export async function consumeBackupCode(userId: string, code: string): Promise<b
   } catch {
     return false;
   }
-  if (!codes.includes(code)) return false;
-  const idx = codes.indexOf(code);
+  // Codes are stored as lowercase hex. Accept what a person actually types
+  // or pastes: spaces, dashes, uppercase letters, a trailing newline.
+  const clean = String(code ?? '').trim().toLowerCase().replace(/[\s-]/g, '');
+  if (!clean) return false;
+  const idx = codes.indexOf(clean);
   if (idx === -1) return false;
   codes.splice(idx, 1);
   await prisma.profile.update({

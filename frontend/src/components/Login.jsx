@@ -166,7 +166,8 @@ export default function Login({ onLogin, onVerifyMfa }) {
     setMfaLoading(true);
     try {
       // W2.7: MFA challenge tokens are stored in the rt_mfa_pending httpOnly
-      // cookie by the backend — we only send the 6-digit code.
+      // cookie by the backend — we only send the code (6-digit TOTP or a
+      // 16-character backup code; the backend tries TOTP first, then backup).
       // trustDevice opts into the 30-day rt_mfa_trusted cookie: future logins
       // on this browser skip the TOTP prompt.
       const result = await onVerifyMfa({ code: mfaCode, trustDevice });
@@ -343,17 +344,20 @@ export default function Login({ onLogin, onVerifyMfa }) {
                  <div className="space-y-4">
                    <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900">Two-Factor Authentication</h2>
                    <p className="text-gray-500 text-sm mt-1 mb-4">
-                     Enter the 6-digit code from your authenticator app to sign in as <span className="font-semibold">{mfaChallenge.email}</span>.
+                     Enter the 6-digit code from your authenticator app to sign in as <span className="font-semibold">{mfaChallenge.email}</span>. Lost your phone? Use one of your 16-character backup codes instead.
                    </p>
                    <form onSubmit={handleMfaSubmit} className="space-y-4">
                      <Field
-                       label="Authentication Code"
+                       label="Authentication or Backup Code"
                        type="text"
                        required
                        value={mfaCode}
-                       onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                       // 6-digit authenticator code OR 16-character backup code
+                       // (letters a–f + digits). Spaces/dashes from copy-paste
+                       // are dropped; the backend normalizes case too.
+                       onChange={(e) => setMfaCode(e.target.value.replace(/[^0-9a-fA-F]/g, '').toLowerCase().slice(0, 16))}
                        className={inputClass}
-                       placeholder="000000"
+                       placeholder="123456 or backup code"
                        autoComplete="one-time-code"
                      />
                      {error && (
@@ -372,7 +376,7 @@ export default function Login({ onLogin, onVerifyMfa }) {
                      </label>
                      <button
                        type="submit"
-                       disabled={mfaLoading || mfaCode.length !== 6}
+                       disabled={mfaLoading || !(/^\d{6}$/.test(mfaCode) || /^[0-9a-f]{16}$/.test(mfaCode))}
                        className="w-full py-3 bg-gray-900 text-white font-bold text-sm rounded-xl hover:bg-gray-800 transition-colors shadow-sm shadow-gray-900/20 disabled:opacity-50"
                      >
                        {mfaLoading ? 'Verifying...' : 'Verify'}

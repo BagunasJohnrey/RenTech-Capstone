@@ -138,6 +138,18 @@ describe('Phase 5: backup code storage + consumption (real implementation)', () 
     });
   });
 
+  it('consumeBackupCode accepts a code typed with uppercase, spaces or dashes', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValueOnce({
+      backupCodes: ['22450842de55e462', '0123456789abcdef'],
+    } as never);
+    const ok = await consumeBackupCode('user-1', ' 2245-0842 DE55-E462 ');
+    expect(ok).toBe(true);
+    expect(vi.mocked(prisma.profile.update)).toHaveBeenCalledWith({
+      where: { userId: 'user-1' },
+      data: { backupCodes: ['0123456789abcdef'] },
+    });
+  });
+
   it('consumeBackupCode rejects an unknown/already-used code and does not write', async () => {
     vi.mocked(prisma.profile.findUnique).mockResolvedValueOnce({
       backupCodes: ['a1b2c3d4'],
