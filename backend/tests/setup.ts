@@ -81,7 +81,10 @@ const { mockUsers, mockSessions } = vi.hoisted(() => {
   };
 });
 
-vi.mock('@supabase/supabase-js', () => {
+vi.mock('@supabase/supabase-js', async (importOriginal) => {
+  // Keep the real error classes/type guards (isAuthApiError etc.); only the
+  // client is faked.
+  const actual = await importOriginal<typeof import('@supabase/supabase-js')>();
   const mockSupabaseClient = {
     auth: {
       admin: {
@@ -161,6 +164,7 @@ vi.mock('@supabase/supabase-js', () => {
   };
 
   return {
+    ...actual,
     createClient: vi.fn(() => mockSupabaseClient),
   };
 });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { isAuthed, hasSessionCookie } from './utils/authSession';
+import { isAuthed, hasSessionCookie, SESSION_EXPIRED_EVENT } from './utils/authSession';
 import { isDemoMode } from './utils/demoMode';
 import { tabPath, tabFromPath, homeTab, HOME_PATH, SIGN_IN_PATH, GUEST_COLLECTION_PATH, ITEM_DETAIL_RE, TX_DETAIL_RE, itemDetailPath, txDetailPath, pathRequiresRole } from './utils/routing';
 import {
@@ -120,7 +120,7 @@ const navItems = {
 
 export default function RentechApp() {
   const { isLoggedIn, role, profile, loading, logout, updateProfile, fetchProfile, completeOAuth, cancelOAuth, completeForcedPasswordChange } = useAuth();
-  const { success: toastSuccess, error: toastError } = useToast();
+  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   // viewRole mirrors role (was state, but it's always synced to it).
@@ -519,6 +519,19 @@ export default function RentechApp() {
     await logout();
     loggingOutRef.current = false;
   };
+
+  // The session could not be renewed (expired or revoked): useAuth already
+  // dropped the profile; leave the portal URL (the signed-out render 404s
+  // portal paths) and land on sign-in with a clear reason, instead of the
+  // tab looking logged in while every request quietly fails with 401.
+  useEffect(() => {
+    const onExpired = () => {
+      navigate(SIGN_IN_PATH, { replace: true });
+      toastInfo('Your session expired. Please sign in again.');
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, [navigate, toastInfo]);
 
   // ---- Transaction mutations delegate to useTransactions (SoC) ----
   const markItemStatus = (itemId, status) =>

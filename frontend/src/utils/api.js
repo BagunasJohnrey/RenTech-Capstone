@@ -1,4 +1,4 @@
-import { isAuthed } from './authSession';
+import { isAuthed, refreshSessionStatus, expireSession } from './authSession';
 import { isDemoMode } from './demoMode';
 import { demoRequest } from './demoInterceptor';
 
@@ -39,17 +39,14 @@ function unlockRefresh(success) {
 }
 
 // Lightweight refresh: calls the backend /auth/refresh endpoint which reads
-// the refresh-token cookie. Returns true on success.
+// the refresh-token cookie. Returns true on success. When the server rejects
+// the refresh token the session is over: sign out and tell the app (it shows
+// the sign-in screen with a "session expired" note). A network blip or a
+// restarting backend is NOT treated as a sign-out.
 async function doRefresh() {
-  try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  const status = await refreshSessionStatus();
+  if (status === 'expired') expireSession();
+  return status === 'ok';
 }
 
 async function refreshOnce() {

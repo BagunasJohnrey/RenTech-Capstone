@@ -61,29 +61,56 @@ export function clearImageCache() {
   } catch { /* storage unavailable */ }
 }
 
-// Attempt a silent session refresh via the backend /auth/refresh endpoint,
-// which reads the refresh-token cookie. Returns true on success.
-export async function refreshSession() {
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+// Fired (same tab) when the server says the session is gone for good. The
+// app listens to sign the user out and land them on the sign-in screen with
+// a "session expired" note. Other tabs follow via the rentech_authed
+// storage event.
+export const SESSION_EXPIRED_EVENT = 'rentech:session-expired';
+
+// Sign out locally because the session can't be renewed. Only announces it
+// once: later 401s in the same burst find the flag already cleared.
+export function expireSession() {
+  const wasAuthed = isAuthed();
+  setAuthed(false);
+  clearImageCache();
+  if (wasAuthed) {
+    try { window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT)); } catch { /* SSR/tests */ }
+  }
+}
+
+// One renewal attempt via /auth/refresh (reads the refresh-token cookie).
+//   'ok'      — new session cookies were set
+//   'expired' — the server rejected the refresh token (401/400): truly signed out
+//   'error'   — network failure, backend restarting, 429 or 5xx: NOT a sign-out,
+//               the session may still be fine once the server answers again
+export async function refreshSessionStatus() {
   try {
-    const res = await fetch('/api/auth/refresh', {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
     });
-    if (!res.ok) {
-      setAuthed(false);
-      return false;
-    }
-    const data = await res.json();
-    if (data?.user) {
+    if (res.ok) {
       setAuthed(true);
-      return true;
+      return 'ok';
     }
-    setAuthed(false);
-    return false;
+    if (res.status === 401 || res.status === 400) return 'expired';
+    return 'error';
   } catch {
-    setAuthed(false);
-    return false;
+    return 'error';
   }
+}
+
+// Boolean wrapper for callers that only care about success. A definite
+// rejection signs the user out (expireSession); a transient failure keeps
+// them signed in. Previously ANY failure — even the backend being down for a
+// restart — silently cleared the flag, after which 401s were never retried
+// and the tab stayed "logged in" while every request failed.
+export async function refreshSession() {
+  const status = await refreshSessionStatus();
+  if (status === 'expired') expireSession();
+  return status === 'ok';
 }
 
 // ─── Proactive refresh scheduler ──────────────────────────────────────────
@@ -117,6 +144,11 @@ async function doRefreshAndReschedule() {
     // The backend just set a fresh rt_expires_at cookie; pick it up and
     // reschedule so the chain continues.
     scheduleProactiveRefresh();
+  } else if (isAuthed()) {
+    // Transient failure (server unreachable / restarting): still signed in,
+    // so try again in a minute instead of letting the chain die.
+    refreshTimer = setTimeout(doRefreshAndReschedule, 60_000);
+    refreshScheduledAt = Date.now();
   }
 }
 

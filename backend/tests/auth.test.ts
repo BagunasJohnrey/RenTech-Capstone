@@ -293,6 +293,56 @@ describe('POST /api/auth/refresh', () => {
     expect(res.status).toBe(401);
   });
 
+  // The frontend signs the user out ("session expired") ONLY on 401, so a
+  // Supabase outage must not surface as 401.
+  it('returns 401 when Supabase rejects the refresh token', async () => {
+    const { supabaseSession } = await import('../src/config/supabase.js');
+    const { AuthApiError } = await import('@supabase/supabase-js');
+    vi.mocked(supabaseSession.auth.refreshSession).mockResolvedValueOnce({
+      data: { session: null, user: null },
+      error: new AuthApiError('Invalid Refresh Token: Refresh Token Not Found', 400, 'refresh_token_not_found'),
+    } as never);
+
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', ['rt_refresh=revoked-token']);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 503 (not 401) when Supabase is unreachable', async () => {
+    const { supabaseSession } = await import('../src/config/supabase.js');
+    const { AuthRetryableFetchError } = await import('@supabase/supabase-js');
+    vi.mocked(supabaseSession.auth.refreshSession).mockResolvedValueOnce({
+      data: { session: null, user: null },
+      error: new AuthRetryableFetchError('fetch failed', 0),
+    } as never);
+
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', ['rt_refresh=mock-refresh-token']);
+
+    expect(res.status).toBe(503);
+  });
+
+  it('returns 503 (not 401) when Supabase answers with a 5xx', async () => {
+    const { supabaseSession } = await import('../src/config/supabase.js');
+    const { AuthApiError } = await import('@supabase/supabase-js');
+    vi.mocked(supabaseSession.auth.refreshSession).mockResolvedValueOnce({
+      data: { session: null, user: null },
+      error: new AuthApiError('upstream error', 502, undefined),
+    } as never);
+
+    const res = await request(app)
+      .post('/api/auth/refresh')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', ['rt_refresh=mock-refresh-token']);
+
+    expect(res.status).toBe(503);
+  });
+
   it('should carry the MFA-verified marker over to the rotated access token', async () => {
     const oldMarker = buildMfaVerifiedValue('old-access-token');
     const res = await request(app)

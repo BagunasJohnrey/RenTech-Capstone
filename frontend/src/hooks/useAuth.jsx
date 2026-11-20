@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api } from '../utils/api';
-import { setAuthed, clearImageCache, isAuthed, hasSessionCookie } from '../utils/authSession';
+import { setAuthed, clearImageCache, isAuthed, hasSessionCookie, SESSION_EXPIRED_EVENT } from '../utils/authSession';
 import { isDemoMode } from '../utils/demoMode';
 
 const AuthContext = createContext(null);
@@ -73,6 +73,14 @@ export function AuthProvider({ children }) {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [fetchProfile]);
+
+  // Session could not be renewed (refresh token rejected): drop the profile
+  // so the app renders signed-out. App handles navigation + the message.
+  useEffect(() => {
+    const onExpired = () => setProfile(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
 
   const login = useCallback(async (email, password) => {
     const result = await api.post('/auth/login', { email, password });

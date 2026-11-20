@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import * as emailService from './resend.service.js';
 import * as storageService from './storage.service.js';
 import { Role, Prisma } from '@prisma/client';
+import { isAuthApiError } from '@supabase/supabase-js';
 import * as crypto from 'crypto';
 
 // Resend email-token lifetimes: verification links last 24h, reset links 1h.
@@ -672,7 +673,21 @@ export async function refreshWithRefreshToken(refreshToken: string) {
     refresh_token: refreshToken,
   });
 
-  if (error || !data.session) {
+  // Only a definite rejection of the token is a 401 — the frontend treats
+  // that as "session over" and signs the user out. Supabase being
+  // unreachable / erroring (network failure, 5xx, its own rate limit) is a
+  // 503 so the client keeps the session and simply retries later, instead of
+  // logging everyone out during a Supabase hiccup.
+  if (error) {
+    const status = (error as { status?: number }).status ?? 0;
+    const rejected = isAuthApiError(error) && status >= 400 && status < 500 && status !== 429;
+    if (!rejected) {
+      console.error('[auth] refresh: auth provider unavailable:', error.name, status, error.message);
+      throw new AppError(503, 'Sign-in service temporarily unavailable, please try again');
+    }
+    throw new AppError(401, 'Invalid or expired refresh token');
+  }
+  if (!data.session) {
     throw new AppError(401, 'Invalid or expired refresh token');
   }
 
