@@ -826,6 +826,10 @@ export async function mfaChallenge(req: Request, res: Response, next: NextFuncti
     });
     if (!profile || !profile.mfaEnabled) throw new AppError(401, 'MFA not enabled for this account');
 
+    // Per-account lockout: 5 wrong codes in a row lock this account's code
+    // step for 15 minutes, from any device (see mfa.service).
+    mfaService.assertMfaNotLocked(user.id);
+
     // First try TOTP code, then fall back to backup code.
     let verified = false;
     const decryptedSecret = profile.totpSecret ? decryptField(profile.totpSecret) : null;
@@ -836,7 +840,8 @@ export async function mfaChallenge(req: Request, res: Response, next: NextFuncti
       verified = await mfaService.consumeBackupCode(user.id, code);
     }
 
-    if (!verified) throw new AppError(401, 'Invalid code');
+    if (!verified) throw mfaService.recordMfaFailure(user.id);
+    mfaService.clearMfaFailures(user.id);
 
     // MFA passed — mark this exact access token as MFA-verified (HMAC-bound
     // httpOnly cookie) so requireMfaAdmin accepts it as AAL=2, then mint full
@@ -885,6 +890,9 @@ export async function mfaStepUp(req: AuthenticatedRequest, res: Response, next: 
     });
     if (!profile?.mfaEnabled) throw new AppError(400, 'MFA is not enabled for this account');
 
+    // Same lockout counter as the login challenge.
+    mfaService.assertMfaNotLocked(req.user.userId);
+
     // Same verification order as the login challenge: TOTP first, then backup code.
     let verified = false;
     const decryptedSecret = profile.totpSecret ? decryptField(profile.totpSecret) : null;
@@ -894,7 +902,8 @@ export async function mfaStepUp(req: AuthenticatedRequest, res: Response, next: 
     if (!verified) {
       verified = await mfaService.consumeBackupCode(req.user.userId, code);
     }
-    if (!verified) throw new AppError(401, 'Invalid code');
+    if (!verified) throw mfaService.recordMfaFailure(req.user.userId);
+    mfaService.clearMfaFailures(req.user.userId);
 
     // Mint the marker for the CURRENT access token (cookie first, Bearer
     // fallback for machine-to-machine callers) so MFA-gated routes open

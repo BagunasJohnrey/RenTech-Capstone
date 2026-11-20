@@ -221,3 +221,56 @@ export async function isMfaEnabled(userId: string): Promise<boolean> {
   });
   return profile?.mfaEnabled ?? false;
 }
+
+// ─── Per-account lockout for wrong MFA codes ────────────────────────────────
+// The route limiters cap attempts per IP (10/min), which an attacker can dodge
+// by rotating IPs. This counts wrong codes per ADMIN ACCOUNT instead: after
+// MFA_MAX_FAILURES wrong codes in a row, that account's code step (login
+// challenge and step-up share one counter) is locked for MFA_LOCK_MS, from any
+// device. A correct code resets the count. Kept in memory like the other rate
+// limiters, so a server restart clears it.
+export const MFA_MAX_FAILURES = 5;
+export const MFA_LOCK_MS = 15 * 60_000;
+
+const mfaFailures = new Map<string, { count: number; lockedUntil: number }>();
+
+function lockedMessage(remainingMs: number): string {
+  const mins = Math.max(1, Math.ceil(remainingMs / 60_000));
+  return `Too many wrong codes. Verification is locked for ${mins} minute${mins === 1 ? '' : 's'}. Please try again later.`;
+}
+
+/** Throws 429 if this account is currently locked out of MFA verification. */
+export function assertMfaNotLocked(userId: string, now = Date.now()): void {
+  const entry = mfaFailures.get(userId);
+  if (!entry) return;
+  if (entry.lockedUntil > now) throw new AppError(429, lockedMessage(entry.lockedUntil - now));
+  if (entry.lockedUntil && entry.lockedUntil <= now) mfaFailures.delete(userId); // lock expired → fresh start
+}
+
+/**
+ * Record a wrong code and return the error to throw: 401 with the attempts
+ * left, or 429 once this failure reaches the limit and starts the lock.
+ */
+export function recordMfaFailure(userId: string, now = Date.now()): AppError {
+  const entry = mfaFailures.get(userId) ?? { count: 0, lockedUntil: 0 };
+  entry.count += 1;
+  if (entry.count >= MFA_MAX_FAILURES) {
+    entry.count = 0;
+    entry.lockedUntil = now + MFA_LOCK_MS;
+    mfaFailures.set(userId, entry);
+    return new AppError(429, lockedMessage(MFA_LOCK_MS));
+  }
+  mfaFailures.set(userId, entry);
+  const left = MFA_MAX_FAILURES - entry.count;
+  return new AppError(401, `Invalid code. ${left} attempt${left === 1 ? '' : 's'} left before verification is locked for 15 minutes.`);
+}
+
+/** A correct code clears the account's failure count. */
+export function clearMfaFailures(userId: string): void {
+  mfaFailures.delete(userId);
+}
+
+/** Test helper. */
+export function _resetMfaLockouts(): void {
+  mfaFailures.clear();
+}

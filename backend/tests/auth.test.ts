@@ -10,7 +10,16 @@ import * as authService from '../src/services/auth.service.js';
 import { buildMfaVerifiedValue, buildMfaTrustedValue, isMfaTrustedCookie } from '../src/middleware/cookies.js';
 
 // Phase 5: Mock the MFA service before imports so the controller picks it up.
-vi.mock('../src/services/mfa.service.js', () => ({
+vi.mock('../src/services/mfa.service.js', async (importOriginal) => {
+  // Lockout bookkeeping is pure in-memory logic, so the real functions are
+  // used; everything that touches TOTP secrets or the database stays mocked.
+  const actual = await importOriginal<typeof import('../src/services/mfa.service.js')>();
+  return {
+  assertMfaNotLocked: actual.assertMfaNotLocked,
+  recordMfaFailure: actual.recordMfaFailure,
+  clearMfaFailures: actual.clearMfaFailures,
+  _resetMfaLockouts: actual._resetMfaLockouts,
+  MFA_MAX_FAILURES: actual.MFA_MAX_FAILURES,
   generateTotpSecret: vi.fn().mockReturnValue('JBSWY3DPEHPK3PXP'),
   buildTotpUri: vi.fn().mockReturnValue('otpauth://totp/RenTech:test@example.com?secret=JBSWY3DPEHPK3PXP&issuer=RenTech'),
   verifyTotpToken: vi.fn().mockReturnValue(true),
@@ -20,7 +29,8 @@ vi.mock('../src/services/mfa.service.js', () => ({
   enableMfa: vi.fn().mockResolvedValue({}),
   disableMfa: vi.fn().mockResolvedValue({}),
   isMfaEnabled: vi.fn().mockResolvedValue(true),
-}));
+  };
+});
 
 import * as mfaService from '../src/services/mfa.service.js';
 
@@ -1252,6 +1262,56 @@ describe('Phase 5: MFA', () => {
         .send({ code: '000000' });
 
       expect(res.status).toBe(401);
+    });
+
+    it('locks the account for 15 minutes after 5 wrong codes, even from a correct code', async () => {
+      mfaService._resetMfaLockouts();
+      const send = (code: string) => request(app)
+        .post('/api/auth/login/mfa')
+        .set('Origin', 'http://localhost:5173')
+        .set('X-Forwarded-For', `10.0.0.${Math.floor(Math.random() * 200)}`)
+        .set('Cookie', [`rt_mfa_pending=admin-token|||mock-refresh-token`])
+        .send({ code });
+
+      for (let i = 1; i <= 4; i++) {
+        vi.mocked(mfaService.verifyTotpToken).mockReturnValueOnce(false);
+        vi.mocked(mfaService.consumeBackupCode).mockResolvedValueOnce(false);
+        const res = await send('000000');
+        expect(res.status).toBe(401);
+        expect(res.body.error).toContain(`${5 - i} attempt`);
+      }
+      vi.mocked(mfaService.verifyTotpToken).mockReturnValueOnce(false);
+      vi.mocked(mfaService.consumeBackupCode).mockResolvedValueOnce(false);
+      const fifth = await send('000000');
+      expect(fifth.status).toBe(429);
+      expect(fifth.body.error).toContain('locked for 15 minutes');
+
+      // Locked: even the right code is refused without being checked.
+      vi.mocked(mfaService.verifyTotpToken).mockClear();
+      const locked = await send('123456');
+      expect(locked.status).toBe(429);
+      expect(mfaService.verifyTotpToken).not.toHaveBeenCalled();
+      mfaService._resetMfaLockouts();
+    });
+
+    it('a correct code resets the wrong-code count', async () => {
+      mfaService._resetMfaLockouts();
+      for (let i = 0; i < 4; i++) {
+        vi.mocked(mfaService.verifyTotpToken).mockReturnValueOnce(false);
+        vi.mocked(mfaService.consumeBackupCode).mockResolvedValueOnce(false);
+        await request(app).post('/api/auth/login/mfa').set('Origin', 'http://localhost:5173')
+          .set('Cookie', [`rt_mfa_pending=admin-token|||mock-refresh-token`]).send({ code: '000000' });
+      }
+      const ok = await request(app).post('/api/auth/login/mfa').set('Origin', 'http://localhost:5173')
+        .set('Cookie', [`rt_mfa_pending=admin-token|||mock-refresh-token`]).send({ code: '123456' });
+      expect(ok.status).toBe(200);
+      vi.mocked(mfaService.verifyTotpToken).mockReturnValueOnce(false);
+      vi.mocked(mfaService.consumeBackupCode).mockResolvedValueOnce(false);
+      const again = await request(app).post('/api/auth/login/mfa').set('Origin', 'http://localhost:5173')
+        .set('Cookie', [`rt_mfa_pending=admin-token|||mock-refresh-token`]).send({ code: '000000' });
+      expect(again.status).toBe(401);
+      expect(again.body.error).toContain('4 attempts left');
+      mfaService._resetMfaLockouts();
     });
 
     it('should reject when MFA is not enabled', async () => {

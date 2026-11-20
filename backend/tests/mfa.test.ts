@@ -182,3 +182,18 @@ describe('Phase 5: enable/disable round-trip', () => {
     });
   });
 });
+
+describe('MFA per-account lockout', () => {
+  it('locks after 5 wrong codes and unlocks after 15 minutes', async () => {
+    const { assertMfaNotLocked, recordMfaFailure, _resetMfaLockouts } = await import('../src/services/mfa.service.js');
+    _resetMfaLockouts();
+    const t0 = 1_000_000;
+    for (let i = 0; i < 4; i++) expect(recordMfaFailure('admin-1', t0).statusCode).toBe(401);
+    expect(recordMfaFailure('admin-1', t0).statusCode).toBe(429);
+    expect(() => assertMfaNotLocked('admin-1', t0 + 14 * 60_000)).toThrow(/locked for 1 minute/);
+    expect(() => assertMfaNotLocked('admin-1', t0 + 15 * 60_000)).not.toThrow();
+    // Other accounts are unaffected.
+    expect(() => assertMfaNotLocked('admin-2', t0)).not.toThrow();
+    _resetMfaLockouts();
+  });
+});
