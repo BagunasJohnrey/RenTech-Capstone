@@ -18,6 +18,16 @@ const isoDateOrNull = z.preprocess(
   (v) => {
     if (v === undefined) return undefined;
     if (v === '' || v === null) return null;
+    // Date-only ("2027-01-19", from <input type="date"> and the AI sale
+    // suggestions) means "the sale runs THROUGH that day": end of day,
+    // Manila time. Impossible calendar dates (2027-02-31) are passed through
+    // unchanged so .datetime() rejects them with a 400.
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      const [y, m, d] = v.split('-').map(Number);
+      const probe = new Date(Date.UTC(y, m - 1, d));
+      if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) return v;
+      return new Date(`${v}T23:59:59.999+08:00`).toISOString();
+    }
     return v;
   },
   z.string().datetime().nullable().optional()

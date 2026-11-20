@@ -619,6 +619,12 @@ export default function RentechApp() {
 
   const handleReleaseRental = async (updated) => {
     releaseTransaction(updated);
+    // Held for fitting: still Reserved, the garment never left the shop.
+    if (updated.status === 'Reserved') {
+      toastSuccess('Held for fitting — customer notified');
+      noteLocalMutation();
+      return;
+    }
     if (updated.itemId) markItemStatus(updated.itemId, 'Rented');
     toastSuccess('Item released');
     noteLocalMutation();

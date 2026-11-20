@@ -544,6 +544,9 @@ export async function checkNoShowAndNotify() {
       noShowNotified: false,
       releasePhoto: null,
       conditionPhoto: null,
+      // Held for fitting: the shop has the garment on purpose, so the
+      // customer not collecting it yet is not a no-show.
+      OR: [{ alterationStatus: null }, { alterationStatus: { not: 'pending' } }],
     },
     include: {
       customer: { select: { id: true, name: true } },

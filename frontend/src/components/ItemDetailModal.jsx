@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, AlertCircle, CheckCircle2, Search, CalendarDays } from 'lucide-react';
+import { X, AlertCircle, CheckCircle2, Search, CalendarDays, Maximize2 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from './Toast';
 import BottomSheet from './BottomSheet';
@@ -8,6 +8,8 @@ import BookingCalendar from './BookingCalendar';
 import { getSaleInfo } from './ItemCard';
 import { Skeleton } from './Skeleton';
 import { itemPill, txPill } from '../utils/statusColors';
+import PhotoViewer from './PhotoViewer';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 // Item detail + availability view. Guests see it (and a "Sign In to Rent"
 // button that redirects to sign-up); logged-in customers get "Rent Now".
@@ -19,6 +21,9 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
   const [checkResult, setCheckResult] = useState(null);
   const [checking, setChecking] = useState(false);
   const { error: toastError } = useToast();
+  // Full-size photo (tap the item photo). Escape closes it first.
+  const [zoomOpen, setZoomOpen] = useState(false);
+  useEscapeClose(() => setZoomOpen(false), zoomOpen);
 
   useEffect(() => {
     if (!item) return;
@@ -63,12 +68,18 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
   // mobile with swipe-down-to-close, centered card on desktop. The body
   // carries data-sheet-scroll so a downward drag mid-scroll stays a scroll.
   return (
+    <>
     <BottomSheet columns onClose={onClose} labelledby="dialog-title-item-detail">
         {/* Header */}
         <div className="flex items-center gap-3 p-4 border-b border-gray-100 bg-gray-50/50">
-          <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0">
+          <button type="button" onClick={() => setZoomOpen(true)} aria-label={`View full photo of ${item.name}`} title="View full photo"
+            className="relative w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0 cursor-zoom-in group/photo focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
             <ItemImage image={item.image} alt="" className="w-full h-full object-cover" placeholderSize={20} />
-          </div>
+            <span aria-hidden="true" className="absolute inset-0 bg-gray-900/0 group-hover/photo:bg-gray-900/20 transition-colors" />
+            <span aria-hidden="true" className="absolute bottom-0.5 right-0.5 p-0.5 rounded-full bg-gray-900/60 text-white">
+              <Maximize2 size={9} />
+            </span>
+          </button>
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.category}</p>
             <h3 id="dialog-title-item-detail" className="font-bold text-gray-900 truncate">{item.name}</h3>
@@ -85,7 +96,13 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
 <div className="panel-split panel-split-hero">
           <div className="hidden lg:flex panel-col">
             <div className="panel-grow relative rounded-2xl overflow-hidden bg-gray-100 min-h-[24rem]">
-              <ItemImage image={item.image} alt={item.name} eager className="absolute inset-0 w-full h-full object-cover" placeholderSize={48} />
+              <button type="button" onClick={() => setZoomOpen(true)} aria-label={`View full photo of ${item.name}`}
+                className="absolute inset-0 w-full h-full cursor-zoom-in group/hero focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60">
+                <ItemImage image={item.image} alt={item.name} eager className="absolute inset-0 w-full h-full object-cover" placeholderSize={48} />
+                <span aria-hidden="true" className="absolute bottom-3 right-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-gray-900/60 rounded-full px-2.5 py-1 opacity-80 group-hover/hero:opacity-100 transition-opacity">
+                  <Maximize2 size={12} /> View full size
+                </span>
+              </button>
               {sale.active && (
                 <span className="absolute top-3 left-3 text-xs font-bold text-white bg-[#bf4a53] rounded-full px-3 py-1 shadow-sm">On Sale</span>
               )}
@@ -205,5 +222,12 @@ export default function ItemDetailModal({ item, guest, onClose, onBook, onGuestB
           )}
         </div>
     </BottomSheet>
+    {/* Outside the sheet: portal events bubble through the React tree, so a
+        swipe inside the viewer must not reach the sheet's drag-to-dismiss. */}
+    {zoomOpen && (
+      <PhotoViewer photos={[{ image: item.image, label: item.name }]} index={0}
+        onIndexChange={() => {}} onClose={() => setZoomOpen(false)} />
+    )}
+    </>
   );
 }

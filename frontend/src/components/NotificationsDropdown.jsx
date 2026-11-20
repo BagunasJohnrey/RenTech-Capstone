@@ -16,6 +16,7 @@ export const TYPE_CONFIG = {
   booking_updated: { icon: CalendarClock, iconBg: 'bg-blue-50', iconColor: 'text-blue-500', chip: 'Updated' },
   booking_cancelled: { icon: XCircle, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Cancelled' },
   alteration_needed: { icon: AlertTriangle, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Alteration' },
+  alteration_ready: { icon: CheckCircle2, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-500', chip: 'Alteration' },
   due_today: { icon: CalendarClock, iconBg: 'bg-amber-50', iconColor: 'text-amber-500', chip: 'Due Today' },
   overdue: { icon: AlertTriangle, iconBg: 'bg-red-50', iconColor: 'text-red-500', chip: 'Overdue' },
   late_return: { icon: Clock, iconBg: 'bg-orange-50', iconColor: 'text-orange-500', chip: 'Late Return' },

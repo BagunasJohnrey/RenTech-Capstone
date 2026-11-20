@@ -209,6 +209,21 @@ describe('PUT /api/inventory/:id', () => {
     expect(res.status).toBe(400);
   });
 
+  it('bulk-sale accepts a date-only saleEndsAt as end of that Manila day', async () => {
+    const { bulkSaleSchema } = await import('../src/controllers/inventory.controller.js');
+    const parsed = bulkSaleSchema.parse({
+      body: { ids: [1, 2], onSale: true, discountPct: 25, salePrice: null, saleEndsAt: '2027-01-19' },
+    });
+    expect(parsed.body.saleEndsAt).toBe('2027-01-19T15:59:59.999Z');
+  });
+
+  it('bulk-sale 400s an impossible calendar date', async () => {
+    const { bulkSaleSchema } = await import('../src/controllers/inventory.controller.js');
+    expect(bulkSaleSchema.safeParse({
+      body: { ids: [1], onSale: true, discountPct: 25, saleEndsAt: '2027-02-31' },
+    }).success).toBe(false);
+  });
+
   it('should 400 on an empty update body', async () => {
     const res = await request(app)
       .put('/api/inventory/1')

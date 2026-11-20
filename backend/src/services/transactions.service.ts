@@ -814,6 +814,37 @@ export async function updateTransaction(
     } catch { /* email is non-critical */ }
   }
 
+  // Fitting finished — keep the promise the "Alteration needed" message made
+  // ("the boutique will let you know when it's ready"). Fires only on the
+  // pending→ready transition so re-saving the edit form never re-sends it.
+  const becameReady = patch.alterationStatus === 'ready' && existing.alterationStatus !== 'ready';
+  if (becameReady) {
+    const readyMsg = `Your "${existing.item.name}" has been fitted and is ready for pickup. Visit the boutique to collect it.`;
+    try {
+      await createNotification({
+        profileId: existing.customerId,
+        transactionId,
+        type: 'alteration_ready',
+        title: 'Alteration ready',
+        message: readyMsg,
+      });
+    } catch { /* notification is non-critical */ }
+    try {
+      const customerProfile = await prisma.profile.findUnique({ where: { id: existing.customerId } });
+      const prefs = (customerProfile as { notifyPrefs?: Record<string, boolean> | null } | null)?.notifyPrefs;
+      const wantsEmail = !prefs || prefs.email !== false;
+      if (customerProfile?.email && wantsEmail && isSendableEmail(customerProfile.email)) {
+        await refreshEmailStore();
+        await sendEmail({
+          to: customerProfile.email,
+          subject: `Ready for pickup: ${existing.item.name} — RenTech`,
+          html: `<p>Hi ${customerProfile.name},</p><p>Good news — your "<strong>${existing.item.name}</strong>" has been fitted and is <strong>ready for pickup</strong>. Visit the boutique to collect it.</p><p>${storeSignoffHtml()}</p>`,
+          text: `Hi ${customerProfile.name},\n\nGood news — your "${existing.item.name}" has been fitted and is ready for pickup. Visit the boutique to collect it.\n\n${storeSignoff()}`,
+        });
+      }
+    } catch { /* email is non-critical */ }
+  }
+
   clearDataCache();
 
   return updated;
@@ -1061,6 +1092,12 @@ export async function cancelTransaction(transactionId: string, performedById: st
   if (!tx) throw new AppError(404, 'Transaction not found');
   if (tx.status === 'Returned') throw new AppError(400, 'Cannot cancel a returned transaction');
   if (tx.status === 'Cancelled') throw new AppError(400, 'Transaction already cancelled');
+  // Once staff released the garment it is with the customer: cancelling would
+  // free the item in inventory while it's physically out of the shop. The
+  // only way to close a released rental is a return.
+  if (tx.releasedById || tx.releasePhoto || tx.conditionPhoto) {
+    throw new AppError(400, 'This item was already released to the customer — process a return instead of cancelling');
+  }
 
   await prisma.transaction.update({
     where: { id: transactionId },
@@ -1155,6 +1192,54 @@ export async function releaseRental(
   if (tx.status === TransactionStatus.Returned) throw new AppError(400, 'Transaction already returned');
   if (tx.status === TransactionStatus.Cancelled) throw new AppError(400, 'Transaction was cancelled');
 
+  // HOLD FOR FITTING: the garment doesn't fit at pickup, so the boutique
+  // keeps it for alteration. Nothing leaves the shop — the booking stays
+  // Reserved, the item keeps its status, and no photo or payment is needed
+  // yet (those happen at the real release once the fitting is done). Only
+  // applies before pickup; flagging an already-released rental falls
+  // through to the normal path below (re-release keeps it Active).
+  if (needsAlteration === true && tx.status === TransactionStatus.Reserved) {
+    const wasPending = tx.alterationStatus === 'pending';
+    const held = await prisma.transaction.update({
+      where: { id: transactionId },
+      data: {
+        alterationStatus: 'pending',
+        notes: notes ? notes : undefined,
+        processedById,
+      },
+      include: {
+        assistedBy: { select: { id: true, name: true } },
+        releasedBy: { select: { id: true, name: true } },
+        processedBy: { select: { id: true, name: true } },
+        customer: { select: { id: true, name: true, email: true, phone: true, address: true } },
+        item: true,
+      },
+    });
+
+    if (!wasPending) {
+      await createAuditLog({
+        action: 'update',
+        entity: 'transaction',
+        entityId: transactionId,
+        performedById: processedById,
+        oldValue: { alterationStatus: tx.alterationStatus ?? null },
+        newValue: { alterationStatus: 'pending', heldForFitting: true },
+      });
+      try {
+        await createNotification({
+          profileId: tx.customerId,
+          transactionId,
+          type: 'alteration_needed',
+          title: 'Alteration needed',
+          message: `Your "${tx.item.name}" needs fitting before you can take it home. The boutique is keeping it for alteration and will let you know when it's ready.`,
+        });
+      } catch { /* notification is non-critical */ }
+    }
+
+    clearDataCache();
+    return held;
+  }
+
   // A manual-QR booking whose transfer is still unverified must never be
   // prepared for pickup: the money may already be on its way, and collecting
   // it again at the counter would charge the customer twice.
@@ -1238,16 +1323,17 @@ export async function releaseRental(
     }
   } catch { /* email is non-critical */ }
 
-  // Staff flagged an alteration during release — notify the customer in-app
-  // so they know to come back for fitting before using the garment.
-  if (needsAlteration === true) {
+  // Staff flagged an alteration on an already-released rental (the hold
+  // path above handles pre-pickup) — the customer has the garment, so ask
+  // them to come back for fitting before using it.
+  if (needsAlteration === true && tx.alterationStatus !== 'pending') {
     try {
       await createNotification({
         profileId: tx.customerId,
         transactionId,
         type: 'alteration_needed',
         title: 'Alteration needed',
-        message: `Your "${tx.item.name}" needs fitting before pickup. The boutique will let you know when it's ready.`,
+        message: `Your "${tx.item.name}" needs a fitting. Please bring it back to the boutique before using it — we will let you know when the alteration is done.`,
       });
     } catch { /* notification is non-critical */ }
   }

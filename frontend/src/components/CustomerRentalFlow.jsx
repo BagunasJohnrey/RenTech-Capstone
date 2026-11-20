@@ -292,7 +292,9 @@ export default function CustomerRentalFlow({
   // LEAVING with unsaved entries confirms.
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   // Full-photo viewer for the step-1 item header.
-  const [photoViewer, setPhotoViewer] = useState(false);
+  // Item whose full photo is open (null = closed). Used by the picker
+  // thumbnails and the Details-step photo alike.
+  const [photoViewer, setPhotoViewer] = useState(null);
   // First-render snapshot: prefilled profile/size/dates are the baseline,
   // so an untouched form is never "dirty". Pure filter UI (search text,
   // category pills) never counts.
@@ -340,7 +342,7 @@ export default function CustomerRentalFlow({
   // confirm (Keep Editing) while it's up — same two-level pattern as staff.
   useEscapeClose(() => requestLeave(), !showDiscardConfirm && !photoViewer && !showPromos);
   useEscapeClose(() => setShowDiscardConfirm(false), showDiscardConfirm);
-  useEscapeClose(() => setPhotoViewer(false), photoViewer);
+  useEscapeClose(() => setPhotoViewer(null), !!photoViewer);
   useEscapeClose(() => setShowPromos(false), showPromos);
   // A committed booking may have consumed the voucher — drop the cached
   // public list so an exhausted code disappears from offers immediately.
@@ -698,6 +700,31 @@ export default function CustomerRentalFlow({
   }, [step, confirmedTx]);
 
   // ---- Step 0: Catalog ----
+  // Full-photo viewer (same overlay pattern as Size Guide): full-resolution
+  // image, tap anywhere / X / Escape to close. Defined before the step-0
+  // return so the item picker's thumbnails can open it too.
+  const photoViewerModal = photoViewer && (
+    <div className="fixed inset-0 z-[300] bg-gray-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setPhotoViewer(null)}>
+      <div className="w-full max-w-lg flex items-center justify-between gap-3 mb-3" onClick={(e) => e.stopPropagation()}>
+        <p className="font-bold text-sm text-white truncate">{photoViewer.name}</p>
+        <button onClick={() => setPhotoViewer(null)} aria-label="Close full photo"
+          className="p-1.5 text-white/80 hover:bg-white/15 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+          <X size={20} />
+        </button>
+      </div>
+      <div className="w-full max-w-lg rounded-2xl overflow-hidden bg-white/10" onClick={(e) => e.stopPropagation()}>
+        <ItemImage image={photoViewer.image} alt={photoViewer.name} eager className="w-full max-h-[75dvh] object-contain bg-gray-950" />
+      </div>
+      <p className="text-white/60 text-xs mt-3 font-medium">Tap anywhere to close</p>
+    </div>
+  );
+
+  const openPhoto = (e, item) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setPhotoViewer(item);
+  };
+
   if (step === 0) {
     return (
       <>
@@ -799,8 +826,16 @@ export default function CustomerRentalFlow({
                     aria-pressed={selectedItem?.id === item.id} aria-label={`Select ${item.name}, ₱${item.price.toLocaleString()} per event`}
                     className={`relative bg-white rounded-2xl p-3 flex items-center gap-3 cursor-pointer border-2 transition-all text-left w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#bf4a53]/60 lg:flex-col lg:items-stretch lg:gap-0 lg:p-0 lg:overflow-hidden ${
                       selectedItem?.id === item.id ? 'border-[#bf4a53] shadow-md' : 'border-transparent hover:border-gray-200 lg:border-gray-100'}`}>
-                    <span className="flex shrink-0 lg:relative lg:w-full lg:aspect-[4/5]">
+                    {/* Tap the photo to zoom; tap anywhere else to select. */}
+                    <span role="button" tabIndex={0} aria-label={`View full photo of ${item.name}`} title="View full photo"
+                      onClick={(e) => openPhoto(e, item)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openPhoto(e, item); }}
+                      className="relative flex shrink-0 cursor-zoom-in rounded-xl overflow-hidden group/photo focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 lg:rounded-none lg:w-full lg:aspect-[4/5]">
                       <ItemImage thumb image={item.image} alt="" className="w-12 h-12 rounded-xl object-cover bg-gray-100 lg:absolute lg:inset-0 lg:w-full lg:h-full lg:rounded-none" />
+                      <span aria-hidden="true" className="absolute inset-0 bg-gray-900/0 group-hover/photo:bg-gray-900/20 transition-colors" />
+                      <span aria-hidden="true" className="absolute bottom-0.5 right-0.5 p-0.5 rounded-full bg-gray-900/60 text-white lg:bottom-2 lg:right-2 lg:p-1">
+                        <Maximize2 size={9} className="lg:w-3 lg:h-3" />
+                      </span>
                     </span>
                     <div className="flex-1 min-w-0 lg:px-3.5 lg:py-3">
                       <p className="text-xs font-bold text-gray-900 line-clamp-1 lg:line-clamp-none lg:text-sm">{item.name}</p>
@@ -855,6 +890,7 @@ export default function CustomerRentalFlow({
       {showDiscardConfirm && (
         <DiscardConfirm onKeep={keepEditing} onDiscard={confirmDiscard} />
       )}
+      {photoViewerModal}
       </>
     );
   }
@@ -899,7 +935,7 @@ export default function CustomerRentalFlow({
           {step === 1 && (
             <div className="space-y-5">
               <div className="bg-gradient-to-r from-gray-50 to-white rounded-2xl p-4 flex items-center gap-4 border border-gray-100/60">
-                <button type="button" onClick={() => setPhotoViewer(true)} aria-label={`View full photo of ${selectedItem.name}`}
+                <button type="button" onClick={() => setPhotoViewer(selectedItem)} aria-label={`View full photo of ${selectedItem.name}`}
                   className="relative shrink-0 rounded-2xl overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 group/photo">
                   <ItemImage thumb image={selectedItem.image} alt="" className="w-20 h-20 rounded-2xl object-cover bg-gray-200 shadow-sm" />
                   <span aria-hidden="true" className="absolute inset-0 bg-gray-900/0 group-hover/photo:bg-gray-900/25 transition-colors flex items-center justify-center">
@@ -1428,24 +1464,6 @@ export default function CustomerRentalFlow({
           </div>
         )}
     </>
-  );
-
-  // Full-photo viewer (same overlay pattern as Size Guide): full-resolution
-  // image, tap anywhere / X / Escape to close.
-  const photoViewerModal = photoViewer && selectedItem && (
-    <div className="fixed inset-0 z-[300] bg-gray-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setPhotoViewer(false)}>
-      <div className="w-full max-w-lg flex items-center justify-between gap-3 mb-3" onClick={(e) => e.stopPropagation()}>
-        <p className="font-bold text-sm text-white truncate">{selectedItem.name}</p>
-        <button onClick={() => setPhotoViewer(false)} aria-label="Close full photo"
-          className="p-1.5 text-white/80 hover:bg-white/15 rounded-full transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
-          <X size={20} />
-        </button>
-      </div>
-      <div className="w-full max-w-lg rounded-2xl overflow-hidden bg-white/10" onClick={(e) => e.stopPropagation()}>
-        <ItemImage image={selectedItem.image} alt={selectedItem.name} eager className="w-full max-h-[75dvh] object-contain bg-gray-950" />
-      </div>
-      <p className="text-white/60 text-xs mt-3 font-medium">Tap anywhere to close</p>
-    </div>
   );
 
   // Voucher picker (Shopee/Lazada): code entry on top, then the vouchers that

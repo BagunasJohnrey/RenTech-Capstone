@@ -189,9 +189,11 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
     if (isStaff && ['Active', 'Reserved'].includes(tx.status) && isReleased(tx)) {
       items.push({ key: 'swap', icon: Repeat, label: 'Swap item', tone: 'text-blue-600', onSelect: () => setSwapTx(tx) });
     }
-    const cancellable = isStaffRole
+    // Released = the garment is with the customer: close it with a return,
+    // never a cancel (server enforces this too).
+    const cancellable = !isReleased(tx) && !tx.releasedById && (isStaffRole
       ? ['Active', 'Reserved', 'Overdue'].includes(tx.status)
-      : ['Active', 'Reserved'].includes(tx.status) && role === 'Customer';
+      : ['Active', 'Reserved'].includes(tx.status) && role === 'Customer');
     if (cancellable) {
       items.push({ key: 'cancel', icon: XCircle, label: 'Cancel booking', danger: true, onSelect: () => setCancelTx(tx) });
     }
@@ -265,7 +267,7 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           booking), so render it inline instead of behind a "⋯" tap.
           Reserved rows get it too (direct cancel — nothing released yet);
           Active rows route through the required admin message. */}
-      {role === 'Customer' && ['Active', 'Reserved'].includes(tx.status) && (
+      {role === 'Customer' && ['Active', 'Reserved'].includes(tx.status) && !isReleased(tx) && !tx.releasedById && (
         <button
           onClick={() => setCancelTx(tx)}
           className="inline-flex items-center gap-1 px-3 py-2 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-600 hover:text-white rounded-full transition-colors"

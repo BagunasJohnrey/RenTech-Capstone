@@ -338,6 +338,105 @@ describe('Staff audit trail (assisted-by / released-by)', () => {
     expect(updateData).not.toHaveProperty('assistedById');
   });
 
+  it('needsAlteration before pickup HOLDS the item instead of releasing it', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.inventoryItem.update).mockClear();
+    vi.mocked(prisma.notification.create).mockClear();
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-hold', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
+      // Unpaid balance + no photo: a hold needs neither.
+      rentalFee: 5000, totalPaid: 1000, balance: 4000, status: 'Reserved',
+      alterationStatus: null, assistedById: 'staff-id-456', releasedById: null,
+      item: { id: 1, name: 'Test Gown', status: 'Reserved' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-hold/release')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ needsAlteration: true, notes: 'Hem 2 inches' });
+
+    expect(res.status).toBe(200);
+    const updateData = vi.mocked(prisma.transaction.update).mock.calls.at(-1)?.[0]?.data as Record<string, unknown>;
+    expect(updateData).toMatchObject({ alterationStatus: 'pending', notes: 'Hem 2 inches' });
+    expect(updateData).not.toHaveProperty('status');
+    expect(updateData).not.toHaveProperty('releasedById');
+    expect(updateData).not.toHaveProperty('releasePhoto');
+    expect(prisma.inventoryItem.update).not.toHaveBeenCalled();
+    expect(prisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'alteration_needed' }) })
+    );
+  });
+
+  it('re-holding a booking already pending fitting does not re-notify', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.notification.create).mockClear();
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-hold2', itemId: 1, customerId: 'customer-id-111',
+      rentalDate: new Date(PICKUP), dueDate: new Date(DUE),
+      rentalFee: 5000, totalPaid: 5000, balance: 0, status: 'Reserved',
+      alterationStatus: 'pending', assistedById: 'staff-id-456', releasedById: null,
+      item: { id: 1, name: 'Test Gown', status: 'Reserved' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-hold2/release')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ needsAlteration: true });
+
+    expect(res.status).toBe(200);
+    expect(prisma.notification.create).not.toHaveBeenCalled();
+  });
+
+  it('marking an alteration Ready notifies the customer once', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    const row = {
+      id: 'tx-ready', itemId: 1, status: 'Reserved', customerId: 'customer-id-111',
+      rentalDate: new Date(PICKUP), dueDate: new Date(DUE), notes: null,
+      item: { id: 1, name: 'Test Gown' },
+    };
+    prisma.transaction.findFirst.mockResolvedValue(null);
+
+    vi.mocked(prisma.notification.create).mockClear();
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...row, alterationStatus: 'pending' });
+    const res = await request(app)
+      .patch('/api/transactions/tx-ready')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ alterationStatus: 'ready' });
+    expect(res.status).toBe(200);
+    expect(prisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: 'alteration_ready' }) })
+    );
+
+    // Saving the form again while already Ready sends nothing.
+    vi.mocked(prisma.notification.create).mockClear();
+    prisma.transaction.findUnique.mockResolvedValueOnce({ ...row, alterationStatus: 'ready' });
+    const again = await request(app)
+      .patch('/api/transactions/tx-ready')
+      .set('Authorization', 'Bearer staff-token')
+      .send({ alterationStatus: 'ready' });
+    expect(again.status).toBe(200);
+    expect(prisma.notification.create).not.toHaveBeenCalled();
+  });
+
+  it('cancel refuses a rental already released to the customer', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    vi.mocked(prisma.transaction.update).mockClear();
+    prisma.transaction.findUnique.mockResolvedValueOnce({
+      id: 'tx-out', itemId: 1, customerId: 'customer-id-111', status: 'Active',
+      releasedById: 'staff-id-456', releasePhoto: 'rental/tx-out/release.jpg', conditionPhoto: null,
+      item: { id: 1, name: 'Test Gown', status: 'Rented' },
+    });
+
+    const res = await request(app)
+      .put('/api/transactions/tx-out/cancel')
+      .set('Authorization', 'Bearer staff-token');
+
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toMatch(/already released/i);
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
+  });
+
   it('release refuses when balance is outstanding', async () => {
     const { prisma } = await import('../src/config/database.js');
     prisma.transaction.findUnique.mockResolvedValueOnce({

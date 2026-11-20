@@ -360,7 +360,8 @@ export default function ItemForm({
       values.onSale = onSale;
       values.discountPct = discountPct === '' ? null : parseFloat(discountPct);
       values.salePrice = salePrice === '' ? null : parseFloat(salePrice);
-      values.saleEndsAt = saleEndsAt ? new Date(saleEndsAt).toISOString() : null;
+      // Date-only: the backend reads it as "runs through that day" (end of day, Manila).
+      values.saleEndsAt = saleEndsAt || null;
     }
     try {
       await onSubmit(values);

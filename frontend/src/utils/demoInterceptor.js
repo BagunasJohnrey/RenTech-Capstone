@@ -727,9 +727,15 @@ function route(method, path, body) {
   }
   if (P(/^\/transactions\/[0-9a-f-]+\/release$/) && method === 'PUT') {
     const t = transactions.find((x) => path.includes(x.id));
+    if (t && body.needsAlteration === true && t.status === 'Reserved') {
+      // Held for fitting (mirrors releaseRental): stays Reserved, no photo.
+      t.alterationStatus = 'pending';
+      return { value: clone(t) };
+    }
     if (t) {
       t.releasePhoto = body.releasePhoto ?? 'demo/release.jpg';
       if (!t.releasedById) { t.releasedById = 's-2'; t.releasedBy = { ...DEMO_RELEASED }; }
+      if (body.needsAlteration === false) t.alterationStatus = null;
     }
     return { value: clone(t ?? {}) };
   }
@@ -775,6 +781,9 @@ function route(method, path, body) {
   }
   if (P(/^\/transactions\/[0-9a-f-]+\/cancel$/) && method === 'PUT') {
     const t = transactions.find((x) => path.includes(x.id));
+    if (t && (t.releasedById || t.releasePhoto || t.conditionPhoto)) {
+      return { status: 400, error: 'This item was already released to the customer — process a return instead of cancelling' };
+    }
     if (t) t.status = 'Cancelled';
     return { value: clone(t ?? {}) };
   }

@@ -127,7 +127,15 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
   const [appliedItems, setAppliedItems] = useState(new Set());
   const [appliedVouchers, setAppliedVouchers] = useState(new Set());
   const [dismissedItems, setDismissedItems] = useState(new Set());
-  const [applyingKey, setApplyingKey] = useState(null);
+  // Per-card saving state: only the card being applied shows a spinner and
+  // is locked; the rest stay normal. '__all__' marks an Apply-all run.
+  const [applyingKeys, setApplyingKeys] = useState(() => new Set());
+  const markApplying = useCallback((key, on) => setApplyingKeys(prev => {
+    const next = new Set(prev);
+    if (on) next.add(key); else next.delete(key);
+    return next;
+  }), []);
+  const applyingAll = applyingKeys.has('__all__');
   const [expanded, setExpanded] = useState(new Set());
   const [salesFilter, setSalesFilter] = useState(null);
 
@@ -298,14 +306,16 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
 
   const handleApplyOne = async (s) => {
     if (!findItem(s)) { toastError(`"${s.itemName}" not found in inventory — it may have been removed.`); return; }
-    setApplyingKey(suggestionKey(s));
+    const key = suggestionKey(s);
+    if (applyingKeys.has(key)) return;
+    markApplying(key, true);
     try {
       await applySales([s]);
       toastSuccess(`${s.itemName} is now ${s.discountPct}% off`);
     } catch (err) {
       toastError(formatError(err));
     } finally {
-      setApplyingKey(null);
+      markApplying(key, false);
     }
   };
 
@@ -317,14 +327,17 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
       confirmLabel: 'Apply all',
     });
     if (!ok) return;
-    setApplyingKey('__all__');
+    // Skip cards already being applied one-by-one so nothing goes out twice.
+    const todo = unappliedItems.filter(s => !applyingKeys.has(suggestionKey(s)));
+    if (!todo.length) return;
+    markApplying('__all__', true);
     try {
-      const n = await applySales(unappliedItems);
+      const n = await applySales(todo);
       toastSuccess(`${n} item sale${n !== 1 ? 's' : ''} applied`);
     } catch (err) {
       toastError(formatError(err));
     } finally {
-      setApplyingKey(null);
+      markApplying('__all__', false);
     }
   };
 
@@ -545,9 +558,9 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
                     <span className="text-[11px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{pendingItems.length}</span>
                   </div>
                   {unappliedItems.length > 1 && (
-                    <button onClick={handleApplyAll} disabled={!!applyingKey}
+                    <button onClick={handleApplyAll} disabled={applyingAll}
                       className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl text-xs font-bold text-[#bf4a53] bg-rose-50 hover:bg-rose-100 transition-colors disabled:opacity-50">
-                      {applyingKey === '__all__' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                      {applyingAll ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                       Apply all {unappliedItems.length}
                     </button>
                   )}
@@ -560,6 +573,7 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
                     const price = item?.price || 0;
                     const salePrice = price * (1 - s.discountPct / 100);
                     const open = expanded.has('r-' + key);
+                    const isApplying = applyingKeys.has(key) || applyingAll;
                     return (
                       <article key={key} className={`bg-white rounded-3xl border p-4 flex flex-col transition-all ${isApplied ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-100/80 shadow-sm hover:shadow'}`}>
                         <div className="flex gap-3">
@@ -600,10 +614,10 @@ export default function PromotionsView({ inventory, onEditItem, onSalePatch }) {
                               {onEditItem && item && (
                                 <IconButton label="Adjust in item editor" onClick={() => handleEditFirst(s)}><Pencil size={15} /></IconButton>
                               )}
-                              <button onClick={() => handleApplyOne(s)} disabled={!item || !!applyingKey}
+                              <button onClick={() => handleApplyOne(s)} disabled={!item || isApplying}
                                 className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-xl text-xs font-bold text-white bg-gray-900 hover:bg-gray-800 transition-colors disabled:opacity-40">
-                                {applyingKey === key ? <Loader2 size={13} className="animate-spin" /> : <Tag size={13} />}
-                                Put on sale
+                                {isApplying ? <Loader2 size={13} className="animate-spin" /> : <Tag size={13} />}
+                                {isApplying ? 'Saving…' : 'Put on sale'}
                               </button>
                             </>
                           )}

@@ -13,6 +13,8 @@ import { useToast } from './Toast';
 import SwapItemModal from './SwapItemModal';
 import ManualQrPanel from './ManualQrPanel';
 import { qrPaymentUnresolved } from '../utils/txDisplayStatus';
+import { emitDataChanged } from '../utils/dataEvents';
+import { invalidateTxCache } from '../hooks/useTransactions';
 import Button from './ui/Button';
 
 export default function ReleaseItemModal({ transaction: initialTx, onClose, onReleased, onSwapItem }) {
@@ -25,7 +27,9 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   const [photoFile, setPhotoFile] = useState(null);
   const [photoUrl, setPhotoUrl] = useState('');
   const [notes, setNotes] = useState('');
-  const [needsAlteration, setNeedsAlteration] = useState(false);
+  // Starts ON when the booking is already waiting on a fitting, so staff
+  // consciously switch it off ("fits now") before the real release.
+  const [needsAlteration, setNeedsAlteration] = useState(initialTx?.alterationStatus === 'pending');
   // Ref guard: state alone can't block same-tick double-taps on Confirm
   // Release (duplicate release + duplicate payment records).
   const { guarding: releasing, guard: guardRelease } = useButtonGuard();
@@ -181,7 +185,47 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
     }
   };
 
+  // Before pickup, "Needs alteration" means the shop KEEPS the garment:
+  // no photo, no payment, booking stays Reserved (see releaseRental).
+  const holdForFitting = needsAlteration && tx.status === 'Reserved';
+
+  // Switching OFF on a booking that is already waiting on a fitting means
+  // "the fitting is done" — save that right away. Before, the switch only
+  // took effect on a full release (photo + payment), so closing the sheet
+  // left the booking "Alteration pending" and the switch came back on.
+  const [clearingAlteration, setClearingAlteration] = useState(false);
+  const handleAlterationToggle = async (checked) => {
+    setNeedsAlteration(checked);
+    if (checked || tx.alterationStatus !== 'pending') return;
+    setClearingAlteration(true);
+    setError('');
+    try {
+      await api.patch(`/transactions/${tx.id}`, { alterationStatus: null });
+      setTx((prev) => ({ ...prev, alterationStatus: null }));
+      invalidateTxCache(tx.id);
+      emitDataChanged({ source: 'alteration-cleared' });
+      toastSuccess('Alteration cleared');
+    } catch (err) {
+      setNeedsAlteration(true);
+      setError(err?.message || 'Could not clear the alteration');
+    } finally {
+      setClearingAlteration(false);
+    }
+  };
+
+  const handleHold = () => guardRelease(async () => {
+    setError('');
+    try {
+      const updated = await api.put(`/transactions/${tx.id}/release`, { notes, needsAlteration: true });
+      onReleased(updated);
+      onClose();
+    } catch (err) {
+      setError(err?.message || 'Failed to hold item for fitting');
+    }
+  });
+
   const handleRelease = () => {
+    if (holdForFitting) { handleHold(); return; }
     if (paymentUnverified) { setError("Verify the customer's QR payment proof first."); return; }
     if (!photoFile) { setError('Please capture the pre-rental condition photo'); return; }
     if (requiresPayment) {
@@ -330,7 +374,8 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 <input
                   type="checkbox"
                   checked={needsAlteration}
-                  onChange={(e) => setNeedsAlteration(e.target.checked)}
+                  disabled={clearingAlteration || releasing}
+                  onChange={(e) => handleAlterationToggle(e.target.checked)}
                   className="sr-only"
                 />
                 <div className={`w-10 h-6 rounded-full transition-colors ${needsAlteration ? 'bg-amber-500' : 'bg-gray-300'}`}>
@@ -342,7 +387,11 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                   <Scissors size={14} className="text-amber-600" /> Needs alteration
                 </p>
                 <p className="text-[11px] text-gray-500 mt-0.5">
-                  The garment doesn't fit — customer will need to come back for fitting before using it.
+                  {tx.status === 'Reserved'
+                    ? (needsAlteration
+                        ? 'The boutique keeps the garment for fitting. The booking stays reserved and the customer is notified. Release it here once the alteration is done.'
+                        : "The garment doesn't fit? Turn this on to keep it in the shop for alteration instead of releasing it.")
+                    : 'The garment needs fitting work — the customer will be asked to bring it back before using it.'}
                 </p>
               </div>
             </label>
@@ -360,7 +409,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
             </div>
           )}
 
-          {requiresPayment && !paymentUnverified && (
+          {requiresPayment && !paymentUnverified && !holdForFitting && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
               <div>
                 <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
@@ -480,13 +529,18 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 Cancel
               </Button>
               <Button variant="info" size="lg" onClick={handleRelease}
-                disabled={releasing || balanceLoading || paymentUnverified || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance))}>
-                {releasing ? 'Releasing...' : paymentUnverified ? 'Verify payment first' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Record payment first' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
+                disabled={holdForFitting ? releasing : (releasing || balanceLoading || paymentUnverified || !photoFile || (requiresPayment && (payChannel === 'online' || Number(payAmount) !== outstandingBalance)))}>
+                {holdForFitting ? (releasing ? 'Saving...' : 'Hold for fitting') : releasing ? 'Releasing...' : paymentUnverified ? 'Verify payment first' : !requiresPayment ? 'Confirm Release' : payChannel === 'online' ? 'Record payment first' : `Collect ₱${outstandingBalance.toLocaleString()} & Release`}
               </Button>
             </div>
             {/* Say WHY the release button is disabled instead of leaving staff
                 guessing that payment can't be taken here. */}
-            {!releasing && !photoFile && !paymentUnverified && (
+            {holdForFitting && !releasing && (
+              <p className="text-[11px] text-gray-500 text-center mt-2">
+                No photo or payment needed yet — the item stays in the shop.
+              </p>
+            )}
+            {!holdForFitting && !releasing && !photoFile && !paymentUnverified && (
               <p className="text-[11px] text-gray-500 text-center mt-2">
                 {requiresPayment
                   ? 'Take the condition photo to release — you can record the payment above now.'

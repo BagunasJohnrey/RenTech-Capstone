@@ -5,6 +5,7 @@ import ItemImage from './ItemImage';
 import { getSaleInfo } from './ItemCard';
 import FilterChip from './ui/FilterChip';
 import Pagination from './ui/Pagination';
+import BottomSheet from './BottomSheet';
 import { useToast } from './Toast';
 
 const PAGE_SIZE = 10;
@@ -28,6 +29,7 @@ export default function BulkSaleManager({ items = [], onSalePatch, filter = null
   const [salePrice, setSalePrice] = useState('');
   const [saleEndsAt, setSaleEndsAt] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saleOpen, setSaleOpen] = useState(false);
 
   const counts = useMemo(() => ({
     null: items.length,
@@ -88,10 +90,27 @@ export default function BulkSaleManager({ items = [], onSalePatch, filter = null
       { onSale: true, discountPct: pct, salePrice: price, saleEndsAt: saleEndsAt || null },
       n => `${n} item${n !== 1 ? 's' : ''} put on sale`,
     );
-    if (ok) { setDiscountPct(''); setSalePrice(''); setSaleEndsAt(''); }
+    if (ok) { setDiscountPct(''); setSalePrice(''); setSaleEndsAt(''); setSaleOpen(false); }
   };
 
-  const handleClearSale = () => runBulk({ onSale: false }, n => `Sale cleared from ${n} item${n !== 1 ? 's' : ''}`);
+  const handleClearSale = async () => {
+    const ok = await runBulk({ onSale: false }, n => `Sale cleared from ${n} item${n !== 1 ? 's' : ''}`);
+    if (ok) setSaleOpen(false);
+  };
+
+  const closeEditor = () => { if (!saving) setSaleOpen(false); };
+
+  const selectedItems = useMemo(() => items.filter(i => selected.has(i.id)), [items, selected]);
+  const anySelectedOnSale = selectedItems.some(i => getSaleInfo(i).active);
+  const previewItems = selectedItems.slice(0, 4);
+  // Mirrors getSaleInfo: a fixed price wins over the %.
+  const previewPrice = (item) => {
+    const price = salePrice !== '' ? parseFloat(salePrice) : null;
+    if (price > 0) return price;
+    const pct = discountPct !== '' ? parseFloat(discountPct) : null;
+    if (pct > 0 && pct < 100) return Math.round(item.price * (1 - pct / 100));
+    return null;
+  };
 
   const inputCls = 'w-full h-10 px-3 bg-white rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#bf4a53] focus:ring-2 focus:ring-[#bf4a53]/10';
 
@@ -125,7 +144,19 @@ export default function BulkSaleManager({ items = [], onSalePatch, filter = null
                 className="h-4 w-4 rounded accent-[#bf4a53]" />
               <span className="text-xs font-semibold text-gray-600">Select all {sorted.length}</span>
             </label>
-            <span className="text-[11px] text-gray-400">Least rented first</span>
+            {selected.size > 0 ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => setSelected(new Set())} className="text-[11px] font-semibold text-gray-500 hover:text-gray-800">
+                  Deselect ({selected.size})
+                </button>
+                <button onClick={() => setSaleOpen(true)}
+                  className="h-8 inline-flex items-center gap-1.5 px-3.5 rounded-full text-xs font-bold text-white bg-[#bf4a53] hover:bg-red-700 shadow-sm transition-colors">
+                  <Tag size={12} /> Set sale
+                </button>
+              </div>
+            ) : (
+              <span className="text-[11px] text-gray-400">Least rented first</span>
+            )}
           </div>
 
           <ul className="divide-y divide-gray-100">
@@ -183,43 +214,75 @@ export default function BulkSaleManager({ items = [], onSalePatch, filter = null
         </>
       )}
 
-      {/* Action bar — appears once something is selected */}
-      {selected.size > 0 && (
-        <div className="sticky bottom-24 md:bottom-6 z-30 px-3 md:px-4 pb-3 md:pb-4">
-          <div className="bg-gray-900 text-white rounded-2xl shadow-2xl shadow-gray-900/30 p-3 md:p-4 animate-in slide-in-from-bottom-2 fade-in duration-200">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <p className="text-sm font-bold">{selected.size} selected</p>
-              <button onClick={() => setSelected(new Set())} className="text-[11px] font-semibold text-white/60 hover:text-white">Deselect</button>
+      {saleOpen && selected.size > 0 && (
+        <BottomSheet onClose={closeEditor} labelledby="dialog-title-bulk-sale" z="z-[200]" maxWidth="sm:max-w-md" variant="dialog" backdropClass="bg-gray-900/50">
+          <div className="shrink-0 flex items-start justify-between gap-3 p-5 border-b border-gray-100">
+            <div className="min-w-0">
+              <h3 id="dialog-title-bulk-sale" className="font-bold text-gray-900 text-base">Set sale</h3>
+              <p className="text-xs text-gray-500 mt-0.5">{selected.size} item{selected.size !== 1 ? 's' : ''} selected</p>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-[1fr_1fr_1.2fr_auto_auto] gap-2 items-end text-gray-900">
+            <button onClick={closeEditor} aria-label="Close" className="p-2 -m-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100">
+              <X size={18} />
+            </button>
+          </div>
+
+          <div data-sheet-scroll className="flex-1 overflow-y-auto p-5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">% off</span>
-                <input type="number" min={0} max={100} value={discountPct} placeholder="20"
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">% off</span>
+                <input type="number" min={0} max={100} value={discountPct} placeholder="20" inputMode="numeric"
                   onChange={e => setDiscountPct(e.target.value === '' ? '' : Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
                   className={`${inputCls} mt-1`} />
               </label>
               <label className="block">
-                <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">or fixed ₱</span>
-                <input type="number" min={0} step="0.01" value={salePrice} placeholder="Optional"
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Or fixed price (₱)</span>
+                <input type="number" min={0} step="0.01" value={salePrice} placeholder="Optional" inputMode="decimal"
                   onChange={e => setSalePrice(e.target.value)} className={`${inputCls} mt-1`} />
               </label>
-              <label className="block col-span-2 md:col-span-1">
-                <span className="text-[10px] font-bold text-white/50 uppercase tracking-wider">Ends</span>
+              <label className="block col-span-2">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Ends (optional)</span>
                 <input type="date" value={saleEndsAt} onChange={e => setSaleEndsAt(e.target.value)} className={`${inputCls} mt-1`} />
               </label>
+            </div>
+            <p className="text-[11px] text-gray-400">A fixed price overrides the %. Leave “Ends” empty to run until cleared.</p>
+
+            {/* Live preview of what customers will see */}
+            <div className="rounded-2xl border border-gray-100 bg-gray-50/70 divide-y divide-gray-100">
+              {previewItems.map(item => {
+                const next = previewPrice(item);
+                return (
+                  <div key={item.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="text-xs font-medium text-gray-700 truncate">{item.name}</span>
+                    <span className="text-xs tabular-nums shrink-0">
+                      {next != null && next < item.price ? (
+                        <><span className="text-gray-400 line-through mr-1.5">{peso(item.price)}</span><span className="font-bold text-[#bf4a53]">{peso(next)}</span></>
+                      ) : (
+                        <span className="text-gray-500">{peso(item.price)}</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+              {selected.size > previewItems.length && (
+                <p className="px-3 py-2 text-[11px] text-gray-400">+{selected.size - previewItems.length} more</p>
+              )}
+            </div>
+          </div>
+
+          <div className="shrink-0 flex gap-2 p-4 border-t border-gray-100 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            {anySelectedOnSale && (
               <button onClick={handleClearSale} disabled={saving}
-                className="h-10 inline-flex items-center justify-center gap-1.5 px-4 rounded-xl text-xs font-bold text-white bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-50">
+                className="h-11 inline-flex items-center justify-center gap-1.5 px-4 rounded-xl text-xs font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors disabled:opacity-50">
                 <X size={13} /> Clear sale
               </button>
-              <button onClick={handleApply} disabled={saving}
-                className="h-10 inline-flex items-center justify-center gap-1.5 px-5 rounded-xl text-xs font-bold text-white bg-[#bf4a53] hover:bg-red-700 transition-colors disabled:opacity-50">
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <Tag size={13} />}
-                {saving ? 'Saving…' : 'Put on sale'}
-              </button>
-            </div>
-            <p className="text-[11px] text-white/40 mt-2">A fixed price overrides the %. Leave “Ends” empty to run until cleared.</p>
+            )}
+            <button onClick={handleApply} disabled={saving}
+              className="flex-1 h-11 inline-flex items-center justify-center gap-1.5 px-5 rounded-xl text-sm font-bold text-white bg-[#bf4a53] hover:bg-red-700 transition-colors disabled:opacity-50">
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Tag size={14} />}
+              {saving ? 'Saving…' : 'Put on sale'}
+            </button>
           </div>
-        </div>
+        </BottomSheet>
       )}
     </div>
   );

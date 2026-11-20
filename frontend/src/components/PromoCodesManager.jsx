@@ -5,11 +5,12 @@ import { api } from '../utils/api';
 import { SkeletonList } from '../components/Skeleton';
 import { promoDiscountLabel, promoTermsLabel } from '../utils/promoLabel';
 import { useConfirm } from '../hooks/useConfirm';
+import { ITEM_TYPES } from './settings/constants';
 
 const EMPTY_FORM = {
   code: '', discountType: 'pct', discountPct: 10, discountAmount: '', maxDiscount: '',
   minSpend: '', startsAt: '', maxUsesPerCustomer: '', firstBookingOnly: false,
-  appliesToCategories: '', maxUses: '', expiresAt: '',
+  appliesToCategories: [], maxUses: '', expiresAt: '',
 };
 
 export default function PromoCodesManager({ initialForm, onClearInitialForm, onCodesChange }) {
@@ -47,10 +48,7 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
     e.preventDefault();
     try {
       const isAmount = form.discountType === 'amount';
-      const categories = String(form.appliesToCategories || '')
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean);
+      const categories = form.appliesToCategories || [];
       await api.post('/promo-codes', {
         code: form.code,
         discountPct: isAmount ? undefined : Number(form.discountPct),
@@ -72,6 +70,13 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
     } catch (err) { setMsg(err.message || 'Failed to create'); }
     setTimeout(() => setMsg(''), 2500);
   };
+
+  const toggleCategory = (cat) => setForm((f) => ({
+    ...f,
+    appliesToCategories: f.appliesToCategories.includes(cat)
+      ? f.appliesToCategories.filter((c) => c !== cat)
+      : [...f.appliesToCategories, cat],
+  }));
 
   const handleDelete = async (id) => {
     if (!(await confirm({ title: 'Delete promo code?', message: 'Customers will no longer be able to use this code.', variant: 'danger', confirmLabel: 'Delete' }))) return;
@@ -189,10 +194,32 @@ export default function PromoCodesManager({ initialForm, onClearInitialForm, onC
                 className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
             </div>
             <div className="sm:col-span-2">
-              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">Only these categories (blank = all)</label>
-              <input type="text" value={form.appliesToCategories} onChange={e => setForm({ ...form, appliesToCategories: e.target.value })}
-                placeholder="Gown, Debut" maxLength={120}
-                className="w-full p-2.5 bg-white rounded-xl border border-gray-200/80 text-sm focus:outline-none focus:border-emerald-400" />
+              <label className="text-[10px] font-bold text-gray-400 uppercase mb-1.5 block">Applies to</label>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => setForm({ ...form, appliesToCategories: [] })}
+                  aria-pressed={form.appliesToCategories.length === 0}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+                    form.appliesToCategories.length === 0 ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-emerald-300'
+                  }`}>
+                  All outfits
+                </button>
+                {ITEM_TYPES.map((cat) => {
+                  const on = form.appliesToCategories.includes(cat);
+                  return (
+                    <button key={cat} type="button" onClick={() => toggleCategory(cat)} aria-pressed={on}
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+                        on ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-emerald-300'
+                      }`}>
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1.5">
+                {form.appliesToCategories.length === 0
+                  ? 'Code works on every outfit.'
+                  : `Code only works on ${form.appliesToCategories.join(', ')}.`}
+              </p>
             </div>
             <label className="sm:col-span-2 flex items-center gap-2 cursor-pointer select-none">
               <input type="checkbox" checked={form.firstBookingOnly} onChange={e => setForm({ ...form, firstBookingOnly: e.target.checked })}
