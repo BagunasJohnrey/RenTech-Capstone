@@ -15,6 +15,7 @@ export const DISPLAY_STATUS_STYLE = {
   'Payment pending': 'bg-amber-50 text-amber-700',
   'Due today': 'bg-orange-50 text-orange-700',
   'Pickup today': 'bg-violet-50 text-violet-700',
+  'No-show pickup': 'bg-red-50 text-red-700',
   'Alteration ready': 'bg-emerald-50 text-emerald-600',
   'Alteration pending': 'bg-amber-50 text-amber-600',
   Active: pill(TX_STATUS_PILLS.Active.bg, TX_STATUS_PILLS.Active.text),
@@ -26,11 +27,12 @@ export const DISPLAY_STATUS_STYLE = {
 // Lower = more urgent. Used for the default "priority" sort.
 const RANK = {
   Overdue: 0,
-  'Payment pending': 1,
-  'Due today': 2,
-  'Pickup today': 3,
-  'Alteration ready': 4,
-  'Alteration pending': 5,
+  'No-show pickup': 1,
+  'Payment pending': 2,
+  'Due today': 3,
+  'Pickup today': 4,
+  'Alteration ready': 5,
+  'Alteration pending': 6,
 };
 
 // The states that make up the "Priority" filter: something needs doing now.
@@ -48,6 +50,7 @@ export function displayStatus(tx, today = todayYmd()) {
   let label = s || '—';
   if (s === 'Overdue') label = 'Overdue';
   else if (isOpen(s) && qrPaymentUnresolved(tx)) label = 'Payment pending';
+  else if (s === 'Reserved' && tx.rentalDate && toLocalYmd(tx.rentalDate) < today) label = 'No-show pickup';
   else if (s === 'Active' && tx.dueDate && toLocalYmd(tx.dueDate) === today) label = 'Due today';
   else if (s === 'Reserved' && tx.rentalDate && toLocalYmd(tx.rentalDate) === today) label = 'Pickup today';
   else if (isOpen(s) && tx.alterationStatus) label = tx.alterationStatus === 'ready' ? 'Alteration ready' : 'Alteration pending';

@@ -108,6 +108,23 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
     (tx?.paymentPath === 'manual' || tx?.gateway === 'manual') &&
     Number(tx?.totalPaid || 0) < Number(tx?.downpayment || 0);
 
+  // Release button logic (same as HistoryView):
+  // - Show when rentalDate is today (scheduled for pickup today)
+  // - Also show for no-show: Reserved with rentalDate in the past
+  // - Don't show for future pickups or already released items
+  const canRelease = (tx) => {
+    if (isReleased(tx) || qrPaymentUnresolved(tx)) return false;
+    if (tx.status !== 'Active' && tx.status !== 'Reserved') return false;
+    const rentalDate = tx.rentalDate ? new Date(tx.rentalDate) : null;
+    if (!rentalDate) return false;
+    rentalDate.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isToday = rentalDate.getTime() === today.getTime();
+    const isNoShow = tx.status === 'Reserved' && rentalDate.getTime() < today.getTime();
+    return isToday || isNoShow;
+  };
+
   // Ready for Pickup + Overdue queues paint from the digest rows first
   // (fast), then the full list takes over when it lands. Both shapes are
   // FULL records, so the merge is seamless.
@@ -537,7 +554,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                     </div>
                   ))}
                 </div>
-                <button onClick={() => goHistoryFiltered('Pickup Due')}
+                <button onClick={() => goHistoryFiltered('Reserved')}
                   className="mt-3 w-full py-2.5 text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors">
                   View All ({pendingPickup.length})
                 </button>
@@ -706,7 +723,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                               <IconButton label="Send SMS" onClick={(e) => { e.stopPropagation(); openSmsModal(tx); }}>
                                 <MessageCircle size={16} />
                               </IconButton>
-                              {!isReleased(tx) && (tx.status === 'Active' || tx.status === 'Reserved') && !qrPaymentUnresolved(tx) && (
+                              {canRelease(tx) && (
                                 <IconButton label="Release item" className="!text-blue-600 hover:!bg-blue-50" onClick={(e) => { e.stopPropagation(); setReleaseTx(tx); }}>
                                   <Package size={16} />
                                 </IconButton>
