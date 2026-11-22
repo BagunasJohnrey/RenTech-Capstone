@@ -97,6 +97,45 @@ export async function submitProof(
   };
 }
 
+const REVIEWED_WHERE = { status: { in: ['approved', 'rejected'] } };
+const REVIEWED_SELECT = {
+  id: true,
+  status: true,
+  amount: true,
+  reference: true,
+  channel: true,
+  imagePath: true,
+  rejectionReason: true,
+  reviewedAt: true,
+  createdAt: true,
+  reviewedBy: { select: { id: true, name: true } },
+  transaction: {
+    select: {
+      id: true, txNumber: true, status: true, downpayment: true, totalPaid: true, balance: true,
+      rentalDate: true, dueDate: true,
+      item: { select: { name: true } },
+      customer: { select: { id: true, name: true, phone: true, address: true } },
+    },
+  },
+} as const;
+
+// Paged staff history (approved/rejected proofs, newest first). The queue
+// above only carries the newest `take` rows, so older reviews live here.
+export async function listReviewedProofs(page = 1, pageSize = 10) {
+  const size = Math.min(Math.max(Math.floor(Number(pageSize)) || 10, 1), 50);
+  const total = await prisma.paymentProof.count({ where: REVIEWED_WHERE });
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  const safePage = Math.min(Math.max(Math.floor(Number(page)) || 1, 1), totalPages);
+  const rows = await prisma.paymentProof.findMany({
+    where: REVIEWED_WHERE,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    skip: (safePage - 1) * size,
+    take: size,
+    select: REVIEWED_SELECT,
+  });
+  return { reviewed: rows, total, page: safePage, pageSize: size, totalPages };
+}
+
 export async function listProofQueue(limit = 50) {
   const take = Math.min(Math.max(Number(limit) || 50, 1), 200);
   // Same TTL cache as the today-digest: the Tasks page reads this on every
@@ -128,31 +167,12 @@ async function listProofQueueUncached(take: number) {
     prisma.paymentProof.count({ where: { status: 'pending' } }),
     // Reviewed proofs are terminal (approved/rejected) — the staff history tab.
     prisma.paymentProof.findMany({
-      where: { status: { in: ['approved', 'rejected'] } },
+      where: REVIEWED_WHERE,
       orderBy: { createdAt: 'desc' },
       take,
-      select: {
-        id: true,
-        status: true,
-        amount: true,
-        reference: true,
-        channel: true,
-        imagePath: true,
-        rejectionReason: true,
-        reviewedAt: true,
-        createdAt: true,
-        reviewedBy: { select: { id: true, name: true } },
-        transaction: {
-          select: {
-            id: true, txNumber: true, status: true, downpayment: true, totalPaid: true, balance: true,
-            rentalDate: true, dueDate: true,
-            item: { select: { name: true } },
-            customer: { select: { id: true, name: true, phone: true, address: true } },
-          },
-        },
-      },
+      select: REVIEWED_SELECT,
     }),
-    prisma.paymentProof.count({ where: { status: { in: ['approved', 'rejected'] } } }),
+    prisma.paymentProof.count({ where: REVIEWED_WHERE }),
     prisma.transaction.findMany({
       where: { paymentPath: 'manual', status: { in: ['Active', 'Reserved'] } },
       // Soonest pickup first — the chase list exists to unblock releases.

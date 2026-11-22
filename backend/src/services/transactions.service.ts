@@ -727,13 +727,13 @@ export async function processReturn(
 export async function updateTransaction(
   transactionId: string,
   performedById: string,
-  patch: { rentalDate?: string; dueDate?: string; notes?: string; alterationStatus?: 'pending' | 'ready' | null }
+  patch: { rentalDate?: string; dueDate?: string; notes?: string; alterationStatus?: 'pending' | 'ready' | null; measurementNotes?: string | null }
 ) {
   const existing = await prisma.transaction.findUnique({
     where: { id: transactionId },
     select: {
       id: true, itemId: true, status: true, rentalDate: true, dueDate: true, notes: true,
-      alterationStatus: true, customerId: true, item: { select: { id: true, name: true } },
+      alterationStatus: true, measurements: true, customerId: true, item: { select: { id: true, name: true } },
     },
   });
   if (!existing) throw new AppError(404, 'Transaction not found');
@@ -778,6 +778,11 @@ export async function updateTransaction(
           dueDate: nextDue,
           notes: patch.notes !== undefined ? patch.notes : existing.notes,
           ...(patch.alterationStatus !== undefined ? { alterationStatus: patch.alterationStatus } : {}),
+          // Measurement notes are one free-text field stored as { notes };
+          // empty text removes them.
+          ...(patch.measurementNotes !== undefined
+            ? { measurements: patch.measurementNotes && patch.measurementNotes.trim() ? { notes: patch.measurementNotes.trim() } : Prisma.DbNull }
+            : {}),
         },
         include: {
           customer: { select: { id: true, name: true, email: true } },
@@ -798,8 +803,8 @@ export async function updateTransaction(
     entity: 'transaction',
     entityId: transactionId,
     performedById,
-    oldValue: { rentalDate: existing.rentalDate, dueDate: existing.dueDate, notes: existing.notes, alterationStatus: existing.alterationStatus ?? null },
-    newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes, alterationStatus: (updated as { alterationStatus?: string | null }).alterationStatus ?? null },
+    oldValue: { rentalDate: existing.rentalDate, dueDate: existing.dueDate, notes: existing.notes, alterationStatus: existing.alterationStatus ?? null, measurements: existing.measurements ?? null },
+    newValue: { rentalDate: nextRental, dueDate: nextDue, notes: updated.notes, alterationStatus: (updated as { alterationStatus?: string | null }).alterationStatus ?? null, measurements: (updated as { measurements?: unknown }).measurements ?? null },
   });
 
   // Staff moved the dates (e.g. alteration running late) — tell the customer
@@ -1203,12 +1208,20 @@ export async function releaseRental(
   processedById: string,
   releasePhoto?: string,
   notes?: string,
-  needsAlteration?: boolean
+  needsAlteration?: boolean,
+  measurementNotes?: string | null
 ) {
   const tx = await prisma.transaction.findUnique({
     where: { id: transactionId },
     include: { item: true },
   });
+
+  // Measurement notes (one free-text field, stored as { notes }) are only
+  // written while flagging an alteration. Omitted = leave measurements alone;
+  // empty text = clear them.
+  const measurementsPatch = needsAlteration === true && measurementNotes !== undefined
+    ? { measurements: measurementNotes && measurementNotes.trim() ? { notes: measurementNotes.trim() } : Prisma.DbNull }
+    : {};
 
   if (!tx) throw new AppError(404, 'Transaction not found');
   if (tx.status === TransactionStatus.Returned) throw new AppError(400, 'Transaction already returned');
@@ -1228,6 +1241,7 @@ export async function releaseRental(
         alterationStatus: 'pending',
         notes: notes ? notes : undefined,
         processedById,
+        ...measurementsPatch,
       },
       include: {
         assistedBy: { select: { id: true, name: true } },
@@ -1244,8 +1258,8 @@ export async function releaseRental(
         entity: 'transaction',
         entityId: transactionId,
         performedById: processedById,
-        oldValue: { alterationStatus: tx.alterationStatus ?? null },
-        newValue: { alterationStatus: 'pending', heldForFitting: true },
+        oldValue: { alterationStatus: tx.alterationStatus ?? null, measurements: tx.measurements ?? null },
+        newValue: { alterationStatus: 'pending', heldForFitting: true, measurements: held.measurements ?? null },
       });
       try {
         await createNotification({
@@ -1301,6 +1315,7 @@ export async function releaseRental(
       // wins) so a re-release can't rewrite history; assistedBy is untouched.
       ...(tx.releasedById ? {} : { releasedById: processedById }),
       ...alterationPatch,
+      ...measurementsPatch,
     },
     include: {
       assistedBy: { select: { id: true, name: true } },

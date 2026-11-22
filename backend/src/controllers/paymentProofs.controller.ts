@@ -50,6 +50,15 @@ export async function listProofs(req: AuthenticatedRequest, res: Response, next:
   }
 }
 
+// Paged History tab: GET /payments/proofs/history?page=2&pageSize=10
+export async function listProofHistory(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    res.json(await paymentProofsService.listReviewedProofs(Number(req.query.page) || 1, Number(req.query.pageSize) || 10));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function approveProof(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   try {
     if (!req.user) throw new AppError(401, 'Not authenticated');

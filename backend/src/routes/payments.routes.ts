@@ -8,6 +8,7 @@ import * as paymentProofsController from '../controllers/paymentProofs.controlle
 const router = Router();
 
 router.get('/proofs', authMiddleware, requireRole(Role.Admin, Role.Staff), paymentProofsController.listProofs);
+router.get('/proofs/history', authMiddleware, requireRole(Role.Admin, Role.Staff), paymentProofsController.listProofHistory);
 router.post('/proofs/:id/approve', authMiddleware, requireRole(Role.Admin, Role.Staff), validate(paymentProofsController.approveProofSchema), paymentProofsController.approveProof);
 router.post('/proofs/:id/reject', authMiddleware, requireRole(Role.Admin, Role.Staff), validate(paymentProofsController.rejectProofSchema), paymentProofsController.rejectProof);
 

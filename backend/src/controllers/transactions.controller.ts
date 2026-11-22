@@ -252,6 +252,9 @@ export const releaseSchema = z.object({
     releasePhoto: z.string().optional(),
     notes: z.string().optional(),
     needsAlteration: z.boolean().optional(),
+    // Tailor's measurement notes typed in the release sheet when the garment
+    // needs alteration ("Bust 34, take in waist 1 in").
+    measurementNotes: z.string().max(500).nullable().optional(),
   }),
 });
 
@@ -261,8 +264,10 @@ export const updateTransactionSchema = z.object({
     dueDate: z.string().optional(),
     notes: z.string().optional(),
     alterationStatus: z.enum(['pending', 'ready']).nullable().optional(),
-  }).refine((d) => d.rentalDate || d.dueDate || d.notes !== undefined || d.alterationStatus !== undefined, {
-    message: 'At least one of rentalDate, dueDate, notes, or alterationStatus must be provided',
+    // Free-text measurement notes for an alteration ("Bust 34, take in waist 1 in").
+    measurementNotes: z.string().max(500).nullable().optional(),
+  }).refine((d) => d.rentalDate || d.dueDate || d.notes !== undefined || d.alterationStatus !== undefined || d.measurementNotes !== undefined, {
+    message: 'At least one of rentalDate, dueDate, notes, alterationStatus, or measurementNotes must be provided',
   }),
 });
 
@@ -272,7 +277,7 @@ export async function updateTransaction(req: AuthenticatedRequest, res: Response
     const updated = await transactionService.updateTransaction(
       String(req.params.id),
       req.user.id,
-      { rentalDate: req.body.rentalDate, dueDate: req.body.dueDate, notes: req.body.notes, alterationStatus: req.body.alterationStatus }
+      { rentalDate: req.body.rentalDate, dueDate: req.body.dueDate, notes: req.body.notes, alterationStatus: req.body.alterationStatus, measurementNotes: req.body.measurementNotes }
     );
     res.json(updated);
   } catch (err) {
@@ -311,7 +316,8 @@ export async function releaseRental(req: AuthenticatedRequest, res: Response, ne
       req.user.id,
       req.body.releasePhoto ?? req.body.conditionPhoto,
       req.body.notes,
-      req.body.needsAlteration
+      req.body.needsAlteration,
+      req.body.measurementNotes
     );
     res.json(result);
   } catch (err) {

@@ -9,6 +9,7 @@ export const paymentsService = {
   // Customer's own QR proof history (pending / approved / rejected).
   myProofs: (limit) => api.get(`/bookings/payment-proofs${limit ? `?limit=${limit}` : ''}`),
   listProofs: (limit) => api.get(`/payments/proofs${limit ? `?limit=${limit}` : ''}`),
+  proofHistory: (page = 1, pageSize = 10) => api.get(`/payments/proofs/history?page=${page}&pageSize=${pageSize}`),
   approveProof: (proofId, amount) => api.post(`/payments/proofs/${proofId}/approve`, amount != null ? { amount } : {}),
   rejectProof: (proofId, reason) => api.post(`/payments/proofs/${proofId}/reject`, { reason }),
 };

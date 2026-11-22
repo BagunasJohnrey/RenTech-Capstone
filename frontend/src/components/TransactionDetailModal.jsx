@@ -854,6 +854,9 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                 <span className="text-xs font-bold uppercase tracking-wide">Measurements</span>
               </div>
               <div className="bg-white border border-gray-100/80 rounded-2xl p-4">
+                {typeof tx.measurements.notes === 'string' ? (
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{tx.measurements.notes}</p>
+                ) : (
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                   {Object.entries(tx.measurements).map(([key, val]) => (
                     <div key={key} className="flex justify-between text-sm">
@@ -862,6 +865,7 @@ export default function TransactionDetailModal({ transaction, onClose, fetchFull
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             </div>
           )}

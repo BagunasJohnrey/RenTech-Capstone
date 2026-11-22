@@ -9,6 +9,10 @@ import { customerLabel, customerPhone, itemLabel } from '../utils/format';
 import { peso } from '../utils/receipt';
 import { usePaymentProofs } from '../hooks/usePaymentProofs';
 import { api } from '../utils/api';
+import { paymentsService } from '../services';
+import Pagination from './ui/Pagination';
+
+const HISTORY_PAGE_SIZE = 10;
 
 const fmtDateTime = (iso) => {
   const d = new Date(iso);
@@ -50,8 +54,41 @@ export default function PaymentProofsQueue({ role, onChanged, onSendSms }) {
 
   const pending = data?.pending ?? [];
   const awaiting = data?.awaiting ?? [];
-  const reviewed = data?.reviewed ?? [];
-  const counts = data?.counts ?? { pending: pending.length, awaiting: awaiting.length, reviewed: reviewed.length };
+  const queueReviewed = data?.reviewed ?? [];
+  const counts = data?.counts ?? { pending: pending.length, awaiting: awaiting.length, reviewed: queueReviewed.length };
+
+  // History is paged from the server (the queue only carries the newest 50).
+  // Until a page arrives, page 1 paints instantly from the queue's rows.
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyData, setHistoryData] = useState(null); // { reviewed, page, totalPages, total }
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyReload, setHistoryReload] = useState(0);
+  useEffect(() => {
+    if (!enabled || tab !== 'history') return undefined;
+    let active = true;
+    setHistoryLoading(true);
+    setHistoryError('');
+    paymentsService.proofHistory(historyPage, HISTORY_PAGE_SIZE)
+      .then((res) => {
+        if (!active) return;
+        setHistoryData(res);
+        if (res?.page && res.page !== historyPage) setHistoryPage(res.page);
+      })
+      .catch((err) => { if (active) setHistoryError(err?.message || "Couldn't load this page"); })
+      .finally(() => { if (active) setHistoryLoading(false); });
+    return () => { active = false; };
+    // `data` changes after an approve/reject refresh — refetch the page then too.
+  }, [enabled, tab, historyPage, data, historyReload]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pageReady = !!historyData && historyData.page === historyPage;
+  // While the next page loads, the previous one stays on screen (dimmed).
+  const reviewed = historyData
+    ? historyData.reviewed ?? []
+    : queueReviewed.slice(0, HISTORY_PAGE_SIZE);
+  const historyTotal = historyData?.total ?? counts.reviewed;
+  const historyTotalPages = historyData?.totalPages ?? Math.max(1, Math.ceil(historyTotal / HISTORY_PAGE_SIZE));
+  const goToHistoryPage = (p) => setHistoryPage(Math.min(Math.max(1, p), historyTotalPages));
   const total = counts.pending + counts.awaiting;
   // No queue has ever loaded — the count is unknown, not zero. Never render a
   // "0" (or "All clear") here: a first-load failure must not look like an
@@ -253,7 +290,24 @@ export default function PaymentProofsQueue({ role, onChanged, onSendSms }) {
           </div>
         )
       ) : (
-        reviewed.length === 0 ? (
+        historyError && !pageReady && reviewed.length === 0 ? (
+          <div className="text-center py-8" role="alert">
+            <p className="text-sm font-bold text-gray-700">{historyError}</p>
+            <button
+              type="button"
+              onClick={() => setHistoryReload((n) => n + 1)}
+              className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-[#bf4a53] hover:bg-[#a83f47] rounded-full px-3.5 py-2 transition-colors shadow-sm"
+            >
+              <RefreshCw size={12} /> Retry
+            </button>
+          </div>
+        ) : historyLoading && reviewed.length === 0 ? (
+          <div className="space-y-2" aria-label="Loading history">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="animate-pulse bg-gray-100 rounded-2xl h-16" />
+            ))}
+          </div>
+        ) : reviewed.length === 0 ? (
           <div className="text-center py-8">
             <div className="w-10 h-10 rounded-2xl bg-gray-100 text-gray-400 flex items-center justify-center mx-auto mb-2">
               <ShieldCheck size={18} />
@@ -262,7 +316,7 @@ export default function PaymentProofsQueue({ role, onChanged, onSendSms }) {
             <p className="text-xs text-gray-400 mt-0.5">Approved and rejected proofs will be listed here.</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className={`space-y-2 transition-opacity ${historyLoading && !pageReady ? 'opacity-60' : ''}`}>
             {reviewed.map((p) => {
               const tx = p.transaction;
               const approved = p.status === 'approved';
@@ -314,6 +368,13 @@ export default function PaymentProofsQueue({ role, onChanged, onSendSms }) {
                 </button>
               );
             })}
+            <Pagination
+              className="pt-2"
+              page={historyPage}
+              totalPages={historyTotalPages}
+              onPageChange={goToHistoryPage}
+              summary={`${historyTotal} reviewed`}
+            />
           </div>
         )
       )}

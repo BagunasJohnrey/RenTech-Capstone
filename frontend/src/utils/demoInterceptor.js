@@ -488,7 +488,7 @@ function demoEligible(fee, category) {
 
 // Returns { match, handle } where handle(body) produces the response.
 
-function route(method, path, body) {
+function route(method, path, body, query = '') {
   const role = getDemoRole();
   const P = (re) => {
     const m = path.match(re);
@@ -727,6 +727,11 @@ function route(method, path, body) {
   }
   if (P(/^\/transactions\/[0-9a-f-]+\/release$/) && method === 'PUT') {
     const t = transactions.find((x) => path.includes(x.id));
+    // Measurement notes typed while flagging an alteration (mirrors releaseRental).
+    if (t && body.needsAlteration === true && body.measurementNotes !== undefined) {
+      const text = String(body.measurementNotes ?? '').trim();
+      t.measurements = text ? { notes: text } : null;
+    }
     if (t && body.needsAlteration === true && t.status === 'Reserved') {
       // Held for fitting (mirrors releaseRental): stays Reserved, no photo.
       t.alterationStatus = 'pending';
@@ -988,6 +993,32 @@ function route(method, path, body) {
     return { value: { promoCodeId: 'demo-' + v.code, code: v.code, discountPct: v.discountPct, discountAmount: v.savings, finalFee: v.finalFee } };
   }
   if (P(/^\/promo-codes/)) return { value: [] };
+  if (P(/^\/payments\/proofs\/history/) && method === 'GET') {
+    // Mirrors listReviewedProofs: approved/rejected, newest first, paged.
+    const qs = new URLSearchParams(query);
+    const size = Math.min(Math.max(Number(qs.get('pageSize')) || 10, 1), 50);
+    const all = paymentProofs
+      .filter((p) => p.status === 'approved' || p.status === 'rejected')
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const totalPages = Math.max(1, Math.ceil(all.length / size));
+    const page = Math.min(Math.max(Number(qs.get('page')) || 1, 1), totalPages);
+    const reviewed = all.slice((page - 1) * size, page * size).map((p) => {
+      const t = transactions.find((x) => x.id === p.transactionId);
+      return {
+        ...clone(p),
+        reviewedBy: p.reviewedBy ?? { id: 'demo-admin-profile', name: 'Mylene (Demo Admin)' },
+        transaction: t ? {
+          id: t.id, txNumber: t.txNumber, status: t.status,
+          downpayment: t.downpayment, totalPaid: t.totalPaid,
+          balance: t.balance ?? Math.max(0, (t.rentalFee ?? 0) - (t.totalPaid ?? 0)),
+          rentalDate: t.rentalDate, dueDate: t.dueDate,
+          item: t.item ? { name: t.item.name } : null,
+          customer: t.customer,
+        } : null,
+      };
+    });
+    return { value: { reviewed, total: all.length, page, pageSize: size, totalPages } };
+  }
   if (P(/^\/payments\/proofs$/) && method === 'GET') {
     const pending = paymentProofs
       .filter((p) => p.status === 'pending')
@@ -1244,7 +1275,7 @@ export async function demoRequest(method, path, body) {
     await new Promise((r) => setTimeout(r, 120));
     return clone(weeklyForecast());
   }
-  const result = route(method.toUpperCase(), path.split('?')[0], body ?? {});
+  const result = route(method.toUpperCase(), path.split('?')[0], body ?? {}, path.split('?')[1] || '');
   await new Promise((r) => setTimeout(r, 120)); // small latency so loaders show
   if (result && result.status && result.status >= 400) {
     const err = new Error(result.error || `Demo request failed (${result.status})`);

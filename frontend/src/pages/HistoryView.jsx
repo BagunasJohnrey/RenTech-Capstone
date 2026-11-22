@@ -386,11 +386,16 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   const inPriorityView = (tx) =>
     displayStatus(tx).priority || (priorityExpanded && isOpenTx(tx));
   statusCounts.Priority = searchDateFiltered.filter(inPriorityView).length;
+  // Searching looks through EVERY transaction: the Priority default would
+  // hide returned/cancelled matches, so it counts as "All" while a search is
+  // typed. A status picked on purpose (Returned, Active…) still applies.
+  const isSearching = searchQuery.trim() !== '';
+  const effectiveStatusFilter = isSearching && activeStatusFilter === 'Priority' ? 'All' : activeStatusFilter;
   const filteredTransactions = searchDateFiltered
     .filter((tx) => {
-      if (activeStatusFilter === 'Priority') return inPriorityView(tx);
-      if (activeStatusFilter !== 'All') {
-        return tx.status === activeStatusFilter;
+      if (effectiveStatusFilter === 'Priority') return inPriorityView(tx);
+      if (effectiveStatusFilter !== 'All') {
+        return tx.status === effectiveStatusFilter;
       }
       return true;
     })
@@ -524,7 +529,12 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
 
         {/* Priority is the staff default, so say so even with the filter
             panel closed, with a one-tap way to the full list and back. */}
-        {isStaff && (activeStatusFilter === 'Priority' || activeStatusFilter === 'All') && (
+        {isStaff && isSearching && activeStatusFilter === 'Priority' && (
+          <div className="text-xs text-gray-500 px-1">
+            Searching all transactions — priority view resumes when you clear the search.
+          </div>
+        )}
+        {isStaff && !(isSearching && activeStatusFilter === 'Priority') && (activeStatusFilter === 'Priority' || activeStatusFilter === 'All') && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 px-1">
             <span>
               {activeStatusFilter !== 'Priority'
@@ -548,8 +558,8 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
             {/* Status pills */}
             <div className="px-4 py-3 border-b border-gray-50">
               <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar">
-                {statusOptions.map(s => {
-                  const active = activeStatusFilter === s;
+                {statusOptions.filter((s) => !(isSearching && s === 'Priority')).map(s => {
+                  const active = effectiveStatusFilter === s;
                   const count = s === 'All' ? searchDateFiltered.length : (statusCounts[s] || 0);
                   return (
                     <FilterChip key={s} active={active} count={count} className="shrink-0"

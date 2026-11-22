@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import RequiredMark from './ui/RequiredMark';
 import { X, Camera, Package, User, Calendar, Scissors, Banknote, Repeat, QrCode } from 'lucide-react';
 import { api } from '../utils/api';
@@ -17,6 +17,14 @@ import { emitDataChanged } from '../utils/dataEvents';
 import { invalidateTxCache } from '../hooks/useTransactions';
 import Button from './ui/Button';
 
+// Saved measurements → editable text: new-style { notes } as-is, older
+// structured ones ({ waistSize: 27 }) as "waist size 27, …".
+function measurementsToText(m) {
+  if (!m || typeof m !== 'object') return '';
+  if (typeof m.notes === 'string') return m.notes;
+  return Object.entries(m).map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').toLowerCase()} ${v}`).join(', ');
+}
+
 export default function ReleaseItemModal({ transaction: initialTx, onClose, onReleased, onSwapItem }) {
   // Local copy: an in-sheet item swap replaces the garment (and fee) without
   // closing the sheet — the release then continues against the new item.
@@ -30,6 +38,12 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   // Starts ON when the booking is already waiting on a fitting, so staff
   // consciously switch it off ("fits now") before the real release.
   const [needsAlteration, setNeedsAlteration] = useState(initialTx?.alterationStatus === 'pending');
+  // Tailor's measurement notes, typed while the alteration switch is on.
+  // Prefilled from what's saved (older bookings stored { bust: 34, … } —
+  // shown as text). Only sent when staff actually edit it, so opening the
+  // sheet never rewrites measurements the customer entered at booking.
+  const [measurementNotes, setMeasurementNotes] = useState(() => measurementsToText(initialTx?.measurements));
+  const measurementsDirty = useRef(false);
   // Ref guard: state alone can't block same-tick double-taps on Confirm
   // Release (duplicate release + duplicate payment records).
   const { guarding: releasing, guard: guardRelease } = useButtonGuard();
@@ -73,6 +87,9 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
           ...(f.gateway !== undefined ? { gateway: f.gateway } : {}),
           ...(f.status ? { status: f.status } : {}),
         }));
+        if (f.measurements !== undefined && !measurementsDirty.current) {
+          setMeasurementNotes(measurementsToText(f.measurements));
+        }
       })
       .catch(() => { /* keep the row's numbers; backend still enforces ₱0 */ })
       .finally(() => { if (alive) setBalanceLoading(false); });
@@ -216,7 +233,11 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
   const handleHold = () => guardRelease(async () => {
     setError('');
     try {
-      const updated = await api.put(`/transactions/${tx.id}/release`, { notes, needsAlteration: true });
+      const updated = await api.put(`/transactions/${tx.id}/release`, {
+        notes,
+        needsAlteration: true,
+        ...(measurementsDirty.current ? { measurementNotes } : {}),
+      });
       onReleased(updated);
       onClose();
     } catch (err) {
@@ -260,6 +281,7 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
         releasePhoto: path,
         notes,
         needsAlteration,
+        ...(needsAlteration && measurementsDirty.current ? { measurementNotes } : {}),
       });
       onReleased(updated);
       onClose();
@@ -395,6 +417,24 @@ export default function ReleaseItemModal({ transaction: initialTx, onClose, onRe
                 </p>
               </div>
             </label>
+            {needsAlteration && (
+              <div className="mt-3 pt-3 border-t border-amber-200/70">
+                <label htmlFor="release-measurement-notes" className="text-xs font-bold text-gray-700 mb-1.5 block">
+                  Measurement notes (optional)
+                </label>
+                <textarea
+                  id="release-measurement-notes"
+                  placeholder="e.g. Bust 34, waist 27 - take in waist 1 in, hem 2 in"
+                  value={measurementNotes}
+                  maxLength={500}
+                  disabled={releasing}
+                  onChange={(e) => { measurementsDirty.current = true; setMeasurementNotes(e.target.value); }}
+                  rows={2}
+                  className="w-full p-3 bg-white rounded-xl border border-amber-200 text-sm focus:outline-none focus:border-amber-400 resize-none"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">Saved on the booking — shown under Measurements in the transaction details.</p>
+              </div>
+            )}
           </div>
 
           {paymentUnverified && !balanceLoading && (

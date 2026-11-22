@@ -427,6 +427,25 @@ describe('proof review', () => {
     },
   };
 
+  it('GET /proofs/history requires staff or admin', async () => {
+    const res = await request(app).get('/api/payments/proofs/history').set('Authorization', 'Bearer customer-token');
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /proofs/history pages reviewed proofs and clamps the page', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.paymentProof.count.mockResolvedValueOnce(86);
+    prisma.paymentProof.findMany.mockResolvedValueOnce([{ id: 'proof-x', status: 'approved' }]);
+    const res = await request(app).get('/api/payments/proofs/history?page=99&pageSize=10').set('Authorization', 'Bearer staff-token');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ total: 86, page: 9, pageSize: 10, totalPages: 9 });
+    expect(res.body.reviewed).toHaveLength(1);
+    const args = prisma.paymentProof.findMany.mock.calls.at(-1)[0];
+    expect(args.skip).toBe(80);
+    expect(args.take).toBe(10);
+    expect(args.where).toEqual({ status: { in: ['approved', 'rejected'] } });
+  });
+
   it('GET /proofs requires staff or admin', async () => {
     const res = await request(app).get('/api/payments/proofs').set('Authorization', 'Bearer customer-token');
     expect(res.status).toBe(403);
