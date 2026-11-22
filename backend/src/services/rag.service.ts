@@ -57,6 +57,7 @@ export const EVENT_TO_CATEGORIES: Record<string, string[]> = {
   birthday: ['gown', 'formal', 'suit'],
   party: ['gown', 'formal', 'suit'],
   gala: ['gown', 'formal'],
+  pageant: ['gown', 'filipiniana'],
   prom: ['gown', 'formal'],
   graduation: ['suit', 'barong', 'formal'],
   corporate: ['suit', 'formal'],
@@ -323,7 +324,9 @@ export async function retrieveStylistContext(query: string, opts: RetrieveOpts =
   const empty: StylistContext = { items: [], policies: [], retrieval: 'keyword', groundedIn: 0 };
   try {
     const [available, policies] = await Promise.all([
-      inventoryService.listItems('Available'),
+      // Date-window availability (see listSuggestableItems): an item booked
+      // weeks from now is still suggestable for this week / the event date.
+      inventoryService.listSuggestableItems(opts.from && opts.to ? { start: new Date(opts.from), end: new Date(opts.to) } : undefined),
       retrievePolicies(query, 3, { always: CORE_POLICY_KEYS }),
     ]);
     if (!Array.isArray(available) || available.length === 0) return { ...empty, policies };

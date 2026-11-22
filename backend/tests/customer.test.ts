@@ -123,6 +123,11 @@ describe('POST /api/bookings', () => {
   it('rejects a same-day online booking (pickup must be tomorrow or later)', async () => {
     // Manila "today" — the server compares pickup against Manila day bounds.
     const todayManila = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    // The item must exist, or createRental 404s before the date check runs.
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findUnique.mockResolvedValueOnce({
+      id: 1, name: 'Test Gown', category: 'Gown', price: 5000, status: 'Available',
+    });
 
     const res = await request(app)
       .post('/api/bookings')

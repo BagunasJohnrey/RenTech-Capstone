@@ -8,6 +8,7 @@ export const OCCASIONS = [
   'Graduation',
   'Corporate',
   'Gala',
+  'Pageant',
   'Party',
   'Photoshoot',
   'Costume Party',
@@ -16,10 +17,10 @@ export const OCCASIONS = [
 // Starter suggestions per garment category so staff tagging is one tap.
 // Editable per item — these are defaults, not rules.
 export const OCCASIONS_BY_CATEGORY = {
-  Gown: ['Wedding', 'Debut', 'Gala', 'Birthday'],
+  Gown: ['Wedding', 'Debut', 'Gala', 'Pageant'],
   Suit: ['Wedding', 'Corporate', 'Graduation'],
   Barong: ['Wedding', 'Corporate', 'Graduation'],
-  Filipiniana: ['Wedding', 'Graduation', 'Corporate', 'Gala'],
+  Filipiniana: ['Wedding', 'Graduation', 'Gala', 'Pageant'],
   Costume: ['Birthday', 'Party', 'Costume Party', 'Photoshoot'],
 };
 

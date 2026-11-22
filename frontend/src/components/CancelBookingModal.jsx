@@ -85,7 +85,8 @@ export default function CancelBookingModal({ tx, role, onClose, onCancel, onSend
             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
             <p className="leading-snug">
               Cancellations are handled by the boutique. Tell us why below and the team will
-              confirm — any refund follows our cancellation policy.
+              confirm. Downpayments are non-refundable: if the booking is cancelled, the
+              downpayment is forfeited.
             </p>
           </div>
         ) : (

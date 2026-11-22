@@ -436,6 +436,34 @@ export async function checkAvailability(itemId: number, rentalDate: string, dueD
  * buffer and open statuses as checkAvailability, so the stylist never
  * recommends something the booking step would then reject.
  */
+/**
+ * Items the AI stylist may suggest. An item is only out when it can't be
+ * rented in the window: archived / out of service, out on rental right now
+ * (Active/Overdue), or reserved for dates that overlap the window (plus the
+ * cleaning buffer). A booking weeks away no longer hides an item. Default
+ * window (no event date mentioned): today through the next 7 days.
+ */
+export async function listSuggestableItems(window?: { start: Date; end: Date }) {
+  const day = 86400000;
+  const rules = await getNumberRules('cleaning_buffer_days');
+  const buffer = (rules.cleaning_buffer_days ?? 0) * day;
+  const m = new Date(Date.now() + 8 * 3600000);
+  const today = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth(), m.getUTCDate()));
+  const start = window?.start ?? today;
+  const end = window?.end ?? new Date(today.getTime() + 7 * day);
+  const items = (await prisma.inventoryItem.findMany({
+    where: { status: { notIn: [ItemStatus.Deleted, ItemStatus.OutOfService] } },
+    include: { transactions: { where: { status: { in: ['Active', 'Overdue', 'Reserved'] } }, select: { status: true, rentalDate: true, dueDate: true } } },
+    orderBy: { createdAt: 'desc' },
+  })) ?? [];
+  return items
+    .filter((i) => !(i.status === ItemStatus.Cleaning && start.getTime() <= today.getTime() + buffer))
+    .filter((i) => !(i.transactions ?? []).some((t) =>
+      t.status === 'Overdue'
+      || (t.rentalDate.getTime() <= end.getTime() && t.dueDate.getTime() + buffer >= start.getTime())))
+    .map(({ transactions: _t, ...rest }) => ({ ...rest, status: ItemStatus.Available, effectiveStatus: 'Available' }));
+}
+
 export async function bookedItemNamesForEvent(eventDate: Date): Promise<{ names: Set<string>; start: Date; end: Date }> {
   const rules = await getNumberRules('cleaning_buffer_days', 'return_days_after_event');
   const day = 86400000;

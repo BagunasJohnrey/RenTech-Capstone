@@ -33,7 +33,7 @@ const customerFaqs = [
   { q: 'How much do I need to pay upfront?', a: 'A minimum downpayment of ₱200 is required to secure your booking. The remaining balance is payable at pickup — the item is released only once fully paid, so please settle the full amount (cash or online via GCash/card) before or at pickup.' },
   { q: 'How do I pay with the boutique\'s QR?', a: 'At checkout choose Manual QR, scan the shop\'s InstaPay / GCash QR, then upload a clear screenshot and the reference number. The booking shows "Payment under review" until staff verify it; pickup is not scheduled until the downpayment is approved. If it is rejected, re-upload a clearer proof from My Rentals.' },
   { q: 'Do I need to pay in full before pickup and return?', a: 'Yes. Pickup (release) and return are both locked until your balance is ₱0. Pay the remaining balance at the counter (cash or online) before pickup; returns are accepted only when fully paid. A damage fee found at return may leave a new balance, which you can settle right after.' },
-  { q: 'What if I need to cancel or reschedule?', a: 'Contact the boutique directly — downpayment refunds follow the store policy.' },
+  { q: 'What if I need to cancel or reschedule?', a: 'Contact the boutique directly. Downpayments are non-refundable: if a booking is cancelled, the downpayment is forfeited.' },
   { q: 'How do I view my bookings?', a: 'Open the Transactions tab in your account for your booking history, payment status, and upcoming rentals.' },
 ];
 
@@ -62,7 +62,7 @@ export const transactionStatuses = [
   { key: 'Active', Icon: PackageCheck, desc: 'The customer currently has the item — the rental is live. Moves to Returned automatically when you process the return.' },
   { key: 'Overdue', Icon: AlertTriangle, desc: 'The item was due and has not come back. Red = act now: the customer gets late-return SMS, and it stays flagged until the return is processed.' },
   { key: 'Returned', Icon: CheckCircle2, desc: 'Item is back and checked in. It flips to Cleaning automatically, then back to Available once washed.' },
-  { key: 'Cancelled', Icon: XCircle, desc: 'Booking revoked. The item frees up for other customers; downpayment refunds follow store policy.' },
+  { key: 'Cancelled', Icon: XCircle, desc: 'Booking revoked. The item frees up for other customers; the downpayment is non-refundable and is forfeited.' },
 ];
 
 // Alteration flags (from the glossary) — when set, the alteration badge

@@ -12,7 +12,8 @@ vi.mock('../src/services/gemini.service.js', async (importOriginal) => {
     chatWithAi: (...args: unknown[]) => { chatSpy(...args); return Promise.resolve({ reply: 'Try the White Gown.', source: 'ai', provider: 'groq', model: 'test' }); },
   };
 });
-vi.mock('../src/services/rag.service.js', () => ({
+vi.mock('../src/services/rag.service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/services/rag.service.js')>()),
   retrieveStylistContext: vi.fn().mockResolvedValue({
     items: [
       { name: 'White Gown', category: 'Gown', price: 1000, onSale: false, salePrice: null, discountPct: null, colors: [] },

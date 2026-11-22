@@ -50,7 +50,8 @@ export const TERMS_SECTIONS = [
     id: 'cancellation',
     title: '7. Cancellations & Rescheduling',
     paragraphs: [
-      'Cancellations and rescheduling requests are handled by the boutique. Downpayment refunds, if any, follow the store\'s cancellation policy in effect at the time of booking. No-shows after the scheduled pickup may result in cancellation of the booking and forfeiture of the downpayment.',
+      'All payments are non-refundable, including the downpayment. If a booking is cancelled, whether at your request or because the item was not picked up on the scheduled pickup date (no-show), the downpayment is forfeited and will not be returned.',
+      'If a booked item is changed to a lower-priced item, the price difference is not refunded. Rescheduling requests are handled by the boutique and depend on the item\'s availability on the new dates.',
     ],
   },
   {

@@ -43,7 +43,11 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
     // RAG grounding: retrieve only the top-k Available items relevant to the
     // query (+ top-3 policy facts) instead of stuffing 60 rows into the
     // prompt. Falls back to keyword Tier 1 internally; never throws.
-    const { retrieveStylistContext } = await import('../services/rag.service.js');
+    const { retrieveStylistContext, requestedCategories } = await import('../services/rag.service.js');
+    // Garment the customer named ("costume for a Christmas party" -> costume).
+    // Nothing outside it may be suggested, sale items included.
+    const lockedCats = requestedCategories(message);
+    const inLocked = (cat: string) => lockedCats.size === 0 || lockedCats.has(String(cat || '').toLowerCase());
     const { env } = await import('../config/env.js');
     let preferences: string[] = [];
     try {
@@ -54,9 +58,20 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
         if (typeof raw === 'string' && raw.trim()) preferences = raw.split(',').map((p) => p.trim()).filter(Boolean);
       }
     } catch { /* preferences are a ranking hint only — never fail the chat */ }
+    // Event date first (this message, else the latest earlier one), so
+    // retrieval checks availability for THAT window: pickup the day before,
+    // return after. No date -> the next 7 days.
+    let eventWindow: { start: Date; end: Date } | undefined;
+    try {
+      if (!mentionedMonthOnly(message)) {
+        const texts = [message, ...[...(history ?? [])].reverse().filter((h: { role: string }) => h.role === 'user').map((h: { text: string }) => h.text)];
+        for (const t of texts) { const d = extractEventDate(t); if (d) { if (d >= manilaToday()) eventWindow = { start: new Date(d.getTime() - 86400000), end: new Date(d.getTime() + 86400000) }; break; } }
+      }
+    } catch { /* date is a hint only */ }
+    const suggestable = await inventoryService.listSuggestableItems(eventWindow);
     const context = { ...(env.RAG_ENABLED
-      ? await retrieveStylistContext(message, { preferences })
-      : { items: (await inventoryService.listItems('Available')).slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; colors?: string[] | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 }) };
+      ? await retrieveStylistContext(message, { preferences, ...(eventWindow ? { from: eventWindow.start.toISOString(), to: eventWindow.end.toISOString() } : {}) })
+      : { items: suggestable.slice(0, 60).map((i: { name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; colors?: string[] | null }) => ({ name: i.name, category: i.category, price: i.price, onSale: i.onSale, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] })), policies: [], retrieval: 'keyword' as const, groundedIn: 0 }) };
     // Relevance retrieval only returns items whose names/colors match the
     // question, so "any sale items?" got zero sale stock and the stylist said
     // it had no sale info. Always append the ACTIVE sale items (Available,
@@ -64,8 +79,8 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
     try {
       const now = Date.now();
       const have = new Set(context.items.map((i: { name: string }) => i.name));
-      const sale = (await inventoryService.listItems('Available') as Array<{ name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; saleEndsAt?: Date | string | null; colors?: string[] | null }>)
-        .filter((i) => i.onSale && (!i.saleEndsAt || new Date(i.saleEndsAt).getTime() > now) && !have.has(i.name))
+      const sale = (suggestable as unknown as Array<{ name: string; category: string; price: number; onSale: boolean; salePrice: number | null; discountPct: number | null; saleEndsAt?: Date | string | null; colors?: string[] | null }>)
+        .filter((i) => i.onSale && (!i.saleEndsAt || new Date(i.saleEndsAt).getTime() > now) && !have.has(i.name) && inLocked(i.category))
         .slice(0, 10)
         .map((i) => ({ name: i.name, category: i.category, price: i.price, onSale: true, salePrice: i.salePrice, discountPct: i.discountPct, colors: i.colors ?? [] }));
       if (sale.length) context.items = [...context.items, ...sale] as typeof context.items;
@@ -159,6 +174,25 @@ export async function chat(req: AuthenticatedRequest, res: Response, next: NextF
         });
       }
     } catch { /* fall through to the stylist */ }
+    // The customer asked for a specific garment and every piece of it is
+    // booked: say so plainly instead of letting the stylist switch to other
+    // categories (a costume question must never be answered with gowns).
+    const freeInLocked = lockedCats.size > 0 && !context.items.some((i: { category: string }) => inLocked(i.category))
+      // Confirm against live stock (not just the retrieval slice) before saying "all booked".
+      ? (suggestable as Array<{ name: string; category: string }>)
+          .filter((i) => inLocked(i.category) && !bookedNames.has(i.name)).length
+      : -1;
+    if (freeInLocked === 0) {
+      const PLURAL: Record<string, string> = { gown: 'gowns', suit: 'suits', barong: 'barongs', filipiniana: 'Filipiniana pieces', costume: 'costumes' };
+      const what = [...lockedCats].map((c) => PLURAL[c] ?? `${c}s`).join(' and ');
+      const reply = checkedDate
+        ? `Sorry, all our ${what} are booked for ${fmtDay(checkedDate)}. Try a different date, or message the boutique and we'll tell you when one frees up.`
+        : `All our ${what} are booked for the next 7 days. When is your event? Tell me the date and I'll check which ${what} are free then.`;
+      return res.json({
+        reply, source: 'availability', groundedIn: 0, retrieval: context.retrieval,
+        ...(checkedDate ? { checkedDate: checkedDate.toISOString().slice(0, 10) } : {}),
+      });
+    }
     const result = await geminiService.chatWithAi(message, history, { items: context.items, policies });
     // Every real reply says where availability stands: checked against
     // bookings for the mentioned date, or confirmed at booking otherwise.

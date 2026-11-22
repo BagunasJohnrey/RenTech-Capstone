@@ -33,7 +33,7 @@ export default function TermsModal({ alreadyRead = false, onRead, onAgree, onClo
             </span>
             <div className="min-w-0">
               <h3 id="dialog-title-terms" className="font-bold text-gray-900 text-sm sm:text-base">Terms and Conditions</h3>
-              <p className="text-[11px] sm:text-xs text-gray-500">Effective date: August 2026</p>
+              <p className="text-[11px] sm:text-xs text-gray-500">Effective date: November 2026</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0" aria-label="Close terms">

@@ -67,27 +67,44 @@ export async function runReindex(opts: { dryRun?: boolean } = {}): Promise<Reind
     if (!vector) { skipped++; continue; }
     if (dryRun) { indexed++; continue; }
     try {
-      await db().$executeRawUnsafe(
-        `INSERT INTO knowledge_chunks (source, source_id, chunk, embedding, metadata, updated_at)
-         VALUES ($1, $2, $3, $4::vector, $5::jsonb, now())
-         ON CONFLICT DO NOTHING`,
-        doc.source, doc.sourceId, doc.chunk,
-        `[${vector.join(',')}]`,
-        JSON.stringify(doc.metadata ?? {}),
-      );
-      // Refresh the embedding when the chunk text changed since last index.
-      await db().$executeRawUnsafe(
+      // Update-then-insert. knowledge_chunks has no unique (source, source_id)
+      // constraint, so the old INSERT ... ON CONFLICT DO NOTHING never hit a
+      // conflict and every reindex added a full second copy of the index.
+      const updated = await db().$executeRawUnsafe(
         `UPDATE knowledge_chunks SET chunk = $3, embedding = $4::vector, metadata = $5::jsonb, updated_at = now()
-         WHERE source = $1 AND source_id = $2 AND chunk IS DISTINCT FROM $3`,
+         WHERE source = $1 AND source_id = $2`,
         doc.source, doc.sourceId, doc.chunk,
         `[${vector.join(',')}]`,
         JSON.stringify(doc.metadata ?? {}),
       );
+      if (!updated) {
+        await db().$executeRawUnsafe(
+          `INSERT INTO knowledge_chunks (source, source_id, chunk, embedding, metadata, updated_at)
+           VALUES ($1, $2, $3, $4::vector, $5::jsonb, now())`,
+          doc.source, doc.sourceId, doc.chunk,
+          `[${vector.join(',')}]`,
+          JSON.stringify(doc.metadata ?? {}),
+        );
+      }
       indexed++;
     } catch {
       // Dead-letter: keep the old embedding, retry next tick.
       skipped++;
     }
+  }
+  // Drop duplicates left by older runs and chunks for items/rules/templates
+  // that no longer exist, so retrieval never sees the same piece twice.
+  if (!dryRun) {
+    try {
+      await db().$executeRawUnsafe(
+        `DELETE FROM knowledge_chunks k USING (
+           SELECT id, row_number() OVER (PARTITION BY source, source_id ORDER BY updated_at DESC, id) rn FROM knowledge_chunks
+         ) d WHERE k.id = d.id AND d.rn > 1`);
+      const keep = new Set(docs.map((d) => `${d.source}:${d.sourceId}`));
+      const rows = await db().$queryRawUnsafe(`SELECT id, source, source_id FROM knowledge_chunks`) as { id: string; source: string; source_id: string }[];
+      const stale = rows.filter((r) => !keep.has(`${r.source}:${r.source_id}`)).map((r) => r.id);
+      if (stale.length) await db().$executeRawUnsafe(`DELETE FROM knowledge_chunks WHERE id = ANY($1::uuid[])`, stale);
+    } catch { /* cleanup is best-effort */ }
   }
   return { chunks: docs.length, indexed, skipped, detail: dryRun ? 'dry run — no writes' : 'ok' };
 }

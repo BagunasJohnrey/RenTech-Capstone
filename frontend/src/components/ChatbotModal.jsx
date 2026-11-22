@@ -175,15 +175,20 @@ export default function ChatbotModal({ onClose, inventory = [], onBook, onSearch
     if (m) {
       const item = (inventory || []).find((i) => String(i.id) === m[1]);
       if (item && onSearchItem) {
+        // Inline link, not a <button>: buttons render as inline-block, so a
+        // long name ("Champagne Beaded Flutter-Sleeve Gown") jumped to its
+        // own centered line and split from its bullet. An inline element
+        // wraps with the sentence like normal text.
         return (
-          <button
-            type="button"
-            onClick={() => onSearchItem(item)}
+          <a
+            href={href}
+            role="button"
+            onClick={(e) => { e.preventDefault(); onSearchItem(item); }}
             title={`Find ${item.name} in the catalog`}
-            className="font-bold text-[#bf4a53] hover:underline"
+            className="font-bold text-[#bf4a53] hover:underline cursor-pointer"
           >
             {children}
-          </button>
+          </a>
         );
       }
     }
