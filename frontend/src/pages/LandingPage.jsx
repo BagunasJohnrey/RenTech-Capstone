@@ -494,7 +494,7 @@ export default function LandingPage({ onLogin, onBrowse, onViewFeatured }) {
                 </li>
                 <li className="flex items-start gap-2">
                   <Clock size={16} className="text-[#bf4a53] mt-0.5 shrink-0" />
-                  <span>Mon – Sat, 9:00 AM – 6:00 PM</span>
+                  <span>Every day, 8:00 AM – 5:00 PM</span>
                 </li>
                 <li>
                   <a

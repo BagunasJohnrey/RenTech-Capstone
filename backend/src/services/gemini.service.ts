@@ -12,7 +12,7 @@ const FAQ: Record<string, string> = {
   'downpayment': 'A downpayment (min ₱200) secures your booking; the remaining balance is settled when you return the item.',
   'size': 'We carry sizes XS to XL, with custom sizing available for select items. Check the item details in our catalog.',
   'measure': 'For the best fit, share your measurements (bust/waist/hips for gowns; shoulder/chest for suits) and we\'ll match you to the right size.',
-  'hours': 'Our boutique is open Monday to Saturday, 9:00 AM to 6:00 PM. We are closed on Sundays and public holidays.',
+  'hours': 'Our boutique is open every day, 8:00 AM to 5:00 PM.',
   'location': 'Mylene\'s Boutique is located in Balayan, Batangas. Please contact us for the exact address and directions.',
   'address': 'We\'re based in Balayan, Batangas. Reach out via your account contact details and we\'ll share the exact directions.',
   'contact': 'You can reach us via phone at the number listed in your account, or visit us during business hours.',
