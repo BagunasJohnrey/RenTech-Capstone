@@ -38,7 +38,7 @@ const formatCurrency = (n) => {
 
 // 'Priority' = rows that need action now (overdue, unverified QR payment,
 // due/pickup today, alteration) — the staff default. Customers start on All.
-const ALL_STATUSES = ['Priority', 'All', 'Overdue', 'Active', 'Reserved', 'Pickup', 'Alteration', 'Returned', 'Cancelled'];
+const ALL_STATUSES = ['Priority', 'All', 'Overdue', 'Active', 'Pickup', 'Reserved', 'Alteration', 'Returned', 'Cancelled'];
 
 const SORT_OPTIONS = [
   { value: 'priority', label: 'Status priority' },
