@@ -94,13 +94,16 @@ export default function ManualQrPayment({
       <div className={`space-y-4 ${s('panel-col')}`}>
       <div>
         <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">
-          Transaction or reference number<RequiredMark show={reference.trim().length < 4} />
+          Reference number (13 digits)<RequiredMark show={reference.trim().length !== 13} />
         </label>
-        <input type="text" value={reference} maxLength={40} disabled={disabled} required
-          aria-required="true" inputMode="text" autoComplete="off"
-          onChange={(e) => onReferenceChange(e.target.value)}
-          placeholder="e.g. 000123456789"
+        <input type="text" value={reference} maxLength={13} disabled={disabled} required
+          aria-required="true" inputMode="numeric" pattern="\d{13}" autoComplete="off"
+          onChange={(e) => onReferenceChange(e.target.value.replace(/\D/g, '').slice(0, 13))}
+          placeholder="e.g. 1234567890123"
           className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-900 placeholder-gray-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/40 focus:border-[#bf4a53] transition-colors" />
+        <p className={`text-[11px] mt-1 ml-1 ${reference.length > 0 && reference.length !== 13 ? 'text-red-500 font-medium' : 'text-gray-400'}`}>
+          {reference.length > 0 && reference.length !== 13 ? `${reference.length}/13 digits` : 'Numbers only, exactly 13 digits.'}
+        </p>
       </div>
 
       <div className={s('panel-grow lg:flex lg:flex-col')}>

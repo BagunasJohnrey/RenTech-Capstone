@@ -247,13 +247,14 @@ export async function isEmailTypeEnabled(type: EmailType): Promise<boolean> {
 // Absent key = the type's default: existing texts default ON (no behaviour
 // change on upgrade); the new payment-received text defaults OFF because
 // every SMS costs money — an admin opts in.
-export const SMS_TYPES = ['booking', 'payment', 'due_reminder', 'overdue'] as const;
+export const SMS_TYPES = ['booking', 'payment', 'due_reminder', 'overdue', 'alteration'] as const;
 export type SmsType = (typeof SMS_TYPES)[number];
 export const SMS_TYPE_DEFAULTS: Record<SmsType, boolean> = {
   booking: true,
   payment: false,
   due_reminder: true,
   overdue: true,
+  alteration: true,
 };
 export const smsTypeKey = (type: SmsType) => `sms_type_${type}_enabled`;
 

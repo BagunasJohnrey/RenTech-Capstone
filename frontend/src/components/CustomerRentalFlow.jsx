@@ -105,6 +105,8 @@ export default function CustomerRentalFlow({
   // (→ step 0, selection kept) only in the first case; otherwise Cancel.
   const [startedAtCatalog] = useState(() => !preselectedItem);
   const todayStr = useMemo(() => todayYmd(), []);
+  // Online bookings can't be picked up the same day (backend enforces too).
+  const tomorrowStr = useMemo(() => { const d = new Date(); d.setDate(d.getDate() + 1); return toLocalYmd(d); }, []);
   // Dates start EMPTY — the customer must tap both days on the calendar
   // (no prefill). `preselectedDate` is only honored when an entry point
   // passes an explicit date, otherwise ''.
@@ -393,9 +395,10 @@ export default function CustomerRentalFlow({
     if (addrTrimmed.length < INPUT_LIMITS.ADDRESS_MIN) errs.address = 'Address is required (min 5 characters)';
     else if (addrTrimmed.length > INPUT_LIMITS.ADDRESS_MAX) errs.address = `Address must be ${INPUT_LIMITS.ADDRESS_MAX} characters or fewer`;
     if (!rentalDate) errs.rentalDate = 'Please select a pickup date.';
-    else if (new Date(rentalDate) < new Date(todayStr)) errs.rentalDate = 'Pickup date cannot be in the past';
+    else if (rentalDate < todayStr) errs.rentalDate = 'Pickup date cannot be in the past';
+    else if (rentalDate < tomorrowStr) errs.rentalDate = 'Same-day pickup is not available. Please choose tomorrow or later.';
     if (!eventDate) errs.eventDate = 'Please select an event date.';
-    else if (new Date(eventDate) < new Date(rentalDate)) errs.eventDate = 'Event date must be on or after the pickup date';
+    else if (eventDate <= rentalDate) errs.eventDate = 'Event date must be at least one day after the pickup date';
     if (!selectedSize) errs.size = 'Please select a size';
     if (selectedSize === 'Custom / Measurements' && measurementsExpanded) {
       const filled = measurementFields.filter(f => measurements[f] && String(measurements[f]).trim());
@@ -603,8 +606,8 @@ export default function CustomerRentalFlow({
             setConfirmError('Payment QR not yet set up — please contact the boutique.');
             return;
           }
-          if (proofReference.trim().length < 4) {
-            setConfirmError('Please enter the transaction or reference number from your payment app.');
+          if (!/^\d{13}$/.test(proofReference.trim())) {
+            setConfirmError('Please enter the 13-digit reference number from your payment app.');
             return;
           }
           if (!proofFile) {
@@ -1038,6 +1041,7 @@ export default function CustomerRentalFlow({
                     pickup={rentalDate}
                     event={eventDate}
                     bookedRanges={bookedRanges}
+                    minDate={tomorrowStr}
                     returnDays={rentalDefaults.return_days_after_event}
                     hideSummary
                     footer={period ? (

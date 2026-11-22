@@ -13,6 +13,7 @@ export const SMS_TYPES = [
   { type: 'payment', label: 'Payment received', hint: 'When staff record a payment or approve a QR proof.', def: false },
   { type: 'due_reminder', label: 'Due reminder', hint: 'Before or on the return date.', def: true },
   { type: 'overdue', label: 'Overdue notices', hint: 'After the return date, on the reminder schedule.', def: true },
+  { type: 'alteration', label: 'Alteration ready', hint: 'When staff mark a fitting/alteration as ready for pickup.', def: true },
 ];
 const typeKey = (type) => `sms_type_${type}_enabled`;
 const fromRules = (rules = {}) => Object.fromEntries(SMS_TYPES.map(({ type, def }) => {

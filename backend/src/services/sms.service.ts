@@ -52,6 +52,42 @@ export async function sendPaymentReceivedSms(transactionId: string, amount: numb
   }
 }
 
+// Alteration/fitting finished -> text the customer that the garment is ready
+// for pickup. Best-effort (never blocks the staff edit); honors the global
+// SMS switch, the per-type "alteration" switch, and notifyPrefs.alteration.
+export async function sendAlterationReadySms(transactionId: string): Promise<void> {
+  try {
+    if (!(await isSmsEnabled().catch(() => true))) return;
+    if (!(await isSmsTypeEnabled('alteration'))) return;
+    const tx = await prisma.transaction.findUnique({
+      where: { id: transactionId },
+      select: {
+        id: true, customerId: true,
+        item: { select: { name: true } },
+        customer: { select: { name: true, phone: true, notifyPrefs: true } },
+      },
+    });
+    if (!tx?.customer?.phone) return;
+    const prefs = tx.customer.notifyPrefs as Record<string, boolean> | null | undefined;
+    if (prefs && prefs.alteration === false) return;
+    const message = finalizeSms(
+      `Hi ${smsShortName(tx.customer.name)}, your ${smsItemName(tx.item.name)} has been fitted and is ready for pickup. ` +
+      'Please visit the boutique to collect it. Thank you!'
+    );
+    const result = await sendSms(tx.customer.phone, message);
+    await prisma.sentSms.create({
+      data: {
+        profileId: tx.customerId,
+        transactionId: tx.id,
+        message,
+        status: result?.messageId ? 'sent' : 'queued',
+      },
+    });
+  } catch (err) {
+    console.error('[sms] alteration-ready text skipped:', (err as Error)?.message);
+  }
+}
+
 export async function sendManualSms(params: {
   profileId: string;
   message: string;

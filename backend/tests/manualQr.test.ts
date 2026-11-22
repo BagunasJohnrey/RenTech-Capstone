@@ -175,7 +175,7 @@ describe('recordPayment route accepts instapay', () => {
 const proofBody = {
   data: Buffer.from('fake-image-bytes').toString('base64'),
   contentType: 'image/jpeg',
-  reference: '000123456789',
+  reference: '0001234567890',
   channel: 'gcash-1',
 };
 
@@ -202,7 +202,7 @@ describe('POST /api/bookings/:id/payment-proof', () => {
       .send(proofBody);
 
     expect(res.status).toBe(201);
-    expect(res.body.proof).toMatchObject({ status: 'pending', amount: 200, reference: '000123456789' });
+    expect(res.body.proof).toMatchObject({ status: 'pending', amount: 200, reference: '0001234567890' });
     expect(prisma.paymentProof.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ transactionId: 'tx-1', amount: 200, imagePath: 'rental/tx-1/proof-1.webp' }),
     }));
@@ -338,7 +338,7 @@ describe('POST /api/bookings (manual QR)', () => {
         transactionId: 'tx-new',
         amount: 2500,
         imagePath: 'rental/customer-id-111/proof-1.webp',
-        reference: '000123456789',
+        reference: '0001234567890',
         channel: 'gcash-1',
         status: 'pending',
       }),

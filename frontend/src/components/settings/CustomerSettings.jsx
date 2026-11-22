@@ -71,6 +71,7 @@ export default function CustomerSettings({ profile, customerInfo, onUpdateCustom
     { key: 'email', label: 'Emails', desc: 'Booking, pickup, return and reminder emails.', icon: Mail, channel: 'Email' },
     { key: 'reminder', label: 'Due Date Reminders', desc: 'SMS the day before your rental is due.', icon: BellRing, channel: 'SMS' },
     { key: 'lateReturn', label: 'Late Return Alerts', desc: 'SMS if a rental becomes overdue.', icon: TriangleAlert, channel: 'SMS' },
+    { key: 'alteration', label: 'Alteration Ready', desc: 'SMS when your fitting/alteration is done and ready for pickup.', icon: Ruler, channel: 'SMS' },
   ];
 
   return (

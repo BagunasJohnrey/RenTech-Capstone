@@ -53,7 +53,7 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
   const handleDayClick = (ds) => {
     if (disabled) return;
     if (isPast(ds) || isBooked(ds)) {
-      setWarn(isBooked(ds) ? 'That date is already booked for this item.' : 'Cannot select a past date.');
+      setWarn(isBooked(ds) ? 'That date is already booked for this item.' : (minDate && ds >= ymd(today) ? 'Same-day pickup is not available. Please choose tomorrow or later.' : 'Cannot select a past date.'));
       return;
     }
     setWarn('');
@@ -63,8 +63,10 @@ export default function BookingCalendar({ pickup, event, onChange, bookedRanges 
       return;
     }
     // Second click sets the event date.
-    if (ds < pickup) {
-      setWarn('Event date must be on or after pickup.');
+    // Same-day pickup + event is not allowed: the event must be at least
+    // one day after the pickup date.
+    if (ds <= pickup) {
+      setWarn(ds === pickup ? 'Event date must be at least one day after pickup.' : 'Event date must be after pickup.');
       return;
     }
     onChange(pickup, ds);

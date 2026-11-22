@@ -13,7 +13,7 @@ import { storeSignoff, storeSignoffHtml } from '../templates/emailTemplates.js';
 import { checkPromo, consumePromoUse } from './promoCodes.service.js';
 import { verifyDiscountPin } from './auth.service.js';
 import { getBusinessRules, getFeatureFlags, isSmsEnabled, isSmsTypeEnabled, getNumberRules } from './settings.service.js';
-import { sendPaymentReceivedSms } from './sms.service.js';
+import { sendPaymentReceivedSms, sendAlterationReadySms } from './sms.service.js';
 import { ItemStatus, TransactionStatus, Prisma } from '@prisma/client';
 import { manilaDayStart, manilaNextDayStart, manilaDaysPastDue, formatManilaDate } from '../utils/manilaDay.js';
 
@@ -177,6 +177,26 @@ export async function createRental(data: CreateRentalInput, processedById?: stri
   const todayStart = manilaDayStart();
   if (start.getTime() < todayStart.getTime()) {
     throw new AppError(400, 'Pickup date cannot be in the past');
+  }
+  // Online bookings can't be picked up the same day: the boutique needs lead
+  // time to prepare the garment, and a late-night booking (e.g. 10 PM, after
+  // the 8 AM-5 PM hours) for "today" could never be collected and would turn
+  // into a no-show. Staff counter bookings (processedById set) may still
+  // start today because the item is handed over at the desk.
+  if (!processedById && start.getTime() < manilaNextDayStart().getTime()) {
+    throw new AppError(400, 'Same-day pickup is not available for online bookings. Please choose a pickup date from tomorrow onward.');
+  }
+  // The event must fall at least one day AFTER pickup (no same-day pickup and
+  // event). dueDate = event + return_days_after_event, so the event day is
+  // dueDay - returnDays.
+  {
+    const { return_days_after_event: returnDays } = await getNumberRules('return_days_after_event');
+    const dayMs = 24 * 60 * 60 * 1000;
+    const pickupDay = manilaDayStart(start).getTime();
+    const eventDay = manilaDayStart(end).getTime() - Math.max(0, returnDays) * dayMs;
+    if (eventDay <= pickupDay) {
+      throw new AppError(400, 'Event date must be at least one day after the pickup date');
+    }
   }
 
   // A booking whose rental starts in the future is an "upcoming hold": the
@@ -843,6 +863,8 @@ export async function updateTransaction(
         });
       }
     } catch { /* email is non-critical */ }
+    // SMS too — best-effort, gated by the SMS switches + customer prefs.
+    await sendAlterationReadySms(transactionId);
   }
 
   clearDataCache();

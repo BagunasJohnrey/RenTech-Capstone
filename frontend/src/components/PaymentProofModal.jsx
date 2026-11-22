@@ -34,7 +34,7 @@ export default function PaymentProofModal({ tx, onClose, onSubmitted, z = 'z-[20
   }, []);
 
   const handleSubmit = async () => {
-    if (reference.trim().length < 4) { setError('Please enter the transaction or reference number from your payment app.'); return; }
+    if (!/^\d{13}$/.test(reference.trim())) { setError('Please enter the 13-digit reference number from your payment app.'); return; }
     if (!file) { setError('Please upload your payment screenshot.'); return; }
     if (file.size > 5 * 1024 * 1024) { setError('Screenshot must be 5 MB or smaller.'); return; }
     setSubmitting(true);
