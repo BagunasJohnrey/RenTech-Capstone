@@ -537,7 +537,7 @@ export default function StaffTasksView({ transactions, digestTransactions, diges
                     </div>
                   ))}
                 </div>
-                <button onClick={() => goHistoryFiltered('Reserved')}
+                <button onClick={() => goHistoryFiltered('Pickup Due')}
                   className="mt-3 w-full py-2.5 text-sm font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors">
                   View All ({pendingPickup.length})
                 </button>

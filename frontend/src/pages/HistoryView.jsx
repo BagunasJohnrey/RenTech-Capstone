@@ -38,7 +38,8 @@ const formatCurrency = (n) => {
 
 // 'Priority' = rows that need action now (overdue, unverified QR payment,
 // due/pickup today, alteration) — the staff default. Customers start on All.
-const ALL_STATUSES = ['Priority', 'All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved'];
+// 'Pickup Due' = Reserved or Active, not released, rental date <= today (for "View All" from Ready for Pickup)
+const ALL_STATUSES = ['Priority', 'All', 'Active', 'Overdue', 'Returned', 'Cancelled', 'Reserved', 'Pickup Due'];
 
 const SORT_OPTIONS = [
   { value: 'priority', label: 'Status priority' },
@@ -391,14 +392,26 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
   // typed. A status picked on purpose (Returned, Active…) still applies.
   const isSearching = searchQuery.trim() !== '';
   const effectiveStatusFilter = isSearching && activeStatusFilter === 'Priority' ? 'All' : activeStatusFilter;
-  const filteredTransactions = searchDateFiltered
-    .filter((tx) => {
-      if (effectiveStatusFilter === 'Priority') return inPriorityView(tx);
-      if (effectiveStatusFilter !== 'All') {
-        return tx.status === effectiveStatusFilter;
-      }
-      return true;
-    })
+  const isPickupDue = (tx) => {
+      if (tx.status !== 'Reserved' && tx.status !== 'Active') return false;
+      if (isReleased(tx)) return false;
+      const rentalDate = tx.rentalDate ? new Date(tx.rentalDate) : null;
+      if (!rentalDate) return false;
+      rentalDate.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return rentalDate <= today;
+    };
+
+    const filteredTransactions = searchDateFiltered
+      .filter((tx) => {
+        if (effectiveStatusFilter === 'Priority') return inPriorityView(tx);
+        if (effectiveStatusFilter === 'Pickup Due') return isPickupDue(tx);
+        if (effectiveStatusFilter !== 'All') {
+          return tx.status === effectiveStatusFilter;
+        }
+        return true;
+      })
     .sort((a, b) => {
       switch (sortBy) {
         case 'newest':
@@ -430,6 +443,27 @@ export default function HistoryView({ role, transactions, inventory, onReturn, o
           const pa = da.rank ?? 10 + (statusPriority[a.status] ?? 89);
           const pb = db.rank ?? 10 + (statusPriority[b.status] ?? 89);
           if (pa !== pb) return pa - pb;
+
+          // When filtering by Reserved, show no-show pickups (past rental date) first
+          if (effectiveStatusFilter === 'Reserved') {
+            const aRental = a.rentalDate ? new Date(a.rentalDate).getTime() : 0;
+            const bRental = b.rentalDate ? new Date(b.rentalDate).getTime() : 0;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const aPast = aRental && aRental < today.getTime();
+            const bPast = bRental && bRental < today.getTime();
+            if (aPast !== bPast) return aPast ? -1 : 1;
+            // Both past or both future: sort by rental date ascending (earliest first)
+            if (aRental && bRental) return aRental - bRental;
+          }
+
+          // For "Pickup Due" filter, sort by rental date ascending (earliest/no-show first)
+          if (effectiveStatusFilter === 'Pickup Due') {
+            const aRental = a.rentalDate ? new Date(a.rentalDate).getTime() : 0;
+            const bRental = b.rentalDate ? new Date(b.rentalDate).getTime() : 0;
+            if (aRental && bRental) return aRental - bRental;
+          }
+
           return txDateOf(b) - txDateOf(a) || txTiebreak(a, b);
         }
       }
