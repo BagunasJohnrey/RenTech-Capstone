@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, QrCode, RotateCcw } from 'lucide-react';
+import { X, Loader2, Search, Calendar, Check, Percent, ShieldCheck, CheckCircle2, Download, SlidersHorizontal, ChevronDown, Banknote, QrCode, RotateCcw, Maximize2 } from 'lucide-react';
 import { api } from '../utils/api';
 import ItemImage from '../components/ItemImage';
+import { getSaleInfo } from '../components/ItemCard';
 import BookingCalendar from '../components/BookingCalendar';
 import DatePickGuide from '../components/DatePickGuide';
 import ScheduleChips, { shortDate } from '../components/ScheduleChips';
@@ -879,30 +880,42 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
             <div key="step2" ref={step2Ref} data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-6">
               <h3 className="font-bold text-lg text-gray-900">Booking Details</h3>
 
-              {/* Selected item summary */}
-              {selectedItem && (
-                <div className="bg-white border border-gray-100/80 rounded-2xl p-4 shadow-sm flex items-start gap-4">
-                  <ItemImage
-                    image={selectedItem.image}
-                    eager
-                    className="w-20 h-24 rounded-xl shrink-0 cursor-pointer object-cover"
-                    onClick={() => setItemPhoto({ image: selectedItem.image, label: selectedItem.name })}
-                    alt={selectedItem.name}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-gray-900 truncate">{selectedItem.name}</p>
-                    <p className="text-sm text-gray-500 mt-0.5">
-                      {customer.rentalDate
-                        ? `Pickup: ${new Date(customer.rentalDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
-                        : 'Pickup: pick your dates below'}
-                    </p>
-                    <p className="text-lg font-bold text-[#bf4a53] mt-1">
-                      ₱{Number(selectedItem.price || 0).toLocaleString()}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-2">Tap the photo to view it full size</p>
+              {/* Selected item summary (same card as the customer booking flow) */}
+              {selectedItem && (() => {
+                const sale = getSaleInfo(selectedItem);
+                return (
+                  <div className="bg-gradient-to-r from-gray-50 to-white rounded-2xl p-4 flex items-center gap-4 border border-gray-100/60">
+                    <button type="button" onClick={() => setItemPhoto({ image: selectedItem.image, label: selectedItem.name })} aria-label={`View full photo of ${selectedItem.name}`}
+                      className="relative shrink-0 rounded-2xl overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 group/photo">
+                      <ItemImage thumb eager image={selectedItem.image} alt="" className="w-20 h-20 rounded-2xl object-cover bg-gray-200 shadow-sm" />
+                      <span aria-hidden="true" className="absolute inset-0 bg-gray-900/0 group-hover/photo:bg-gray-900/25 transition-colors flex items-center justify-center">
+                        <Maximize2 size={18} className="text-white opacity-0 group-hover/photo:opacity-100 transition-opacity drop-shadow" />
+                      </span>
+                      <span aria-hidden="true" className="absolute bottom-1 right-1 p-1 rounded-full bg-gray-900/60 text-white">
+                        <Maximize2 size={10} />
+                      </span>
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-gray-900">{selectedItem.name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {customer.rentalDate
+                          ? `Pickup: ${new Date(customer.rentalDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                          : 'Pickup: pick your dates below'}
+                      </p>
+                      {sale.active ? (
+                        <p className="text-xl font-extrabold text-[#bf4a53] mt-1">
+                          ₱{sale.price.toLocaleString()} <span className="text-xs text-gray-400 line-through font-medium">₱{Number(selectedItem.price || 0).toLocaleString()}</span>
+                        </p>
+                      ) : (
+                        <p className="text-xl font-extrabold text-[#bf4a53] mt-1">₱{Number(selectedItem.price || 0).toLocaleString()}</p>
+                      )}
+                      <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1">
+                        <Maximize2 size={10} /> Tap the photo to view it full size
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
 
 
