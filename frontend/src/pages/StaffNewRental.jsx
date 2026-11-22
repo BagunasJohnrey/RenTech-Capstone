@@ -10,6 +10,7 @@ import Field from '../components/ui/Field';
 import BookingReceipt from '../components/BookingReceipt';
 import BottomSheet from '../components/BottomSheet';
 import ManualQrPanel from '../components/ManualQrPanel';
+import PhotoViewer from '../components/PhotoViewer';
 import { inventoryService } from '../services/inventory';
 import { promoService } from '../services/promo';
 import { promoDiscountLabel } from '../utils/promoLabel';
@@ -65,6 +66,10 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
 
   // Selected item (only one at a time)
   const [selectedItem, setSelectedItem] = useState(initialItem || null);
+
+  // Full-screen item photo viewer
+  const [itemPhoto, setItemPhoto] = useState(null);
+  useEscapeClose(() => setItemPhoto(null), !!itemPhoto);
 
   const todayStr = useMemo(() => todayYmd(), []);
 
@@ -874,6 +879,31 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
             <div key="step2" ref={step2Ref} data-sheet-scroll className="step-enter overflow-y-auto min-h-0 pr-1 space-y-6">
               <h3 className="font-bold text-lg text-gray-900">Booking Details</h3>
 
+              {/* Selected item summary */}
+              {selectedItem && (
+                <div className="bg-white border border-gray-100/80 rounded-2xl p-4 shadow-sm flex items-start gap-4">
+                  <ItemImage
+                    image={selectedItem.image}
+                    eager
+                    className="w-20 h-24 rounded-xl shrink-0 cursor-pointer object-cover"
+                    onClick={() => setItemPhoto({ image: selectedItem.image, label: selectedItem.name })}
+                    alt={selectedItem.name}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-gray-900 truncate">{selectedItem.name}</p>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {customer.rentalDate
+                        ? `Pickup: ${new Date(customer.rentalDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                        : 'Pickup: pick your dates below'}
+                    </p>
+                    <p className="text-lg font-bold text-[#bf4a53] mt-1">
+                      ₱{Number(selectedItem.price || 0).toLocaleString()}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-2">Tap the photo to view it full size</p>
+                  </div>
+                </div>
+              )}
+
 
 
               <div className="bg-white border border-gray-100/80 rounded-2xl p-5 space-y-4 shadow-sm">
@@ -1391,6 +1421,11 @@ export default function StaffNewRental({ inventory, transactions = [], onAddTran
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Full-screen item photo viewer */}
+          {itemPhoto && (
+            <PhotoViewer photos={[itemPhoto]} index={0} onIndexChange={() => {}} onClose={() => setItemPhoto(null)} />
           )}
     </>
   );

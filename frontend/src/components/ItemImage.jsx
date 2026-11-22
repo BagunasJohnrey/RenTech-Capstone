@@ -12,7 +12,7 @@ import {
 // thumb) — skip straight to the full image instead of 404ing every mount.
 const deadThumbs = new Set();
 
-function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eager = false, thumb = false, onSettled }) {
+function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eager = false, thumb = false, onSettled, onClick }) {
   const ref = useRef(null);
   const [inView, setInView] = useState(eager);
   const [src, setSrc] = useState(() => (image && isAbsoluteUrl(image) ? image : null));
@@ -105,7 +105,7 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
 
   if (!src) {
     return (
-      <div ref={ref} className={`flex items-center justify-center text-gray-300 ${className}`}>
+      <div ref={ref} className={`flex items-center justify-center text-gray-300 ${className}`} onClick={onClick}>
         <ImageIcon size={placeholderSize} />
       </div>
     );
@@ -121,6 +121,7 @@ function ItemImage({ image, alt = '', className = '', placeholderSize = 28, eage
       fetchPriority={eager ? 'high' : 'auto'}
       onLoad={settle}
       onError={handleError}
+      onClick={onClick}
     />
   );
 }
