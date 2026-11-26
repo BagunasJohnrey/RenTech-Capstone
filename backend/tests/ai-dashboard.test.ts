@@ -518,6 +518,48 @@ describe('GET /api/dashboard/insights', () => {
     expect(res.body).not.toHaveProperty('revenueByWeek');
   });
 
+  it('period=weekly pins a Monday–Sunday week and buckets revenue per day', async () => {
+    const { prisma } = await import('../src/config/database.js');
+    prisma.inventoryItem.findMany.mockReset();
+    prisma.transaction.findMany.mockReset();
+    prisma.payment.findMany.mockReset();
+    prisma.inventoryItem.findMany.mockResolvedValue([]);
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.payment.findMany.mockResolvedValue([]);
+    prisma.inventoryItem.findMany.mockResolvedValueOnce([{ id: 1, name: 'Gown A', category: 'Gown' }]);
+    prisma.payment.findMany.mockResolvedValueOnce([
+      { amount: 1500, createdAt: new Date(2026, 0, 19, 10) }, // Mon Jan 19
+      { amount: 500, createdAt: new Date(2026, 0, 19, 15) },  // Mon Jan 19
+      { amount: 2000, createdAt: new Date(2026, 0, 25, 9) },  // Sun Jan 25
+    ]);
+
+    // Any day of the week works — Wed Jan 21 snaps to Mon Jan 19.
+    const res = await request(app)
+      .get('/api/dashboard/insights?period=weekly&week=2026-01-21')
+      .set('Authorization', 'Bearer admin-token');
+
+    expect(res.status).toBe(200);
+    const findManyArg = prisma.transaction.findMany.mock.calls[0][0] as any;
+    expect(findManyArg.where.rentalDate.gte).toEqual(new Date(2026, 0, 19));
+    expect(findManyArg.where.rentalDate.lt).toEqual(new Date(2026, 0, 26));
+    expect(res.body.revenueByDay.map((d: any) => d.revenue)).toEqual([2000, 0, 0, 0, 0, 0, 2000]);
+    expect(res.body.revenueByDay[0]).toMatchObject({ label: 'Mon', date: '2026-01-19' });
+    expect(res.body.revenueByDay[6]).toMatchObject({ label: 'Sun', date: '2026-01-25' });
+    expect(res.body).not.toHaveProperty('revenueByWeek');
+  });
+
+  it('period=weekly falls back to the current week for a future or invalid week', async () => {
+    const { getPeriodFilter } = await import('../src/controllers/dashboard.controller.js');
+    const current = getPeriodFilter('weekly');
+    expect(current.start!.getDay()).toBe(1); // Monday
+    expect(current.end!.getTime() - current.start!.getTime()).toBeGreaterThanOrEqual(6.9 * 86400000);
+    expect(getPeriodFilter('weekly', undefined, undefined, '2999-01-01').start).toEqual(current.start);
+    expect(getPeriodFilter('weekly', undefined, undefined, 'not-a-date').start).toEqual(current.start);
+    expect(getPeriodFilter('weekly', undefined, undefined, '2026-02-31').start).toEqual(current.start);
+    // Sunday belongs to the week that started the Monday before.
+    expect(getPeriodFilter('weekly', undefined, undefined, '2026-01-25').start).toEqual(new Date(2026, 0, 19));
+  });
+
   it('should reject for staff', async () => {
     const res = await request(app)
       .get('/api/dashboard/insights')

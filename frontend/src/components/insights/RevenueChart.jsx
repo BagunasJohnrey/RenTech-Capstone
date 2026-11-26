@@ -1,5 +1,5 @@
-// Revenue chart card: weekly series in Monthly view, monthly otherwise,
-// with the projection bar appended. Week-over-week deltas + best-week star
+// Revenue chart card: daily series (Mon–Sun) in Weekly view, weekly series
+// in Monthly view, monthly otherwise, with the projection bar appended. Week-over-week deltas + best-week star
 // cover finished weeks only (in-progress and projection bars excluded).
 // Pure presentational.
 import { useRef, useEffect } from 'react';
@@ -102,6 +102,7 @@ export default function RevenueChart({
   isMonthlyView, isOverall = false, monthName, appliedYear, appliedMonth,
   viewingCurrentMonth, revChart, revChartEmptyLabel, revFootnote,
   stepMonth, goCurrentMonth,
+  isWeeklyView = false, weekLabel = '', viewingCurrentWeek = false, stepWeek, goCurrentWeek,
 }) {
   const labels = annotationsFor(revChart);
   // Delta labels sit above the bars (up to ~32px for a stacked ★ best +
@@ -112,7 +113,13 @@ export default function RevenueChart({
   const hasWip = revChart.some((e) => e.wip);
   const hasForecast = revChart.some((e) => e.forecast);
   const hasLogbook = revChart.some((e) => (e.logbook || 0) > 0);
-  const unit = isMonthlyView ? 'week' : 'month';
+  const unit = isWeeklyView ? 'day' : isMonthlyView ? 'week' : 'month';
+  // Monthly and Weekly views both get a ‹ › stepper + a jump back to "now".
+  const stepper = isWeeklyView
+    ? { atNow: viewingCurrentWeek, step: stepWeek, goNow: goCurrentWeek, nowLabel: 'This week', noun: 'week' }
+    : isMonthlyView
+      ? { atNow: viewingCurrentMonth, step: stepMonth, goNow: goCurrentMonth, nowLabel: 'This month', noun: 'month' }
+      : null;
   // Dense = a long multi-year series (Overall). Yearly's bare month names
   // ("Jan") and weekly "Wk 1" labels fit the card as-is.
   const dense = revChart.length > MAX_DELTA_BARS && String(revChart[0]?.label ?? '').length > 4;
@@ -168,21 +175,22 @@ export default function RevenueChart({
     <div className="bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-5 md:px-7 pt-5 md:pt-7 pb-2">
         <h3 className="font-bold text-gray-900 text-base md:text-lg">
-          {isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : isOverall ? 'Overall Revenue' : `${appliedYear} · Monthly Revenue`}
+          {isWeeklyView ? `${weekLabel} · Daily Revenue`
+            : isMonthlyView ? `${monthName} ${appliedYear} · Weekly Revenue` : isOverall ? 'Overall Revenue' : `${appliedYear} · Monthly Revenue`}
         </h3>
-        {isMonthlyView && (
+        {stepper && (
           <div className="flex items-center gap-0.5 shrink-0">
-            {!viewingCurrentMonth && (
-              <button onClick={goCurrentMonth}
+            {!stepper.atNow && (
+              <button onClick={stepper.goNow}
                 className="px-2.5 min-h-[32px] rounded-lg text-[11px] font-bold text-[#bf4a53] hover:bg-[#bf4a53]/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
-                This month
+                {stepper.nowLabel}
               </button>
             )}
-            <button onClick={() => stepMonth(-1)} aria-label="Previous month" title="Previous month"
+            <button onClick={() => stepper.step(-1)} aria-label={`Previous ${stepper.noun}`} title={`Previous ${stepper.noun}`}
               className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
               <ChevronLeft size={16} />
             </button>
-            <button onClick={() => stepMonth(1)} disabled={viewingCurrentMonth} aria-label="Next month" title="Next month"
+            <button onClick={() => stepper.step(1)} disabled={stepper.atNow} aria-label={`Next ${stepper.noun}`} title={`Next ${stepper.noun}`}
               className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60">
               <ChevronRight size={16} />
             </button>
@@ -190,7 +198,11 @@ export default function RevenueChart({
         )}
       </div>
       <p className="text-xs md:text-sm text-gray-400 px-5 md:px-7 pb-4">
-        {isMonthlyView
+        {isWeeklyView
+          ? (hasLogbook
+            ? 'Day-by-day revenue · collected + imported logbook'
+            : 'Day-by-day revenue for the selected week (Monday–Sunday)')
+          : isMonthlyView
           ? (viewingCurrentMonth && hasForecast
             ? 'Week-by-week revenue with the final week projected'
             : hasLogbook

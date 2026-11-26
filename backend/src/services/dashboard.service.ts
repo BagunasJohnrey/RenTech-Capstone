@@ -939,14 +939,15 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
 
 // Cache key includes both start AND end so "current month" and "a pinned
 // month from a past year" never collide.
-export async function getInsights(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }) {
+export async function getInsights(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean; daily?: boolean }) {
   const startKey = filter?.start ? filter.start.toISOString() : 'all';
   const endKey = filter?.end ? `:${filter.end.toISOString()}` : '';
-  const key = `insights:${startKey}${endKey}`;
+  const dailyKey = filter?.daily ? ':daily' : '';
+  const key = `insights:${startKey}${endKey}${dailyKey}`;
   return cacheOrCompute(key, () => getInsightsUncached(filter));
 }
 
-async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }) {
+async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean; daily?: boolean }) {
   // Window by RENTAL date (when the item is out), not creation date — a booking
   // made in September for October belongs to October. Reserved counts too: a
   // locked upcoming rental is real demand for the period (Cancelled stays out).
@@ -1107,6 +1108,32 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     logbookByWeek = logbookBuckets;
   }
 
+  // Daily zoom for a pinned Monday–Sunday week (period=weekly). Seven
+  // buckets, always — days with nothing collected stay ₱0 so each bar sits
+  // under its weekday. `date` is the local YYYY-MM-DD of that day. Logbook
+  // prices ride alongside (same indices), like logbookByWeek above.
+  let revenueByDay: { label: string; date: string; revenue: number }[] | undefined;
+  let logbookByDay: number[] | undefined;
+  if (filter?.daily && filter?.start) {
+    const s0 = filter.start;
+    const days = Array.from({ length: 7 }, (_, i) => new Date(s0.getFullYear(), s0.getMonth(), s0.getDate() + i));
+    const keyOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const idx = new Map(days.map((d, i) => [keyOf(d), i]));
+    const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const dayBuckets = [0, 0, 0, 0, 0, 0, 0];
+    for (const p of payments) {
+      const i = idx.get(keyOf(p.createdAt as Date));
+      if (i !== undefined) dayBuckets[i] += p.amount;
+    }
+    const logBuckets = [0, 0, 0, 0, 0, 0, 0];
+    for (const r of logRows ?? []) {
+      const i = idx.get(keyOf(r.eventDate));
+      if (i !== undefined) logBuckets[i] += r.price || 0;
+    }
+    revenueByDay = days.map((d, i) => ({ label: WEEKDAYS[i], date: keyOf(d), revenue: dayBuckets[i] }));
+    logbookByDay = logBuckets;
+  }
+
   const revenueByCategory: Record<string, number> = {};
   for (const p of payments) {
     const cat = p.transaction?.item?.category;
@@ -1137,6 +1164,9 @@ async function getInsightsUncached(filter?: { start?: Date; end?: Date; past?: b
     // the monthly series (undefined fields are dropped by JSON).
     ...(revenueByWeek ? { revenueByWeek } : {}),
     ...(logbookByWeek ? { logbookByWeek } : {}),
+    // Only present for a pinned week (period=weekly): Mon–Sun daily buckets.
+    ...(revenueByDay ? { revenueByDay } : {}),
+    ...(logbookByDay ? { logbookByDay } : {}),
     // Echo the queried window so the frontend can label the weekly chart for
     // a past month (e.g. "Jun 2025 · Wk 2") instead of assuming "this month".
     ...(filter?.start ? { insightsPeriod: { start: filter.start.toISOString() } } : {}),
@@ -1189,10 +1219,10 @@ export async function getDataVersion() {
 // meant a single mutation could warm one endpoint while leaving another cold
 // until its own first load. Bundling them under one key gets all four with a
 // single fetch and a single invalidate/warm cycle.
-export async function getDashboardBundle(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean }, forecastPeriod: number = 3) {
+export async function getDashboardBundle(filter?: { start?: Date; end?: Date; past?: boolean; weekly?: boolean; daily?: boolean }, forecastPeriod: number = 3) {
   const startKey = filter?.start ? filter.start.toISOString() : 'all';
   const endKey = filter?.end ? `:${filter.end.toISOString()}` : '';
-  const weeklyKey = filter?.weekly ? ':weekly' : '';
+  const weeklyKey = filter?.weekly ? ':weekly' : filter?.daily ? ':daily' : '';
   const key = `dashboardBundle:${startKey}${endKey}${weeklyKey}:fp${forecastPeriod}`;
   return cacheOrCompute(key, async () => {
     const [kpis, insights, forecast, analytics] = await Promise.all([

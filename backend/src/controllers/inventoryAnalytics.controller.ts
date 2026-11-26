@@ -11,7 +11,8 @@ export async function getInventoryAnalytics(req: AuthenticatedRequest, res: Resp
     const period = String(req.query.period || 'all');
     const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
     const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
-    const { start, end } = getPeriodFilter(period, year, month);
+    const week = req.query.week !== undefined ? String(req.query.week) : undefined;
+    const { start, end } = getPeriodFilter(period, year, month, week);
     const analytics = await inventoryAnalyticsService.getInventoryAnalytics(start, end);
     res.json(analytics);
   } catch (err) { next(err); }

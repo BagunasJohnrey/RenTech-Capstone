@@ -37,17 +37,27 @@ function exporter(req: AuthenticatedRequest): exportService.ExportedBy | undefin
 router.use(authMiddleware);
 
 // One .xlsx with Transactions + Revenue + Inventory as separate sheets,
-// scoped to the dashboard period (Overall / Yearly / Monthly + year/month).
+// scoped to the dashboard period (Overall / Yearly / Monthly + year/month /
+// Weekly + week=YYYY-MM-DD).
 router.get('/workbook', requireRole(Role.Admin, Role.Staff), async (req, res: Response, next: NextFunction) => {
   try {
     const authReq = req as AuthenticatedRequest;
     const period = String(req.query.period || 'overall').toLowerCase();
     const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
     const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
-    const win = getPeriodFilter(period, year, month);
+    const week = req.query.week !== undefined ? String(req.query.week) : undefined;
+    const win = getPeriodFilter(period, year, month, week);
     let scopeLabel = 'Overall';
     let filename = 'rentech-report-overall.xlsx';
-    if (period === 'monthly' && win.start) {
+    if (period === 'weekly' && win.start && win.end) {
+      // "Jan 19 – Jan 25, 2026" (Monday–Sunday).
+      const last = new Date(win.end.getFullYear(), win.end.getMonth(), win.end.getDate() - 1);
+      const md = (d: Date) => d.toLocaleString('en-US', { month: 'short', day: 'numeric' });
+      const sameYear = win.start.getFullYear() === last.getFullYear();
+      scopeLabel = `${md(win.start)}${sameYear ? '' : `, ${win.start.getFullYear()}`} – ${md(last)}, ${last.getFullYear()}`;
+      const iso = `${win.start.getFullYear()}-${String(win.start.getMonth() + 1).padStart(2, '0')}-${String(win.start.getDate()).padStart(2, '0')}`;
+      filename = `rentech-report-week-${iso}.xlsx`;
+    } else if (period === 'monthly' && win.start) {
       scopeLabel = win.start.toLocaleString('en-US', { month: 'short', year: 'numeric' });
       filename = `rentech-report-${win.start.getFullYear()}-${String(win.start.getMonth() + 1).padStart(2, '0')}.xlsx`;
     } else if (period === 'yearly' && win.start) {

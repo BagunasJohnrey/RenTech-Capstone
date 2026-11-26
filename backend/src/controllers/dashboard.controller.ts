@@ -7,9 +7,45 @@ import { AuthenticatedRequest } from '../types/index.js';
 // month/year. The service fills in `end` when start is set but end isn't
 // ("one month after start"), so a past month correctly returns only THAT
 // month instead of everything since.
-export function getPeriodFilter(period?: string, year?: number, month?: number): { start?: Date; end?: Date; past?: boolean; weekly?: boolean } {
+// Monday 00:00 of the week containing `d` (Monday–Sunday weeks, local
+// midnight — same convention as the monthly window below).
+export function weekStartOf(d: Date): Date {
+  const s = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  s.setDate(s.getDate() - ((s.getDay() + 6) % 7));
+  return s;
+}
+
+// "YYYY-MM-DD" → local midnight of that day; anything else → undefined.
+function parseIsoDay(v?: string): Date | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v ?? ''));
+  if (!m) return undefined;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.getMonth() === Number(m[2]) - 1 ? d : undefined;
+}
+
+// Today's Manila calendar date as a local-midnight Date. The server runs on
+// UTC (Render), so between 00:00 and 08:00 Manila on a Monday a plain
+// `new Date()` still reads Sunday and would clamp the client's "this week"
+// back to last week.
+function manilaToday(): Date {
+  const m = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  return new Date(m.getUTCFullYear(), m.getUTCMonth(), m.getUTCDate());
+}
+
+export function getPeriodFilter(period?: string, year?: number, month?: number, week?: string): { start?: Date; end?: Date; past?: boolean; weekly?: boolean; daily?: boolean } {
   const now = new Date();
   const thisYear = now.getFullYear();
+  if (period === 'weekly') {
+    // ?week=YYYY-MM-DD (any day of the wanted week; snapped to its Monday).
+    // Missing/invalid/future weeks fall back to the current week.
+    const thisWeek = weekStartOf(manilaToday());
+    const picked = parseIsoDay(week);
+    let start = picked ? weekStartOf(picked) : thisWeek;
+    if (start > thisWeek || start.getFullYear() < 2000) start = thisWeek;
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+    // daily: emit the Mon–Sun per-day revenue breakdown.
+    return { start, end, past: end <= now, daily: true };
+  }
   if (period === 'monthly') {
     const y = Number.isInteger(year) && year! >= 2000 && year! <= thisYear ? year! : thisYear;
     const m = Number.isInteger(month) && month! >= 1 && month! <= 12 ? month! - 1 : now.getMonth();
@@ -35,7 +71,8 @@ export async function getKpis(req: AuthenticatedRequest, res: Response, next: Ne
     const period = String(req.query.period || 'all');
     const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
     const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
-    const kpis = await dashboardService.getKpis(getPeriodFilter(period, year, month));
+    const week = req.query.week !== undefined ? String(req.query.week) : undefined;
+    const kpis = await dashboardService.getKpis(getPeriodFilter(period, year, month, week));
     res.json(kpis);
   } catch (err) {
     next(err);
@@ -88,7 +125,8 @@ export async function getInsights(req: AuthenticatedRequest, res: Response, next
     const period = String(req.query.period || 'all');
     const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
     const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
-    const data = await dashboardService.getInsights(getPeriodFilter(period, year, month));
+    const week = req.query.week !== undefined ? String(req.query.week) : undefined;
+    const data = await dashboardService.getInsights(getPeriodFilter(period, year, month, week));
     res.json(data);
   } catch (err) {
     next(err);
@@ -102,9 +140,10 @@ export async function getBundle(req: AuthenticatedRequest, res: Response, next: 
     const period = String(req.query.period || 'all');
     const year = req.query.year !== undefined ? Number(req.query.year) : undefined;
     const month = req.query.month !== undefined ? Number(req.query.month) : undefined;
+    const week = req.query.week !== undefined ? String(req.query.week) : undefined;
     const fp = Number(req.query.fp);
     const forecastPeriod = Number.isFinite(fp) && fp >= 1 && fp <= 12 ? Math.floor(fp) : 3;
-    const data = await dashboardService.getDashboardBundle(getPeriodFilter(period, year, month), forecastPeriod);
+    const data = await dashboardService.getDashboardBundle(getPeriodFilter(period, year, month, week), forecastPeriod);
     res.json(data);
   } catch (err) {
     next(err);

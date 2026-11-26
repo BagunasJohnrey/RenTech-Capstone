@@ -32,7 +32,7 @@ export const RevenueTooltip = ({ active, payload }) => {
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-lg px-4 py-3 text-sm">
       <p className="font-bold text-gray-900">{p.full}{p.forecast ? ' (projected)' : ''}</p>
-      <p className="text-gray-600">{p.rev <= 0 && !p.forecast ? 'No revenue' : fmt(p.rev)}</p>
+      <p className="text-gray-600">{p.upcoming ? 'Upcoming day' : p.rev <= 0 && !p.forecast ? 'No revenue' : fmt(p.rev)}</p>
       {!p.forecast && p.rev > 0 && (p.payments != null || p.logbook != null) && (
         <p className="text-[11px] text-gray-400">
           Collected {fmt(p.payments || 0)}
@@ -56,7 +56,8 @@ export const RevenueTooltip = ({ active, payload }) => {
 export const STATUS_COLORS = { Active: TX_STATUS_HEX.Active, Overdue: TX_STATUS_HEX.Overdue, Returned: TX_STATUS_HEX.Returned, Cancelled: TX_STATUS_HEX.Cancelled };
 export const STATUS_ICONS = { Active: Clock, Overdue: AlertTriangle, Returned: RotateCcw, Cancelled: XCircle };
 
-export const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly'];
+export const TIME_OPTIONS = ['Overall', 'Yearly', 'Monthly', 'Weekly'];
+
 
 export const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

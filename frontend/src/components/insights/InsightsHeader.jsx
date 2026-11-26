@@ -1,11 +1,60 @@
 // Page header: title left, filter + export controls top-right on desktop,
 // stacked on mobile. Pure presentational — all state lives in the parent.
-import { ChevronDown, Download, RefreshCw } from 'lucide-react';
+import { useRef } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, Download, RefreshCw } from 'lucide-react';
 import { TIME_OPTIONS, SHORT_MONTHS } from './shared';
+import { formatWeekRange, toIsoDay, parseIsoDay, weekStartOf, addDays } from '../../utils/week';
+
+// Weekly filter pill: ‹ January 19 – January 25 ›. Tapping the label opens
+// the native date picker — any day picked snaps to its Monday–Sunday week.
+// Future weeks can't be picked (next arrow + picker max stop at this week).
+function WeekPicker({ weekStart, currentWeekStart, setSelWeek, now0 }) {
+  const dateRef = useRef(null);
+  const isCurrentWeek = weekStart.getTime() === currentWeekStart.getTime();
+  const step = (dir) => {
+    const next = addDays(weekStart, dir * 7);
+    if (next > currentWeekStart || next.getFullYear() < 2000) return;
+    setSelWeek(toIsoDay(next));
+  };
+  const openPicker = () => {
+    const el = dateRef.current;
+    if (!el) return;
+    try { el.showPicker(); } catch { el.focus(); el.click(); }
+  };
+  const showYear = weekStart.getFullYear() !== now0.getFullYear();
+  const arrow = 'p-1 sm:p-0.5 rounded-full text-gray-500 hover:text-gray-800 hover:bg-gray-200 transition-colors disabled:opacity-30 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50';
+  return (
+    <div className="relative flex items-center gap-0.5 bg-gray-100 rounded-full px-1.5 py-1.5 sm:px-1 sm:py-1 shrink-0">
+      <button type="button" onClick={() => step(-1)} aria-label="Previous week" title="Previous week" className={arrow}>
+        <ChevronLeft size={14} />
+      </button>
+      <button type="button" onClick={openPicker}
+        title={`${formatWeekRange(weekStart, { long: true, year: true })} · tap to pick a week`}
+        aria-label={`Week of ${formatWeekRange(weekStart, { long: true, year: true })}. Pick a week`}
+        className="px-1 text-sm sm:text-xs font-bold text-gray-700 whitespace-nowrap tabular-nums rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/50">
+        <span className="lg:hidden">{formatWeekRange(weekStart)}</span>
+        <span className="hidden lg:inline">{formatWeekRange(weekStart, { long: true, year: showYear })}</span>
+      </button>
+      <input ref={dateRef} type="date" tabIndex={-1} aria-hidden="true"
+        min="2000-01-01" max={toIsoDay(now0)} value={toIsoDay(weekStart)}
+        onChange={(e) => {
+          const d = parseIsoDay(e.target.value);
+          if (!d) return;
+          const ws = weekStartOf(d);
+          setSelWeek(toIsoDay(ws > currentWeekStart ? currentWeekStart : ws));
+        }}
+        className="absolute inset-0 w-full h-full opacity-0 pointer-events-none" />
+      <button type="button" onClick={() => step(1)} disabled={isCurrentWeek} aria-label="Next week" title="Next week" className={arrow}>
+        <ChevronRight size={14} />
+      </button>
+    </div>
+  );
+}
 
 export default function InsightsHeader({
   timeRange, setTimeRange,
   appliedMonth, appliedYear, setSelMonth, setSelYear, now0,
+  appliedWeekStart, currentWeekStart, setSelWeek,
   availableYears,
   refreshState = 'idle', onRefresh, statusText = '',
   workbookScopeLabel, handleWorkbookExport,
@@ -23,7 +72,7 @@ export default function InsightsHeader({
       </div>
 
       {/* Controls — single one-line row on all screens: range pills,
-          optional month/year, Excel. Compact on phones, roomier on sm+. */}
+          optional month/year or week, Excel. Compact on phones, roomier on sm+. */}
       <div className="flex items-center justify-center lg:justify-end gap-2 sm:gap-3 shrink-0 w-full lg:w-auto">
 
         {/* Data freshness + manual refresh — one button left of the filter:
@@ -58,8 +107,14 @@ export default function InsightsHeader({
           <ChevronDown size={15} className="pointer-events-none absolute right-3 sm:right-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
         </div>
 
-        {/* Month + Year — compact pill, hidden on Overall */}
-        {timeRange !== 'Overall' && (
+        {/* Week — ‹ Jan 19 – Jan 25 › stepper + date picker */}
+        {timeRange === 'Weekly' && appliedWeekStart && (
+          <WeekPicker weekStart={appliedWeekStart} currentWeekStart={currentWeekStart}
+            setSelWeek={setSelWeek} now0={now0} />
+        )}
+
+        {/* Month + Year — compact pill, hidden on Overall / Weekly */}
+        {timeRange !== 'Overall' && timeRange !== 'Weekly' && (
           <div className="flex items-center gap-1 sm:gap-0.5 bg-gray-100 rounded-full px-3 py-2 sm:px-1.5 sm:py-1 shrink-0">
             {timeRange === 'Monthly' && (
               <select

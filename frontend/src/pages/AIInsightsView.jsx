@@ -14,6 +14,7 @@ import InsightsPanel from '../components/insights/InsightsPanel';
 import ReportSection from '../components/insights/ReportSection';
 import SmartListModal from '../components/insights/SmartListModal';
 import { extractRecommendations, shortMonth, SHORT_MONTHS, STATUS_COLORS } from '../components/insights/shared';
+import { weekStartOf, toIsoDay, parseIsoDay, addDays, formatWeekRange } from '../utils/week';
 import { api } from '../utils/api';
 import { formatCheckedAgo } from '../utils/cache';
 import { reorderSuggestions, restockWatch, clearanceSuggestions, cleaningPriority } from '../utils/optimization';
@@ -135,6 +136,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const now0 = new Date();
   const [selYear, setSelYear] = useState(now0.getFullYear());
   const [selMonth, setSelMonth] = useState(now0.getMonth() + 1); // 1-12
+  // Weekly filter: Monday ("YYYY-MM-DD") of the picked Monday–Sunday week.
+  const currentWeekStart = weekStartOf(now0);
+  const [selWeek, setSelWeek] = useState(() => toIsoDay(weekStartOf(new Date())));
   // Years that actually have bookings (drives the year picker — no empty
   // decades). Fetched once; the applied year is always selectable regardless.
   const [availableYears, setAvailableYears] = useState(null);
@@ -160,13 +164,25 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // Clamp the *applied* month/year so picking a future value can't leak into
   // the request — the dropdown options are filtered to the past, but the
   // state setter can hold a stale future value between renders.
-  const appliedYear = timeRange === 'Overall' ? undefined : Math.min(Math.max(selYear, 2000), now0.getFullYear());
+  // Weekly: clamp the picked week to this week (no future weeks).
+  const appliedWeekStart = timeRange === 'Weekly'
+    ? (() => {
+        const d = parseIsoDay(selWeek);
+        const ws = d ? weekStartOf(d) : currentWeekStart;
+        return ws > currentWeekStart ? currentWeekStart : ws;
+      })()
+    : null;
+  const appliedWeek = appliedWeekStart ? toIsoDay(appliedWeekStart) : undefined;
+  const appliedYear = timeRange === 'Overall' ? undefined
+    : timeRange === 'Weekly' ? appliedWeekStart.getFullYear()
+    : Math.min(Math.max(selYear, 2000), now0.getFullYear());
   const appliedMonth = timeRange === 'Monthly'
     ? (appliedYear === now0.getFullYear() ? Math.min(selMonth, now0.getMonth() + 1) : selMonth)
     : undefined;
 
   const cacheKey = timeRange === 'Monthly' ? `Monthly:${appliedYear}-${appliedMonth}`
     : timeRange === 'Yearly' ? `Yearly:${appliedYear}`
+    : timeRange === 'Weekly' ? `Weekly:${appliedWeek}`
     : 'Overall';
 
   const cached = readAiCache(cacheKey);
@@ -252,9 +268,11 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     // chart. Only the SMA forecast stays global (a full-history trend is the
     // point of that chart).
     const monthParam = range === 'Monthly' ? `&year=${appliedYear}&month=${appliedMonth}` : '';
-    const yearParam = range === 'Yearly' ? `&year=${appliedYear}` : '';
+    const yearParam = range === 'Yearly' ? `&year=${appliedYear}`
+      : range === 'Weekly' ? `&week=${appliedWeek}` : '';
     const cacheKey = range === 'Monthly' ? `Monthly:${appliedYear}-${appliedMonth}`
       : range === 'Yearly' ? `Yearly:${appliedYear}`
+      : range === 'Weekly' ? `Weekly:${appliedWeek}`
       : 'Overall';
 
     // Snapshot present for this range: apply instantly (no skeleton), then fall
@@ -330,7 +348,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
 
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange, appliedYear, appliedMonth, refreshTick]);
+  }, [timeRange, appliedYear, appliedMonth, appliedWeek, refreshTick]);
 
   // Auto-refresh. (1) The app-wide 15s version poll moved → another device
   // (or the scheduler) changed data: refetch in place. (2) Tab came back
@@ -375,18 +393,23 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   };
 
   // One workbook download (Transactions + Revenue + Inventory sheets) scoped
-  // to the selected Overall / Yearly / Monthly window.
+  // to the selected Overall / Yearly / Monthly / Weekly window.
   const workbookScopeLabel = timeRange === 'Monthly'
     ? `${SHORT_MONTHS[appliedMonth - 1]} ${appliedYear}`
+    : timeRange === 'Weekly' ? formatWeekRange(appliedWeekStart, { year: true })
     : timeRange === 'Yearly' ? `${appliedYear}` : 'Overall';
   const handleWorkbookExport = () => {
     const params = timeRange === 'Overall'
       ? 'period=overall'
       : timeRange === 'Yearly'
         ? `period=yearly&year=${appliedYear}`
-        : `period=monthly&year=${appliedYear}&month=${appliedMonth}`;
+        : timeRange === 'Weekly'
+          ? `period=weekly&week=${appliedWeek}`
+          : `period=monthly&year=${appliedYear}&month=${appliedMonth}`;
     const filename = timeRange === 'Monthly'
       ? `rentech-report-${appliedYear}-${String(appliedMonth).padStart(2, '0')}.xlsx`
+      : timeRange === 'Weekly'
+        ? `rentech-report-week-${appliedWeek}.xlsx`
       : timeRange === 'Yearly'
         ? `rentech-report-${appliedYear}.xlsx`
         : 'rentech-report-overall.xlsx';
@@ -513,11 +536,16 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // figure to the window) — so the label must follow it too instead of always
   // reading "Monthly Revenue".
   const revMonLabel = `${SHORT_MONTHS[(appliedMonth ?? now0.getMonth() + 1) - 1]} ${appliedYear ?? now0.getFullYear()}`;
+  const isWeeklyView = timeRange === 'Weekly';
+  const viewingCurrentWeek = isWeeklyView && appliedWeekStart.getTime() === currentWeekStart.getTime();
+  const weekLabel = isWeeklyView ? formatWeekRange(appliedWeekStart, { year: true }) : '';
   const revLabel = timeRange === 'Yearly' ? `${appliedYear} Revenue`
     : timeRange === 'Monthly' ? `${revMonLabel} Revenue`
+    : isWeeklyView ? (viewingCurrentWeek ? 'This Week Revenue' : 'Weekly Revenue')
     : 'Total Revenue';
   const revSub = timeRange === 'Yearly' ? `Collected Jan–Dec ${appliedYear}`
     : timeRange === 'Monthly' ? `Collected ${revMonLabel}`
+    : isWeeklyView ? `Collected ${weekLabel}`
     : 'All-time collected';
   // Short "vs" label for the change pill (null = no comparison shown).
   // Monthly walks back one month (Jan wraps to last Dec).
@@ -527,8 +555,9 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           const d = new Date(appliedYear, (appliedMonth ?? now0.getMonth() + 1) - 2, 1);
           return `vs ${SHORT_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
         })()
+      : isWeeklyView ? `vs ${formatWeekRange(addDays(appliedWeekStart, -7))}`
       : null;
-  const revCompare = timeRange === 'Yearly' ? 'the previous year' : 'last month';
+  const revCompare = timeRange === 'Yearly' ? 'the previous year' : isWeeklyView ? 'the previous week' : 'last month';
   const rentedCount = insightsData?.totalRented || 0;
   const totalItems = kpis?.totalItems ?? 0;
 
@@ -634,7 +663,31 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   const lgByMonthAll = Array.isArray(insightsData?.logbookByMonth) ? insightsData.logbookByMonth : [];
   let revChart;
   let revChartEmptyLabel = 'No transaction data yet.';
-  if (isMonthlyView && revByWeek && revByWeek.length > 0) {
+  if (isWeeklyView) {
+    // Seven daily bars, Monday–Sunday. Today is marked ongoing; later days in
+    // the current week are "upcoming" (₱0 placeholders, never a slow day).
+    const days = Array.isArray(insightsData?.revenueByDay) ? insightsData.revenueByDay : null;
+    const lgDays = Array.isArray(insightsData?.logbookByDay) ? insightsData.logbookByDay : [];
+    const todayIso = toIsoDay(new Date());
+    revChart = (days || []).map((d, i) => {
+      const date = parseIsoDay(d.date) || addDays(appliedWeekStart, i);
+      const iso = toIsoDay(date);
+      const logbook = lgDays[i] || 0;
+      return {
+        label: `${d.label} ${date.getDate()}`,
+        full: date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }),
+        rev: (d.revenue || 0) + logbook,
+        payments: d.revenue || 0,
+        logbook,
+        ...(iso === todayIso ? { wip: true } : {}),
+        ...(iso > todayIso ? { upcoming: true } : {}),
+      };
+    });
+    // Switching into Weekly before the bundle lands: say so instead of
+    // briefly claiming the week had no revenue.
+    revChartEmptyLabel = !days && fetching ? 'Loading week…'
+      : viewingCurrentWeek ? 'No revenue this week yet.' : `No revenue in ${weekLabel}.`;
+  } else if (isMonthlyView && revByWeek && revByWeek.length > 0) {
     const daysInMonth = new Date(appliedYear, appliedMonth, 0).getDate();
     // A 28-day February has no days 29–31, so Wk 5 never exists there. Past
     // months show Wk 1–4 only (the 3-day Wk 5 tail is called out in the
@@ -755,7 +808,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
   // Next-month projection bar only when the chart reaches the present: never
   // after a past year's December (that drew "Nov 2026" onto a 2025 chart),
   // and not once the current year is complete (Dec → next Jan is next year).
-  } else if (avgPriceKnown && forecastRevValue > 0 && revChart.length > 0
+  } else if (!isWeeklyView && avgPriceKnown && forecastRevValue > 0 && revChart.length > 0
     && (isOverallView || (isCurrentYear(appliedYear) && now0.getMonth() < 11))) {
     const label = timeRange === 'Yearly' ? shortMonth(monthlyNextLabel) : monthlyNextLabel;
     revChart = [...revChart, { label, full: monthlyNextLabel, rev: forecastRevValue, forecast: true }];
@@ -794,6 +847,14 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
     setSelYear(now0.getFullYear());
     setSelMonth(now0.getMonth() + 1);
   };
+  // Week stepper (Weekly view): ±7 days, never past this week.
+  const stepWeek = (dir) => {
+    if (!appliedWeekStart) return;
+    const next = addDays(appliedWeekStart, dir * 7);
+    if (next > currentWeekStart || next.getFullYear() < 2000) return;
+    setSelWeek(toIsoDay(next));
+  };
+  const goCurrentWeek = () => setSelWeek(toIsoDay(currentWeekStart));
 
   // -- Render --
   return (    <>
@@ -803,6 +864,7 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
           timeRange={timeRange} setTimeRange={setTimeRange}
           appliedMonth={appliedMonth} appliedYear={appliedYear}
           setSelMonth={setSelMonth} setSelYear={setSelYear} now0={now0}
+          appliedWeekStart={appliedWeekStart} currentWeekStart={currentWeekStart} setSelWeek={setSelWeek}
           availableYears={availableYears}
           refreshState={fetching ? 'loading' : fetchError ? 'error' : 'idle'}
           onRefresh={handleRefresh}
@@ -841,6 +903,8 @@ export default function AIInsightsView({ analyticsData, role, onViewItemTransact
             revChart={revChart} revChartEmptyLabel={revChartEmptyLabel}
             revFootnote={revFootnote}
             stepMonth={stepMonth} goCurrentMonth={goCurrentMonth}
+            isWeeklyView={isWeeklyView} weekLabel={weekLabel} viewingCurrentWeek={viewingCurrentWeek}
+            stepWeek={stepWeek} goCurrentWeek={goCurrentWeek}
           />
           <StatusDistribution
             totalTx={totalTx} statusDist={statusDist}
