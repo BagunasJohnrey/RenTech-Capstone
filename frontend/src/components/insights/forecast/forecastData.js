@@ -14,6 +14,18 @@ const shortMonthYear = (l) => {
   return y ? `${m} ’${y.slice(2)}` : m || '';
 };
 
+// Plain name of the technique making the monthly projection.
+// Short name, for the subtitle while another technique is being viewed.
+export const methodShortLabel = (method) => (method === 'seasonal'
+  ? 'seasonal blend'
+  : method === 'regression' ? 'linear regression' : 'moving average');
+
+export const methodLabel = (method, period) => (method === 'seasonal'
+  ? `seasonal blend (last ${period} months + same month last year)`
+  : method === 'regression'
+    ? 'linear regression (trend line)'
+    : `${period}-month moving average`);
+
 const rangeOf = (lo, hi) => (lo == null || hi == null
   ? { projLo: null, projSpan: null }
   : { projLo: lo, projSpan: Math.max(0, Math.round((hi - lo) * 100) / 100) });
@@ -60,9 +72,12 @@ export function deriveForecast(f, weekly) {
   const avgs = sma.filter((v) => v !== null && v !== undefined);
   const latest = avgs.length ? avgs[avgs.length - 1] : 0;
   const prev = avgs.length >= 2 ? avgs[avgs.length - 2] : 0;
-  const seasonal = !weekly && f?.projectionMethod === 'seasonal';
-  // Error of the method actually projecting (seasonal backtest when it won).
-  const errPct = seasonal ? f?.seasonality?.seasonalErrorPct : f?.errorPct;
+  const method = weekly ? 'average' : (f?.projectionMethod || 'average');
+  const seasonal = method === 'seasonal';
+  // Error of the technique actually projecting (the one that won the backtest).
+  const errPct = method === 'seasonal' ? f?.seasonality?.seasonalErrorPct
+    : method === 'regression' ? f?.seasonality?.regressionErrorPct
+      : f?.errorPct;
 
   return {
     rows,
@@ -74,6 +89,7 @@ export function deriveForecast(f, weekly) {
     completeCount: avgs.length,
     projections: (f?.projections || []).filter((p) => p.value !== null && p.value !== undefined),
     current: cur,
+    method,
     seasonal,
     errPct: errPct ?? null,
     rangeReliable: errPct !== null && errPct !== undefined && errPct <= 100,

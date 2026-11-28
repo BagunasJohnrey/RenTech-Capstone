@@ -15,6 +15,15 @@ export default function ForecastExplainer({ fc, weekly, period, seasonality, pro
   const stock = proj.length ? Math.ceil(Math.max(...proj.map((p) => p.high ?? p.value))) : 0;
   const word = fc.trend === 'up' ? 'rising' : fc.trend === 'down' ? 'easing' : 'steady';
   const b = (t) => <strong className="text-gray-900">{t}</strong>;
+  // Monthly only: the three techniques tested on the same past months, and
+  // the one that missed the least (it makes the forecast).
+  const techniques = weekly || seasonality?.averageErrorPct == null ? [] : [
+    { key: 'average', name: 'Moving average', err: seasonality.averageErrorPct },
+    { key: 'seasonal', name: 'Seasonal blend', err: seasonality.seasonalErrorPct },
+    { key: 'regression', name: 'Linear regression', err: seasonality.regressionErrorPct },
+  ].filter((t) => t.err != null);
+  const winner = techniques.find((t) => t.key === fc.method) || techniques[0];
+  const maxErr = Math.max(1, ...techniques.map((t) => t.err));
 
   const lines = [
     <>{b(`Demand is ${word}.`)} The last {period} complete {unit}s average {fc.latest.toFixed(1)} rentals
@@ -25,9 +34,17 @@ export default function ForecastExplainer({ fc, weekly, period, seasonality, pro
     next && (fc.seasonal
       ? <>{b("Expect demand to follow last year's calendar:")} {proj.map((p) => `${p.label} ~${p.value.toFixed(1)}`).join(' · ')}.
           Each month is half the recent average and half the same month last year
-          {seasonality?.growth != null && seasonality.growth !== 1 ? ` (×${seasonality.growth} for growth)` : ''}, because that predicted past months better.</>
+          {seasonality?.growth != null && seasonality.growth !== 1 ? ` (×${seasonality.growth} for growth)` : ''}.</>
+      : fc.method === 'regression'
+        ? <>{b('Expect demand to follow the overall trend:')} {proj.map((p) => `${p.label} ~${p.value.toFixed(1)}`).join(' · ')}.
+            Each month sits on a straight trend line fitted to the past months.</>
       : <>{b(`Expect about ${next.value.toFixed(1)} rentals per ${unit}`)} ({proj.map((p) => p.label).join(' · ')})
           {!weekly && avgPriceKnown ? ` — roughly ${fmt(next.value * avgPrice)} in revenue each.` : '.'}</>),
+    techniques.length > 1 && <>{b(`Which technique wins: ${winner.name.toLowerCase()}.`)} Each technique forecast the last {seasonality.backtestPoints} complete
+      months using only the months before them, and its misses were averaged: {techniques.map((t) => `${t.name.toLowerCase()} ~${t.err}%`).join(' · ')}.{' '}
+      {winner.key === 'average'
+        ? 'Neither of the other two missed by less, so the moving average (the baseline) makes the forecast.'
+        : `The ${winner.name.toLowerCase()} missed the least, so it makes the forecast.`}</>,
     fc.rangeReliable
       ? <>{b(`Reality usually lands within ±${fc.errPct}%.`)} That comes from replaying the method on past {unit}s.</>
       : <>{b('No reliable range right now.')} Past {unit}s swing too much — treat the forecast as a direction.</>,
@@ -46,6 +63,29 @@ export default function ForecastExplainer({ fc, weekly, period, seasonality, pro
           </li>
         ))}
       </ol>
+      {techniques.length > 1 && (
+        <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2.5">
+            Technique comparison · average error on past {unit}s (lower is better)
+          </p>
+          <div className="space-y-2">
+            {techniques.map((t) => {
+              const won = t.key === winner.key;
+              return (
+                <div key={t.key} className="flex items-center gap-3">
+                  <span className={`w-32 shrink-0 text-xs ${won ? 'font-bold text-gray-900' : 'text-gray-600'}`}>{t.name}</span>
+                  <div className="flex-1 h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                    <div className={`h-full rounded-full ${won ? 'bg-[#bf4a53]' : 'bg-gray-300'}`}
+                      style={{ width: `${Math.max(4, Math.round((Math.min(t.err, maxErr) / maxErr) * 100))}%` }} />
+                  </div>
+                  <span className={`w-12 text-right text-xs tabular-nums ${won ? 'font-bold text-[#bf4a53]' : 'text-gray-500'}`}>~{t.err}%</span>
+                  <span className={`w-12 text-center text-[10px] font-bold rounded-full py-0.5 ${won ? 'bg-[#bf4a53]/10 text-[#bf4a53]' : 'invisible'}`}>Used</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="bg-white border border-[#bf4a53]/20 rounded-xl px-4 py-3 text-sm text-gray-700 flex items-start gap-2.5">
         <span className="w-8 h-8 rounded-xl bg-[#bf4a53]/10 text-[#bf4a53] flex items-center justify-center shrink-0"><Sparkles size={14} /></span>
         <p>

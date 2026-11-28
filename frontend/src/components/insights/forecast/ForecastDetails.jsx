@@ -1,11 +1,12 @@
 // Detail blocks under the chart. The card shows only the outlook table; the
 // full view adds the seasonal pattern and the categories driving demand.
 import { SHORT_MONTHS, fmt } from '../shared';
+import { methodLabel } from './forecastData';
 
 const BOX = 'rounded-2xl border border-gray-100';
 const HEAD = 'text-[11px] font-bold uppercase tracking-wide';
 
-export function OutlookTable({ projections, weekly, avgPriceKnown, avgPrice, seasonality, showMethodNote }) {
+export function OutlookTable({ projections, weekly, avgPriceKnown, avgPrice, seasonality, showMethodNote, method, period }) {
   if (projections.length === 0) return null;
   return (
     <div className={`${BOX} overflow-hidden`}>
@@ -36,10 +37,14 @@ export function OutlookTable({ projections, weekly, avgPriceKnown, avgPrice, sea
           ))}
         </tbody>
       </table>
-      {showMethodNote && seasonality?.seasonalErrorPct != null && seasonality?.averageErrorPct != null && (
+      {showMethodNote && seasonality?.averageErrorPct != null && (
         <p className="text-[11px] text-gray-500 px-4 py-2.5 bg-gray-50/70 border-t border-gray-100 leading-relaxed">
-          Seasonal blend chosen: on past months it missed by ~{seasonality.seasonalErrorPct}% vs ~{seasonality.averageErrorPct}% for the plain average
-          {seasonality.growth != null && seasonality.growth !== 1 ? ` · last year ×${seasonality.growth} for growth` : ''}.
+          Tested on the last {seasonality.backtestPoints} complete months (average error, lower is better):
+          moving average ~{seasonality.averageErrorPct}%
+          {seasonality.seasonalErrorPct != null ? ` · seasonal blend ~${seasonality.seasonalErrorPct}%` : ''}
+          {seasonality.regressionErrorPct != null ? ` · linear regression ~${seasonality.regressionErrorPct}%` : ''}.
+          {' '}Using: {methodLabel(method, period)}
+          {method === 'seasonal' && seasonality.growth != null && seasonality.growth !== 1 ? ` · last year ×${seasonality.growth} for growth` : ''}.
         </p>
       )}
     </div>

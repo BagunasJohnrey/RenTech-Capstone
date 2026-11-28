@@ -1,6 +1,7 @@
-// Demand forecast — rule-based (no AI, no ML): a moving average over COMPLETE
-// periods, blended 50/50 with the same month last year when that beat the
-// plain average on past months (server backtest).
+// Demand forecast — no AI: three techniques are backtested on past months
+// (moving average over COMPLETE periods as the baseline, a 50/50 blend with
+// the same month last year, and a linear-regression trend line), and the one
+// with the lowest error makes the monthly projection (server backtest).
 //
 // Card (on the page): next period + this period so far, the chart, and the
 // outlook table. Full view (⤢): adds trend, accuracy, seasonal pattern, the
@@ -8,15 +9,23 @@
 // The pieces live in ./forecast/; this file only lays them out.
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Sparkles, Maximize2, X, CalendarClock, ChevronRight } from 'lucide-react';
+import { Sparkles, Maximize2, X, CalendarClock, ChevronRight, Check } from 'lucide-react';
 import { CONFIDENCE_STYLES } from './shared';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
-import { deriveForecast } from './forecast/forecastData';
+import { deriveForecast, methodLabel, methodShortLabel } from './forecast/forecastData';
 import ForecastChart from './forecast/ForecastChart';
 import ForecastTiles from './forecast/ForecastTiles';
 import { OutlookTable, OutlookCards, SeasonalPattern, DemandDrivers } from './forecast/ForecastDetails';
 import ForecastExplainer from './forecast/ForecastExplainer';
 import { ForecastBodySkeleton } from './forecast/ForecastSkeleton';
+
+// Technique filter (monthly only): "Best" is the one the system uses.
+const TECHNIQUES = [
+  { key: 'best', label: 'Best (auto)' },
+  { key: 'average', label: 'Moving average', err: 'averageErrorPct' },
+  { key: 'seasonal', label: 'Seasonal blend', err: 'seasonalErrorPct' },
+  { key: 'regression', label: 'Linear regression', err: 'regressionErrorPct' },
+];
 
 const ICON_BTN = 'w-8 h-8 rounded-full flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60';
 
@@ -54,8 +63,23 @@ function ForecastPanel({
   activeForecast, monthlyForecast, avgPriceKnown, avgPrice,
 }) {
   const [explaining, setExplaining] = useState(false);
+  const [technique, setTechnique] = useState('best');
   const weekly = granularity === 'weekly';
-  const fc = useMemo(() => deriveForecast(activeForecast, weekly), [activeForecast, weekly]);
+  const byMethod = weekly ? null : activeForecast?.projectionsByMethod;
+  const bestMethod = weekly ? 'average' : (activeForecast?.projectionMethod || 'average');
+  // A non-best technique swaps in its own outlook; everything else stays.
+  // Picking the technique already in use is the same as "Best (auto)".
+  const viewing = technique !== 'best' && technique !== bestMethod && byMethod?.[technique] ? technique : null;
+  const viewForecast = useMemo(() => (viewing
+    ? {
+      ...activeForecast,
+      projections: byMethod[viewing].projections,
+      current: byMethod[viewing].current ?? activeForecast?.current,
+      projectionMethod: viewing,
+    }
+    : activeForecast), [activeForecast, byMethod, viewing]);
+  const fc = useMemo(() => deriveForecast(viewForecast, weekly), [viewForecast, weekly]);
+  const fcBest = useMemo(() => (viewing ? deriveForecast(activeForecast, weekly) : fc), [viewing, activeForecast, weekly, fc]);
   const period = activeForecast?.period || 3;
   const unit = weekly ? 'week' : 'month';
   const profile = weekly ? [] : (monthlyForecast?.seasonalProfile || []);
@@ -73,12 +97,16 @@ function ForecastPanel({
     <div className={full ? 'bg-white' : 'bg-white rounded-3xl border border-gray-100/80 shadow-sm lg:col-span-2 overflow-hidden'}>
       {/* Header (sticky in the full view so close + toggles stay reachable) */}
       <div className={`px-5 md:px-7 pt-5 md:pt-7 pb-3 space-y-3 ${full ? 'sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-gray-100' : ''}`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+        <div className="flex flex-wrap md:flex-nowrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <h3 className={`font-bold text-gray-900 ${full ? 'text-lg md:text-2xl' : 'text-base md:text-lg'}`}>Demand Forecast</h3>
             <p className="text-xs text-gray-400 mt-0.5">
               {weeklyLoading ? 'Loading weekly buckets…'
-                : `Rule-based · ${fc.seasonal ? `last ${period} months + same month last year` : `${period}-${unit} moving average`}`}
+                : weekly
+                  ? `Rule-based · ${period}-week moving average`
+                  : viewing
+                    ? `Viewing ${methodShortLabel(viewing)} · in use: ${methodShortLabel(bestMethod)} (lowest error)`
+                    : `Lowest error of 3 techniques · ${methodLabel(bestMethod, period)}`}
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -103,6 +131,28 @@ function ForecastPanel({
               : <button type="button" onClick={onExpand} aria-label="Open demand forecast in full view" title="Full view" className={ICON_BTN}><Maximize2 size={15} /></button>}
           </div>
         </div>
+        {!weekly && !weeklyLoading && byMethod && (
+          <div role="radiogroup" aria-label="Forecasting technique" className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-gray-400 mr-0.5">Technique:</span>
+            {TECHNIQUES.filter((t) => t.key === 'best' || byMethod[t.key]).map((t) => {
+              const err = t.err ? activeForecast?.seasonality?.[t.err] : null;
+              const on = technique === t.key;
+              const inUse = t.key === bestMethod;
+              return (
+                <button key={t.key} type="button" role="radio" aria-checked={on} onClick={() => setTechnique(t.key)}
+                  title={t.key === 'best' ? 'The technique with the lowest error on past months'
+                    : `Show the ${t.label.toLowerCase()} outlook${inUse ? ' (in use: lowest error)' : ''}`}
+                  className={`px-2.5 min-h-[26px] rounded-full text-[11px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#bf4a53]/60 ${
+                    on ? 'bg-[#bf4a53] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  <span className="inline-flex items-center gap-1">
+                    {inUse && <Check size={12} strokeWidth={3} aria-label="in use" />}
+                    {t.label}{err != null ? ` · ~${err}%` : ''}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         {full && (
           <div className="flex flex-wrap gap-1.5">
             {activeForecast?.confidenceNote && (
@@ -153,7 +203,7 @@ function ForecastPanel({
           ) : (
             <div key={explaining ? 'explain' : 'numbers'} className="animate-in fade-in duration-300">
               {explaining ? (
-                <ForecastExplainer fc={fc} weekly={weekly} period={period} seasonality={activeForecast?.seasonality}
+                <ForecastExplainer fc={fcBest} weekly={weekly} period={period} seasonality={activeForecast?.seasonality}
                   profile={profile} drivers={drivers} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice} />
               ) : weekly ? (
                 <div className="px-5 md:px-7 pb-5">
@@ -162,14 +212,15 @@ function ForecastPanel({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-5 md:px-7 pb-5">
                   <OutlookTable projections={fc.projections} weekly={weekly} avgPriceKnown={avgPriceKnown} avgPrice={avgPrice}
-                    seasonality={activeForecast?.seasonality} showMethodNote={fc.seasonal} />
+                    seasonality={activeForecast?.seasonality} method={bestMethod} period={period} showMethodNote={!weekly} />
                   <SeasonalPattern profile={profile} projections={fc.projections} />
                   <DemandDrivers drivers={drivers} />
                 </div>
               )}
               <p className="text-[11px] text-gray-400 px-5 md:px-7 pb-6 leading-relaxed">
-                How it works: average of the last {period} complete {unit}s
-                {fc.seasonal ? ', blended 50/50 with the same month last year (adjusted for growth)' : ''}.
+                How it works: {weekly
+                  ? `average of the last ${period} complete weeks.`
+                  : `the ${period}-month moving average (baseline), a 50/50 blend with the same month last year, and a linear regression trend line are each tested on past months, and the one with the lowest error makes the projection. Now using: ${methodLabel(bestMethod, period)}.`}
                 One-off spikes are capped; regular yearly peaks are kept. Cancelled bookings count, since they still show demand.
               </p>
             </div>

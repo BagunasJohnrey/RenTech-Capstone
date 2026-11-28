@@ -1050,7 +1050,7 @@ SECTION GUIDANCE (use the supplied data):
 - TREND MEANING: a "down"/"up" trend compares the last 3 complete months with the 3 before them — it describes RECENT demand, not the coming months. Never say a specific upcoming month will decline or rise unless its projection is lower/higher than the month before it in the projections. Describe the coming months from their projected numbers (e.g. December higher, January lower), and the trend as "recent demand has eased".
 - Months with no in-app payments are NOT months without sales when logbook records exist: say "in-app payments start in <first month>; earlier months are covered by the logbook records" — never "no sales data" for those months.
 - Never mention the internal "latest" or "average" fields of the per-category forecast (e.g. no "from latest 4"); just give each category's projection and trend.
-- If demand is projected down, do not list every category as "especially" affected. Name at most the two largest categories, and note that the forecast already blends in the same month last year, so part of the change is the normal seasonal pattern.
+- If demand is projected down, do not list every category as "especially" affected. Name at most the two largest categories. Only when the forecast's projectionMethod is "seasonal", note that it blends in the same month last year, so part of the change is the normal seasonal pattern.
 - Recommendations: the prioritized action list.
 
 Data:

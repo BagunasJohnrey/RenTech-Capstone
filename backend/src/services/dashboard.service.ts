@@ -1,6 +1,6 @@
 import { prisma } from '../config/database.js';
 import { TransactionStatus } from '@prisma/client';
-import { sma, smaCapped, mape, type SpikeFlag } from '../utils/sma.js';
+import { sma, smaCapped, mape, linearRegression, type SpikeFlag, type RegressionLine } from '../utils/sma.js';
 import { cacheOrCompute, setDataCacheWarmer } from '../utils/ttlCache.js';
 import { getInventoryAnalytics } from './inventoryAnalytics.service.js';
 import { manilaDayStart, manilaNextDayStart } from '../utils/manilaDay.js';
@@ -532,12 +532,15 @@ function projectForward(smaValues: (number | null)[], labels: string[], nextLabe
 // the SAME month last year, scaled by year-over-year growth (last 3 complete
 // months vs the same 3 a year earlier, clamped ×0.5–×2).
 //
-// It is only USED when a one-step backtest over the trailing complete months
-// beats the plain SMA (≥3 comparable points) — otherwise the flat projection
-// stands. The partial current month never enters the growth base or the
-// backtest, and a spike-flagged month is never copied forward (that month
-// falls back to the flat average). Pure + exported for unit tests.
+// It competes with a linear-regression trend line in a one-step backtest
+// over the trailing complete months (≥3 comparable points): the plain SMA is
+// the baseline, and whichever technique missed past months by the least
+// makes the projection. The partial current month never enters the growth
+// base, the regression fit or the backtest, and a spike-flagged month is
+// never copied forward (that month falls back to the flat average).
+// Pure + exported for unit tests.
 export const SEASONAL_WEIGHT = 0.5;
+export type ForecastMethod = 'average' | 'seasonal' | 'regression';
 const GROWTH_MIN = 0.5;
 const GROWTH_MAX = 2;
 
@@ -570,47 +573,100 @@ export function seasonalProjection(
   };
   const usableYearAgo = (i: number) => i >= 0 && !spikeIdx.has(i) && counts[i] > 0;
 
+  // Linear regression: an ordinary least-squares trend line (rentals against
+  // the month number) fitted on the complete months before `t`. Spike-flagged
+  // months and the empty months before the records begin are left out.
+  const firstData = counts.findIndex((c) => c > 0);
+  const fitBefore = (t: number): RegressionLine | null => {
+    if (firstData < 0) return null;
+    const pts: { t: number; y: number }[] = [];
+    for (let i = firstData; i < t; i++) if (!spikeIdx.has(i)) pts.push({ t: i, y: counts[i] });
+    return linearRegression(pts);
+  };
+  const regAt = (fit: RegressionLine | null, t: number) =>
+    fit === null ? null : Math.max(0, fit.intercept + fit.slope * t);
+
   // Backtest: predict each of the last ≤8 complete months from what was
-  // known the month before, both ways, on the SAME points.
-  const actual: number[] = [];
-  const smaPred: (number | null)[] = [];
-  const blendPred: (number | null)[] = [];
+  // known the month before, with every technique, on the SAME points.
+  const rows: { actual: number; sma: number; blend: number | null; reg: number | null }[] = [];
   for (let t = Math.max(0, lastComplete - 7); t <= lastComplete; t++) {
     const base = smaValues[t - 1];
+    if (t < 1 || base === null || base === undefined || !counts[t]) continue;
     const g = growthAt(t - 1);
-    if (t < 1 || base === null || base === undefined || g === null || !usableYearAgo(t - 12) || !counts[t]) continue;
-    actual.push(counts[t]);
-    smaPred.push(base);
-    blendPred.push((1 - SEASONAL_WEIGHT) * base + SEASONAL_WEIGHT * counts[t - 12] * g);
+    const blend = g !== null && usableYearAgo(t - 12)
+      ? (1 - SEASONAL_WEIGHT) * base + SEASONAL_WEIGHT * counts[t - 12] * g
+      : null;
+    rows.push({ actual: counts[t], sma: base, blend, reg: regAt(fitBefore(t), t) });
   }
-  const smaErrorPct = mape(actual, smaPred);
-  const seasonalErrorPct = mape(actual, blendPred);
+  // All three are compared when the seasonal blend can be tested (it needs a
+  // year-ago month); otherwise the average is compared with the regression.
+  const withSeasonal = rows.filter((r) => r.blend !== null && r.reg !== null);
+  const seasonalTested = withSeasonal.length >= 3;
+  const compared = seasonalTested ? withSeasonal : rows.filter((r) => r.reg !== null);
+  const enough = compared.length >= 3;
+  const actual = compared.map((r) => r.actual);
+  const smaErrorPct = enough ? mape(actual, compared.map((r) => r.sma)) : null;
+  const seasonalErrorPct = seasonalTested ? mape(actual, compared.map((r) => r.blend)) : null;
+  const regressionErrorPct = enough ? mape(actual, compared.map((r) => r.reg)) : null;
   const growth = lastComplete >= 0 ? growthAt(lastComplete) : null;
-  const used = actual.length >= 3
-    && growth !== null
-    && smaErrorPct !== null && seasonalErrorPct !== null
-    && seasonalErrorPct < smaErrorPct;
+  const trendLine = fitBefore(lastComplete + 1);
+
+  // The moving average is the baseline: another technique replaces it only
+  // when it missed past months by strictly less, and the lowest error wins.
+  let method: ForecastMethod = 'average';
+  let best = smaErrorPct;
+  if (best !== null && growth !== null && seasonalErrorPct !== null && seasonalErrorPct < best) {
+    method = 'seasonal';
+    best = seasonalErrorPct;
+  }
+  if (best !== null && trendLine !== null && regressionErrorPct !== null && regressionErrorPct < best) {
+    method = 'regression';
+    best = regressionErrorPct;
+  }
+  const used = method === 'seasonal';
 
   let base: number | null = null;
   for (const v of smaValues) if (v !== null && v !== undefined) base = v;
+  const first = months[0];
+  const monthIndex = (year: number, month: number) => (year - first.year) * 12 + (month - first.month);
 
-  const projections = next.map((t) => {
+  const projectWith = (m: ForecastMethod) => next.map((t) => {
     const flat = base === null ? null : round1(base);
     const ya = indexOf(t.year - 1, t.month);
-    if (!used || base === null || growth === null || !usableYearAgo(ya)) {
-      return { label: t.label, value: flat, lastYear: ya >= 0 ? counts[ya] : null, seasonal: false };
+    const lastYear = ya >= 0 ? counts[ya] : null;
+    if (m === 'regression' && first && trendLine !== null) {
+      const v = regAt(trendLine, monthIndex(t.year, t.month));
+      return { label: t.label, value: v === null ? flat : round1(v), lastYear, seasonal: false };
+    }
+    if (m !== 'seasonal' || base === null || growth === null || !usableYearAgo(ya)) {
+      return { label: t.label, value: flat, lastYear, seasonal: false };
     }
     const value = round1((1 - SEASONAL_WEIGHT) * base + SEASONAL_WEIGHT * counts[ya] * growth);
     return { label: t.label, value, lastYear: counts[ya], seasonal: true };
   });
+  const projections = projectWith(method);
+  // Every tested technique's own outlook, so the screen can show each one
+  // on request (the winner above is still the one the system uses).
+  const byMethod = {
+    average: projectWith('average'),
+    seasonal: seasonalErrorPct !== null && growth !== null ? projectWith('seasonal') : null,
+    regression: trendLine !== null && regressionErrorPct !== null ? projectWith('regression') : null,
+  };
 
   return {
     used,
+    method,
     growth: growth === null ? null : Math.round(growth * 100) / 100,
     smaErrorPct,
     seasonalErrorPct,
-    backtestPoints: actual.length,
+    regressionErrorPct,
+    regression: trendLine === null ? null : {
+      slope: Math.round(trendLine.slope * 100) / 100,
+      intercept: Math.round(trendLine.intercept * 100) / 100,
+    },
+    backtestPoints: compared.length,
     projections,
+    byMethod,
   };
 }
 
@@ -821,8 +877,9 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
     const targets = lastComplete
       ? nextMonthLabels(lastComplete.year, lastComplete.month, FORECAST_HORIZON + (partial ? 1 : 0))
       : [];
-    // Seasonal blend when it backtests better than the flat average; the
-    // flat projection otherwise (seasonalProjection falls back per month).
+    // Three techniques compete on past months (moving average as the
+    // baseline, seasonal blend, linear regression); the one with the lowest
+    // backtest error makes the projection.
     const seasonal = seasonalProjection(
       completeCounts,
       completeMonths,
@@ -832,7 +889,9 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       nowM,
     );
     // Ranges come from the WINNING method's backtest error.
-    const winErr = seasonal.used ? seasonal.seasonalErrorPct : series.errorPct;
+    const winErr = seasonal.method === 'seasonal' ? seasonal.seasonalErrorPct
+      : seasonal.method === 'regression' ? seasonal.regressionErrorPct
+      : series.errorPct;
     const allProj = seasonal.projections.map(({ label, value, lastYear, seasonal: s }) => (
       { label, value, lastYear, seasonal: s, ...rangeFor(value, winErr) }
     ));
@@ -844,6 +903,29 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
             Math.min(daysInMonth, nowM.getDate()), daysInMonth, allProj[0]);
         })()
       : null;
+    // Each technique's outlook with its own error range, for the technique
+    // filter on the forecast screen.
+    const errOf = (m: ForecastMethod) => (m === 'seasonal' ? seasonal.seasonalErrorPct
+      : m === 'regression' ? seasonal.regressionErrorPct
+        : series.errorPct);
+    const projectionsByMethod: Partial<Record<ForecastMethod, {
+      projections: unknown[];
+      current: ReturnType<typeof currentPeriod> | null;
+      errorPct: number | null;
+    }>> = {};
+    for (const m of ['average', 'seasonal', 'regression'] as ForecastMethod[]) {
+      const list = seasonal.byMethod[m];
+      if (!list) continue;
+      const all = list.map(({ label, value, lastYear, seasonal: s }) => (
+        { label, value, lastYear, seasonal: s, ...rangeFor(value, errOf(m)) }
+      ));
+      let cur: ReturnType<typeof currentPeriod> | null = null;
+      if (partial && last) {
+        const dim = new Date(last.year, last.month, 0).getDate();
+        cur = currentPeriod(last.label, monthlyCounts[months.length - 1], Math.min(dim, nowM.getDate()), dim, all[0]);
+      }
+      projectionsByMethod[m] = { projections: partial ? all.slice(1) : all, current: cur, errorPct: errOf(m) };
+    }
     const seasonalProfile = calendarProfile(completeCounts, completeMonths, series.flags);
 
     // Per-category series over the same month buckets (top categories by
@@ -919,13 +1001,16 @@ export async function getForecast(period: number = 3, granularity: 'monthly' | '
       current,
       seasonalProfile,
       projections,
+      projectionsByMethod,
       // How the outlook was made, so the UI can say it in plain words and
       // show the backtest that justified it.
-      projectionMethod: seasonal.used ? 'seasonal' : 'average',
+      projectionMethod: seasonal.method,
       seasonality: {
         growth: seasonal.growth,
         averageErrorPct: seasonal.smaErrorPct,
         seasonalErrorPct: seasonal.seasonalErrorPct,
+        regressionErrorPct: seasonal.regressionErrorPct,
+        regression: seasonal.regression,
         backtestPoints: seasonal.backtestPoints,
       },
       byCategory,

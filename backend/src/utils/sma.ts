@@ -78,3 +78,29 @@ export function mape(actual: number[], predicted: (number | null)[]): number | n
   if (n === 0) return null;
   return Math.round((sum / n) * 100);
 }
+
+// Simple linear regression: the ordinary least-squares trend line
+// y = intercept + slope·t, where t is the period number and y the rental
+// count. Null with fewer than 3 points, or when every point shares the same
+// t (no line can be fitted).
+export type RegressionLine = { intercept: number; slope: number };
+
+export function linearRegression(points: { t: number; y: number }[]): RegressionLine | null {
+  const n = points.length;
+  if (n < 3) return null;
+  let st = 0;
+  let sy = 0;
+  let stt = 0;
+  let sty = 0;
+  for (const p of points) {
+    st += p.t;
+    sy += p.y;
+    stt += p.t * p.t;
+    sty += p.t * p.y;
+  }
+  const den = n * stt - st * st;
+  if (den === 0) return null;
+  const slope = (n * sty - st * sy) / den;
+  const intercept = (sy - slope * st) / n;
+  return { intercept, slope };
+}

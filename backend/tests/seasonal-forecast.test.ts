@@ -21,6 +21,8 @@ describe('seasonalProjection', () => {
     const out = seasonalProjection(seasonalCounts, months, smaVals, new Set(), next, NOW);
 
     expect(out.used).toBe(true);
+    expect(out.method).toBe('seasonal');
+    expect(out.seasonalErrorPct!).toBeLessThan(out.regressionErrorPct!);
     expect(out.growth).toBe(1); // same pattern every year → no growth
     expect(out.backtestPoints).toBeGreaterThanOrEqual(3);
     expect(out.seasonalErrorPct!).toBeLessThan(out.smaErrorPct!);
@@ -34,6 +36,8 @@ describe('seasonalProjection', () => {
     const flat = months.map(() => 20);
     const out = seasonalProjection(flat, months, sma(flat, 3), new Set(), next, NOW);
     expect(out.used).toBe(false);
+    // A flat line ties the average, and a tie keeps the baseline.
+    expect(out.method).toBe('average');
     expect(out.projections.map((p) => p.value)).toEqual([20, 20, 20]);
     expect(out.projections.every((p) => !p.seasonal)).toBe(true);
   });
@@ -43,7 +47,8 @@ describe('seasonalProjection', () => {
     const counts = short.map((m) => PATTERN[m.month - 1]);
     const out = seasonalProjection(counts, short, sma(counts, 3), new Set(), next, NOW);
     expect(out.used).toBe(false);
-    expect(out.backtestPoints).toBe(0);
+    // No year-ago months: the seasonal blend is not tested at all.
+    expect(out.seasonalErrorPct).toBeNull();
   });
 
   it('never copies a spike-flagged month forward', () => {
@@ -54,6 +59,32 @@ describe('seasonalProjection', () => {
     // May falls back to the flat average; June still blends.
     expect(out.projections[0]).toMatchObject({ value: 13.3, seasonal: false });
     expect(out.projections[1].seasonal).toBe(true);
+  });
+
+  it('uses linear regression when a steady trend beats the other two', () => {
+    // Rentals climb by 2 every month, with no calendar pattern.
+    const rising = months.map((_, i) => 10 + 2 * i);
+    const out = seasonalProjection(rising, months, sma(rising, 3), new Set(), next, NOW);
+    expect(out.method).toBe('regression');
+    expect(out.used).toBe(false);
+    expect(out.regressionErrorPct!).toBeLessThan(out.smaErrorPct!);
+    expect(out.regressionErrorPct!).toBeLessThan(out.seasonalErrorPct!);
+    expect(out.regression).toMatchObject({ slope: 2, intercept: 10 });
+    // May 2026 is month 28 on the line: 10 + 2·28 = 66.
+    expect(out.projections[0]).toMatchObject({ label: 'May 2026', value: 66, seasonal: false });
+    // Every technique's outlook is kept for the technique filter.
+    expect(out.byMethod.regression).toEqual(out.projections);
+    // Moving average: the last SMA point (Feb–Apr 2026 = 60, 62, 64) → 62.
+    expect(out.byMethod.average.map((p) => p.value)).toEqual([62, 62, 62]);
+    expect(out.byMethod.seasonal).not.toBeNull();
+  });
+
+  it('leaves out a technique that could not be tested', () => {
+    const short = months.slice(-10);
+    const counts = short.map((m) => PATTERN[m.month - 1]);
+    const out = seasonalProjection(counts, short, sma(counts, 3), new Set(), next, NOW);
+    expect(out.byMethod.seasonal).toBeNull();
+    expect(out.byMethod.average).toHaveLength(3);
   });
 
   it('scales last year by recent growth', () => {

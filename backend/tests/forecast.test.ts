@@ -3,7 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import routes from '../src/routes/index.js';
 import { errorHandler } from '../src/middleware/errorHandler.js';
-import { smaCapped, mape } from '../src/utils/sma.js';
+import { smaCapped, mape, linearRegression } from '../src/utils/sma.js';
 import { buildForecastSeries } from '../src/services/dashboard.service.js';
 
 const app = express();
@@ -43,6 +43,19 @@ describe('mape', () => {
   it('returns null when nothing is comparable', async () => {
     expect(mape([0, 0], [5, 5])).toBeNull();
     expect(mape([], [])).toBeNull();
+  });
+});
+
+describe('linearRegression', () => {
+  it('fits the least-squares line through a straight trend', async () => {
+    const fit = linearRegression([{ t: 0, y: 3 }, { t: 1, y: 5 }, { t: 2, y: 7 }, { t: 3, y: 9 }]);
+    expect(fit!.slope).toBeCloseTo(2);
+    expect(fit!.intercept).toBeCloseTo(3);
+  });
+
+  it('returns null with fewer than 3 points or no spread in t', async () => {
+    expect(linearRegression([{ t: 0, y: 1 }, { t: 1, y: 2 }])).toBeNull();
+    expect(linearRegression([{ t: 2, y: 1 }, { t: 2, y: 2 }, { t: 2, y: 3 }])).toBeNull();
   });
 });
 

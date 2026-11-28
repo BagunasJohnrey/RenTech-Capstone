@@ -367,6 +367,15 @@ const forecast = () => {
   const next = nextMonthLabelsFrom(last.year, last.month, 3);
   const nextMonthNums = [1, 2, 3].map((k) => ((last.month - 1 + k) % 12) + 1);
   const curProj = seasonalFor(last.month);
+  const seasonalProj = next.map((label, i) => {
+    const value = seasonalFor(nextMonthNums[i]);
+    return { label, value, lastYear: DEMO_SEASON[nextMonthNums[i] - 1], seasonal: true, ...range(value) };
+  });
+  const flatProj = next.map((label) => ({ label, value: round1(lastSma), lastYear: null, seasonal: false, ...range(lastSma) }));
+  const trendProj = next.map((label, i) => {
+    const value = round1(lastSma + 0.3 * (i + 1));
+    return { label, value, lastYear: null, seasonal: false, ...range(value) };
+  });
   return {
     labels,
     counts,
@@ -380,12 +389,14 @@ const forecast = () => {
       pace: round1((soFar * daysInMonth) / Math.max(1, daysElapsed)),
       projected: curProj, ...range(curProj),
     },
-    projections: next.map((label, i) => {
-      const value = seasonalFor(nextMonthNums[i]);
-      return { label, value, lastYear: DEMO_SEASON[nextMonthNums[i] - 1], seasonal: true, ...range(value) };
-    }),
+    projections: seasonalProj,
+    projectionsByMethod: {
+      average: { projections: flatProj, current: null, errorPct: 34 },
+      seasonal: { projections: seasonalProj, current: null, errorPct: err },
+      regression: { projections: trendProj, current: null, errorPct: 41 },
+    },
     projectionMethod: 'seasonal',
-    seasonality: { growth: 1.1, averageErrorPct: 34, seasonalErrorPct: err, backtestPoints: 6 },
+    seasonality: { growth: 1.1, averageErrorPct: 34, seasonalErrorPct: err, regressionErrorPct: 41, backtestPoints: 6 },
     seasonalProfile: DEMO_SEASON.map((avg, i) => ({
       month: i + 1, avg, index: Math.round((avg / (DEMO_SEASON.reduce((a, b) => a + b, 0) / 12)) * 100) / 100, samples: 1,
     })),
